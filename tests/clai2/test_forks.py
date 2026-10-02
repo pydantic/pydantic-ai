@@ -22,16 +22,16 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_shell
-from pydantic_clai2._session import Session
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.forks import USAGE, Forks, parse_fork_args
-from pydantic_clai2.image_input import ImageInput
-from pydantic_clai2.interrupts import Interrupts
-from pydantic_clai2.live_prompt import LivePrompt
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
 
 PromptT = TypeVar('PromptT')
 

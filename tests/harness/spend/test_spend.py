@@ -21,10 +21,7 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
-    CombinedCapability,
-    Hooks,
     WrapModelRequestHandler,
-    WrapperCapability,
 )
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -33,12 +30,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
-from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness import HarnessDeprecationWarning, spend
 from pydantic_ai_harness.spend import (
     Budget,
     InMemorySpendStore,
     RedisSpendStore,
-    SpendCompositionWarning,
     SpendEntry,
     SpendLimitExceeded,
     SpendLimits,
@@ -47,6 +43,7 @@ from pydantic_ai_harness.spend import (
     UnpricedModelError,
     UnpricedModelWarning,
 )
+from pydantic_ai_harness.spend._exceptions import SpendCompositionWarning
 
 pytestmark = [
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
@@ -113,9 +110,9 @@ def _request_context() -> ModelRequestContext:
 
 
 class _UsageRequestContext:
-    """The provider-response seam, usable while Harness still floors on an older core."""
+    """Stands in for the provider-response record core keeps on a `ModelRequestContext`."""
 
-    usage_responses: tuple[ModelResponse, ...] = ()
+    _usage_responses: tuple[ModelResponse, ...] = ()
 
 
 def _response(
@@ -147,8 +144,8 @@ async def _record(
     request_context: Any = _UsageRequestContext()
 
     async def handler(request_context: ModelRequestContext) -> ModelResponse:
-        usage_responses: tuple[ModelResponse, ...] = getattr(request_context, 'usage_responses')
-        setattr(request_context, 'usage_responses', (*usage_responses, recorded))
+        usage_responses: tuple[ModelResponse, ...] = getattr(request_context, '_usage_responses')
+        setattr(request_context, '_usage_responses', (*usage_responses, recorded))
         return recorded
 
     return await guard.wrap_model_request(
@@ -551,15 +548,6 @@ class _RetryOnceInnermost(AbstractCapability[None]):
         return response
 
 
-class _NoModelWrapper(AbstractCapability[None]):
-    """A capability that cannot reject a model response on wrapper exit."""
-
-
-class _InnermostWrapper(WrapperCapability[None]):
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='innermost')
-
-
 class TestOrdering:
     """Nothing may reject a response before it is counted."""
 
@@ -642,7 +630,7 @@ class TestOrdering:
         request_context: Any = _UsageRequestContext()
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            setattr(request_context, 'usage_responses', (first, second))
+            setattr(request_context, '_usage_responses', (first, second))
             return transformed
 
         result = await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
@@ -659,7 +647,7 @@ class TestOrdering:
         request_context: Any = _UsageRequestContext()
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            setattr(request_context, 'usage_responses', (first, second))
+            setattr(request_context, '_usage_responses', (first, second))
             return second
 
         for _ in range(2):
@@ -677,7 +665,7 @@ class TestOrdering:
         request_context: Any = _UsageRequestContext()
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            setattr(request_context, 'usage_responses', (first, second))
+            setattr(request_context, '_usage_responses', (first, second))
             return second
 
         with pytest.raises(UnpricedModelError):
@@ -701,7 +689,7 @@ class TestOrdering:
         request_context: Any = _UsageRequestContext()
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            setattr(request_context, 'usage_responses', (first, second))
+            setattr(request_context, '_usage_responses', (first, second))
             return second
 
         with pytest.raises(RuntimeError, match='reporting failed'):
@@ -766,7 +754,7 @@ class TestOrdering:
         request_context: Any = _UsageRequestContext()
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            setattr(request_context, 'usage_responses', (billed,))
+            setattr(request_context, '_usage_responses', (billed,))
             raise ModelRetry('rejected after billing')
 
         with pytest.raises(ModelRetry, match='rejected after billing'):
@@ -791,8 +779,8 @@ class TestOrdering:
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
             response = next(responses)
-            usage_responses: tuple[ModelResponse, ...] = getattr(request_context, 'usage_responses')
-            setattr(request_context, 'usage_responses', (*usage_responses, response))
+            usage_responses: tuple[ModelResponse, ...] = getattr(request_context, '_usage_responses')
+            setattr(request_context, '_usage_responses', (*usage_responses, response))
             return response
 
         await guard.wrap_model_request(_guard_ctx(guard), request_context=request_context, handler=handler)
@@ -808,7 +796,7 @@ class TestOrdering:
         request_context: Any = _UsageRequestContext()
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            setattr(request_context, 'usage_responses', (first, second))
+            setattr(request_context, '_usage_responses', (first, second))
             return second
 
         with warnings.catch_warnings():
@@ -832,7 +820,7 @@ class TestOrdering:
         request_context: Any = _UsageRequestContext()
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            setattr(request_context, 'usage_responses', (first, second))
+            setattr(request_context, '_usage_responses', (first, second))
             return second
 
         with pytest.raises(UserError, match='raised RuntimeError: pricing failed'):
@@ -842,112 +830,7 @@ class TestOrdering:
         assert spent.requests == 2
         assert spent.unpriced_requests == 1
 
-    async def test_an_older_core_accrues_the_handler_response(self):
-        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('1'))
-        response = _response()
-        legacy_request_context: Any = object()
-
-        async def handler(request_context: ModelRequestContext) -> ModelResponse:
-            return response
-
-        result = await guard.wrap_model_request(
-            _guard_ctx(guard),
-            request_context=legacy_request_context,
-            handler=handler,
-        )
-
-        assert result is response
-        assert (await guard.status())[0].spent.requests == 1
-
-    async def test_an_older_core_warns_when_an_inner_wrapper_can_hide_a_response(self):
-        guard = SpendLimits[None]()
-        root = CombinedCapability([guard, _RetryOnceInnermost()])
-        legacy_request_context: Any = object()
-
-        with pytest.warns(SpendCompositionWarning, match='_RetryOnceInnermost'):
-            await guard.before_model_request(
-                _run_ctx(root_capability=root),
-                legacy_request_context,
-            )
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', SpendCompositionWarning)
-            await guard.before_model_request(
-                _run_ctx(root_capability=root),
-                legacy_request_context,
-            )
-
-    async def test_provider_response_accounting_removes_the_ordering_warning(self):
-        guard = SpendLimits[None]()
-        root = CombinedCapability([guard, _RetryOnceInnermost()])
-        request_context: Any = _UsageRequestContext()
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', SpendCompositionWarning)
-            await guard.before_model_request(_run_ctx(root_capability=root), request_context)
-
-    @pytest.mark.parametrize('root', [None, CombinedCapability([_RetryOnceInnermost()])])
-    async def test_an_older_core_does_not_warn_without_a_position_in_the_chain(
-        self, root: AbstractCapability[None] | None
-    ):
-        guard = SpendLimits[None]()
-        legacy_request_context: Any = object()
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', SpendCompositionWarning)
-            await guard.before_model_request(
-                _run_ctx(root_capability=root),
-                legacy_request_context,
-            )
-
-    async def test_an_older_core_locates_spend_limits_through_a_wrapper(self):
-        guard = SpendLimits[None]()
-        root = CombinedCapability([_InnermostWrapper(guard), _RetryOnceInnermost()])
-        legacy_request_context: Any = object()
-
-        with pytest.warns(SpendCompositionWarning, match='_RetryOnceInnermost'):
-            await guard.before_model_request(_run_ctx(root_capability=root), legacy_request_context)
-
-    @pytest.mark.parametrize(
-        'inner',
-        [
-            _NoModelWrapper(),
-            _InnermostWrapper(_NoModelWrapper()),
-            Hooks[None](ordering=CapabilityOrdering(position='innermost')),
-        ],
-    )
-    async def test_an_older_core_does_not_warn_for_a_non_rejecting_inner_capability(
-        self, inner: AbstractCapability[None]
-    ):
-        guard = SpendLimits[None]()
-        root = CombinedCapability([guard, inner])
-        legacy_request_context: Any = object()
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', SpendCompositionWarning)
-            await guard.before_model_request(_run_ctx(root_capability=root), legacy_request_context)
-
-    async def test_an_older_core_does_not_recommend_reordering_around_durability(self, monkeypatch: pytest.MonkeyPatch):
-        from pydantic_ai_harness.spend._composition import (
-            _may_reject_a_billed_response,  # pyright: ignore[reportPrivateUsage]
-        )
-
-        guard = SpendLimits[None]()
-        monkeypatch.setattr('pydantic_ai_harness.spend._composition.BaseDurabilityCapability', _NoModelWrapper)
-        durable = _NoModelWrapper()
-        assert not _may_reject_a_billed_response(durable)
-        root = CombinedCapability([guard, durable])
-        legacy_request_context: Any = object()
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', SpendCompositionWarning)
-            await guard.before_model_request(_run_ctx(root_capability=root), legacy_request_context)
-
-    async def test_an_innermost_capability_listed_after_still_counts_every_billed_response(  # pragma: lax no cover - unreleased core seam
-        self,
-    ):
-        if not hasattr(_request_context(), 'usage_responses'):
-            pytest.skip('requires provider-response accounting from pydantic-ai#7053')
+    async def test_an_innermost_capability_listed_after_still_counts_every_billed_response(self):
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
         agent = Agent(_scripted_usage(), deps_type=type(None), capabilities=[guard, _RetryOnceInnermost()])
 
@@ -956,11 +839,7 @@ class TestOrdering:
         assert result.usage.requests == 2
         assert (await guard.status())[0].spent.requests == 2
 
-    async def test_outer_spend_observes_usage_through_an_inner_context_copy(  # pragma: lax no cover - unreleased core seam
-        self,
-    ):
-        if not hasattr(_request_context(), 'usage_responses'):
-            pytest.skip('requires provider-response accounting from pydantic-ai#7053')
+    async def test_outer_spend_observes_usage_through_an_inner_context_copy(self):
 
         class CopyContext(AbstractCapability[None]):
             async def wrap_model_request(
@@ -2700,3 +2579,15 @@ class TestDurableClock:
 
         with pytest.raises(ZeroDivisionError, match='the clock is broken'):
             await _gate(guard)
+
+
+def test_spend_composition_warning_is_a_deprecated_alias() -> None:
+    """`SpendCompositionWarning` is no longer emitted, but importing it keeps working with a deprecation warning."""
+    with pytest.warns(
+        HarnessDeprecationWarning, match='`pydantic_ai_harness.spend.SpendCompositionWarning` is deprecated'
+    ):
+        alias = spend.SpendCompositionWarning
+    assert alias is SpendCompositionWarning
+
+    with pytest.raises(AttributeError, match='has no attribute'):
+        _ = spend.NotAnExport

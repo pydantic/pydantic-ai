@@ -56,7 +56,7 @@ from .abstract import (
 
 def _usage_response(request_context: ModelRequestContext) -> ModelResponse | None:
     """Represent the usage committed at the provider boundary without changing semantic output."""
-    responses = request_context.usage_responses
+    responses = request_context._usage_responses  # pyright: ignore[reportPrivateUsage]
     if not responses:
         return None
     usage = RequestUsage()

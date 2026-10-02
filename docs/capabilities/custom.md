@@ -478,7 +478,13 @@ If `for_run()` returns the original capability, the bootstrap model selection is
 
 ## Hooking into the lifecycle
 
-Capabilities can hook into seven lifecycle stages, each with up to four variants:
+Capabilities can hook into seven lifecycle stages. Each stage has the same lifecycle:
+
+```text
+wrap_* enter → before_* → operation (on_*_error if it fails) → after_* → wrap_* exit
+```
+
+A `wrap_*` hook that returns without calling its handler skips everything inside it. [`run_stream()` handles node hooks differently](#node-hooks). The four hook variants are:
 
 * **`before_*`** — fires inside the wrapped handler before the core operation, can modify inputs
 * **`after_*`** — fires after the core operation succeeds or `on_*_error` recovers (in reverse capability order), can modify outputs
@@ -499,7 +505,7 @@ A short-circuiting wrapper skips `before_*`, including policy hooks. Put mandato
 | [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, handler: `[`WrapRunHandler`][pydantic_ai.capabilities.WrapRunHandler]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Wrap the complete run lifecycle |
 | [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, error: BaseException) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Handle run-body errors (see [error hooks](#error-hooks)) |
 
-`wrap_run` supports error recovery: `on_run_error` first gets a chance to recover run-body failures inside `handler()`. If the error remains unrecovered and `handler()` raises, `wrap_run` can catch it and return a result instead. This works with [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.iter()`][pydantic_ai.agent.Agent.iter], and [realtime sessions](../realtime/capabilities.md). A realtime session is a run, so all four hooks fire once around it, with `wrap_run`'s handler resolving when the session closes. Check [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] to branch behavior, and use [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] (set once the session is connected) to interact with the live session.
+`wrap_run` supports error recovery: `on_run_error` first gets a chance to recover run-body failures inside `handler()`. If the error remains unrecovered and `handler()` raises, `wrap_run` can catch it and return a result instead. `on_run_error` only sees run-body failures: an exception from any capability's `before_run` or `after_run` reaches `wrap_run` but not `on_run_error`, so release resources acquired in `before_run` from `wrap_run`, in a `try`/`finally` around `handler()`. Don't acquire them in [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], which runs before any run hook. This works with [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.iter()`][pydantic_ai.agent.Agent.iter], and [realtime sessions](../realtime/capabilities.md). A realtime session is a run, so all four hooks fire once around it, with `wrap_run`'s handler resolving when the session closes. Check [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] to branch behavior, and use [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] (set once the session is connected) to interact with the live session.
 
 !!! warning "Tearing down tasks you spawn"
     A run is cancelled — via [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel], a [`CancellationToken`][pydantic_ai.CancellationToken], an `asyncio.wait_for` timeout, or an enclosing task group — by cancelling the single asyncio task that drives it. Work the run `await`s inline receives the `CancelledError` automatically; a task you start yourself with `asyncio.create_task(...)` runs on a **different** task and does **not**, so a capability that spawns tasks must tear them down itself.
@@ -609,7 +615,7 @@ See [Iterating Over an Agent's Graph](../agent.md#iterating-over-an-agents-graph
 
 [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance. Mutate the context you were given, or return a `dataclasses.replace()` copy of it — either way, `model_id` and `streaming` carry over.
 
-After the handler reaches the provider boundary, `request_context.usage_responses` contains the response objects whose usage the agent committed for that lifecycle. Accounting and telemetry capabilities should use this tuple instead of assuming the response returned by an outer hook is still the billable provider response. It can contain multiple entries when a continuation emitted partial billable output before an error hook recovered; treat it as read-only. The ledger is shared by contexts produced with `dataclasses.replace()`, so an outer wrapper observes usage committed through a context copied by an inner wrapper.
+The response a wrapper's handler returns isn't necessarily the one the provider billed: an inner hook may have replaced or rejected it. To account for usage, read [`ctx.usage`][pydantic_ai.tools.RunContext.usage], which includes every response the provider billed, even one a hook later rejected.
 
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
 
@@ -1181,9 +1187,9 @@ assert combined.capabilities[1] is rate_limit_hooks
 
 Capabilities don't have direct access to each other. To tell other capabilities that something happened, publish a [capability event](overview.md#capability-events): the publisher awaits [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] and any interested capability reacts with [`@on_event`][pydantic_ai.capabilities.on_event], with no shared object between them and no ordering requirement on the `capabilities` list.
 
-To share a value rather than announce an occurrence, use a [`contextvars.ContextVar`][contextvars.ContextVar] set from an async function: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. For hooks in the same `before_*` family, put the writer before the reader. A value set by any `wrap_*` hook before it calls `handler` is available to every inner `before_*` hook because the complete wrapper chain encloses the complete before chain; conversely, a wrapper cannot read state that is only set later by a `before_*` hook until its handler returns. A sync [`Hooks`](../hooks.md) function can't be the writer: it runs on a separate thread, so values it sets are not visible to the rest of the run.
+To share a value rather than announce an occurrence, use a [`contextvars.ContextVar`][contextvars.ContextVar] set from an async function: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. Within a `before_*` family, list the writer before the reader. Every wrapper is entered before any `before_*` hook runs, so a value a wrapper sets before calling `handler` is visible to all `before_*` hooks, and a wrapper can only read values set by `before_*` hooks after its handler returns. A sync [`Hooks`](../hooks.md) function can't be the writer: it runs on a separate thread, so values it sets are not visible to the rest of the run.
 
-With `run_stream()`, `before_model_request` runs in the model-wrapper task, but its `ContextVar` writes are copied back when the stream opens so later tool, output, and run hooks observe them. Writes made later in the model request task remain task-local; use run dependencies for state that must be shared bidirectionally.
+In `run_stream()`, values set by an async `before_model_request` hook are available to later tool, output, and run hooks. Values set later in that model request may not be; use mutable [dependencies](../dependencies.md) for state that must be shared throughout the run.
 
 ### Testing custom capabilities
 

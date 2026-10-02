@@ -15,7 +15,7 @@ from rich.text import Text
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, PartStartEvent, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.ask_user import (
     DECLINED,
@@ -28,17 +28,22 @@ from pydantic_ai_harness.ask_user import (
     QuestionOption,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.ask_user_menu import QuestionMenu, TerminalAnswerer, activate, render_answer
-from pydantic_clai2.menu_worker import menu_key
-from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.question_input import Paste
+from pydantic_clai2.builtin_plugins.ask_user_menu import (
+    AskUserPlugin,
+    QuestionMenu,
+    TerminalAnswerer,
+    render_answer,
+)
+from pydantic_clai2.plugins import PluginHost, load_plugin
+from pydantic_clai2.ui.menus.menu_worker import menu_key
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.question_input import Paste
 
 
 @pytest.fixture
 def question_pipe(monkeypatch: pytest.MonkeyPatch) -> Generator[PipeInput]:
     with create_pipe_input() as pipe:
-        monkeypatch.setattr('pydantic_clai2.question_input.create_input', lambda: pipe)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.question_input.create_input', lambda: pipe)
         yield pipe
 
 
@@ -209,13 +214,16 @@ def test_render_answer_lists_picks_or_the_decline() -> None:
     assert '● You declined to answer' in text
 
 
-async def test_activate_registers_capability_and_renderer() -> None:
+async def test_plugin_declares_capability_and_renderer() -> None:
     host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
-    activate(host)
-    (capability,) = host.capabilities
+    loaded = load_plugin(AskUserPlugin, host)
+    (capability,) = loaded.capabilities
     assert isinstance(capability, AskUser)
-    (renderer,) = host.renderers
-    assert renderer(AskUserAnsweredEvent(request_id='r', response=AskUserResponse(cancelled=True))) is not None
+    assert loaded.plugin.has_render
+    assert (
+        loaded.plugin.render(AskUserAnsweredEvent(request_id='r', response=AskUserResponse(cancelled=True))) is not None
+    )
+    assert loaded.plugin.render(PartStartEvent(index=0, part=TextPart('hi'))) is None
     assert any(plugin.id == 'ask_user' for plugin in DEFAULT_PLUGINS)
 
 
@@ -301,7 +309,7 @@ async def test_cancellation_joins_question_reader_before_releasing_screen(monkey
             input_ready.set()
             allow_exit.set()
 
-    monkeypatch.setattr('pydantic_clai2.menu_worker.read_key', read_key)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read_key)
     answerer = TerminalAnswerer(full_screen=screen, runner=run)
     with anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:

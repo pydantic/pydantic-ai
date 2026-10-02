@@ -326,6 +326,9 @@ class ModelRequestContext:
     message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
     instead, or update both explicitly when both effects are intended.
 
+    Messages a `before_model_request` hook appends here with `append`, `extend` or `+=` are also
+    added to the message history, but this is deprecated and emits a warning.
+
     This is an independent top-level list, not an independent object graph. Retained messages
     and their parts may be the same objects as those in persistent history. Filtering, reordering,
     or assigning the outer sequence is request-only, but mutating a contained message or part in
@@ -395,14 +398,15 @@ class ModelRequestContext:
     )
 
     @property
-    def usage_responses(self) -> tuple[ModelResponse, ...]:
-        """Provider-boundary responses whose usage was committed for this lifecycle.
+    def _usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The model responses whose usage was counted for this request.
 
-        This remains empty until the wrapped handler reaches a provider response. It can contain
-        more than one response when a continuation produced billable partial output before an
-        error hook recovered. Contexts produced with `dataclasses.replace()` share this ledger, so
-        outer wrappers still observe usage committed through an inner wrapper's copy. This is
-        read-only: it exposes the agent's accounting decisions while only the agent runtime updates it.
+        Empty until the model responds. It includes responses a hook later replaced, and can hold more
+        than one response when a continued response was partly billed before an error hook recovered.
+        Request contexts copied with `dataclasses.replace()` see the same responses.
+
+        Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
+        `SpendLimits`, which pins this package's exact version.
         """
         return tuple(self._usage_response_ledger.responses)
 
@@ -539,19 +543,58 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # TODO(v3): remove along with `resolve_prompt_cache_retention`.
+        legacy = cls.__dict__.get('resolve_prompt_cache_retention')
+        if legacy is not None and 'resolve_cache_retention' not in cls.__dict__:
+            warnings.warn(
+                f'`{cls.__name__}` overrides `resolve_prompt_cache_retention`, which is deprecated; '
+                'override `resolve_cache_retention` instead.',
+                PydanticAIDeprecationWarning,
+                # Past `ABCMeta.__new__`, to the class statement.
+                stacklevel=3,
+            )
+            # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
+            cls.resolve_cache_retention = legacy
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by provider-specific model settings.
 
         The model's default settings are merged with the per-request `model_settings`. Only provider-specific settings
         are currently considered; a future unified cache setting is not yet an input. If multiple active settings
         request different retention periods, the longest period wins because any longer-lived cache breakpoint can
         keep the corresponding prompt prefix available. Models without a provider-specific retention setting return
-        `None`.
+        `None`, in which case the provider's
+        [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention] applies.
         """
         return None
 
+    @deprecated(
+        '`resolve_prompt_cache_retention` is deprecated, use `resolve_cache_retention` instead.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Deprecated alias of [`resolve_cache_retention`][pydantic_ai.models.Model.resolve_cache_retention]."""
+        # A subclass that still overrides this name reaches this base implementation only through its
+        # own `super()` call, and `__init_subclass__` routed `resolve_cache_retention` to that override,
+        # so dispatching on `self` would recurse. Continue with the implementation above the outermost
+        # legacy override instead, which is what that `super()` call means.
+        legacy_owner = next(
+            (
+                klass
+                for klass in reversed(type(self).__mro__)
+                if klass is not Model and 'resolve_prompt_cache_retention' in klass.__dict__
+            ),
+            None,
+        )
+        if legacy_owner is None:
+            return self.resolve_cache_retention(model_settings)
+        # `super()` with a class found at runtime is untyped, but that class is a `Model` subclass.
+        return cast('Model[Any]', super(legacy_owner, self)).resolve_cache_retention(model_settings)
+
     @staticmethod
-    def _max_prompt_cache_retention(
+    def _max_cache_retention(
         *cache_settings: bool | Literal['5m', '1h'] | None,
     ) -> timedelta | None:
         if '1h' in cache_settings:
@@ -757,7 +800,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings
+        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
+        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
             supports_thinking = self.profile.get('supports_thinking', False)
@@ -1824,6 +1868,13 @@ def infer_model(  # noqa: C901
         from .typesafe import TypeSafeModel
 
         return TypeSafeModel(model_name, provider=provider)
+    elif model_kind == 'system-one':
+        from ..providers.system_one import SystemOneProvider
+        from .system_one import SystemOneModel
+
+        if not isinstance(provider, SystemOneProvider):
+            raise UserError('System One models require a `SystemOneProvider`.')
+        return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

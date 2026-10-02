@@ -30,7 +30,6 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
-from pydantic_ai_harness.spend._composition import warn_about_inner_wrappers
 from pydantic_ai_harness.spend._events import SpendBudgetStatus, SpendRecordedEvent
 from pydantic_ai_harness.spend._exceptions import SpendLimitExceeded, UnpricedModelError, UnpricedModelWarning
 from pydantic_ai_harness.spend._snapshot import BudgetStatus, SpendSnapshot, Spent, money_precision
@@ -158,7 +157,6 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     id: str | None = 'spend_limits'
 
     _warned_unpriced: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    _reported_arrangements: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Model names already reported by `UnpricedModelWarning`, so each reports once.
 
     Instance-level and never reset, matching the capability's own posture that state
@@ -278,25 +276,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Refuse the request if any budget with a ceiling is already spent.
-
-        Also where the arrangement `get_ordering` cannot rule out is reported. The sorted
-        chain is readable from `RunContext.root_capability` from `before_run` onward but not
-        before it: `for_agent` sees only the capabilities the agent was constructed with, and
-        `ctx.root_capability` is still `None` in `for_run`, so neither covers a capability
-        added through `agent.run(capabilities=...)`. `before_run` would serve as well, since
-        the chain is fixed for a run; the read sits here to stay on the request path, beside
-        the accrual it is about. Re-reading per request costs nothing because
-        `_reported_arrangements` makes it idempotent, and keying on the arrangement rather
-        than on having reported is what covers a chain that differs between runs.
-        """
-        if not hasattr(request_context, 'usage_responses'):
-            # Only a core without provider-response accounting can hide a billed response
-            # behind an inner wrapper. Once the pydantic-ai floor includes
-            # `ModelRequestContext.usage_responses`, delete this warning path outright:
-            # `warn_about_inner_wrappers`, `_composition.py`, `SpendCompositionWarning`,
-            # and `_reported_arrangements`.
-            warn_about_inner_wrappers(ctx.root_capability, self, self._reported_arrangements)
+        """Refuse the request if any budget with a ceiling is already spent."""
         enforcing = [(budget, key) for budget, key in await self._keyed(ctx) if budget.enforces]
         read = await self._read(list(dict.fromkeys(key for _, key in enforcing)))
         for budget, key in enforcing:
@@ -310,20 +290,21 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Accrue each response `SpendLimits` records during the wrapped lifecycle."""
-        initial_usage_responses: tuple[ModelResponse, ...] | None = getattr(request_context, 'usage_responses', None)
-        usage_response_offset = len(initial_usage_responses) if initial_usage_responses is not None else None
+        """Accrue every response the provider billed during the wrapped lifecycle.
+
+        Core records each billed response on the request context as the model returns it, so
+        this sees a response even when a hook nested inside this wrapper rejects or replaces it,
+        and never sees a response a hook made up without calling the model (a cache hit or
+        `SkipModelRequest`).
+        """
+        usage_response_offset = len(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
         response: ModelResponse | None = None
         try:
             response = await handler(request_context)
         finally:
-            usage_responses: tuple[ModelResponse, ...] | None = getattr(request_context, 'usage_responses', None)
-            if usage_response_offset is None or usage_responses is None:
-                usage_responses = (response,) if response is not None else ()
-            else:
-                usage_responses = usage_responses[usage_response_offset:]
+            usage_responses = request_context._usage_responses[usage_response_offset:]  # pyright: ignore[reportPrivateUsage]
             first_error: Exception | None = None
-            for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset or 0):
+            for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset):
                 try:
                     error = await self._accrue_response(ctx, usage_response, response_index)
                 except Exception as exc:

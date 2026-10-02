@@ -38,6 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
+from ._lifecycle import LifecycleEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -483,6 +484,20 @@ class RealtimeConnection(ABC):
         """Iterate over events received from the model."""
         raise NotImplementedError
 
+    _lifecycle_version: ClassVar[int] = 1
+    """Which version of the lifecycle contract this connection's events follow (see `_lifecycle.py`).
+
+    Version 1 is the codec vocabulary alone. A connection on version 2 also yields identified lifecycle
+    events from `_lifecycle_events()`.
+    """
+
+    def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
+        """Iterate over the codec events together with the lifecycle events, on a version 2 connection.
+
+        A version 1 connection has no lifecycle events to add, so this is its ordinary iterator.
+        """
+        return aiter(self)
+
     @property
     def model_name(self) -> str | None:
         """The model id the server reported serving this session, when the provider reports one.
@@ -577,6 +592,26 @@ class RealtimeConnection(ABC):
         `True`; the OpenAI connection overrides it.
         """
         return True
+
+    @property
+    def _defers_audio_commit(self) -> bool:
+        """Whether committed audio joins the conversation only when the connection sends the commit later.
+
+        For the session's history placement only. A connection may hold a `CommitAudio` back, for instance
+        until a response is asked for, when its provider answers a commit by itself, and input sent in the
+        meantime then reaches the provider first. The session records the spoken turn where the provider
+        has it, once the connection reports sending the commit to the listener passed to
+        `_set_audio_commit_listener`. Internal until the session's lifecycle events, which track provider
+        items per input, replace it. Defaults to `False`.
+        """
+        return False
+
+    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
+        """Register what to call as a held commit goes out, on a connection that `_defers_audio_commit`.
+
+        The listener is called just before the commit is sent, and before anything the provider sends in
+        answer. Internal, like `_defers_audio_commit`. A no-op by default.
+        """
 
 
 __all__ = (

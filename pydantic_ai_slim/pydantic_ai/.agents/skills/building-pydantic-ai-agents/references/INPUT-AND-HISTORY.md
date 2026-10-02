@@ -83,8 +83,9 @@ In `before_model_request` and `wrap_model_request`, use the two message views de
 - Mutating or assigning `request_context.messages` changes only the current model request.
 - `ctx.messages[:] = rewritten` changes persistent history and later requests, but not the current model request.
 - Use both assignments when both effects are intended.
+- Deprecated: in `before_model_request`, `append`/`extend`/`+=` on `request_context.messages` also appends to `ctx.messages` and warns. Assign a new list instead, e.g. `request_context.messages = [*request_context.messages, m]` plus `ctx.messages.append(m)`.
 
-The separation is only at the outer collection. `request_context.messages` is an independent shallow list, but retained messages and nested parts may be the same objects as those in `ctx.messages`. Appending, filtering, reordering, or replacing the outer list is isolated; mutating a contained message or part in place is not and can affect persistent history. For request-only changes below the message level, use `dataclasses.replace` to construct new messages and parts down to the level being changed.
+The separation is only at the outer collection. `request_context.messages` is an independent shallow list, but retained messages and nested parts may be the same objects as those in `ctx.messages`. Apart from the deprecated appends above, changing the outer list is isolated; mutating a contained message or part in place is not and can affect persistent history. For request-only changes below the message level, use `dataclasses.replace` to construct new messages and parts down to the level being changed.
 
 `ProcessHistory` and compaction intentionally update both contexts. A processor transforms the current request view and makes its complete result persistent, so capability order still matters around processors.
 

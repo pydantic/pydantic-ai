@@ -65,6 +65,8 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -4974,22 +4976,23 @@ async def test_openai_responses_thinking_part_from_other_model(
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=42,
-                    output_tokens=291,
+                    input_tokens=43,
+                    output_tokens=269,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 42,
-                        'output_tokens': 291,
+                        'input_tokens': 43,
+                        'output_tokens': 269,
+                        'thinking_tokens': 23,
                     },
-                    cost=Decimal('0.004491'),
+                    cost=Decimal('0.004164'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_0114iHK2ditgTf1N8FWomc4E',
+                provider_response_id='msg_011CfY5JvP9tsuUrzoV5SHP9',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5023,47 +5026,47 @@ async def test_openai_responses_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_68c42d0b5e5c819385352dde1f447d910ad492c7955fc6fc',
+                        id='msg_0bd463641f0080ef006abbec8067f887d19765a3359225c08d',
                         provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=306,
-                    output_tokens=3134,
+                    input_tokens=300,
+                    output_tokens=3010,
                     output_reasoning_tokens=2496,
                     details={'reasoning_tokens': 2496},
-                    cost=Decimal('0.0317225'),
+                    cost=Decimal('0.030475'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5071,10 +5074,10 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 12, 14, 23, 30, tzinfo=timezone.utc),
+                    'timestamp': datetime(2026, 9, 29, 16, 50, 29, tzinfo=timezone.utc),
                     'service_tier': 'default',
                 },
-                provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
+                provider_response_id='resp_0bd463641f0080ef006abbec55308087d1ac30fbbf212ebde7',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -7274,7 +7277,8 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                             cost=Decimal('0.00475625'),
                         )
                     )
-                    assert run.usage == snapshot(RunUsage(requests=1))
+                    # The run counts the step once its response is committed, after the stream.
+                    assert run.usage == snapshot(RunUsage())
                 assert run.usage == snapshot(
                     RunUsage(
                         input_tokens=53,
@@ -9234,9 +9238,6 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='', id='msg_68cdc42eae2c81918eeacdbceb60d7fa08537600f5445fc6', provider_name='openai'
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2746,
@@ -9307,9 +9308,6 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    TextPart(
-                        content='', id='msg_68cdc4c5951c8191ace8044f1e89571508537600f5445fc6', provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(
@@ -9499,6 +9497,75 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
     )
 
 
+async def test_openai_responses_image_generation_stream_empty_final_answer(
+    allow_model_requests: None, openai_api_key: str
+):
+    """The empty `final_answer` message that follows a generated image makes no text part."""
+    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                ImageGenerationTool(quality='low', size='1024x1024', output_format='jpeg', output_compression=50)
+            )
+        ],
+        output_type=BinaryImage,
+    )
+
+    async with agent.iter(user_prompt='Generate a simple image of a red circle.') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.response == snapshot(
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='image_generation',
+                    tool_call_id='ig_051dd45a6415155e006abc4ab95e9087d1ac076b4aaaf77bd0',
+                    provider_name='openai',
+                ),
+                FilePart(
+                    content=IsInstance(BinaryImage),
+                    id='ig_051dd45a6415155e006abc4ab95e9087d1ac076b4aaaf77bd0',
+                ),
+                NativeToolReturnPart(
+                    tool_name='image_generation',
+                    content={
+                        'status': 'completed',
+                        'background': 'opaque',
+                        'quality': 'low',
+                        'size': '1024x1024',
+                        'revised_prompt': 'A simple, clean graphic of a solid red circle centered on a plain white background. Minimalist, no text, no shadows, no border.',
+                    },
+                    tool_call_id='ig_051dd45a6415155e006abc4ab95e9087d1ac076b4aaaf77bd0',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ],
+            usage=RequestUsage(
+                details={'reasoning_tokens': 0},
+                input_tokens=1641,
+                output_reasoning_tokens=0,
+                output_tokens=48,
+                cost=Decimal('0.0003858'),
+            ),
+            model_name='gpt-5.6-luna',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={'timestamp': IsDatetime(), 'service_tier': 'default', 'finish_reason': 'completed'},
+            provider_response_id='resp_051dd45a6415155e006abc4ab8b30c87d1b42b6dde07c02c5c',
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
 async def test_openai_responses_image_generation_tool_without_image_output(
     allow_model_requests: None, openai_api_key: str
 ):
@@ -9552,9 +9619,6 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    TextPart(
-                        content='', id='msg_68cdec605234819fab332bfc0ba35a5d079003437d26d0c0', provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(
@@ -9620,9 +9684,6 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    TextPart(
-                        content='', id='msg_68cdecb54530819f9e25118291f5d1fe079003437d26d0c0', provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(
@@ -9723,9 +9784,6 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    TextPart(
-                        content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2', provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(
@@ -10080,9 +10138,6 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332', provider_name='openai'
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=1294,
@@ -10181,9 +10236,6 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='', id='msg_0b6169df6e16e9690068dd8163a99c8191ae96a95eaa8e6365', provider_name='openai'
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2675,
@@ -10262,9 +10314,6 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='', id='msg_08acbdf1ae54befc0068dd9d468248819786f55b61db3a9a60', provider_name='openai'
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=1889,
@@ -10289,6 +10338,43 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
             ),
         ]
     )
+
+
+async def test_openai_responses_image_generation_store_false(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """With `openai_store=False`, a history holding an image generation call can be sent back.
+
+    The API resolves an `image_generation_call` input item by its ID alone, and even an item carrying
+    its `result` inline fails with a 404 when the response that produced it wasn't stored. So the
+    call is left out of the replay.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.http_client(timeout=300)),
+    )
+    agent = Agent(
+        model,
+        output_type=BinaryImage,
+        capabilities=[NativeTool(ImageGenerationTool(quality='low', size='1024x1024'))],
+        model_settings=OpenAIResponsesModelSettings(openai_store=False),
+    )
+
+    result = await agent.run('Generate an image of a red circle on a white background.')
+    assert [type(part).__name__ for part in result.all_messages()[-1].parts] == snapshot(
+        ['ThinkingPart', 'NativeToolCallPart', 'FilePart', 'NativeToolReturnPart']
+    )
+
+    result = await agent.run(
+        'What color was the circle? Answer in a few words, without generating a new image.',
+        message_history=result.all_messages(),
+        output_type=str,
+    )
+    assert result.output == snapshot('The circle was red.')
+
+    _, second_request = request_capture.bodies('/v1/responses')
+    second_input = cast(list[dict[str, Any]], second_request['input'])
+    assert [item.get('type', 'message') for item in second_input] == snapshot(['message', 'reasoning', 'message'])
 
 
 async def test_openai_responses_history_with_combined_tool_call_id(allow_model_requests: None, openai_api_key: str):
@@ -13662,6 +13748,155 @@ async def test_stream_response_failed_finish_reason_error(allow_model_requests: 
     assert (response.provider_details or {}).get('finish_reason') == 'failed'
 
 
+def _failed_response_json(error: dict[str, str] | None) -> dict[str, Any]:
+    return {
+        'id': 'resp_001',
+        'object': 'response',
+        'created_at': 1704067200,
+        'status': 'failed',
+        'model': 'gpt-5',
+        'output': [],
+        'parallel_tool_calls': True,
+        'tool_choice': 'auto',
+        'tools': [],
+        'error': error,
+    }
+
+
+def _sse(*events: dict[str, Any]) -> bytes:
+    return b''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n'.encode() for event in events)
+
+
+_CREATED_EVENT: dict[str, Any] = {
+    'type': 'response.created',
+    'response': {**_failed_response_json(None), 'status': 'in_progress'},
+    'sequence_number': 0,
+}
+_ERROR_EVENT: dict[str, Any] = {
+    'type': 'error',
+    'code': 'insufficient_quota',
+    'message': 'You exceeded your current quota',
+    'sequence_number': 0,
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('stream', 'content', 'message'),
+    [
+        pytest.param(
+            True,
+            _sse(
+                _CREATED_EVENT,
+                {'type': 'error', 'code': 'server_error', 'message': 'The server had an error', 'sequence_number': 1},
+            ),
+            'server_error: The server had an error',
+            id='stream-error-event',
+        ),
+        pytest.param(
+            True,
+            _sse(_ERROR_EVENT),
+            'insufficient_quota: You exceeded your current quota',
+            id='stream-error-event-first',
+        ),
+        pytest.param(
+            True,
+            # The nested shape, which the SDK itself raises as `openai.APIError`.
+            _sse(
+                {
+                    'type': 'error',
+                    'sequence_number': 0,
+                    'error': {
+                        'type': 'insufficient_quota',
+                        'code': 'insufficient_quota',
+                        'message': 'You exceeded your current quota',
+                    },
+                }
+            ),
+            'You exceeded your current quota',
+            id='stream-error-event-nested',
+        ),
+        pytest.param(
+            True,
+            _sse(
+                {**_CREATED_EVENT, 'response': {**_CREATED_EVENT['response'], 'background': True}},
+                {
+                    'type': 'response.failed',
+                    'response': {
+                        **_failed_response_json({'code': 'rate_limit_exceeded', 'message': 'Rate limit reached'}),
+                        'background': True,
+                    },
+                    'sequence_number': 1,
+                },
+            ),
+            'rate_limit_exceeded: Rate limit reached',
+            id='stream-response-failed-background',
+        ),
+        pytest.param(
+            False,
+            json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
+            'server_error: The model failed',
+            id='response-failed',
+        ),
+    ],
+)
+async def test_response_error_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, message: str
+):
+    """A failure the Responses API reports in a 200 body or stream raises `ModelAPIError` with no status code,
+    instead of ending the response with `finish_reason='error'` and sending the model an output retry.
+
+    A mock transport stands in for a cassette because no real provider returns such a response on demand.
+    """
+    requests_made = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal requests_made
+        requests_made += 1
+        content_type = 'text/event-stream' if stream else 'application/json'
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()  # pragma: no cover — the error raises while the stream opens
+            else:
+                await agent.run('Hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == message
+    # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
+    assert requests_made == 1
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_response_error_event_first_falls_back(allow_model_requests: None):
+    """An `error` event that opens the stream fires `FallbackModel`'s default `fallback_on`."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=_sse(_ERROR_EVENT), headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(FallbackModel(primary, TestModel(custom_output_text='from fallback')))
+
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+
+    assert output == 'from fallback'
+
+
 async def test_stream_response_incomplete_content_filter_finish_reason(allow_model_requests: None):
     """A terminal `response.incomplete` maps `content_filter` to 'content_filter', like the non-streaming path."""
 
@@ -13780,7 +14015,6 @@ async def test_openai_responses_null_text(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='', id='msg_001', provider_name='openai'),
                     TextPart(content='Hello', id='msg_001', provider_name='openai'),
                 ],
                 usage=RequestUsage(),
@@ -16013,7 +16247,6 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='', id='output-1', provider_name='openai'),
                     TextPart(content='final', id='output-1', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',

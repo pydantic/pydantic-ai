@@ -14,6 +14,7 @@ from dataclasses import field, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
+import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -63,6 +64,7 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._genai_prices import best_effort_price, fill_response_cost
+from ._history_mirroring import HistoryMirroringMessages
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -166,7 +168,7 @@ _AGENT_GRAPH_SLEEP: ContextVar[AgentGraphSleepFunc | None] = ContextVar(
 def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
     """Set a custom async sleep function for agent graph delays.
 
-    By default, the agent graph uses `asyncio.sleep` when it needs to wait during
+    By default, the agent graph uses `anyio.sleep` when it needs to wait during
     a run. Durable execution frameworks (Temporal, Prefect, DBOS, Restate, etc.)
     should use this context manager to register their own durable sleep so that
     delays survive workflow replays and don't waste activity time.
@@ -191,12 +193,12 @@ def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
 
 
 async def _agent_graph_sleep(delay: float) -> None:
-    """Sleep using the registered agent graph sleep function, or asyncio.sleep."""
+    """Sleep using the registered agent graph sleep function, or anyio.sleep."""
     sleep_func = _AGENT_GRAPH_SLEEP.get()
     if sleep_func is not None:
         await sleep_func(delay)
     else:
-        await asyncio.sleep(delay)
+        await anyio.sleep(max(delay, 0))
 
 
 DepsT = TypeVar('DepsT')
@@ -356,8 +358,6 @@ class _AttemptBaseline:
     messages: list[_messages.ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: models.ModelRequestParameters
-    request_counted: bool = False
-    """Whether the step's request has been counted in `usage.requests`, which happens once per step."""
 
     @classmethod
     def capture(cls, request_context: ModelRequestContext) -> _AttemptBaseline:
@@ -571,8 +571,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
-    pending_immediate_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
-        default_factory=dict[int, list[asyncio.Event]], repr=False
+    pending_immediate_dispatches: dict[int, list[anyio.Event]] = dataclasses.field(
+        default_factory=dict[int, list[anyio.Event]], repr=False
     )
     """Settlement signals for buffered events dispatched immediately, keyed by `id(event)`.
 
@@ -1520,8 +1520,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 3. This coroutine waits for stream_ready (or early task completion), yields the stream
         #    to the caller, and sets stream_done when the caller is finished consuming it.
         # 4. The handler resumes, the stream context manager closes, and the task completes.
-        stream_ready = asyncio.Event()
-        stream_done = asyncio.Event()
+        stream_ready = anyio.Event()
+        stream_done = anyio.Event()
         # Each attempt's stream is offered to this coroutine to be primed, since its first segment has
         # to be opened in the task that consumes it; the outcome goes back to the attempt loop, which
         # can still retry or fall back before anything has reached the consumer. See `_open_stream`.
@@ -1621,15 +1621,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if wrap_task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
-                result_or_exc: _messages.ModelResponse | Exception
                 try:
-                    result_or_exc = wrap_task.result()
-                except Exception as e:
-                    result_or_exc = e
-                model_response = self._resolve_wrap_result(result_or_exc)
+                    model_response = wrap_task.result()
+                except exceptions.SkipModelRequest as e:
+                    model_response = e.response
             except exceptions.ModelRetry as e:
                 self._did_stream = True
-                # Don't increment usage.requests — handler was never called (short-circuit)
+                # No response is committed, so the step is not counted in `usage.requests`.
                 run_context = build_run_context(ctx)
                 await self._build_retry_node(ctx, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream
@@ -1700,26 +1698,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # We append directly rather than via `_append_response` to skip the usage-limit
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
-                        partial = agent_stream_holder[0].response
-                        recorded_state = await _resolve_interrupted_stream_state(
-                            wrap_request_context.model, stream_error, partial
+                        await self._commit_interrupted_response(
+                            ctx, wrap_request_context.model, stream_error, agent_stream_holder[0].response
                         )
-                        partial_response = replace(
-                            partial,
-                            state=recorded_state,
-                            run_id=ctx.state.run_id,
-                            conversation_id=ctx.state.conversation_id,
-                        )
-                        fill_response_cost(partial_response)
-                        partial_response.workspace_ref = ctx.deps.workspace_ref
-                        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
-                        ctx.state.message_history.append(partial_response)
                 else:
                     try:
                         model_response = await wrap_task
                     except exceptions.ModelRetry as e:
                         self._enforce_usage_limits(ctx, accounted_responses)
-                        # Don't increment usage.requests — _streaming_handler already did.
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
                         # partially-consumed stream) and a wrap hook converted that failure to
@@ -1736,6 +1722,30 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The event iterator is memoized on the stream, so a consumer that broke out early
                 # leaves the capability chain suspended. Close it now that the node is done with it.
                 await agent_stream_holder[0].aclose_events()
+
+    @staticmethod
+    async def _commit_interrupted_response(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        model: models.Model,
+        stream_error: BaseException,
+        partial: _messages.ModelResponse,
+    ) -> None:
+        """Record the response an interrupted stream produced so far, without checking usage limits."""
+        recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
+        partial_response = replace(
+            partial,
+            state=recorded_state,
+            run_id=ctx.state.run_id,
+            conversation_id=ctx.state.conversation_id,
+        )
+        fill_response_cost(partial_response)
+        partial_response.workspace_ref = ctx.deps.workspace_ref
+        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
+        if partial_response.parts:
+            # The agent acted on what was streamed before the interruption, so the step counts;
+            # a stream that failed before producing anything doesn't.
+            _usage_attribution.record_request(ctx.state.usage)
+        ctx.state.message_history.append(partial_response)
 
     @staticmethod
     def _build_agent_stream(
@@ -1826,18 +1836,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             state.response = None
             state.usage_recorded = False
             try:
-                request_context = await self._prepare_attempt(ctx, run_context, request_context, baseline)
+                request_context = await self._prepare_attempt(ctx, run_context, request_context)
             except exceptions.RetryModelRequest as retry:
                 # A `prepare_model_request` hook asked for another model before this attempt was sent.
                 await self._start_next_attempt(ctx, request_context, retry)
                 continue
             capture_model_request_span_context(request_context)
-            if not baseline.request_counted:
-                # One request step, however many attempts it takes: `usage.requests` counts steps, so
-                # `UsageLimits.request_limit` bounds the agent loop rather than how many models a
-                # fallback chain tried.
-                _usage_attribution.record_request(ctx.state.usage)
-                baseline.request_counted = True
             try:
                 return await self._request_attempt(ctx, run_context, request_context, state)
             except exceptions.RetryModelRequest as retry:
@@ -1937,6 +1941,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context.model_id = ctx.deps.model_id
         request_context.streaming = streaming
         self.last_request_context = request_context
+        # At the start of the step, before `wrap_model_request`: a step a wrapper answers from a
+        # cache still counts in `usage.requests`, so it must not get past `request_limit` either.
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
 
     async def _prepare_resume_request(
@@ -1996,25 +2003,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # `_finish_handling` must append its replacement response after the base history, not
         # after the dangling suspended response. The wrapped lifecycle redoes this bookkeeping
         # on the (possibly hook-modified) messages; with unmodified messages it's idempotent.
-        self._trim_suspended_tail(ctx, request_context.messages)
+        # The request messages keep the suspended response as the continuation seed.
+        _set_resumed_history(ctx, request_context.messages[:-1])
+        # At the start of the step, before `wrap_model_request`, as in `_prepare_request`.
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
-
-    @staticmethod
-    def _trim_suspended_tail(
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        messages: Sequence[_messages.ModelMessage],
-    ) -> None:
-        """Point the run state at the resumed turn's base history, without its suspended tail.
-
-        `resumed_request` = the request that triggered the paused turn, so `new_messages()`
-        yields just the completed (merged) response; it's tracked by object and by position so
-        `_first_new_message_index` can exclude it however processors mutate the list.
-        `ctx.state.message_history` is the same list used by `capture_run_messages`, so its
-        contents are replaced (dropping the suspended response) rather than the reference;
-        `_finish_handling` then appends the final merged response after the base history.
-        The request messages are untouched — they retain the suspended continuation seed.
-        """
-        _set_resumed_history(ctx, messages[:-1])
 
     async def _apply_before_model_request(
         self,
@@ -2030,7 +2023,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         runs per attempt, in `_prepare_attempt`.
         """
         persistent_messages_before_processing = len(ctx.state.message_history)
-        processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+        mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
+        request_context.messages = mirrored_messages
+        try:
+            processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+        finally:
+            # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
+            mirrored_messages.detach()
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
@@ -2119,7 +2118,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 and isinstance(persistent_tail := persistent_messages[-1], _messages.ModelResponse)
                 and persistent_tail.state == 'suspended'
             ):
-                self._trim_suspended_tail(ctx, persistent_messages)
+                _set_resumed_history(ctx, persistent_messages[:-1])
             else:
                 _set_resumed_history(ctx, persistent_messages)
 
@@ -2145,7 +2144,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
-        baseline: _AttemptBaseline,
     ) -> ModelRequestContext:
         """Prepare one attempt at the request for the model that is about to serve it.
 
@@ -2184,10 +2182,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             request_context.messages = messages
 
-            usage = ctx.state.usage
             if ctx.deps.usage_limits.count_tokens_before_request:
                 # Copy to avoid modifying the original usage object with the counted usage.
-                usage = deepcopy(usage)
+                usage = deepcopy(ctx.state.usage)
                 outgoing_request = next(
                     message for message in reversed(messages) if isinstance(message, _messages.ModelRequest)
                 )
@@ -2235,19 +2232,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 counted_usage.cost = counted_price.total_price if counted_price is not None else None
                 usage.incr(counted_usage)  # usage-attribution: a deepcopy, to check a limit before the request
                 ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
+                # The step-start check in `_prepare_request` ran before this request's tokens were counted.
+                ctx.deps.usage_limits.check_before_request(usage)
         else:
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
             request_context.model_request_parameters = model_request_parameters
-            usage = ctx.state.usage
 
-        if baseline.request_counted:
-            # The step's request was counted when its first attempt was sent, so the request limit
-            # must not count it again; the token and cost limits still apply to every attempt.
-            usage = replace(usage, requests=usage.requests - 1)
+        # `request_limit` was checked once at the start of the step. Token and cost limits apply to every
+        # attempt: an earlier attempt's rejected response has already been counted.
+        ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+        ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
-        ctx.deps.usage_limits.check_before_request(usage)
 
         self.last_request_context = request_context
 
@@ -2275,7 +2272,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         while True:
             baseline.restore(request_context)
             try:
-                request_context = await self._prepare_attempt(ctx, run_context, request_context, baseline)
+                request_context = await self._prepare_attempt(ctx, run_context, request_context)
             except exceptions.RetryModelRequest as retry:
                 # A `prepare_model_request` hook asked for another model before this attempt was sent.
                 await self._start_next_attempt(ctx, request_context, retry)
@@ -2284,10 +2281,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # actually being called (a hook or an earlier attempt may have swapped it).
             _ensure_model_supports_streaming(request_context.model)
             capture_model_request_span_context(request_context)
-            if not baseline.request_counted:
-                # Counted once for the step: continuations and further attempts aren't separate steps.
-                _usage_attribution.record_request(ctx.state.usage)
-                baseline.request_counted = True
             # Stamp the request-issue instant so the instrumentation capability can record
             # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
             # the first-chunk instant; the delta is the client-side time to first token.
@@ -2407,16 +2400,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return self._result
 
     @staticmethod
-    def _resolve_wrap_result(result_or_exc: _messages.ModelResponse | Exception) -> _messages.ModelResponse:
-        """Resolve a `wrap_model_request` result, converting only `SkipModelRequest`."""
-        if isinstance(result_or_exc, Exception):
-            exc = result_or_exc
-            if isinstance(exc, exceptions.SkipModelRequest):
-                return exc.response
-            raise exc
-        return result_or_exc
-
-    @staticmethod
     async def _recover_model_request_error(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
@@ -2435,9 +2418,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         record_usage: bool = True,
     ) -> None:
-        """Append a model response to history, updating usage tracking."""
+        """Commit a step's model response to history, counting the step and updating usage tracking.
+
+        This is the one place a step is counted in `usage.requests`: a step counts once, when the
+        agent acts on its response, whatever produced it (the provider, an error hook's recovery, a
+        wrapper's short-circuit or `SkipModelRequest`). A model call that fails without recovery
+        commits no response, so it doesn't count, though any usage it reported does.
+        """
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         response.workspace_ref = ctx.deps.workspace_ref
+        _usage_attribution.record_request(ctx.state.usage)
         if record_usage:
             ModelRequestNode._record_response_usage(ctx, response)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
@@ -2614,8 +2604,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
-                # Check for content filter on a response with no content
-                if (is_empty or is_blank_text_only) and self.model_response.finish_reason == 'content_filter':
+                # A refusal can arrive after the model has already emitted thinking (e.g. Anthropic's
+                # `stop_reason: 'refusal'`), so a thinking-only response is filtered too. Re-prompting it
+                # would only repeat the refused request.
+                if self.model_response.finish_reason == 'content_filter':
                     details = self.model_response.provider_details or {}
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
 

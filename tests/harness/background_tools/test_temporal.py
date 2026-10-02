@@ -26,7 +26,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import BackgroundTools
-from tests.harness.conftest import ignore_source_reads_left_open
+from tests.harness._temporal import ignore_source_reads_left_open
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 

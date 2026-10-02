@@ -114,13 +114,6 @@ def _without_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessa
     return kept
 
 
-def _with_system_prompt(messages: Sequence[ModelMessage], sys_parts: list[SystemPromptPart]) -> list[ModelMessage]:
-    messages = list(messages)
-    i, first_request = next((i, m) for i, m in enumerate(messages) if isinstance(m, ModelRequest))
-    messages[i] = replace(first_request, parts=[*sys_parts, *first_request.parts])
-    return messages
-
-
 def _reinject_system_prompt(
     messages: Sequence[ModelMessage],
     sys_parts: list[SystemPromptPart],
@@ -131,6 +124,8 @@ def _reinject_system_prompt(
         messages = _without_system_prompts(messages)
     elif _has_system_prompt(messages):
         return list(messages)
+    messages = list(messages)
     if sys_parts:
-        return _with_system_prompt(messages, sys_parts)
-    return list(messages)
+        i, first_request = next((i, m) for i, m in enumerate(messages) if isinstance(m, ModelRequest))
+        messages[i] = replace(first_request, parts=[*sys_parts, *first_request.parts])
+    return messages

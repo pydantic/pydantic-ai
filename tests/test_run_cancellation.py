@@ -1784,7 +1784,7 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
 # Blocking *external*-cancel recovery relies on the backstop, which is a no-op on Python 3.10.
 @pytest.mark.parametrize('first_party', [True, pytest.param(False, marks=requires_task_cancelling)])
 async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
-    """`on_run_error` may hide cancellation from `wrap_run`, but cannot recover it."""
+    """`on_run_error` and `wrap_run` both observe cancellation, but neither can recover it."""
     started = asyncio.Event()
     observed: list[str] = []
 
@@ -1792,9 +1792,9 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
         async def wrap_run(self, ctx: RunContext, *, handler: Any) -> AgentRunResult:
             try:
                 return await handler()
-            except asyncio.CancelledError:  # pragma: no cover
-                observed.append('wrap_run')  # pragma: no cover
-                return AgentRunResult(output='recovered')  # pragma: no cover
+            except asyncio.CancelledError:
+                observed.append('wrap_run')
+                return AgentRunResult(output='recovered')
 
         async def on_run_error(self, ctx: RunContext, *, error: BaseException) -> AgentRunResult:
             assert isinstance(error, asyncio.CancelledError)
@@ -1816,7 +1816,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
             runs.append(agent_run)
             async for _node in agent_run:
                 pass
-        assert agent_run.result is not None
+        assert agent_run.result is not None  # pragma: lax no cover
         return agent_run.result  # pragma: no cover
 
     task = asyncio.create_task(drive())
@@ -1831,7 +1831,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
     with pytest.raises(expected_exception):
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
 
-    assert observed == ['on_run_error']
+    assert observed == ['on_run_error', 'wrap_run']
 
 
 async def test_cancel_after_completion_is_a_noop():

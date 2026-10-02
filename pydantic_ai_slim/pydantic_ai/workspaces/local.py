@@ -337,9 +337,11 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             )
 
         try:
-            # Startup has its own finite bound, capped by the command deadline when supplied.
-            spawn_deadline = min(anyio.current_time() + _SPAWN_GRACE, absolute_deadline or float('inf'))
-            await _shielded(spawn(), spawn_deadline)
+            # Startup has its own finite bound, which the command deadline does not shorten: cancelling
+            # asyncio's process creation part-way kills only the direct child and leaks its pipes.
+            await _shielded(spawn(), anyio.current_time() + _SPAWN_GRACE)
+            if absolute_deadline is not None and anyio.current_time() >= absolute_deadline:
+                raise TimeoutError
         except (FileNotFoundError, PermissionError) as error:
             if isinstance(error, FileNotFoundError):
                 # A deleted workspace directory raises `WorkspaceUnavailableError` here.

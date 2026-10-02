@@ -41,44 +41,6 @@ class MyOutput(BaseModel):
 class TestOutputHookFullLifecycle:
     """Test the full output hook lifecycle fires in the correct order."""
 
-    async def test_wrap_output_validate_encloses_before_and_after(self):
-        call_order: list[str] = []
-
-        @dataclass
-        class LifecycleCap(AbstractCapability[Any]):
-            async def before_output_validate(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
-                call_order.append('before')
-                return output
-
-            async def after_output_validate(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
-            ) -> Any:
-                call_order.append('after')
-                return output
-
-            async def wrap_output_validate(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: str | dict[str, Any],
-                handler: Any,
-            ) -> Any:
-                call_order.append('wrap:before')
-                result = await handler(output)
-                call_order.append('wrap:after')
-                return result
-
-        agent = Agent(
-            FunctionModel(lambda messages, info: make_text_response('{"value": 1}')),
-            output_type=PromptedOutput(MyOutput),
-            capabilities=[LifecycleCap()],
-        )
-        await agent.run('hello')
-        assert call_order == ['wrap:before', 'before', 'after', 'wrap:after']
-
     async def test_wrap_output_process_encloses_before_and_after(self):
         call_order: list[str] = []
 

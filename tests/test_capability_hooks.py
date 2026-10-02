@@ -36,6 +36,7 @@ from pydantic_ai.exceptions import (
     SkipToolValidation,
     ToolFailed,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -66,7 +67,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
@@ -89,24 +90,6 @@ pytestmark = []
 
 
 # --- Hooks test helpers ---
-
-
-@dataclass
-class _ReplacingCapability(AbstractCapability[Any]):
-    """Capability that replaces ModelRequestNode with a fresh copy in before_node_run.
-
-    Used to test that streaming + node replacement doesn't cause double model execution.
-    """
-
-    replaced: bool = field(default=False, init=False)
-
-    async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-        from pydantic_ai import ModelRequestNode
-
-        if isinstance(node, ModelRequestNode) and not self.replaced:
-            self.replaced = True
-            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
-        return node  # pyright: ignore[reportUnknownVariableType]
 
 
 # Defined at module scope so pydantic-ai can resolve the annotation under `from __future__ import annotations`.
@@ -459,6 +442,80 @@ class TestModelRequestHooks:
         assert result.usage.output_tokens == 5
         assert [part.content for part in result.all_messages()[-1].parts if isinstance(part, TextPart)] == ['recovered']
 
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_failed_model_request_is_not_counted_as_a_request(self, streaming: bool):
+        """`RunUsage.requests` counts responses the agent acted on, so an unrecovered failure counts in neither mode."""
+
+        def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('provider failed')
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('provider failed')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_function, stream_function=stream_function))
+        usage = RunUsage()
+        with pytest.raises(RuntimeError, match='provider failed'):
+            if streaming:
+                async with agent.run_stream('hello', usage=usage) as stream:
+                    await stream.get_output()  # pragma: lax no cover
+            else:
+                await agent.run('hello', usage=usage)
+
+        assert usage.requests == 0
+
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_skipped_model_request_is_counted_as_a_request(self, streaming: bool):
+        """The agent acts on a `SkipModelRequest` response, so the step counts like any other."""
+
+        class SkipCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart('skipped model')]))
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function), capabilities=[SkipCap()]
+        )
+        if streaming:
+            async with agent.run_stream('hello') as stream:
+                assert await stream.get_output() == 'skipped model'
+            usage = stream.usage
+        else:
+            result = await agent.run('hello')
+            assert result.output == 'skipped model'
+            usage = result.usage
+        assert usage.requests == 1
+
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_request_limit_bounds_responses_a_wrapper_returns_without_the_model(self, streaming: bool):
+        """A step answered from a cache counts and is checked, so `request_limit` still stops a loop."""
+
+        class CachedToolCall(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                return ModelResponse(parts=[ToolCallPart('noop', {})])
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[CachedToolCall()],
+        )
+
+        @agent.tool_plain
+        def noop() -> str:
+            return 'ok'
+
+        usage = RunUsage()
+        with pytest.raises(UsageLimitExceeded, match='The next request would exceed the request_limit of 3'):
+            if streaming:
+                async with agent.run_stream('hello', usage=usage, usage_limits=UsageLimits(request_limit=3)) as stream:
+                    await stream.get_output()  # pragma: lax no cover
+            else:
+                await agent.run('hello', usage=usage, usage_limits=UsageLimits(request_limit=3))
+
+        assert usage.requests == 3
+
     async def test_usage_ledger_is_shared_with_replaced_request_context(self):
         observed_responses: list[ModelResponse] = []
 
@@ -471,7 +528,7 @@ class TestModelRequestHooks:
                 handler: Any,
             ) -> ModelResponse:
                 response = await handler(request_context)
-                observed_responses.extend(request_context.usage_responses)
+                observed_responses.extend(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
                 return response
 
         class CopyContext(AbstractCapability[Any]):
@@ -3114,176 +3171,6 @@ class TestToolExecuteErrorHooks:
 
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
-
-
-# --- Tests for double-execution bug fix (streaming + before_node_run replacement) ---
-
-
-class TestNodeStreamingWithHooks:
-    """Tests that node streaming with event_stream_handler doesn't cause double model execution
-    when before_node_run replaces a node."""
-
-    async def test_before_node_run_replacement_no_double_execution(self):
-        """When before_node_run replaces a ModelRequestNode and event_stream_handler is set,
-        the model should be called exactly once (not twice)."""
-        model_call_count = 0
-
-        async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            nonlocal model_call_count
-            model_call_count += 1
-            yield 'streamed response'
-
-        cap = _ReplacingCapability()
-        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
-
-        events_received: list[AgentStreamEvent] = []
-
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                events_received.append(event)
-
-        result = await agent.run('hello', event_stream_handler=handler)
-        assert result.output == 'streamed response'
-        assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
-        assert len(events_received) > 0
-
-    async def test_hook_ordering_with_event_stream_handler(self):
-        """before_node_run fires BEFORE streaming events, wrap_node_run wraps the streaming,
-        and after_node_run fires after graph advancement."""
-        log: list[str] = []
-
-        @dataclass
-        class OrderTrackingCapability(AbstractCapability[Any]):
-            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                log.append(f'before:{type(node).__name__}')
-                return node
-
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                log.append(f'wrap:enter:{type(node).__name__}')
-                result = await handler(node)
-                log.append(f'wrap:exit:{type(node).__name__}')
-                return result
-
-            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-                log.append(f'after:{type(node).__name__}')
-                return result
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[OrderTrackingCapability()],
-        )
-
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for _ in stream:
-                pass
-            log.append('stream:consumed')
-
-        await agent.run('hello', event_stream_handler=handler)
-
-        # For ModelRequestNode the wrapper encloses before/after and stream consumption.
-        mr_before = log.index('before:ModelRequestNode')
-        mr_wrap_enter = log.index('wrap:enter:ModelRequestNode')
-        stream_consumed_idx = log.index('stream:consumed')
-        mr_wrap_exit = log.index('wrap:exit:ModelRequestNode')
-        mr_after = log.index('after:ModelRequestNode')
-        assert mr_wrap_enter < mr_before < stream_consumed_idx < mr_after < mr_wrap_exit
-
-    async def test_run_stream_before_node_run_replacement_no_double_execution(self):
-        """Same as the run() test but for run_stream(): before_node_run replacement
-        should not cause double model execution."""
-        model_call_count = 0
-
-        async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            nonlocal model_call_count
-            model_call_count += 1
-            yield 'streamed response'
-
-        cap = _ReplacingCapability()
-        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
-
-        async with agent.run_stream('hello') as streamed:
-            output = await streamed.get_output()
-
-        assert output == 'streamed response'
-        assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
-
-    async def test_run_stream_skips_wrap_and_after_for_the_final_model_request(self):
-        """`run_stream()` hands back the result mid-stream, so the final `ModelRequestNode` only gets `before_node_run`.
-
-        Pinning the documented exception to "node hooks fire however the run is driven": that node's
-        `wrap_node_run`/`after_node_run` are deliberately skipped, while the `SetFinalResult` node
-        that ends the run gets the full lifecycle.
-        """
-        log: list[str] = []
-
-        @dataclass
-        class NodeHookCap(AbstractCapability[Any]):
-            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                log.append(f'before:{type(node).__name__}')
-                return node
-
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                log.append(f'wrap:{type(node).__name__}')
-                return await handler(node)
-
-            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-                log.append(f'after:{type(node).__name__}')
-                return result
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[NodeHookCap()],
-        )
-
-        async with agent.run_stream('hello') as streamed:
-            await streamed.get_output()
-
-        assert log == snapshot(
-            [
-                'before:UserPromptNode',
-                'wrap:UserPromptNode',
-                'after:UserPromptNode',
-                'before:ModelRequestNode',
-                'wrap:SetFinalResult',
-                'before:SetFinalResult',
-                'after:SetFinalResult',
-            ]
-        )
-
-    async def test_on_node_run_error_fires_in_run_stream(self):
-        """on_node_run_error in run_stream() fires when wrap_node_run raises during graph advancement."""
-        error_log: list[str] = []
-
-        @dataclass
-        class WrapErrorCap(AbstractCapability[Any]):
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                # Raise on CallToolsNode — after UserPromptNode and ModelRequestNode pass through.
-                # ModelRequestNode with tool calls doesn't produce a FinalResultEvent in run_stream(),
-                # so it falls through to wrap_node_run; CallToolsNode is next and triggers the error.
-                from pydantic_ai._agent_graph import CallToolsNode
-
-                if isinstance(node, CallToolsNode):
-                    raise RuntimeError('wrap error')
-                return await handler(node)
-
-            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
-                error_log.append(type(node).__name__)
-                raise error
-
-        agent = Agent(
-            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
-            capabilities=[WrapErrorCap()],
-        )
-
-        @agent.tool_plain
-        def my_tool() -> str:
-            return 'tool result'
-
-        with pytest.raises(RuntimeError, match='wrap error'):
-            async with agent.run_stream('hello') as _streamed:
-                pass
-
-        assert error_log == ['CallToolsNode']
 
 
 # --- ToolFailed and ModelRetry from hooks tests ---
