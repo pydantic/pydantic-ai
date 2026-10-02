@@ -119,9 +119,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 self._ui.log('info', 'session started', attributes={'model': model})
 
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
-        self.instance.log(
-            'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
-        )
+        with telemetry.parent_span(self._session_tracing.root()):
+            self.instance.log(
+                'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
+            )
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         if self.settings.ui_events:
