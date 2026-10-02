@@ -307,7 +307,7 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 - `stable` (default): the newest release on PyPI.
 - `bleeding`: the newest commit on `main` that changes CLAI. It downloads that
   commit's source over HTTPS and installs CLAI, harness, and core from it, so it
-  needs no release and no `git`. These builds report version `0.0.0+<commit>`.
+  needs no release and no `git`. These builds report version `0.0.0+<full-commit-sha>`.
 
 ```text
 /set updates.channel bleeding
@@ -321,6 +321,28 @@ shows uv's output, then restarts CLAI as the new build with the same launch opti
 resuming the current conversation. Switching back to `stable` offers the latest release.
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
+
+Bleeding updates use an overrides file for all four packages. The overrides keep
+harness's `coder` extra and slim's `anthropic`, `mcp`, and `openai` extras, so the
+coding tools and bundled providers remain installed. To install a particular
+commit by hand on macOS or Linux, replace `FULL_COMMIT_SHA` below:
+
+```bash
+SHA='FULL_COMMIT_SHA'
+U="https://github.com/pydantic/pydantic-ai/archive/$SHA.tar.gz"
+OVERRIDES=$(mktemp)
+cat > "$OVERRIDES" <<EOF
+pydantic-clai2 @ $U#subdirectory=src/pydantic_clai2
+pydantic-ai-harness[coder] @ $U#subdirectory=src/pydantic_ai_harness
+pydantic-ai-slim[anthropic,mcp,openai] @ $U#subdirectory=pydantic_ai_slim
+pydantic-graph @ $U#subdirectory=pydantic_graph
+EOF
+UV_DYNAMIC_VERSIONING_BYPASS="0.0.0+$SHA" uv tool install --force --overrides "$OVERRIDES" pydantic-clai2
+rm "$OVERRIDES"
+```
+
+The version bypass lets the packages build without Git history. The overrides
+replace their exact development-version pins, which may not exist on PyPI.
 
 Windows does not let a program replace files it is running from, so there
 `/update` exits first and installs in a new PowerShell window; start `clai2`

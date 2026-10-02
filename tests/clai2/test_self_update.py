@@ -168,14 +168,15 @@ def test_install_commands(tmp_path: Path) -> None:
         '--force',
         '--overrides',
         str(overrides),
-        f'pydantic-clai2 @ {archive}src/pydantic_clai2',
+        'pydantic-clai2',
     ]
     assert bleeding.overrides() == (
-        f'pydantic-ai-harness @ {archive}src/pydantic_ai_harness\n'
-        f'pydantic-ai-slim @ {archive}pydantic_ai_slim\n'
+        f'pydantic-clai2 @ {archive}src/pydantic_clai2\n'
+        f'pydantic-ai-harness[coder] @ {archive}src/pydantic_ai_harness\n'
+        f'pydantic-ai-slim[anthropic,mcp,openai] @ {archive}pydantic_ai_slim\n'
         f'pydantic-graph @ {archive}pydantic_graph\n'
     )
-    assert bleeding.environment() == {'UV_DYNAMIC_VERSIONING_BYPASS': '0.0.0+9e08a34ee'}
+    assert bleeding.environment() == {'UV_DYNAMIC_VERSIONING_BYPASS': f'0.0.0+{NEWER}'}
 
 
 def _updates(
@@ -192,10 +193,13 @@ def _updates(
     async def run(command: Sequence[str], environment: dict[str, str]) -> int:
         ran.append(command)
         if '--overrides' in command:
-            # The overrides file exists while uv runs and names the other packages.
+            # The overrides file exists while uv runs and preserves the packages' required extras.
             text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
-            assert 'pydantic-ai-harness @ ' in text
-            assert environment == {'UV_DYNAMIC_VERSIONING_BYPASS': '0.0.0+9e08a34ee'}
+            assert 'pydantic-ai-harness[coder] @ ' in text
+            assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
+            assert environment == {'UV_DYNAMIC_VERSIONING_BYPASS': f'0.0.0+{NEWER}'}
+        else:
+            assert environment == {}
         return (codes or [0]).pop(0)
 
     async def locate(uv: str) -> str | None:
@@ -282,7 +286,8 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert lost.relaunch is None
     manual, _ = _updates(['bleeding'], uv=None)
     printed = (await manual.command([])).splitlines()[-1]
-    assert printed.startswith('UV_DYNAMIC_VERSIONING_BYPASS=0.0.0+9e08a34ee uv tool install --force --overrides ')
+    assert printed.startswith(f'UV_DYNAMIC_VERSIONING_BYPASS=0.0.0+{NEWER} uv tool install --force --overrides ')
+    assert printed.endswith(' pydantic-clai2')
     # The printed command still needs its overrides file.
     overrides = Path(shlex.split(printed)[6])
     assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
@@ -378,18 +383,29 @@ async def test_windows_hands_the_install_off_and_exits() -> None:
     assert ran == []
     [script] = scripts
     assert f'Wait-Process -Id {os.getpid()} ' in script
-    assert "$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+9e08a34ee'; & '/bin/uv' 'tool' 'install'" in script
+    assert f"$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+{NEWER}'; & '/bin/uv' 'tool' 'install'" in script
     # The overrides file outlives CLAI; the script removes it after uv reads it.
     overrides = Path(script.split("Remove-Item -LiteralPath '")[1].split("'")[0])
-    assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
+    assert overrides.read_text(encoding='utf-8') == Update(channel='bleeding', target=NEWER).overrides()
+    assert script.splitlines()[2].endswith(" 'pydantic-clai2'")
     overrides.unlink()
 
 
-async def test_windows_manual_command_is_powershell() -> None:
-    updates, _ = _updates(['stable'], uv=None)
+@pytest.mark.parametrize('channel', ['stable', 'bleeding'])
+async def test_windows_manual_command_is_powershell(channel: UpdateChannel) -> None:
+    updates, _ = _updates([channel], uv=None)
     updates.windows = True
     printed = (await updates.command([])).splitlines()[-1]
-    assert printed == "& 'uv' 'tool' 'install' '--force' 'pydantic-clai2==0.53.0'"
+    if channel == 'stable':
+        assert printed == "& 'uv' 'tool' 'install' '--force' 'pydantic-clai2==0.53.0'"
+    else:
+        assert printed.startswith(
+            f"$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+{NEWER}'; & 'uv' 'tool' 'install' '--force' '--overrides' "
+        )
+        assert printed.endswith(" 'pydantic-clai2'")
+        overrides = Path(printed.split("'--overrides' '")[1].split("'")[0])
+        assert overrides.read_text(encoding='utf-8') == Update(channel='bleeding', target=NEWER).overrides()
+        overrides.unlink()
 
 
 def test_in_thread_runs_the_work() -> None:
