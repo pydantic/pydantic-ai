@@ -71,6 +71,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
 
     def __post_init__(self):
+        self._refresh_initial_run_ctx_usage()
+
+    def _refresh_initial_run_ctx_usage(self) -> None:
+        """Snapshot the run's usage so far, which `usage` adds this response's usage on top of."""
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
