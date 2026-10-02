@@ -74,8 +74,10 @@ class RealtimeModelSettings(TypedDict, total=False):
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI, Azure OpenAI, and OpenAI GPT-Live, where it applies to the delegated backend
-    unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it but ignores it.
+    Supported by: OpenAI, Azure OpenAI, Azure AI Voice Live (where `True` leaves the model's default,
+    since some models can't call tools in parallel), and OpenAI GPT-Live, where it applies to the
+    delegated backend unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it
+    but ignores it.
     """
 
     async_tool_calls: bool | None

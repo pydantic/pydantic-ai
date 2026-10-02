@@ -254,11 +254,11 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     set), `turn_detection` (or `openai_turn_detection`, or `azure_voice_live_turn_detection`),
     `openai_input_noise_reduction`, `thinking` (as `reasoning_effort`, on models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]),
-    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools, plus the
-    `azure_voice_live_*` settings.
+    `input_transcription_model`, `output_modality`, `max_tokens`, `parallel_tool_calls`, `tool_choice`,
+    and tools, plus the `azure_voice_live_*` settings.
 
-    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, and
-    `parallel_tool_calls` — are **silently ignored** under Voice Live; they still apply on the GA path.
+    The remaining inherited fields — `openai_output_speed` and `openai_truncation` — are **silently
+    ignored** under Voice Live; they still apply on the GA path.
     Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
     `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """
@@ -643,6 +643,10 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['tools'] = [tool_def_to_openai(tool) for tool in advertised_tools]
         if (max_tokens := settings.get('max_tokens')) is not None:
             config['max_response_output_tokens'] = max_tokens
+        if settings.get('parallel_tool_calls') is False:
+            # Voice Live defaults to parallel calls, and `gpt-realtime`/`-mini`/`-1.5` reject an explicit
+            # `True`, so only `False` is sent.
+            config['parallel_tool_calls'] = False
         if tool_choice is not None:
             config['tool_choice'] = tool_choice_config(tool_choice)
         thinking = settings.get('thinking')

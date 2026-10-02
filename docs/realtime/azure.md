@@ -169,7 +169,7 @@ from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSet
 provider = AzureProvider(
     voice_live_endpoint='https://my-voice-live.services.ai.azure.com',
     voice_live_api_key='...',
-    voice_live_api_version='2026-04-10',
+    voice_live_api_version='2026-07-15',
 )
 
 agent = Agent(instructions='You are a helpful voice assistant.')
@@ -197,8 +197,7 @@ Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_
 adapting them to the model: for example, semantic VAD on a
 [cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade] uses
 Voice Live's own semantic VAD. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
-sets the sampling temperature. Voice Live ignores `openai_output_speed`, `openai_truncation`, and
-`parallel_tool_calls`.
+sets the sampling temperature. Voice Live ignores `openai_output_speed` and `openai_truncation`.
 
 ### Voices
 
