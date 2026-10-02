@@ -50,6 +50,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
 from ..conftest import try_import
@@ -1095,6 +1096,43 @@ async def test_wrapped_durability_dispatches_capability_operation() -> None:
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(name == 'wrapped_durability__capability__operations.calculate' for name, _ in durability.calls)
+
+
+class ToolCallingOperation(AbstractCapability[Any]):
+    id = 'tool_calling'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[Any], query: str) -> str:
+        self.calls += 1
+        return f'fetched {query}'
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def lookup(ctx: RunContext[Any], query: str) -> str:
+            return await self.fetch(ctx, query)
+
+        return toolset
+
+
+async def test_operation_called_from_a_wrapped_tool_runs_inside_the_tool_unit() -> None:
+    """The tool's unit already records the result, and engines like AWS Lambda can't nest units."""
+    capability = ToolCallingOperation()
+    durability = RecordingDurability()
+    agent = Agent(TestModel(), name='tool_calling', capabilities=[capability, durability])
+
+    await agent.run('test')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    names = [name for name, _ in bound.calls]
+    assert 'tool_calling__function_toolset__tool_calling.call_tool:lookup' in names
+    assert not [name for name in names if '__capability__' in name]
+    assert capability.calls == 1
 
 
 @requires_temporal

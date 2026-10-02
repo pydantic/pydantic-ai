@@ -659,14 +659,16 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Dispatch through serialized context so per-run capability instances recover worker-side.
 
         Outside a durable container, calling the original operation preserves live context mutations
-        without rebuilding resources solely to round-trip them through the durable projection.
+        without rebuilding resources solely to round-trip them through the durable projection. Inside
+        a durable unit, such as a tool's, the operation runs inline too: the enclosing unit already
+        records its result, and engines like AWS Lambda cannot nest one unit in another.
         """
         capability_id = capability.id
         if capability_id is None:
             raise RuntimeError('A durable operation capability must have an explicit `id`.')
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
-        if not self.in_durable_context:
+        if not self.in_durable_context or in_durable_unit():
             return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
         request_context = next(
