@@ -8,11 +8,13 @@ import shlex
 import sys
 import threading
 from collections.abc import Callable, Sequence
+from importlib import metadata
 from io import StringIO
 from pathlib import Path
 
 import httpx
 import pytest
+from packaging.requirements import Requirement
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -177,6 +179,18 @@ def test_install_commands(tmp_path: Path) -> None:
         f'pydantic-graph @ {archive}pydantic_graph\n'
     )
     assert bleeding.environment() == {'UV_DYNAMIC_VERSIONING_BYPASS': f'0.0.0+{NEWER}'}
+
+
+def test_archive_overrides_preserve_declared_extras() -> None:
+    overrides = {
+        requirement.name: requirement.extras
+        for requirement in map(Requirement, Update(channel='bleeding', target=NEWER).overrides().splitlines())
+    }
+    requirements = metadata.requires('pydantic-clai2')
+    assert requirements is not None
+    for requirement in map(Requirement, requirements):
+        if requirement.name in overrides and (requirement.marker is None or requirement.marker.evaluate()):
+            assert overrides[requirement.name] == requirement.extras
 
 
 def _updates(

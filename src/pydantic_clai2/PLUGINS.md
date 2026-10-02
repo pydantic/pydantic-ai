@@ -25,11 +25,8 @@ their initialization contributes to startup time.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
-Bleeding `/update` installs CLAI, `pydantic-ai-harness[coder]`,
-`pydantic-ai-slim[anthropic,mcp,openai]`, and `pydantic-graph` from one commit's
-HTTPS archive. The overrides preserve the coding tools and bundled provider and
-MCP dependencies. Extra packages installed with `--with` must be added again
-after updating. See [Updating](README.md#updating) for the install command.
+Extra packages installed with `--with` must be added again after `/update`.
+See [Updating](README.md#updating) for how CLAI installs updates.
 
 ## Connect MCP servers
 
