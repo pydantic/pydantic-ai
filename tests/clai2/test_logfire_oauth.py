@@ -162,7 +162,7 @@ class TestSignIn:
         [registered] = logfire.registered
         assert registered == {
             'client_name': 'CLAI',
-            'client_uri': 'https://github.com/pydantic/pydantic-ai-harness',
+            'client_uri': 'https://github.com/pydantic/pydantic-ai',
             'grant_types': ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
             'token_endpoint_auth_method': 'none',
             'application_type': 'native',

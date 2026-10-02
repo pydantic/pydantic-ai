@@ -493,6 +493,7 @@ def test_docs_examples(
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
     env.set('TYPESAFE_API_KEY', 'testing')
+    env.set('SYSTEM_ONE_BASE_URL', 'http://localhost:8700')
     env.set('MISTRAL_API_KEY', 'testing')
     env.set('ANTHROPIC_API_KEY', 'testing')
     env.set('HF_TOKEN', 'hf_testing')
@@ -1388,6 +1389,16 @@ async def model_logic(  # noqa: C901
                 provider_details={
                     'confidence': {'harmful': 0.98, 'target': 1.0},
                     'probabilities': {'target': {'code': 1.0, 'infrastructure': 0.0, 'data': 0.0}},
+                    'scores': {},
+                },
+            )
+        elif m.content == 'Our checkout has returned 500 errors since 9am.':
+            # docs/models/system-one.md: Nimble on Ollama labels the ticket, from a live run
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 'bug'})],
+                provider_details={
+                    'confidence': {'response': 0.91},
+                    'probabilities': {'response': {'billing': 0.01, 'bug': 0.98, 'account': 0.01}},
                     'scores': {},
                 },
             )

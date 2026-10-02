@@ -564,7 +564,13 @@ def _map_openrouter_provider_details(
     provider_details['downstream_provider'] = response.provider
     if native_finish_reason := response.choices[0].native_finish_reason:
         provider_details['finish_reason'] = native_finish_reason
+    return provider_details
 
+
+def _map_openrouter_usage_provider_details(
+    response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
+) -> dict[str, Any]:
+    provider_details: dict[str, Any] = {}
     if usage := response.usage:
         if cost := usage.cost:
             provider_details['cost'] = cost
@@ -1082,6 +1088,7 @@ class OpenRouterModel(OpenAIChatModel):
 
         provider_details = super()._process_provider_details(response) or {}
         provider_details.update(_map_openrouter_provider_details(response))
+        provider_details.update(_map_openrouter_usage_provider_details(response))
         if annotations := response.choices[0].message.annotations:
             provider_details['annotations'] = _dump_openrouter_annotations(annotations)
         return provider_details or None
@@ -1295,6 +1302,12 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             # Provider details are shallow-merged across chunks, so publish the running list.
             provider_details['annotations'] = list(self._annotations)
         return provider_details or None
+
+    @override
+    def _map_chunk_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
+        assert isinstance(chunk, _OpenRouterChatCompletionChunk)
+        # Usage often arrives on a final chunk without choices.
+        return _map_openrouter_usage_provider_details(chunk) or None
 
     @override
     def _map_usage(self, response: chat.ChatCompletionChunk) -> usage.RequestUsage:

@@ -45,7 +45,7 @@ pydantic-monty = false
 pydantic-monty-client = false
 pydantic-monty-runtime = false
 pydantic-settings = false
-termflow-md = "2026-09-24T16:36:46Z"
+termflow-md = "2026-09-30T15:58:29Z"
 
 [manifest]
 members = [
@@ -88,6 +88,18 @@ constraints = [
 ]
 excludes = ["browser-use"]
 build-constraints = [{ name = "hatchling", specifier = "<1.32" }]
+
+[[package]]
+name = "absurd-sdk"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "psycopg", extra = ["binary"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/18/6a/2d4199ddc3d846ba13c51aa9c8614b9ee42a5af5144ef456ef11f4f6aa20/absurd_sdk-0.5.0.tar.gz", hash = "sha256:b22fbe8d10f649d0ed427ba16d885a4a452e4240f412591e7f087fe8584a6f00", size = 14973, upload-time = "2026-08-04T13:06:40.682Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/12/0d1c4e23dc00069a4666fc25c165514657fc62eb723a7bee3ce22ef416ae/absurd_sdk-0.5.0-py3-none-any.whl", hash = "sha256:a21465deaf159ba29ab4d15d87f429ae5dcf6f0e3098bce11ae9bc3e267fd03a", size = 15407, upload-time = "2026-08-04T13:06:39.406Z" },
+]
 
 [[package]]
 name = "ag-ui-protocol"
@@ -6417,6 +6429,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+absurd = [
+    { name = "absurd-sdk" },
+]
 acp = [
     { name = "agent-client-protocol" },
 ]
@@ -6528,6 +6543,7 @@ youdotcom = [
 
 [package.metadata]
 requires-dist = [
+    { name = "absurd-sdk", marker = "extra == 'absurd'", specifier = ">=0.5.0,<1" },
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<2" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
@@ -6574,7 +6590,7 @@ requires-dist = [
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -6845,7 +6861,7 @@ requires-dist = [
     { name = "pydantic-monty", specifier = ">=1.0.0,<2" },
     { name = "pyfiglet", specifier = ">=1.0.4" },
     { name = "rich", specifier = ">=14" },
-    { name = "termflow-md", specifier = ">=0.9.3,<0.10" },
+    { name = "termflow-md", specifier = ">=0.11.0,<0.12" },
 ]
 provides-extras = ["typesafe"]
 
@@ -8877,15 +8893,16 @@ wheels = [
 
 [[package]]
 name = "termflow-md"
-version = "0.9.3"
+version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pygments" },
     { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "wcwidth" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/5c/45/3d38b72453163c005e0c29c53875d81243b4339a27dbab4c4f67ff835da6/termflow_md-0.11.0.tar.gz", hash = "sha256:25706c43d80c9ddb1cad971a559f834abe89680f20887d4f5735e9968cef9e5a", size = 182364, upload-time = "2026-09-30T15:58:28.403Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/93/d6b95a69eece72a79c3bd92e28cc48d6c7493b9d720ff244ddc9885681ba/termflow_md-0.9.3-py3-none-any.whl", hash = "sha256:569f1ac99d466d1ddd91ec057139965864ffb678da6d0f9da30ee4a458c9f6fb", size = 95796, upload-time = "2026-09-24T16:36:45.369Z" },
+    { url = "https://files.pythonhosted.org/packages/66/bd/0b0b500fd09318dc35b2dfe2ca4405de6f6ba91f969736ba7eaa83b18562/termflow_md-0.11.0-py3-none-any.whl", hash = "sha256:05661df6235c73de34540d11faf6bf06bd7470496621a9cb84de40bf31e48767", size = 105318, upload-time = "2026-09-30T15:58:27.154Z" },
 ]
 
 [[package]]

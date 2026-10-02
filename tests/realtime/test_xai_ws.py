@@ -235,6 +235,59 @@ async def test_audio_in_server_vad_turn(
     assert session.usage.cost is not None and session.usage.cost > 0
 
 
+@pytest.mark.realtime_ws_hold_open
+async def test_push_to_talk_replies_only_when_asked(
+    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """With turn detection off, committed audio gets a reply only when `create_response()` asks for one.
+
+    xAI answers a commit of speech by itself, so the commit is held back and sent in place of
+    `response.create`. Text sent in between reaches xAI first, and history follows that order. A second
+    `create_response()` with nothing new behind it is answered again, as on every other provider: xAI would
+    drop it without a word, so it first clears the buffer, which is empty.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider, settings=XaiRealtimeModelSettings(turn_detection=False))
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    async with agent.realtime(model).session() as session:
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        await session.commit_audio()
+        await session.send('Greet me by name.', respond=False)
+        if realtime_recording:  # pragma: no cover
+            # Long enough for a reply to the commit to have started, had the commit been sent.
+            await anyio.sleep(3)
+        await session.create_response()
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+        await session.create_response()
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    interactions = [message for message in cassette.interactions if isinstance(message, CassetteMessage)]
+    commit_at = next(
+        index
+        for index, message in enumerate(interactions)
+        if message.direction == 'sent' and message.data['type'] == 'input_audio_buffer.commit'
+    )
+    # Nothing was answered before the request, and the commit went out after the text, in its place.
+    assert not any(message.data['type'] == 'response.created' for message in interactions[:commit_at])
+    sent_types = [message.data['type'] for message in interactions if message.direction == 'sent']
+    assert sent_types[sent_types.index('conversation.item.create') :] == snapshot(
+        ['conversation.item.create', 'input_audio_buffer.commit', 'input_audio_buffer.clear', 'response.create']
+    )
+    # History follows what xAI was sent: the text, then the committed speech, then one reply per request.
+    messages = session.all_messages()
+    assert [[type(part).__name__ for part in message.parts] for message in messages] == snapshot(
+        [['UserPromptPart'], ['SpeechPart'], ['SpeechPart'], ['SpeechPart']]
+    )
+    assert [type(message).__name__ for message in messages] == snapshot(
+        ['ModelRequest', 'ModelRequest', 'ModelResponse', 'ModelResponse']
+    )
+
+
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history.
 
