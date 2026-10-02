@@ -778,7 +778,10 @@ the CLI uses `STOCK_PLUGINS`, which opts its own rebuildable agent in.
 
 Saved `Coder` declarations that omit `sub_agents` still default to `false` for
 compatibility. Set `"sub_agents": true` in `/plugins configure coder` to opt in;
-explicit `false` remains an opt-out. Supplied agents are not rebuilt: their plugins
+explicit `false` remains an opt-out. **Unrestricted filesystem** in
+`/plugins configure coder` decides whether the file tools reach any path on this
+machine (`true`, the stock default) or only the launch directory (`false`). It
+saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are not rebuilt: their plugins
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 

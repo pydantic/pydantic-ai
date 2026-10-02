@@ -194,6 +194,10 @@ __all__ = (
     'RealtimeEvent',
 )
 
+_ACTIVE_AGENT_LIMITERS: ContextVar[tuple[tuple[int, _concurrency.ConcurrencyLimiter], ...]] = ContextVar(
+    'pydantic_ai.active_agent_limiters', default=()
+)
+
 
 @dataclasses.dataclass(frozen=True)
 class _ResolvedAgentRetries:
@@ -4407,9 +4411,23 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 
             self.model_resources.bind_stack(stack)
+            task_id = anyio.get_current_task().id
+            if isinstance(self.concurrency_limiter, _concurrency.ConcurrencyLimiter) and any(
+                active_task_id == task_id and limiter is self.concurrency_limiter
+                for active_task_id, limiter in _ACTIVE_AGENT_LIMITERS.get()
+            ):
+                raise RuntimeError(
+                    'This task already holds a slot for this agent concurrency limiter. '
+                    'Use a separate limiter for the nested run.'
+                )
             await stack.enter_async_context(
                 _concurrency.get_concurrency_context(self.concurrency_limiter, f'agent:{self.agent_name}')
             )
+            if isinstance(self.concurrency_limiter, _concurrency.ConcurrencyLimiter):
+                limiter_token = _ACTIVE_AGENT_LIMITERS.set(
+                    (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
+                )
+                stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
             if self.capability_owns_current_model:
                 await self.model_resources.enter_model(self.model)
             graph_run = await stack.enter_async_context(
