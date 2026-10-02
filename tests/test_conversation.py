@@ -6,6 +6,7 @@ cassette matcher is sensitive to.
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 import pytest
@@ -302,3 +303,26 @@ def test_serializes_with_the_fidelity_of_the_messages_adapter() -> None:
     assert ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(conversation)).messages == expected
     assert Thread.model_validate_json(thread.model_dump_json()).conversation.messages == expected
     assert Thread.model_validate(thread.model_dump(mode='json')).conversation.messages == expected
+
+
+def test_serialization_honors_the_caller_s_dump_settings() -> None:
+    """A redaction asked for is a redaction applied, on its own or nested in a model of the caller's.
+
+    The messages are dumped through `ModelMessagesTypeAdapter`, and a plain serializer's return isn't
+    filtered by the outer dump's settings, so they have to be passed on: dropping `exclude` would
+    send the metadata a server meant to keep from its client.
+    """
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hi')], metadata={'api_key': 'secret'})]
+    conversation = Conversation(messages=messages)
+    redact_metadata = {'messages': {'__all__': {'metadata'}}}
+
+    class Thread(BaseModel):
+        conversation: Conversation
+
+    assert b'secret' not in ConversationTypeAdapter.dump_json(conversation, exclude=redact_metadata)
+    assert 'secret' not in Thread(conversation=conversation).model_dump_json(exclude={'conversation': redact_metadata})
+
+    dumped = json.loads(ConversationTypeAdapter.dump_json(conversation, exclude_none=True, exclude_defaults=True))
+    assert dumped['messages'] == json.loads(
+        ModelMessagesTypeAdapter.dump_json(messages, exclude_none=True, exclude_defaults=True)
+    )

@@ -18,12 +18,26 @@ from .exceptions import UserError
 __all__ = ('Conversation', 'ConversationTypeAdapter')
 
 
-def _dump_messages_json(messages: list[_messages.ModelMessage]) -> Any:
+def _dump_messages_json(messages: list[_messages.ModelMessage], info: pydantic.SerializationInfo) -> Any:
     # Through `ModelMessagesTypeAdapter`, whose `ser_json_bytes='base64'` reaches the `Any`-typed fields
     # (a tool's raw `bytes` return, say) that a `Conversation`'s own schema can't configure: a
     # dataclass's config doesn't apply to the message types it holds. Read back, those values are
     # their base64 string, exactly as they are through the adapter itself.
-    return _messages.ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    #
+    # A plain serializer's return isn't filtered by the caller's dump settings, so they are passed on:
+    # without `include`/`exclude`, `exclude={'messages': {'__all__': {'metadata'}}}` would dump the
+    # metadata it was asked to redact. `info` carries this field's own share of a nested spec.
+    return _messages.ModelMessagesTypeAdapter.dump_python(
+        messages,
+        mode='json',
+        include=info.include,
+        exclude=info.exclude,
+        by_alias=info.by_alias,
+        exclude_unset=info.exclude_unset,
+        exclude_defaults=info.exclude_defaults,
+        exclude_none=info.exclude_none,
+        round_trip=info.round_trip,
+    )
 
 
 @dataclasses.dataclass
