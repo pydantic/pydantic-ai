@@ -520,7 +520,8 @@ def _scroll_position(reported: object) -> str:
         return ''
     parts = reported.split('|')
     if len(parts) != 3 or not all(part.lstrip('-').isdigit() for part in parts):
-        # The wrapped scroll expression always reports three integers.
+        # The test pages report whole numbers; a browser with subpixel scrolling can report a
+        # fractional `scrollY`, which this does not parse.
         return ''  # pragma: no cover
     before, after, furthest = (int(part) for part in parts)
     if furthest == 0:
