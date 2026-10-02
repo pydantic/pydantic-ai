@@ -238,6 +238,16 @@ class TestPixeltableMemoryStoreSchema:
         # Tables created without the path index (e.g. by older releases) get it on first open.
         assert 'path_lookup_idx' in PixeltableMemoryStore(table_name=name).table.get_metadata()['indexes']
 
+    async def test_hand_built_table_with_default_indexes(self, root: str) -> None:
+        name = f'{root}.indexed'
+        create_table(name, MEMORY_COLUMNS, primary_key='path', has_default_idxs=True)
+        store = PixeltableMemoryStore(table_name=name)
+
+        created = await store.write('a.md', 'hello', expected_version=None)
+        file = await store.read('a.md', max_chars=10)
+        assert file is not None
+        assert (file.content, file.version) == ('hello', created.version)
+
     @pytest.mark.parametrize(
         ('schema', 'primary_key', 'message'),
         [

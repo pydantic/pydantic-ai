@@ -251,15 +251,16 @@ class PixeltableMemoryStore:
                 if_exists='ignore',
             )
         assert t is not None  # get_table's default if_not_exists='error' raises instead of returning None
-        self._check_compatible_schema(t)
-        # The primary key indexes left(path, 256), which cannot serve exact-path lookups. Tables
-        # created before this index existed get it on first open.
-        t.add_btree_index('path', idx_name=_PATH_INDEX, if_exists='ignore')
+        has_default_idxs = self._check_compatible_schema(t)
+        # Automatic indexes already cover path and reject explicit B-tree indexes.
+        # Otherwise add an exact-path index; the primary key only indexes left(path, 256).
+        if not has_default_idxs:
+            t.add_btree_index('path', idx_name=_PATH_INDEX, if_exists='ignore')
         self._table = t
         return t
 
-    def _check_compatible_schema(self, t: pxt.Table) -> None:
-        """Reject a pre-existing table whose schema cannot back the MemoryStore protocol."""
+    def _check_compatible_schema(self, t: pxt.Table) -> bool:
+        """Reject incompatible tables and return whether Pixeltable manages their indexes."""
         metadata = t.get_metadata()
         if metadata['kind'] != 'table':
             raise ValueError(f'{self._table_name!r} is a {metadata["kind"]}; the memory store needs a writable table')
@@ -287,6 +288,7 @@ class PixeltableMemoryStore:
             raise ValueError(
                 f'{self._table_name!r} is not a memory table ({"; ".join(problems)}); drop and recreate it'
             )
+        return metadata['has_default_idxs']
 
     def _file_row(self, t: pxt.Table, path: str) -> dict[str, Any] | None:
         query = t.where((t.path == path) & (t.kind == _KIND_FILE)).select(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
