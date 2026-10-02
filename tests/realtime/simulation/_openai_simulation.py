@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -14,9 +15,8 @@ from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.xai import XaiProvider
 from pydantic_ai.realtime import RealtimeModel
-from pydantic_ai.realtime._lifecycle import LifecycleEvent
+from pydantic_ai.realtime._lifecycle import TaggedEvent
 from pydantic_ai.realtime.azure import AzureRealtimeModel
-from pydantic_ai.realtime.codec import RealtimeCodecEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 from pydantic_ai.realtime.settings import RealtimeModelSettings
 from pydantic_ai.realtime.xai import XaiRealtimeModel
@@ -57,6 +57,8 @@ class OpenAISimulation(Simulation):
         )
         self.deferred_requests = 0
         """How many requests for a response the connection deferred behind an active one."""
+        self.requests_cut_off = 0
+        """How many requests for a response were cancelled while the connection was sending them."""
         if self.options.latency:
             self.server.network.latency = lambda: self.rng.choice((0, 0, 0, 1, 2, 4))
 
@@ -79,19 +81,30 @@ class OpenAISimulation(Simulation):
             await request_response(input_indexes, answers=answers)
 
         connection._request_response = counted  # pyright: ignore[reportPrivateUsage]
+        create_response = connection._create_response  # pyright: ignore[reportPrivateUsage]
+
+        async def cut_off(input_indexes: Sequence[int], answers: Sequence[int]) -> None:
+            try:
+                await create_response(input_indexes, answers)
+            except asyncio.CancelledError:
+                self.requests_cut_off += 1
+                raise
+
+        connection._create_response = cut_off  # pyright: ignore[reportPrivateUsage]
 
         # The session reads the codec stream; the lifecycle stream the same frames make is checked on the side.
-        all_events = connection._all_events  # pyright: ignore[reportPrivateUsage]
+        tagged_frames = connection._tagged_frames  # pyright: ignore[reportPrivateUsage]
         observe = self.checker.observe_lifecycle_stream(lambda: connection._inputs_received)  # pyright: ignore[reportPrivateUsage]
 
-        async def observed() -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
-            async for event, stale in all_events():
-                if not stale:
-                    observe(event)
-                yield event, stale
+        async def observed() -> AsyncIterator[list[TaggedEvent]]:
+            async for frame in tagged_frames():
+                for event, stale in frame:
+                    if not stale:
+                        observe(event)
+                yield frame
             observe(None)
 
-        connection._all_events = observed  # pyright: ignore[reportPrivateUsage]
+        connection._tagged_frames = observed  # pyright: ignore[reportPrivateUsage]
 
     def build_model(self) -> RealtimeModel:
         if self.openai.dialect == 'azure':

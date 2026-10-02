@@ -4,13 +4,13 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import io
-import wave
+import difflib
 import weakref
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import takewhile
+from pprint import pformat
 from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
@@ -52,6 +52,7 @@ from ..messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
@@ -83,10 +84,24 @@ from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
+from ._core import (
+    AudioCleared,
+    AudioSent,
+    Closed,
+    ExchangeAbandoned,
+    InputSent,
+    InputWithdrawn,
+    Interrupted,
+    ReceiveEnded,
+    SessionCore,
+    ToolCallRefused,
+    ToolReturned,
+)
 from ._instrumentation import (
     SessionInstrumentation,
 )
-from ._utils import seed_pcm_audio
+from ._lifecycle import LIFECYCLE_EVENT_TYPES
+from ._utils import accumulate_transcript, pcm_to_wav, seed_pcm_audio, user_transcript_update
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -294,6 +309,13 @@ _SESSION_DELTA_QUEUE_SIZE = 512
 # bound a session nothing iterates keeps every one of them for as long as it runs. The same 512 buys a
 # late iterator around a hundred turns of structure, comfortably more history than the deltas it keeps.
 _SESSION_STRUCTURAL_QUEUE_SIZE = 512
+_CoreMode: TypeAlias = Literal['legacy', 'shadow']
+_CORE_MODE: _CoreMode = 'legacy'
+"""Which session core a connection on version 2 of the lifecycle contract runs (see `_core.py`).
+
+`'shadow'` runs the new core alongside the current one, which stays authoritative, and records where the
+two disagree (`RealtimeSession._shadow_divergences`). Private, for the refactor's parity tests.
+"""
 _TapItem = TypeVar('_TapItem')
 _Tap = TypeVar('_Tap')
 
@@ -460,69 +482,6 @@ _TranslatableEvent: TypeAlias = (
 _SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]
 
 
-def _pcm_to_wav(data: bytes, sample_rate: int) -> bytes:
-    """Wrap mono 16-bit PCM bytes in a WAV container at `sample_rate`."""
-    buffer = io.BytesIO()
-    with wave.open(buffer, 'wb') as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(sample_rate)
-        wav.writeframes(data)
-    return buffer.getvalue()
-
-
-def _accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
-    """Fold a transcript event's `text` into the running transcript, returning `(new_accumulated, appended)`.
-
-    Providers deliver transcripts two different ways: as incremental deltas (each event carries a new
-    piece) or as a single final event carrying the full text. Both are handled by one rule: if `text`
-    extends what we already have (the accumulated transcript is a prefix of it), it is a cumulative/full
-    update and only the new suffix is appended; otherwise `text` is an incremental piece appended as-is.
-    The second element is the newly appended text (empty when a final event merely repeats the deltas),
-    suitable for a [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent].
-
-    A cumulative/final snapshot can differ from the accumulated deltas by leading/trailing whitespace —
-    OpenAI's input-audio-transcription deltas start with a leading space that the `.completed` snapshot
-    trims — so the prefix check is applied to the stripped text too, adopting the snapshot as
-    authoritative rather than concatenating a near-duplicate.
-    """
-    if accumulated and text.startswith(accumulated):
-        return text, text[len(accumulated) :]
-    stripped = accumulated.strip()
-    if stripped and (stripped_text := text.strip()).startswith(stripped):
-        return text, stripped_text[len(stripped) :]
-    return accumulated + text, text
-
-
-def _user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tuple[str, SpeechPartDelta | None]:
-    """Fold a user transcript event into the running text, returning it with the delta to emit.
-
-    An incremental piece is accumulated by [`_accumulate_transcript`][pydantic_ai.realtime._session._accumulate_transcript]
-    and surfaced as an appended delta. A cumulative snapshot is adopted wholesale, because a provider
-    that sends snapshots may revise earlier words rather than only extend them: when it merely extends,
-    the new suffix is still an appended delta (what a live transcript wants), but a revision can't be
-    expressed by appending, so it goes out as a replacement instead. `None` when nothing changed.
-    """
-
-    def delta(transcript: str, added: str) -> SpeechPartDelta:
-        return SpeechPartDelta(speaker='user', transcript_delta=added, transcript=transcript)
-
-    if not cumulative:
-        transcript, appended = _accumulate_transcript(previous, text)
-        return transcript, delta(transcript, appended) if appended else None
-    if text == previous:
-        return previous, None
-    if previous and text.startswith(previous):
-        return text, delta(text, text[len(previous) :])
-    stripped = previous.strip()
-    if stripped and (stripped_text := text.strip()).startswith(stripped):
-        return text, delta(text, stripped_text[len(stripped) :])
-    if not previous:
-        return text, delta(text, text)
-    # A revision: nothing was *added*, so only the corrected whole is reported.
-    return text, delta(text, '')
-
-
 def _tool_result_call_id(message: ModelMessage) -> str | None:
     """The id of the call a history request holds the result for, or `None` if it holds no result.
 
@@ -625,6 +584,19 @@ def _pending_message_text(pending: PendingMessage) -> str:
     if not texts:
         raise error
     return '\n\n'.join(texts)
+
+
+def _comparable(messages: Sequence[ModelMessage]) -> list[Any]:
+    """Messages as plain data without their timestamps, which two cores building the same message differ in."""
+
+    def strip(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: strip(item) for key, item in cast('dict[str, Any]', value).items() if key != 'timestamp'}
+        if isinstance(value, list):
+            return [strip(item) for item in cast('list[Any]', value)]
+        return value
+
+    return strip(ModelMessagesTypeAdapter.dump_python(list(messages), mode='json'))
 
 
 class _RealtimePendingMessages(PendingMessageQueue):
@@ -1024,6 +996,27 @@ class RealtimeSession:
         self._traceparent_value: str | None = None
         self._result: AgentRunResult[str] | None = None
 
+        # The new core, run in shadow of this one on a connection that identifies its responses, turns,
+        # and inputs (see `_CORE_MODE`).
+        self._core: SessionCore | None = None
+        self._shadow_divergences: list[str] = []
+        if _CORE_MODE == 'shadow' and connection._lifecycle_version == 2:  # pyright: ignore[reportPrivateUsage]
+            requested_model = self._model_name
+            self._core = SessionCore(
+                model_name=lambda: connection.model_name or requested_model,
+                provider_name=self._provider_name,
+                provider_url=self._provider_url,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                responses_are_requests=self._responses_are_requests,
+                input_transcription_enabled=self._input_transcription_enabled,
+                retain_input_audio=self._retain_input,
+                retain_output_audio=self._retain_output,
+                input_sample_rate=self.audio_input_sample_rate,
+                output_sample_rate=self.audio_output_sample_rate,
+                seeded=self._seeded,
+            )
+
     async def __aenter__(self) -> RealtimeSession:
         if self._entered or self._closed:
             raise UserError('This realtime session cannot be entered more than once.')
@@ -1105,6 +1098,9 @@ class RealtimeSession:
             # recorded as interrupted, and every still-running tool call gets a cancelled return. The
             # returned events are discarded — the stream is closing and has no consumer left.
             self._finalize_lost_state()
+            if self._core is not None:
+                self._core.apply(Closed())
+                self._compare_shadow(self._core)
             self._teardown = asyncio.create_task(self._finish_teardown())
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
@@ -1748,7 +1744,7 @@ class RealtimeSession:
             # frame stream can't grow the host's memory without limit. Providers hold their own
             # (server-side) image context; this only trims the local record.
             while self._retain_images_max is not None and len(self._retained_image_requests) > self._retain_images_max:
-                self._remove_sent_request(self._retained_image_requests.pop(0))
+                self._evict_image(self._retained_image_requests.pop(0))
 
     def _record_sent_request(self, request: ModelRequest) -> None:
         """Record a sent request without interleaving it with an in-flight assistant response."""
@@ -1779,6 +1775,13 @@ class RealtimeSession:
         return any(message is request for message in self._pending_sent_requests) or any(
             message is request for message in reversed(self._history)
         )
+
+    def _evict_image(self, request: ModelRequest) -> None:
+        """Drop the oldest retained image from history, to keep within `retain_images_max`."""
+        self._remove_sent_request(request)
+        if self._core is not None:
+            evicted = [index for index, sent in self._input_requests.items() if sent is request]
+            self._core.apply(InputWithdrawn(input_ids=tuple(evicted)))
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
         """Remove a recorded request: a failed network send takes it back, the image cap evicts it."""
@@ -1851,6 +1854,8 @@ class RealtimeSession:
                 self._input_audio.extend(data)
             self._audio_uncommitted = True
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
+            if self._core is not None:
+                self._core.apply(AudioSent(data=bytes(data)))
         except BaseException as e:
             self._user_turn_active = user_turn_was_active
             self._audio_uncommitted = audio_was_uncommitted
@@ -1896,6 +1901,8 @@ class RealtimeSession:
         self._require_media_ownership('clear_audio')
         self._require_capability('supports_manual_turn_control', method='clear_audio', feature='manual turn-taking')
         await self._send_frame(ClearAudio())
+        if self._core is not None:
+            self._core.apply(AudioCleared())
         self._audio_uncommitted = False
         # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
@@ -1989,6 +1996,8 @@ class RealtimeSession:
         # Only a response still being generated records the position: a finished one keeps what history
         # recorded, and the position must not land on the next one instead.
         self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
+        if self._core is not None:
+            self._core.apply(Interrupted(played_ms=played_ms))
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
@@ -2050,6 +2059,8 @@ class RealtimeSession:
         # Only a response still being generated can record the position: history is append-only, so a
         # finished one keeps what it recorded, and the position must not land on the next one instead.
         self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
+        if self._core is not None:
+            self._core.apply(Interrupted(played_ms=played_ms))
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
 
@@ -2121,7 +2132,9 @@ class RealtimeSession:
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index
 
-    async def _send_frame(self, *contents: RealtimeInput, request: ModelRequest | None = None) -> None:
+    async def _send_frame(
+        self, *contents: RealtimeInput, request: ModelRequest | None = None, reply_asked: bool = True
+    ) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
 
         A single input can expand to several protocol frames (a `ToolResult` creates the conversation
@@ -2130,7 +2143,8 @@ class RealtimeSession:
         the cases where an interleaved frame would change what they mean.
 
         `request` is the history entry recording the first input, taken back if the provider later
-        reports that input's content as refused (see `_handle_input_rejected`).
+        reports that input's content as refused (see `_handle_input_rejected`). `reply_asked=False` says no
+        reply will be asked for them, as for a result of a tool batch that will get none.
         """
         self._ensure_not_closed()
         self._start_pump()
@@ -2141,6 +2155,7 @@ class RealtimeSession:
         # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
         # which is a caller that asked to send.
         async with self._send_lock:
+            first_input = self._inputs_sent
             try:
                 for position, content in enumerate(contents):
                     # Numbered before the call, and whether or not it raises, matching how
@@ -2150,8 +2165,22 @@ class RealtimeSession:
                     self._inputs_sent += 1
                     if position == 0 and request is not None:
                         self._input_requests[input_index] = request
+                    if self._core is not None:
+                        self._core.apply(
+                            InputSent(
+                                input_id=input_index,
+                                request=request if position == 0 else None,
+                                solicits=reply_asked and isinstance(content, (str, CreateResponse, ToolResult)),
+                                tool_call_id=content.tool_call_id if isinstance(content, ToolResult) else None,
+                            )
+                        )
                     await self._connection.send(content)
-            except self._connection.transport_errors as e:
+            except BaseException as e:
+                if self._core is not None:
+                    # The caller takes back what it sent, so the shadow core does too.
+                    self._core.apply(InputWithdrawn(input_ids=tuple(range(first_input, self._inputs_sent))))
+                if not isinstance(e, self._connection.transport_errors):
+                    raise
                 # A send that fails because the link is gone is the same failure the receive side
                 # reports; surface it as the same typed error rather than leaking a `websockets` or
                 # provider-SDK exception from what looks like an ordinary method call.
@@ -2199,6 +2228,8 @@ class RealtimeSession:
         """Park a background failure for iteration or close, ending receive-only views if nobody is iterating."""
         self._parked_errors.append(error)
         self._queue_put(error)
+        if self._core is not None:
+            self._core.apply(ExchangeAbandoned())
         if not self._response_limit_checked or any(isinstance(part, ToolCallPart) for part in self._response_parts):
             # A tool that raised, or a usage limit tripped by the request its result would make, stops
             # the model from getting that result, so the exchange waiting on it is over: a caller in
@@ -2296,7 +2327,7 @@ class RealtimeSession:
         events.extend(self._ensure_active_assistant(output_text=output_text, item_id=item_id))
         active = self._active_assistant
         assert active is not None
-        self._assistant_transcript, appended = _accumulate_transcript(self._assistant_transcript, text)
+        self._assistant_transcript, appended = accumulate_transcript(self._assistant_transcript, text)
         if isinstance(active, TextPart):
             self._active_assistant = replace(active, content=self._assistant_transcript)
             delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
@@ -2334,7 +2365,7 @@ class RealtimeSession:
                 part = replace(
                     part,
                     audio=BinaryContent(
-                        data=_pcm_to_wav(bytes(self._output_audio), sample_rate), media_type=_WAV_MEDIA_TYPE
+                        data=pcm_to_wav(bytes(self._output_audio), sample_rate), media_type=_WAV_MEDIA_TYPE
                     ),
                 )
         index = self._active_assistant_index
@@ -2674,7 +2705,10 @@ class RealtimeSession:
         request_parts: list[ModelRequestPart] = [result_part]
         if content:
             request_parts.append(UserPromptPart(content=content))
-        self._insert_tool_return(call_part, self._new_request(request_parts))
+        request = self._new_request(request_parts)
+        self._insert_tool_return(call_part, request)
+        if self._core is not None:
+            self._core.apply(ToolReturned(tool_call_id=call_part.tool_call_id, request=request))
         return [FunctionToolResultEvent(part=result_part, content=content)]
 
     def _insert_tool_return(self, call_part: ToolCallPart, request: ModelRequest) -> None:
@@ -2735,7 +2769,7 @@ class RealtimeSession:
             if not turn.start_emitted:
                 events.append(PartStartEvent(index=turn.index, part=turn.part))
                 turn.start_emitted = True
-            transcript, delta = _user_transcript_update(turn.transcript, text, cumulative=cumulative)
+            transcript, delta = user_transcript_update(turn.transcript, text, cumulative=cumulative)
             turn.transcript = transcript
             turn.part = replace(turn.part, transcript=transcript)
             if delta is not None:
@@ -2762,7 +2796,7 @@ class RealtimeSession:
         if not turn.start_emitted:
             events.append(PartStartEvent(index=turn.index, part=turn.part))
             turn.start_emitted = True
-        turn.transcript, delta = _user_transcript_update(turn.transcript, text, cumulative=cumulative)
+        turn.transcript, delta = user_transcript_update(turn.transcript, text, cumulative=cumulative)
         turn.part = replace(turn.part, transcript=turn.transcript)
         if delta is not None:
             events.append(PartDeltaEvent(index=turn.index, delta=delta))
@@ -2817,7 +2851,7 @@ class RealtimeSession:
                 sample_rate = self.audio_input_sample_rate
                 part = replace(
                     part,
-                    audio=BinaryContent(data=_pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
+                    audio=BinaryContent(data=pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
                 )
         if item_id is None:
             self._anonymous_user_turn_finalized = True
@@ -3054,7 +3088,7 @@ class RealtimeSession:
         audio = None
         if self._input_audio:
             audio = BinaryContent(
-                data=_pcm_to_wav(bytes(self._input_audio), self.audio_input_sample_rate),
+                data=pcm_to_wav(bytes(self._input_audio), self.audio_input_sample_rate),
                 media_type=_WAV_MEDIA_TYPE,
             )
         part = SpeechPart(speaker='user', transcript=None, audio=audio)
@@ -3449,7 +3483,7 @@ class RealtimeSession:
             self._check_request_limit()
         batch.sending += 1
         try:
-            await self._send_frame(result)
+            await self._send_frame(result, reply_asked=not batch.abandoned)
         except BaseException:
             # A provider missing one of the batch's results won't answer it.
             batch.abandoned = True
@@ -3746,7 +3780,13 @@ class RealtimeSession:
             # The tool call a held response was waiting for joins it, so the hold is spent.
             self._deferred_response_finish_reason = None
             if self._accept_item(event.item_id, event.tool_call_id):
-                await self._dispatch_tool_call(event)
+                try:
+                    await self._dispatch_tool_call(event)
+                except UsageLimitExceeded:
+                    # Tripped before the call joined the response, so it never runs or reaches history.
+                    if self._core is not None:
+                        self._core.apply(ToolCallRefused(tool_call_id=event.tool_call_id))
+                    raise
             return False
         return await self._handle_non_tool_pump_event(event)
 
@@ -3910,7 +3950,8 @@ class RealtimeSession:
         """Drain the connection into the session queue under the explicit session-span context."""
         token = otel_context.attach(context) if context is not None else None
         try:
-            async for event in self._connection:
+            events = self._connection if self._core is None else self._shadowed_events(self._core)
+            async for event in events:
                 if merged := self._connection._take_merged_response_requests():  # pyright: ignore[reportPrivateUsage]
                     # Requests the connection answered with a response it was already asking for: none of
                     # them gets one of its own.
@@ -3923,12 +3964,44 @@ class RealtimeSession:
             self._pump_error = e
         finally:
             self._pump_finished = True
+            if self._core is not None:
+                self._core.apply(ReceiveEnded())
             self._exchange_progress.set()
             if not self._closed:
                 self._finish_taps()
             self._queue_put(self._queue_changed)
             if token is not None:
                 otel_context.detach(token)
+
+    async def _shadowed_events(self, core: SessionCore) -> AsyncIterator[RealtimeCodecEvent]:
+        """The connection's codec events, feeding the shadow core its lifecycle stream on the way."""
+        async for frame in self._connection._tagged_frames():  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
+            # Applied a whole frame at a time, before this session handles any of it: a consumer reacting
+            # to one of its events (and closing, say) must find the shadow core as far along as this one.
+            for event, stale in frame:
+                if not stale:
+                    core.apply(event)
+            for event, _ in frame:
+                if not isinstance(event, LIFECYCLE_EVENT_TYPES):
+                    yield event
+
+    def _compare_shadow(self, core: SessionCore) -> None:
+        """Record where the shadow core's history or usage disagrees with this session's."""
+        legacy, shadow = _comparable(self.all_messages()), _comparable(core.all_messages())
+        if legacy != shadow:
+            diff = difflib.unified_diff(
+                pformat(legacy, width=120).splitlines(),
+                pformat(shadow, width=120).splitlines(),
+                'legacy',
+                'shadow',
+                lineterm='',
+            )
+            self._shadow_divergences.append('history differs:\n' + '\n'.join(diff))
+        # Everything but the tool calls, which the session counts as it runs them, not the core.
+        for usage_field in dataclasses.fields(self.usage):
+            name = usage_field.name
+            if name != 'tool_calls' and (theirs := getattr(core.usage, name)) != (ours := getattr(self.usage, name)):
+                self._shadow_divergences.append(f'usage.{name} differs: legacy {ours}, shadow {theirs}')
 
     def _ensure_streamable(self) -> None:
         if not self._entered:

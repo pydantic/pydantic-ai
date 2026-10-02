@@ -25,6 +25,7 @@ from pydantic_ai import (
     RunContext,
     StructuredDict,
     TextPart,
+    Tool,
     ToolCallPart,
     ToolOutput,
     ToolReturn,
@@ -674,6 +675,80 @@ def test_falsy_const_tool_args() -> None:
 
     agent.run_sync('hello', model=TestModel())
     assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
+
+
+def test_list_form_items_tool_args() -> None:
+    """A tool schema spelling a tuple as a draft-7 `items` list gets one generated value per element, up to `maxItems`.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
+    When the schema also has `prefixItems`, those are generated instead of the list.
+    """
+    calls: list[dict[str, Any]] = []
+
+    def pair_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'minItems': 2, 'maxItems': 2, 'items': [{'type': 'string'}, {'type': 'integer'}]},
+            'head': {'type': 'array', 'maxItems': 1, 'items': [{'type': 'string'}, {'type': 'integer'}]},
+            'prefixed': {
+                'type': 'array',
+                'prefixItems': [{'type': 'string'}],
+                'items': [{'type': 'integer'}, {'type': 'integer'}],
+            },
+        },
+        'required': ['pair', 'head', 'prefixed'],
+    }
+    tool = Tool.from_schema(pair_tool, name='pair_tool', description='Takes a pair.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'pair': ['a', 0], 'head': ['a'], 'prefixed': ['a']}])
+
+
+def test_prefix_items_max_items_tool_args() -> None:
+    """`prefixItems` longer than `maxItems` is cut to `maxItems`, but never below `minItems`."""
+    calls: list[dict[str, Any]] = []
+
+    def head_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'head': {'type': 'array', 'maxItems': 1, 'prefixItems': [{'type': 'string'}, {'type': 'integer'}]},
+            'floor': {
+                'type': 'array',
+                'minItems': 2,
+                'maxItems': 1,
+                'prefixItems': [{'type': 'string'}, {'type': 'integer'}],
+            },
+        },
+        'required': ['head', 'floor'],
+    }
+    tool = Tool.from_schema(head_tool, name='head_tool', description='Takes a head.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'head': ['a'], 'floor': ['a', 0]}])
+
+
+def test_boolean_schema_tool_args() -> None:
+    """A `true` subschema, which constrains nothing, is generated like a schema without a `type`."""
+    calls: list[dict[str, Any]] = []
+
+    def any_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {'anything': True, 'pair': {'type': 'array', 'items': [True, {'type': 'integer'}]}},
+        'required': ['anything', 'pair'],
+    }
+    tool = Tool.from_schema(any_tool, name='any_tool', description='Takes anything.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'anything': 'a', 'pair': ['a', 0]}])
 
 
 @pytest.mark.parametrize(

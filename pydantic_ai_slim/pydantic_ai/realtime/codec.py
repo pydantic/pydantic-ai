@@ -38,7 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
-from ._lifecycle import LifecycleEvent
+from ._lifecycle import LifecycleEvent, TaggedEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -491,12 +491,24 @@ class RealtimeConnection(ABC):
     events from `_lifecycle_events()`.
     """
 
-    def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
-        """Iterate over the codec events together with the lifecycle events, on a version 2 connection.
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        """Every event, codec and lifecycle alike, a frame at a time, each with whether it is stale.
 
-        A version 1 connection has no lifecycle events to add, so this is its ordinary iterator.
+        A frame is what one provider message (or one transition of the connection's own, such as a
+        reconnect) makes, so a consumer can apply it whole. A stale event is a codec event about a response
+        that has already ended (a repeated or late terminal, content trailing it): the codec stream
+        (`__aiter__`) carries it, the lifecycle stream (`_lifecycle_events()`) leaves it out. A version 1
+        connection has no lifecycle events and no stale ones: each codec event is a frame of its own.
         """
-        return aiter(self)
+        async for event in self:
+            yield [(event, False)]
+
+    async def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
+        """Iterate over the codec events together with the lifecycle events, on a version 2 connection."""
+        async for frame in self._tagged_frames():
+            for event, stale in frame:
+                if not stale:
+                    yield event
 
     @property
     def model_name(self) -> str | None:
