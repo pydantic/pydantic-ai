@@ -256,11 +256,11 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_labels: dict[str, str]
-    """User-defined metadata to break down billed charges.
+    """User-defined metadata attached to the request.
 
-    Supported by the Vertex AI API, and by the Gemini API from `google-genai` 2.26.0.
-
-    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    On Vertex AI, labels break down billed charges; see the [Vertex AI docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls).
+    The Gemini API accepts them from `google-genai` 2.26.0; earlier versions raise `ValueError` before sending the request.
+    See the [Gemini API reference](https://ai.google.dev/api/generate-content) for label requirements.
     """
 
     google_video_resolution: MediaResolution
