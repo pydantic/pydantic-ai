@@ -832,7 +832,7 @@ the message stays queued. Slash commands, `!` shell commands, and exit signals
 are not steered or skipped over. With no queued message, Alt+Enter does nothing.
 While running with at least one queued message, the input box shows both shortcuts.
 Shift-Enter inserts a newline when the terminal reports it separately from Enter.
-Ctrl-J always inserts a newline; plain Enter submits. Some terminals, including
+Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
 GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
 Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
 Kitty or xterm. CLAI enables xterm and Kitty keyboard reporting only while the
