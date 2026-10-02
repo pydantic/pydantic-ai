@@ -922,8 +922,8 @@ worktree directory name for detached HEAD. These labels are read when the browse
 opens, not historical branch names. Missing directories, non-Git workspaces, and
 unavailable Git fall back to directory labels. Separate repositories with the
 same name remain separate and use paths to distinguish them. Transcript previews
-and cross-directory confirmations keep the original saved path; resuming does
-not change directories or migrate saved data.
+keep the original saved path; resuming does not change directories or migrate
+saved data.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -959,9 +959,9 @@ The browser follows Code Puppy's project/session design:
 - `r` sets a manual title, which the namer will not overwrite. `d` asks for
   confirmation before deletion. The active session cannot be deleted.
 - Esc goes back; Ctrl-C closes. Narrow screens show one focused pane at a time.
-- Selecting a session from another directory asks for confirmation. It does not
-  change directories or move the saved conversation out of its original project
-  group. Direct cross-directory resume asks you to use the browser.
+- Selecting a session from another directory resumes immediately, without
+  confirmation. It does not change directories or move the saved conversation out
+  of its original project group. Direct cross-directory resume asks you to use the browser.
 
 The browser counts loaded summaries, not a separate unbounded catalog. Search
 runs against the full catalog before pagination. It does not index tool output,

@@ -2575,7 +2575,8 @@ is labeled **SELECT PROJECT** or **SELECT SESSION**, with matching key hints.
 
 The browser groups existing Git worktrees by repository and labels session cards
 with the current branch or detached worktree name. This is display metadata only;
-saved workspace paths and cross-directory confirmation are unchanged. See
+saved workspace paths are unchanged. Selecting a session resumes immediately in
+the current directory, without confirmation. See
 [Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first
