@@ -51,6 +51,20 @@ def _is_retryable_http_error(exc: Exception, status_codes: tuple[int, ...]) -> b
     return False
 
 
+def _validate_status_codes(value: tuple[int, ...], *, prefix: str) -> None:
+    """A bad member would never match, but a non-tuple would fail obscurely at classification time."""
+    if not isinstance(value, tuple) or any(not isinstance(code, int) or isinstance(code, bool) for code in value):
+        raise ValueError(f'{prefix} must be a tuple of ints, got {value!r}')
+
+
+def _validate_exception_types(value: tuple[type[Exception], ...], *, prefix: str) -> None:
+    """A non-`Exception` member would raise `TypeError` from `isinstance` while classifying a failure."""
+    if not isinstance(value, tuple) or any(
+        not isinstance(exc_type, type) or not issubclass(exc_type, Exception) for exc_type in value
+    ):
+        raise ValueError(f'{prefix} must be a tuple of Exception types, got {value!r}')
+
+
 def _validate_tool_overrides(tool_overrides: Mapping[str, Mapping[str, Any]]) -> None:
     """Reject unknown keys and malformed values at construction, not at the first tool failure."""
     for tool_name, config in tool_overrides.items():
@@ -72,9 +86,10 @@ def _validate_tool_overrides(tool_overrides: Mapping[str, Mapping[str, Any]]) ->
                     or value <= 0
                 ):
                     raise ValueError(f'{prefix}[{name!r}] must be a finite number > 0, got {value!r}')
-        for name in ('retryable_status_codes', 'retryable_exceptions'):
-            if name in config and not isinstance(config[name], tuple):
-                raise ValueError(f'{prefix}[{name!r}] must be a tuple, got {config[name]!r}')
+        if 'retryable_status_codes' in config:
+            _validate_status_codes(config['retryable_status_codes'], prefix=f"{prefix}['retryable_status_codes']")
+        if 'retryable_exceptions' in config:
+            _validate_exception_types(config['retryable_exceptions'], prefix=f"{prefix}['retryable_exceptions']")
         for name in ('on_retry', 'on_failure'):
             if name in config and not callable(config[name]):
                 raise ValueError(f'{prefix}[{name!r}] must be callable, got {config[name]!r}')
@@ -171,6 +186,13 @@ class RetryPolicy(AbstractCapability[AgentDepsT]):
             raise ValueError(f'backoff_factor must be a finite number > 0, got {self.backoff_factor!r}')
         if not math.isfinite(self.max_backoff) or self.max_backoff <= 0:
             raise ValueError(f'max_backoff must be a finite number > 0, got {self.max_backoff!r}')
+        if not isinstance(self.allow_idempotent_retries, bool):
+            raise ValueError(
+                f'allow_idempotent_retries must be a bool, got {self.allow_idempotent_retries!r}; '
+                "a truthy non-bool like 'false' would otherwise open the retry gate"
+            )
+        _validate_status_codes(self.retryable_status_codes, prefix='retryable_status_codes')
+        _validate_exception_types(self.retryable_exceptions, prefix='retryable_exceptions')
         if self.max_backoff < self.backoff_factor:
             raise ValueError(
                 f'max_backoff must be >= backoff_factor, got {self.max_backoff!r} < {self.backoff_factor!r}; '

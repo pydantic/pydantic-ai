@@ -81,6 +81,34 @@ class TestValidation:
         with pytest.raises(ValueError, match=r'max_backoff.*>=.*backoff_factor'):
             RetryPolicy(backoff_factor=1.0, max_backoff=0.5)
 
+    @pytest.mark.parametrize('value', ['false', 'true', 1, None])
+    def test_non_bool_gate_raises(self, value: Any) -> None:
+        with pytest.raises(ValueError, match='allow_idempotent_retries must be a bool'):
+            kwargs: dict[str, Any] = {'allow_idempotent_retries': value}
+            RetryPolicy(**kwargs)
+
+    def test_non_exception_member_in_retryable_exceptions_raises(self) -> None:
+        with pytest.raises(ValueError, match='retryable_exceptions must be a tuple of Exception types'):
+            kwargs: dict[str, Any] = {'retryable_exceptions': (TimeoutError, 'TimeoutError')}
+            RetryPolicy(**kwargs)
+
+    def test_non_int_member_in_retryable_status_codes_raises(self) -> None:
+        with pytest.raises(ValueError, match='retryable_status_codes must be a tuple of ints'):
+            kwargs: dict[str, Any] = {'retryable_status_codes': ('429',)}
+            RetryPolicy(**kwargs)
+
+    def test_tool_override_non_exception_member_raises(self) -> None:
+        with pytest.raises(
+            ValueError, match=r"tool_overrides\['tool'\]\['retryable_exceptions'\] must be a tuple of Exception types"
+        ):
+            RetryPolicy(tool_overrides={'tool': {'retryable_exceptions': (ValueError, 123)}})
+
+    def test_tool_override_non_int_status_code_raises(self) -> None:
+        with pytest.raises(
+            ValueError, match=r"tool_overrides\['tool'\]\['retryable_status_codes'\] must be a tuple of ints"
+        ):
+            RetryPolicy(tool_overrides={'tool': {'retryable_status_codes': (429.0,)}})
+
 
 class TestResolution:
     def test_get_tool_config_default(self) -> None:
