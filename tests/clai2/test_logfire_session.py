@@ -1,5 +1,6 @@
 """Session roots group UI and agent traces without spreading identity tags."""
 
+import asyncio
 import io
 import json
 from pathlib import Path
@@ -8,11 +9,16 @@ import anyio
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
+from prompt_toolkit.application import create_app_session
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from pydantic_ai import Agent
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins import logfire_session
 from pydantic_clai2.config import Settings
@@ -21,6 +27,8 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.runtime._session import Session, current_session_id
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.session_browser import SessionBrowser
+from tests.clai2.test_forks import Model
 from tests.clai2.test_logfire import Recorder, close, load_logfire, make_host, operation, recorder as recorder
 
 
@@ -163,6 +171,85 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
     assert roots[0].context != roots[3].context
     assert all(span.parent is None and span.end_time is not None for span in roots)
     assert all(exporter.closed for exporter in recorder.exporters)
+
+
+@pytest.mark.parametrize('browser', [False, True])
+async def test_startup_resume_opens_only_the_saved_conversation_root(
+    recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, browser: bool
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    agent = Agent(TestModel(call_tools=[], custom_output_text='answer'))
+    saved = Session(
+        agent, deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'), workspace=tmp_path
+    )
+    await saved.prompt('saved')
+
+    def select(_browser: SessionBrowser) -> str:
+        return saved.summary.id
+
+    monkeypatch.setattr(SessionBrowser, 'run', select)
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('resumed\n/exit\n')
+        await chat(
+            agent,
+            deps=None,
+            console=Console(file=io.StringIO()),
+            store=SettingsStore(tmp_path / 'config.db'),
+            builtin_plugins=tuple(
+                plugin.model_copy(update={'settings': {'ui_events': True}})
+                for plugin in DEFAULT_PLUGINS
+                if plugin.id == 'observability'
+            ),
+            resume='' if browser else saved.summary.id,
+        )
+    roots = [span for span in recorder.spans() if span.name == 'CLAI session']
+    assert [(span.attributes or {})['agent_session_id'] for span in roots] == [saved.summary.id]
+    startup = next(span for span in recorder.spans() if span.name == 'session started')
+    assert startup.parent == roots[0].context
+
+
+@pytest.mark.parametrize(('prompt', 'outcome'), [('hello', 'completed'), ('explode', 'failed'), ('block', 'cancelled')])
+async def test_fork_turn_end_stays_under_its_saved_conversation_root(
+    recorder: Recorder, tmp_path: Path, prompt: str, outcome: str
+) -> None:
+    model = Model()
+    shell = create_shell(
+        Agent(FunctionModel(stream_function=model.respond)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        settings=None,
+        project=ProjectSettings(),
+        console=Console(file=io.StringIO()),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=tuple(
+            plugin.model_copy(update={'settings': {'ui_events': True}})
+            for plugin in DEFAULT_PLUGINS
+            if plugin.id == 'observability'
+        ),
+        headless=True,
+    )
+    try:
+        await shell.loader.load_all()
+        await shell.forks.start(prompt)
+        (fork,) = shell.forks.records
+        if outcome == 'cancelled':
+            await model.started.wait()
+            fork.task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await fork.task
+        else:
+            await fork.task
+        assert current_session_id() is None
+    finally:
+        await shell.loader.close('exit')
+    roots = [span for span in recorder.spans() if span.name == 'CLAI session']
+    assert len(roots) == 2
+    child_root = next(span for span in roots if (span.attributes or {})['agent_session_id'] == fork.session_id)
+    finished = next(span for span in recorder.spans() if span.name == 'turn {outcome}')
+    assert (finished.attributes or {})['outcome'] == outcome
+    assert finished.parent == child_root.context
+    assert 'logfire.tags' not in (finished.attributes or {})
 
 
 async def test_background_run_keeps_nested_agents_and_threaded_ui_in_its_conversation(recorder: Recorder) -> None:

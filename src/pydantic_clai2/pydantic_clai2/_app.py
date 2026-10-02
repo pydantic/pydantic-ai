@@ -217,13 +217,14 @@ async def chat(
                         workers.start_soon(shell.sessions.namer.run)
                         try:
                             with transcript.capture(console):
-                                await shell.loader.load_all(fresh=fresh)
-                                _report_project_plugins(shell.loader, console)
+                                # Plugins must start with the saved conversation, not a temporary empty session.
                                 if resume is not None:
                                     console.print(
                                         await shell.sessions.command([resume] if resume else []), markup=False
                                     )
                                     resume = None
+                                await shell.loader.load_all(fresh=fresh)
+                                _report_project_plugins(shell.loader, console)
                             warming = warming or warm_imports.start()
                             reason = await shell.run()
                         finally:
