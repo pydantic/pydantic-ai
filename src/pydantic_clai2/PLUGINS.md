@@ -332,6 +332,12 @@ and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
 the configured telemetry destination first.
 
+Startup plugin load failures reported in the terminal, including missing optional dependencies,
+are recorded with their exception and traceback through this same instance. This does not require
+`ui_events`. Reporting waits until startup loading finishes, so failures before the
+observability plugin loaded are included. Disabling observability stops this reporting;
+the existing terminal messages remain.
+
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
 in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
 `~/.config/pydantic-clai2/logfire/`. SDK configuration is read only from that user
@@ -778,7 +784,10 @@ the CLI uses `STOCK_PLUGINS`, which opts its own rebuildable agent in.
 
 Saved `Coder` declarations that omit `sub_agents` still default to `false` for
 compatibility. Set `"sub_agents": true` in `/plugins configure coder` to opt in;
-explicit `false` remains an opt-out. Supplied agents are not rebuilt: their plugins
+explicit `false` remains an opt-out. **Unrestricted filesystem** in
+`/plugins configure coder` decides whether the file tools reach any path on this
+machine (`true`, the stock default) or only the launch directory (`false`). It
+saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are not rebuilt: their plugins
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
@@ -810,6 +819,9 @@ the shell starts an automated continuation with no user message. Its `turn_start
 and `turn_end` hooks receive empty text. The editor preserves drafts and gives
 queued user input priority. Reports arriving during a run stay on its native queue.
 
+Saved settings that need features absent from this build use defaults; see
+[Settings that need a feature](#settings-that-need-a-feature-hostsettingsmodel-requires).
+
 `repo_context` wraps harness `RepoContext` with the launch directory as the
 workspace and its default filenames. Its settings:
 
@@ -828,7 +840,9 @@ ones waiting at startup, and `/plugins enable NAME` approves one. See
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
-same chain unconditionally. Only `ModelAPIError`, `FallbackExceptionGroup`, and
+same chain unconditionally. Its optional focus is free text, not shell arguments:
+`/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
+the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off; a declaration under the same name
@@ -1600,16 +1614,16 @@ contributes nothing:
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, and its
 saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`
 
-Four `async` methods fire outside the agent run, in the shell:
+Five `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -1617,6 +1631,14 @@ Four `async` methods fire outside the agent run, in the shell:
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
+| `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
+
+`on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
+name and original exception. Every successfully loaded plugin receives it, regardless
+of load order. It covers startup loading, not individual `/plugins` actions. Declarations
+whose own module is not installed stay quiet, as on the terminal; a missing dependency
+inside an available plugin is reported. A handler failure is printed without stopping
+startup or preventing other handlers from running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -1793,11 +1815,12 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 
 Built-in tool rendering shows one summary line per call by default, clipped to
 the terminal width and followed by a blank line. Tool names are pink; arguments
-and bullet markers are muted grey. Shell output and completion details, grep results, and file
-diffs are hidden from the terminal, not from the model. Set
-`/set display.tool_output true` to restore detailed output; `display.shell_lines`
-and `display.grep_lines` then control preview lengths (20 lines each by default).
-This setting does not suppress plugin renderers or interactive questions.
+and bullet markers are muted grey. Successful file writes and edits show their
+diffs even in compact mode. Shell output and completion details and grep results
+are hidden from the terminal, not from the model. Set `/set display.tool_output true`
+to show those details; `display.shell_lines` and `display.grep_lines` then control
+preview lengths (20 lines each by default). This setting does not suppress file
+diffs, plugin renderers, or interactive questions.
 
 CLAI shows unknown tool calls as `● tool_name`, with the name in pink. To show something
 better, return a Rich renderable (a `str` is fine). Return `None` to say "not mine,
@@ -1933,6 +1956,50 @@ also reaches the next turn from a plugin command, without a reload.
 saved settings and preserves their values for other versions or branches. This
 does not relax validation of plugin declarations or `self.host.settings(Model)`.
 
+### Settings that need a feature: `host.settings(Model, requires=...)`
+
+Every CLAI on a machine shares one settings database, whatever code it runs: other
+worktrees, branches, and installs. When a setting's valid values or meaning depend
+on code that other builds may lack, tag it with the feature it needs:
+
+```python
+settings = host.settings(Options, requires={'mode': ['fancy-mode']})
+```
+
+The contract:
+
+- **Feature names** are lowercase words joined by hyphens, such as
+  `stock-bound-delegation`. A build lists the ones it supports in
+  `SUPPORTED_FEATURES` (`pydantic_clai2/config/features.py`). Never rename or reuse one.
+- **Keys** are the saved names, aliases included. An unknown key or a badly formed
+  name raises `ValueError` at activation.
+- **Writers attach tags for you.** `host.save_settings`, `/plugins add`,
+  `/plugins enable` and `disable`, and the settings menus store them beside the
+  declaration, in their own table. Your settings JSON never holds them.
+- **A build that lacks a feature, or does not know its name, ignores that one
+  setting.** It uses the built-in declaration's value, or your model's default,
+  keeps your other settings, and prints one line per plugin:
+  `coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.`
+  Reading never rewrites the database, and saving from that build keeps the
+  ignored value and its tag. A tag goes away only when its value changes.
+- **Tag only settings whose default is the safe choice.** Dropping a value means
+  using the default, so a default must never be looser than what it replaces.
+- **Builds older than tags ignore them** and apply every setting as before.
+  Tags cannot protect those builds.
+
+A capability class declared as `module:Class` has no `Plugin` subclass; CLAI lists its
+tags in `CAPABILITY_REQUIREMENTS`, keyed by that factory string.
+`clai2 plugins add` from the command line imports nothing, so it attaches only
+those; a plugin's own tags are attached the next time it saves or is enabled.
+
+If an untagged setting still makes a capability that CLAI built from a
+`module:Class` declaration (such as `coder`) raise `UserError` while a run is
+set up, that turn fails closed with the plugin named, and CLAI leaves that
+capability out of later turns; `/plugins reload NAME` brings it back. Nothing is
+retried, so no other capability is set up twice. Errors from the model, from tools, or
+from a raising plugin handler still fail the turn as before, and capabilities an
+`get_capabilities` returns, or that contain a `Hooks`, are never left out.
+
 ### Keep secrets in `/keys`: `KeyReference`, `SavedKey`, `host.save_settings`
 
 Plugin settings are stored in plaintext SQLite, so a token, API key, or client
@@ -2065,9 +2132,12 @@ again. Services with Dynamic Client Registration need none of this: add them as
 
 `host.conversation` is the retained history: `messages` is a snapshot,
 `await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model the next prompt will use. `host.status` is the footer's state; set
-`context_alert` to paint the context figure in the warning colour. The built-in
-`compaction` plugin uses both. A host built outside the shell gets an in-memory
+model the next prompt will use. `host.status` is the footer's state:
+`context_tokens` and `context_window` render as compact used/max, such as
+`128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
+not an assumed fallback. Set `context_alert` to paint the figure in the warning
+colour. The built-in `compaction` plugin fills these fields from Harness usage
+events, including an explicit window override, and clears the window when unloaded. A host built outside the shell gets an in-memory
 `Transcript` and a detached `Status`, so tests need no special case. The status
 row itself is CLAI's; a plugin adds to it with `get_status_segments`.
 
@@ -2520,7 +2590,8 @@ is labeled **SELECT PROJECT** or **SELECT SESSION**, with matching key hints.
 
 The browser groups existing Git worktrees by repository and labels session cards
 with the current branch or detached worktree name. This is display metadata only;
-saved workspace paths and cross-directory confirmation are unchanged. See
+saved workspace paths are unchanged. Selecting a session resumes immediately in
+the current directory, without confirmation. See
 [Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first

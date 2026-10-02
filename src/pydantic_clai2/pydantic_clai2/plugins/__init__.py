@@ -1,7 +1,7 @@
 """The declarative plugin API: subclass `Plugin` and override what it contributes, as with `AbstractCapability`."""
 
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import ClassVar, Generic, Literal, Protocol, TypeVar, cast, get_args, get_origin
@@ -19,6 +19,7 @@ from pydantic_ai.providers import infer_provider_class
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
+from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
 from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
@@ -87,6 +88,14 @@ class SessionStart:
 
     agent: AbstractAgent[Never, object]
     settings: Settings
+
+
+@dataclass(kw_only=True)
+class PluginLoadFailed:
+    """A plugin failed to load; delivered to loaded plugins after startup loading finishes."""
+
+    plugin: str
+    error: BaseException
 
 
 @dataclass(kw_only=True)
@@ -216,7 +225,7 @@ def _runs_already(prefix: str) -> bool:
     return True
 
 
-HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd
+HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | PluginLoadFailed
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
@@ -245,6 +254,7 @@ class PluginHost(Generic[DepsT]):
         conversation: Conversation | None = None,
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
+        requirements: Requirements | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -267,9 +277,30 @@ class PluginHost(Generic[DepsT]):
         self.status = status if status is not None else Status()
         self._settings = settings
         self._persist = save_settings
+        self._requirements: Requirements = dict(requirements or {})
 
-    def settings(self, model: type[ModelT], /) -> ModelT:
-        """Validate the JSON saved for this plugin right now, as a settings menu needs after each save."""
+    @property
+    def requirements(self) -> Requirements:
+        """Feature names each setting key needs, as declared with `settings(Model, requires=...)`."""
+        return dict(self._requirements)
+
+    def settings(self, model: type[ModelT], /, *, requires: Mapping[str, Iterable[str]] | None = None) -> ModelT:
+        """Validate the JSON given to `plugins add` against the plugin's own model.
+
+        `requires` names the features a setting's saved value depends on, such as
+        `{'sub_agents': ['stock-bound-delegation']}`. CLAI stores the tags beside the declaration
+        whenever the settings are saved, and a build missing a feature ignores that setting and uses
+        its default. Keys are the saved names (aliases included); see `PLUGINS.md`.
+        """
+        if requires is not None:
+            declared = declared_requirements(requires)
+            known = {name for key, info in model.model_fields.items() for name in (key, info.alias) if name}
+            unknown = declared.keys() - known
+            if unknown:
+                raise ValueError(
+                    f'{model.__name__} has no setting {", ".join(sorted(unknown))} to require features for.'
+                )
+            self._requirements = declared
         return model.model_validate(self._settings)
 
     def save_settings(self, settings: BaseModel, /) -> None:
@@ -419,6 +450,9 @@ class Plugin(Generic[SettingsT, DepsT]):
     async def on_session_end(self, event: SessionEnd) -> None:
         """CLAI is quitting, the plugin is unloading, or it failed to load after it was built."""
 
+    async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
+        """A startup plugin failed to load; called after all enabled plugins have been tried."""
+
     async def on_turn_start(self, event: TurnStart) -> None:
         """A prompt was submitted; edit `event.text` or call `event.cancel()`. A failure cancels the turn."""
 
@@ -446,6 +480,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     SessionEnd: 'on_session_end',
     TurnStart: 'on_turn_start',
     TurnEnd: 'on_turn_end',
+    PluginLoadFailed: 'on_plugin_load_failed',
 }
 
 

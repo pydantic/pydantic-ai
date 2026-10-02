@@ -27,7 +27,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
-from pydantic_clai2.cli.self_update import Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -57,6 +57,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.runtime._session import Session, StockAgent
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
@@ -235,6 +236,9 @@ async def chat(
                     with transcript.capture(console):
                         await shell.loader.close(reason)
             if not shell.reload_requested:
+                if (executable := shell.updates.relaunch) is not None:
+                    summary = shell.session.summary
+                    raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
                 return
             shell.reload_requested = False
             if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
@@ -263,7 +267,7 @@ async def chat(
                         load_plugins=load_plugins,
                     )
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
                 with transcript.capture(console):
                     console.print(
                         f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
@@ -662,16 +666,23 @@ class _Shell(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             models=self.context.store.models,
         )
+        self.session.on_setup_error = self.capability_failed
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
-        """Capabilities bound to the next run: supplied, plugin-registered, then speculation.
+        """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
 
-        Speculation sees the others, so its sandbox mount stays within their `FileSystem`.
+        Speculation sees the others unguarded, so its sandbox mount stays within their `FileSystem`.
         """
         granted = (*self.plugins, *self.loader.capabilities())
+        bound = (*self.plugins, *self.loader.run_capabilities())
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
-        return (*granted, *self.speculation.capabilities(granted))
+            bound = (*bound, self.tasks.presentation)
+        return (*bound, *self.speculation.capabilities(granted))
+
+    def capability_failed(self, error: CapabilitySetupError) -> None:
+        """Report that a failing settings-built capability is left out of later turns."""
+        self.console.print(self.loader.suspend(error), style=theme.color(theme.WARNING), markup=False)
 
     def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
         """A separately saved session configured like the foreground one, seeded with `history`."""
@@ -688,6 +699,7 @@ class _Shell(Generic[DepsT, OutputT]):
         child.tool_retries = self.session.tool_retries
         child.resolve_model = self.session.resolve_model
         child.model_settings = self.context.model_settings(child.model or _model_label(self.agent))
+        child.on_setup_error = self.capability_failed
         return child
 
     async def tasks_command(self, args: list[str]) -> str:
@@ -816,7 +828,11 @@ class _Shell(Generic[DepsT, OutputT]):
                 [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
             )
             try:
-                self.status.model = self.session.model or _model_label(self.agent)
+                model = self.session.model or _model_label(self.agent)
+                if model != self.status.model:
+                    self.status.context_window = None
+                    self.status.context_alert = False
+                self.status.model = model
                 self.status.workspace = self.session.workspace
                 self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
                 if self.editor is not None:
@@ -948,7 +964,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if headless:
             try:
                 result = await self.session.prompt(None if automated else start.text)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- report a failed headless turn to the CLI.
                 return TurnEnd(text=start.text, outcome='failed', error=exc)
             return TurnEnd(text=start.text, outcome='completed', result=result)
         # Menus open mid-turn only after this turn has captured its settings; session changes
@@ -1008,7 +1024,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
         if not is_silent(result):
             console.print(result, markup=False)
             console.print()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
     _reset_status(text, status)
@@ -1017,6 +1033,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
 def _reset_status(command: str, status: Status) -> None:
     if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
         status.context_tokens = None
+        status.context_window = None
         status.context_alert = False
         status.output_tokens = None
         status.cost = None
@@ -1098,7 +1115,7 @@ async def _run_prompt(
     except asyncio.CancelledError:
         await renderer.abort()
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- interactive boundary reports plugin/provider failures.
         await renderer.finish()
         console.print(f'{type(exc).__name__}: {error_message(exc)}', style=theme.color(theme.ERROR), markup=False)
         console.print(

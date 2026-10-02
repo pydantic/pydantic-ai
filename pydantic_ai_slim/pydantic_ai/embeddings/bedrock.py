@@ -13,6 +13,7 @@ import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import check_allow_model_requests
+from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
@@ -678,7 +679,10 @@ class BedrockEmbeddingModel(EmbeddingModel):
             response.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-amzn-bedrock-input-token-count', '0')
         )
 
-        response_body = json.loads(response['body'].read())
+        # `InvokeModel` returns the body as an undecoded byte stream, so this is the response decode other providers'
+        # SDKs do internally.
+        with map_decode_errors(self.model_name):
+            response_body = json.loads(response['body'].read())
         return response_body, input_tokens
 
     async def max_input_tokens(self) -> int | None:

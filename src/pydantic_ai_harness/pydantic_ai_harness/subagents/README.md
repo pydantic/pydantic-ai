@@ -220,7 +220,7 @@ Definitions are read at the start of every run from the run's [workspace](https:
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
 - `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
 
-Earlier releases loaded the conventional folder by default. When `agent_folders` is omitted and that folder contains a definition, the run emits a `HarnessDeprecationWarning` naming the folder it no longer loads. Pass `agent_folders='agents'` to retain the old behavior, or `agent_folders=None` to keep the new behavior without a warning.
+Earlier releases loaded the conventional folders by default. Pass `agent_folders='agents'` to keep doing so.
 
 Until this release, the folders were read from this machine, including the home folder `~/.agents/agents/`. A run without a workspace now fails at its start when given a path sequence. Convention discovery warns once when it skips a folder in the current or home directory that the workspace does not reach, naming the folder and the `workspace=` that reads it.
 
@@ -276,7 +276,9 @@ SubAgents(
 )
 ```
 
-Every agent the capability builds runs at a minimum thinking-effort floor. `MINIMUM_EFFORT_FLOOR` and the `clamp_effort(level, floor=...)` helper are exported so an orchestrator can apply the same floor to its own agents (that orchestrator-side application is the caller's responsibility). `clamp_effort` maps `None`/`False` to the floor, leaves `True` (provider-default effort) unchanged, and raises a concrete level below the floor up to it. Effort is applied through pyai's `ModelSettings.thinking`.
+When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
+
+`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable for compatibility but are deprecated. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
 
 ### Tools
 

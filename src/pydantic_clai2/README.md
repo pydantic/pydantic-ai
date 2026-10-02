@@ -42,15 +42,20 @@ Python 3.10+ is required.
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
 CLAI attaches the launch directory as the agent's workspace, so relative paths
-and commands start there. Commands get CLAI's environment minus LLM provider API
-keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools.
+and commands start there. A plugin or agent capability that supplies its own
+workspace, such as a sandbox, takes the launch directory's place; a capability
+function that supplies none leaves the launch directory in use. Commands get
+CLAI's environment minus LLM provider API keys. To keep the file tools inside the
+launch directory, set **Unrestricted filesystem** to `false` in
+`/plugins configure coder`. Shell commands are not restricted either way.
 
 Tool calls show a single-line summary followed by a blank line by default.
-Tool and argument names are pink; argument values and bullet markers are muted grey. Shell output, exit details and
-log paths, grep results, and file diffs stay out of the terminal; the model still
-receives full tool results. Long summaries are clipped to the terminal width.
-Use `/set display.tool_output true` to show detailed output again, or
-`/set display.tool_output false` to return to summaries. In detailed mode,
+Tool and argument names are pink; argument values and bullet markers are muted grey.
+Successful file writes and edits also show their diffs, including in compact mode.
+Shell output, exit details and log paths, and grep results stay out of the terminal;
+the model still receives full tool results. Long summaries are clipped to the terminal width.
+Use `/set display.tool_output true` to show shell and grep details, or
+`/set display.tool_output false` to hide those details without hiding file diffs. In detailed mode,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
@@ -313,16 +318,18 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 When a newer build exists, the status row shows `update <version or commit>: /update`.
 CLAI checks once at startup and again when you change the channel, and only for
 `uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
-shows uv's output, then exits; start `clai2` again to use the new build. Switching
-back to `stable` offers the latest release.
+shows uv's output, then restarts CLAI as the new build with the same launch options,
+resuming the current conversation. Switching back to `stable` offers the latest release.
+Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
+restarts into that.
 
 Windows does not let a program replace files it is running from, so there
 `/update` exits first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
-again afterwards. Without uv on `PATH`, or outside a `uv tool` install, `/update`
-prints the command to run yourself, in PowerShell syntax on Windows.
+again afterwards. Without uv on `PATH`, `/update` prints the command to run
+yourself, in PowerShell syntax on Windows.
 
 ## Your own agent
 
@@ -916,8 +923,8 @@ worktree directory name for detached HEAD. These labels are read when the browse
 opens, not historical branch names. Missing directories, non-Git workspaces, and
 unavailable Git fall back to directory labels. Separate repositories with the
 same name remain separate and use paths to distinguish them. Transcript previews
-and cross-directory confirmations keep the original saved path; resuming does
-not change directories or migrate saved data.
+keep the original saved path; resuming does not change directories or migrate
+saved data.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -940,6 +947,10 @@ The browser follows Code Puppy's project/session design:
 - Projects on the left, with session counts. The current directory is preselected.
   The selected project stays highlighted while browsing its sessions. **SELECT
   PROJECT** or **SELECT SESSION** labels the focused pane, with matching key hints.
+- A repository with sessions in more than one checkout (branch or worktree) lists
+  them beneath it, indented and dimmed. Select one to see only its sessions.
+  Sessions from deleted folders, such as removed worktrees, gather under
+  **missing folders** at the bottom.
 - Two-line session cards on the right: time, title, subtitle, tags, message and
   token counts. Recent sorting groups cards by local calendar date.
 - Enter opens a project or resumes a session. Right opens a scrollable transcript,
@@ -949,9 +960,9 @@ The browser follows Code Puppy's project/session design:
 - `r` sets a manual title, which the namer will not overwrite. `d` asks for
   confirmation before deletion. The active session cannot be deleted.
 - Esc goes back; Ctrl-C closes. Narrow screens show one focused pane at a time.
-- Selecting a session from another directory asks for confirmation. It does not
-  change directories or move the saved conversation out of its original project
-  group. Direct cross-directory resume asks you to use the browser.
+- Selecting a session from another directory resumes immediately, without
+  confirmation. It does not change directories or move the saved conversation out
+  of its original project group. Direct cross-directory resume asks you to use the browser.
 
 The browser counts loaded summaries, not a separate unbounded catalog. Search
 runs against the full catalog before pagination. It does not index tool output,
@@ -1045,8 +1056,10 @@ to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
 window by default). `/compact` runs the same chain between turns regardless of that
-threshold. Add words to say what the summary must keep: `/compact the auth refactor, not the CSS`. You get one line
-with the message counts before and after and an estimate of the tokens saved.
+threshold. Add free text to say what the summary must keep, for example
+`/compact don't lose the "auth" decisions`. The focus is passed to the summariser
+as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
+You get one line with the message counts before and after and an estimate of the tokens saved.
 An empty conversation, or one that fits inside the protected tail, says so and
 sends nothing.
 
@@ -1067,6 +1080,12 @@ turns it off, `/compact` included:
 | `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
+
+The status row shows compact used/max context tokens, such as `128k/1m`.
+The maximum comes from the request's model or the `context_window` override;
+it stays `?` until the plugin reports a known window. An unknown model's fallback
+compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
+larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 
 The context figure turns yellow when a request still exceeds `threshold` after
 compaction, for example because the protected tail is too large. For windows smaller
@@ -1259,8 +1278,9 @@ is not modified.
 The early splash and the `CLAI 2.0` banner keep Pydantic's brand colours under
 every palette, except on 16-colour terminals, where the palette owns the ANSI
 slots. Code uses the terminal foreground
-and ANSI syntax colours; bundled palettes use Termflow's default diff colours. Theme selection adds no
-model requests or telemetry.
+and ANSI syntax colours. File diffs tint added and removed lines with the palette's
+green and red over its background, and light palettes keep diff code dark enough
+to read. Theme selection adds no model requests or telemetry.
 
 ### Spinners
 
@@ -1390,8 +1410,9 @@ repeated completion heading before the diff or output.
 
 ## Tool details
 
-Native capability events drive specialized output: `FileEditedEvent` renders its
-bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
+File diffs are shown regardless of `display.tool_output`. Native capability events
+drive specialized output: `FileEditedEvent` renders its bounded unified diff using
+Termflow `DiffRenderer`, the same renderer Code Puppy
 uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code uses the terminal foreground and ANSI syntax colours on the terminal
@@ -1578,6 +1599,21 @@ plugin list. Use `/plugins list` to print it. Plugins are trusted code running a
 
 [PLUGINS.md](PLUGINS.md) has every method, event, and rule.
 
+Every CLAI on your machine shares one settings database, so another worktree or
+branch may have saved a plugin setting this one cannot run. When a saved setting
+names a feature this build lacks, CLAI skips just that setting, uses the default,
+and tells you once at startup:
+
+```text
+coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
+```
+
+Nothing is rewritten; the other build still sees your setting. If a plugin still
+rejects its settings when a turn starts, that turn fails with the plugin named, and
+CLAI leaves that plugin's capability out of later turns; `/plugins reload NAME` tries
+it again. CLAI builds from before this
+check apply every saved setting as they always did.
+
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
 settings menu (`/plugins configure notion` reopens it). The token is picked from
 `/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
@@ -1622,6 +1658,11 @@ capability to CLAI turns for agent, model-request, and tool
 spans, including timing, token usage, and failures. It adds CLAI's own UI spans
 only when `ui_events` is on (see below), and does not instrument HTTP clients or
 unrelated agents globally.
+
+Startup plugin load failures reported in the terminal are also sent through the configured
+Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
+reported after loading finishes, including those that happened before observability
+loaded. Disabling the plugin leaves these failures as terminal messages only.
 
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing

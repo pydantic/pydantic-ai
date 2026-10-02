@@ -23,6 +23,9 @@ Additional external SDK integrations:
 - [Apache Airflow](./airflow.md)
 - [Absurd](https://pydantic.dev/docs/ai/harness/absurd/)
 
+!!! warning "One durable execution engine per agent"
+    Each engine wraps every model request and tool call as its own durable unit, so attaching a second one, whether to the agent, for a single run, or through an agent spec, raises a [`UserError`][pydantic_ai.exceptions.UserError] before either is bound.
+
 Capability authors can also move custom hook work into engine activities, steps, or tasks with [durable capability operations](../capabilities/custom.md#durable-capability-operations).
 
 Third-party runtime authors can use the stable [durable execution backend builder](./backends.md)

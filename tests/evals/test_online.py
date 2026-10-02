@@ -3,8 +3,12 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import importlib.metadata
 import inspect
+import os
 import random
+import subprocess
+import sys
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -2446,3 +2450,14 @@ async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
     assert 'tenant' not in attrs
+
+
+@pytest.mark.skipif(
+    any(req.startswith('sniffio') for req in importlib.metadata.requires('anyio') or []),
+    reason='AnyIO before 4.12 depends on and imports `sniffio`, so every install has it',
+)
+def test_imports_without_sniffio():
+    """Nothing `pydantic-evals` declares installs `sniffio`, so a clean install has none."""
+    code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_evals.online\n"
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    subprocess.run([sys.executable, '-c', code], check=True, env=env)
