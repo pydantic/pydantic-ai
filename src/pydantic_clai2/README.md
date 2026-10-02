@@ -594,6 +594,13 @@ option is available even when no models have been added. Tab completion uses
 only the saved list. `/model NAME` switches directly to an added model.
 The currently configured model is kept in the list when upgrading.
 
+To remove a model you no longer use, highlight it and press **Ctrl+D** or
+**Delete**, then confirm **Delete model**. This removes it from the saved list and
+Tab completion and deletes its per-model settings. Provider credentials are kept.
+The current model and saved default cannot be deleted. Select another model first,
+or use `/set model NAME` to change the saved default. **Keep model** or Esc cancels
+without changing anything.
+
 `/add_model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
