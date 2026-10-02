@@ -523,6 +523,12 @@ filterwarnings = [
     # TODO: Drop once starlette moves to `anyio.from_thread.BlockingPortal`.
     # https://github.com/Kludex/starlette/issues/3497
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
+    # `anthropic` 1.11.0 warns on every request for `claude-sonnet-4-5`, which reaches end of life on
+    # 2026-11-30. Recordings across the suite were made against it and replay offline, so the warning
+    # carries no signal here; users still get it from the SDK.
+    # TODO: Move these tests to a current model; the API stops serving this one on 2026-11-30, so any
+    # re-recording after that date needs the move first.
+    "ignore:The model 'claude-sonnet-4-5(-20250929)?' is deprecated and will reach end-of-life:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
