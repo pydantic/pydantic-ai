@@ -74,6 +74,7 @@ from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _drop_unanswered_turn_scoped_prompts,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -1329,10 +1330,28 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # means that the stream was started but not finished before `run()` was called
             raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: no cover
 
-        return await self._make_request(ctx)
+        try:
+            return await self._make_request(ctx)
+        except BaseException:
+            _drop_unanswered_turn_scoped_prompts(ctx.state.message_history)
+            raise
 
     @asynccontextmanager
-    async def stream(  # noqa: C901
+    async def stream(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
+        try:
+            async with self._stream(ctx) as agent_stream:
+                yield agent_stream
+        except BaseException:
+            # A stream interrupted after it opened has already committed its partial response, which
+            # answers the request, so this only drops anything when the step never got a response.
+            _drop_unanswered_turn_scoped_prompts(ctx.state.message_history)
+            raise
+
+    @asynccontextmanager
+    async def _stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -2083,6 +2102,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Increments the retry counter and creates a new request with a RetryPromptPart.
         """
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
+        # A retry without a response gives up on this step, so its turn-scoped parts go with it. When the
+        # response was kept in history it answers them, and this is a no-op.
+        _drop_unanswered_turn_scoped_prompts(ctx.state.message_history)
         m = _messages.RetryPromptPart(content=error.message)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node

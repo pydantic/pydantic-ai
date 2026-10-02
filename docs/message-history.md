@@ -246,6 +246,41 @@ Phrase the instruction as what changed rather than as an override of the user. M
 
     This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as user content, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
 
+### Turn-scoped system prompts
+
+Some instructions are only true for one model request: a nudge against instruction fade, a note that the user can't see a tool's output, the budget left right now. Give such a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] [`scope='turn'`][pydantic_ai.messages.SystemPromptPart.scope] and the model sees it for the request it's part of, and not for any request after that:
+
+```python {title="turn_scoped_system_prompt.py"}
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+
+agent = Agent('anthropic:claude-opus-5-5')
+
+
+@agent.tool
+def run_tests(ctx: RunContext) -> str:
+    ctx.enqueue(
+        SystemPromptPart(
+            "The user can't see this tool's output. Summarize the failures for them.",
+            scope='turn',
+        )
+    )
+    return '3 failed, 41 passed'
+```
+
+A capability that nudges the model on every request adds one from `before_model_request`, to both the persistent history (`ctx.messages.append(...)`) and the request being prepared (`request_context.messages = [*request_context.messages, ...]`), as a `ModelRequest` of its own. The Harness [System Reminders](harness/system-reminders.md) capability is built this way.
+
+A turn-scoped prompt stays in the message history like any other part, so the history records what each request was sent. How it reaches the model depends on the provider:
+
+* Where the API can keep it in the conversation and stop showing it to the model itself, every turn-scoped prompt is sent unchanged with every request, and costs nothing once its turn is over. [Anthropic](models/anthropic.md#turn-scoped-system-messages) supports this on the models that take mid-conversation system messages. Sending it unchanged is what keeps the cached prefix valid, and on models that tie their reasoning to the exact conversation it was produced in, it keeps that reasoning valid as well: removing an instruction from a later request counts as editing the conversation.
+* Everywhere else, it's sent with its own request and left out of every later one. It goes at the end of that request and renders like any other [mid-conversation system prompt](#mid-conversation-system-prompts). Where the provider holds the conversation itself, such as OpenAI Responses with `openai_previous_response_id`, it keeps everything it was sent, so a turn-scoped prompt stays in view there.
+
+Either way, the cache breakpoints Pydantic AI places for you, through settings like `anthropic_cache_messages`, land before it, so the next request can still read what was cached. A request and any continuation of it (such as an Anthropic `pause_turn`) are one turn, and so is a retry or [fallback](models/overview.md#fallback-model) attempt at the same request. A turn-scoped prompt in a request that never gets a response, because the run failed or was cancelled, is removed from the history when the run gives up on that request, so it doesn't carry into the next one.
+
+Use a turn-scoped prompt for something about the current moment. Something that stays true belongs in the agent's [instructions](agent.md#instructions) or a regular mid-conversation system prompt, and the same rule about untrusted content applies to both.
+
+!!! note "Histories sent back from a frontend"
+    The [UI adapters](ui/overview.md#trust-model-for-client-submitted-messages) strip `SystemPromptPart`s from client-submitted messages by default, turn-scoped ones included, so a history that round-trips through a frontend loses its turn-scoped prompts. On a model whose reasoning is tied to the exact conversation, that's an edit to the conversation like any other lost part. Keep the history on the server, for example with [conversation storage](persistence.md), when you need it unchanged.
+
 ### Making histories provider-valid
 
 Model providers reject a request whose message history has broken tool-call/tool-result pairing — a tool call with no result, or a result with no call. A run that is cancelled or crashes partway through can leave the history in exactly this state, and so can a hand-built, truncated, or context-evicted history. You don't need to clean these up yourself: before each model request, Pydantic AI repairs the history it was given so the provider accepts it.

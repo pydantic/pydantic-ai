@@ -117,6 +117,11 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                # Turn-scoped (`clear_at`) entries are published for the same models and transports as
+                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
+                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
+                # the same reason it's left out above.
+                supports_turn_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)

@@ -35,6 +35,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
@@ -70,6 +71,8 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _current_turn_start,  # pyright: ignore[reportPrivateUsage]
+    _is_turn_scoped,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -840,6 +843,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Where the profile's `supports_turn_scoped_system_prompts` is `False`, leaves out every
+        [turn-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose turn is over
+        and moves the current turn's ones to the end of the last request.
+
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
@@ -860,6 +867,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+
+        clears_turn_scoped_prompts = self.profile.get('supports_turn_scoped_system_prompts', False)
+        if not clears_turn_scoped_prompts:
+            messages = _drop_superseded_turn_scoped_prompts(messages)
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -914,6 +925,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
+
+        if not clears_turn_scoped_prompts:
+            messages = _move_turn_scoped_prompts_to_tail(messages)
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
@@ -2249,10 +2263,13 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     mid-conversation instruction into the provider's top-level system parameter rewrites the first
     cache section of every later request, which is the exact invalidation that leaving it in place
     exists to avoid.
+
+    A turn-scoped part ends the standing prompt too: the top-level system parameter is sent with every
+    request, and a turn-scoped part has to stop being sent once its turn is over.
     """
     count = 0
     for part in request.parts:
-        if not isinstance(part, SystemPromptPart):
+        if not isinstance(part, SystemPromptPart) or part.scope == 'turn':
             break
         count += 1
     return count
@@ -2346,6 +2363,94 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     if not opening and instructions is None:
         return []
     return [ModelRequest(parts=list(opening), instructions=instructions)]
+
+
+_TURN_SCOPED_TAIL_KEY = 'turn_scoped_tail'
+"""Key in a prepared request's `__pydantic_ai__` metadata: how many of its trailing parts render turn-scoped prompts."""
+
+
+def _drop_superseded_turn_scoped_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Leave out the turn-scoped `SystemPromptPart`s whose turn is over, for a model that can't clear them itself.
+
+    A request emptied this way is left out too: it held nothing but prompts the model no longer sees.
+    Returns the original list when nothing changed.
+    """
+    start = _current_turn_start(messages)
+    if not any(
+        isinstance(message, ModelRequest) and any(_is_turn_scoped(part) for part in message.parts)
+        for message in messages[:start]
+    ):
+        return messages
+    kept_messages: list[ModelMessage] = []
+    for message in messages[:start]:
+        if isinstance(message, ModelRequest) and any(_is_turn_scoped(part) for part in message.parts):
+            if parts := [part for part in message.parts if not _is_turn_scoped(part)]:
+                kept_messages.append(replace(message, parts=parts))
+        else:
+            kept_messages.append(message)
+    return [*kept_messages, *messages[start:]]
+
+
+def _move_turn_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Send the current turn's turn-scoped prompts last, and record that they're there.
+
+    Runs after `_drop_superseded_turn_scoped_prompts`, so every turn-scoped part left is current. They
+    move to the end of the last request, where adapters that place cache breakpoints automatically can
+    leave them out of the cached prefix: the next request won't contain them, so a breakpoint on one
+    would write a cache entry nothing ever reads. How many trailing parts they are is recorded under
+    `_TURN_SCOPED_TAIL_KEY` in the request's `__pydantic_ai__` metadata, which `_turn_scoped_tail_texts`
+    reads back. Moving them is free, because every part of the current turn precedes the same response.
+
+    Returns the original list when there's nothing to move.
+    """
+    request_indices = [index for index, message in enumerate(messages) if isinstance(message, ModelRequest)]
+    turn_scoped = [
+        part for index in request_indices for part in cast(ModelRequest, messages[index]).parts if _is_turn_scoped(part)
+    ]
+    if not turn_scoped:
+        return messages
+    last_index = request_indices[-1]
+    moved: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest):
+            moved.append(message)
+            continue
+        parts = [part for part in message.parts if not _is_turn_scoped(part)]
+        if index != last_index:
+            if len(parts) == len(message.parts):
+                moved.append(message)
+            elif parts:
+                moved.append(replace(message, parts=parts))
+            continue
+        namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+        metadata = {
+            **(message.metadata or {}),
+            _PYDANTIC_AI_METADATA_KEY: {
+                **(namespace if _utils.is_str_dict(namespace) else {}),
+                _TURN_SCOPED_TAIL_KEY: len(turn_scoped),
+            },
+        }
+        moved.append(replace(message, parts=[*parts, *turn_scoped], metadata=metadata))
+    return moved
+
+
+def _turn_scoped_tail_texts(messages: Sequence[ModelMessage]) -> frozenset[str]:
+    """The texts the current turn's turn-scoped prompts render as, for a model that can't clear them itself.
+
+    Adapters that place a cache breakpoint automatically skip wire blocks carrying these texts, so the
+    breakpoint lands on the last block the next request will still contain. Empty for a model that
+    clears turn-scoped prompts itself; its adapter recognizes them on the wire instead.
+    """
+    request = next((message for message in reversed(messages) if isinstance(message, ModelRequest)), None)
+    namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) if request else None
+    count = namespace.get(_TURN_SCOPED_TAIL_KEY) if _utils.is_str_dict(namespace) else None
+    if request is None or not isinstance(count, int) or count <= 0:
+        return frozenset()
+    return frozenset(
+        part.content
+        for part in request.parts[-count:]
+        if isinstance(part, SystemPromptPart | UserPromptPart) and isinstance(part.content, str)
+    )
 
 
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:

@@ -26,7 +26,11 @@ from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
-from . import ModelRequestParameters, download_item
+from . import (
+    ModelRequestParameters,
+    _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
@@ -1009,7 +1013,19 @@ class OpenRouterModel(OpenAIChatModel):
             and (cache_messages := model_settings.get('openrouter_cache_messages'))
             and self._resolved_profile.get('openrouter_supports_cache_control', False)
         ):
-            self._add_cache_control_to_message(openai_messages[-1], cache_messages)
+            # A turn-scoped prompt ends the request as its own user message (see `_turn_scoped_tail_texts`),
+            # and the next request won't send it, so the breakpoint goes on the message before it.
+            turn_scoped_texts = _turn_scoped_tail_texts(messages)
+            anchor = next(
+                (
+                    message
+                    for message in reversed(openai_messages)
+                    if not _is_text_message_in(message, turn_scoped_texts)
+                ),
+                None,
+            )
+            if anchor is not None:
+                self._add_cache_control_to_message(anchor, cache_messages)
 
         if (
             model_settings
@@ -1319,3 +1335,9 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
     ) -> FinishReason | None:
         return _CHAT_FINISH_REASON_MAP.get(key)
+
+
+def _is_text_message_in(message: chat.ChatCompletionMessageParam, texts: frozenset[str]) -> bool:
+    """Whether `message` is a user message whose content is one of `texts`, as a turn-scoped prompt renders."""
+    content = message.get('content')
+    return message['role'] == 'user' and isinstance(content, str) and content in texts

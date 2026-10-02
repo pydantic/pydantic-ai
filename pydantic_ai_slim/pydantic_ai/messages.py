@@ -226,6 +226,20 @@ class SystemPromptPart:
     Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] for more information.
     """
 
+    scope: Literal['conversation', 'turn'] = 'conversation'
+    """How long the model sees this prompt.
+
+    * `'conversation'` (the default): from where it sits in the history for the rest of the conversation.
+    * `'turn'`: only for the model request it's part of, including a continuation of that same request
+      (such as an Anthropic `pause_turn`). Once a later request exists, the model no longer sees it.
+
+    A turn-scoped prompt stays in the message history like any other part. Use one for a nudge about the
+    current moment (a reminder against instruction fade, a note that tool output was hidden, a remaining
+    budget), not for something that stays true. See
+    [turn-scoped system prompts](../message-history.md#turn-scoped-system-prompts) for how each provider
+    renders it.
+    """
+
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -3493,6 +3507,56 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
             else:
                 clean_messages.append(message)
     return clean_messages
+
+
+def _is_turn_scoped(part: ModelRequestPart) -> bool:
+    return isinstance(part, SystemPromptPart) and part.scope == 'turn'
+
+
+def _current_turn_start(messages: Sequence[ModelMessage]) -> int:
+    """The index of the first message of the history's current turn.
+
+    The current turn is the trailing run of `ModelRequest`s no response has answered yet, together with
+    any `ModelResponse`s after them that continue it (a suspended response being resumed). A
+    [turn-scoped][pydantic_ai.messages.SystemPromptPart.scope] part in one of those requests is still
+    current; one in any earlier request has been superseded. Adjacent requests are one turn because
+    they're sent as one: `_clean_message_history` merges them.
+    """
+    index = len(messages)
+    while index and isinstance(messages[index - 1], ModelResponse):
+        index -= 1
+    while index and isinstance(messages[index - 1], ModelRequest):
+        index -= 1
+    return index
+
+
+def _drop_unanswered_turn_scoped_prompts(messages: list[ModelMessage]) -> None:
+    """Remove the turn-scoped `SystemPromptPart`s that no response will answer, in place.
+
+    Called once a step has given up on getting a response: the run raised or was cancelled, or a
+    capability asked for a retry without one. The parts were written for that step alone, so leaving
+    them in the trailing requests would carry them into the next step's turn next to the ones it adds
+    for itself. Never between attempts at the same step: a retried or fallback attempt is still that
+    step's turn.
+
+    Edits the list in place, since it's the run's history, but replaces the affected requests rather
+    than mutating them: instrumentation caches each message's serialized form. A request left empty
+    is removed, unless every trailing request was, in which case one empty request is kept so the
+    history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does.
+    """
+    start = len(messages)
+    while start and isinstance(messages[start - 1], ModelRequest):
+        start -= 1
+    for index in range(len(messages) - 1, start - 1, -1):
+        message = messages[index]
+        assert isinstance(message, ModelRequest)
+        if not any(_is_turn_scoped(part) for part in message.parts):
+            continue
+        parts = [part for part in message.parts if not _is_turn_scoped(part)]
+        if not parts and len(messages) - start > 1:
+            del messages[index]
+        else:
+            messages[index] = replace(message, parts=parts)
 
 
 def _clean_message_history(messages: list[ModelMessage], *, repair_last_response: bool = False) -> list[ModelMessage]:
