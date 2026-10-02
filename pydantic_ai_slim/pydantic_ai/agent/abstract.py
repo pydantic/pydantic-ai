@@ -2163,6 +2163,12 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     """A `wrap_run` hook returned a result without opening the session; nothing below was resolved."""
 
 
+def _accepts_message_history(answer_webrtc_offer: Callable[..., Any]) -> bool:
+    """Whether a model's `answer_webrtc_offer` takes `message_history`, which was added after models could override it."""
+    parameters = inspect.signature(answer_webrtc_offer).parameters.values()
+    return any(p.name == 'message_history' or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters)
+
+
 class AgentRealtime(Generic[AgentDepsT]):
     """An agent bound to a realtime model, returned by [`AbstractAgent.realtime`][pydantic_ai.agent.AbstractAgent.realtime].
 
@@ -2242,7 +2248,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             # Current while the offer is answered, as while a session connects: a model can consult the
             # agent it belongs to (GPT-Live delegates to the agent's own model by default).
             with set_current_run_context(resolved.run_context):
-                if self._message_history:
+                if self._message_history and _accepts_message_history(resolved.model.answer_webrtc_offer):
                     return await resolved.model.answer_webrtc_offer(
                         sdp_offer,
                         instructions=resolved.instructions,
@@ -2250,8 +2256,8 @@ class AgentRealtime(Generic[AgentDepsT]):
                         model_settings=resolved.model_settings,
                         message_history=self._message_history,
                     )
-                # Without history the keyword isn't passed, so a `RealtimeModel` written before it existed
-                # keeps working.
+                # The keyword is only passed when there is history and the model takes it, so a `RealtimeModel`
+                # written before it existed keeps working: its sideband seeds the history, as it always did.
                 return await resolved.model.answer_webrtc_offer(
                     sdp_offer,
                     instructions=resolved.instructions,

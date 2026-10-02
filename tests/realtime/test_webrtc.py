@@ -178,6 +178,10 @@ async def test_agent_realtime_offer_carries_the_bound_history() -> None:
 
     answer = await Agent().realtime(_LegacyModel()).answer_webrtc_offer(SAMPLE_SDP_OFFER)
     assert answer.sdp == SAMPLE_SDP_OFFER
+    # With history bound too: the model can't take it at the offer, so its sideband seeds it, as before.
+    history = [ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])]
+    answer = await Agent().realtime(_LegacyModel(), message_history=history).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert answer.sdp == SAMPLE_SDP_OFFER
 
 
 async def test_agent_realtime_signaling_resolves_bound_run_identity() -> None:
