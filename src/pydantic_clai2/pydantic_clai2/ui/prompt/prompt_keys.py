@@ -12,6 +12,21 @@ from prompt_toolkit.keys import Keys
 
 _MODIFIED_KEY = re.compile(r'\x1b\[(?:(\d+)(?::\d*)?(?::(\d+))?(?:;(\d+))?u|27;(\d+);(\d+)~)')
 _CSI_KEY = re.compile(r'\x1b\[(\d+);(\d+)([A-Z~])')
+_LOCK_MODIFIERS = 64 | 128  # Caps Lock, Num Lock.
+_SUPPORTED_MODIFIERS = 1 | 2 | 4  # Shift, Alt, Ctrl.
+_KEY_ALIASES = {
+    's-tab': 'backtab',
+    'shift-tab': 'backtab',
+    'shift-backspace': 'backspace',
+    'ctrl-backspace': 'backspace',
+    'ctrl-h': 'backspace',
+    'ctrl-i': 'tab',
+    'ctrl-m': 'enter',
+    'ctrl-[': 'escape',
+    'ctrl-enter': 'enter',
+    'ctrl-shift-enter': 'enter',
+    '<bracketed-paste>': 'paste',
+}
 _NAMED_KEYS = {
     8: 'backspace',
     9: 'tab',
@@ -36,14 +51,15 @@ _NAMED_KEYS = {
 
 def _key_name(key: Keys | str) -> str:
     name = key.value if isinstance(key, Keys) else key
-    name = {
-        'c-m': 'enter',
-        'c-i': 'tab',
-        'c-h': 'backspace',
-        's-tab': 'backtab',
-        '<bracketed-paste>': 'paste',
-    }.get(name, name)
-    return 'ctrl-' + name[2:] if name.startswith('c-') else name
+    if name.startswith('c-'):
+        name = 'ctrl-' + name[2:]
+    return _KEY_ALIASES.get(name, name)
+
+
+def _modifiers(value: str) -> int | None:
+    """Ignore lock state without dropping unsupported modifiers."""
+    modifiers = (int(value) - 1) & ~_LOCK_MODIFIERS
+    return None if modifiers & ~_SUPPORTED_MODIFIERS else modifiers
 
 
 def _modified_key(sequence: str) -> str | None:
@@ -51,8 +67,8 @@ def _modified_key(sequence: str) -> str | None:
     # Known Alt reports become two decoder tokens; leave both on the legacy path.
     if (match := _CSI_KEY.fullmatch(sequence)) and sequence not in ANSI_SEQUENCES:
         code, modifier, suffix = match.groups()
-        modifiers = (int(modifier) - 1) & ~192
-        if modifiers & ~7:
+        modifiers = _modifiers(modifier)
+        if modifiers is None:
             return None
         params = f'{code};{modifiers + 1}' if modifiers else code
         if params == '1' and suffix != '~':
@@ -66,9 +82,8 @@ def _modified_key(sequence: str) -> str | None:
         return None
     code, base_code, modifier, xterm_modifier, xterm_code = match.groups()
     codepoint = int(code or xterm_code)
-    # Ignore Caps Lock and Num Lock, but never drop an unsupported modifier.
-    modifiers = (int(modifier or xterm_modifier or '1') - 1) & ~192
-    if modifiers & ~7:
+    modifiers = _modifiers(modifier or xterm_modifier or '1')
+    if modifiers is None:
         return None
     if modifiers & 4 and codepoint > 127 and base_code:
         # Kitty supplies the layout-independent identity for non-Latin Ctrl keys.
@@ -81,25 +96,15 @@ def _modified_key(sequence: str) -> str | None:
     if name == ' ' and modifiers == 1:
         return name
     prefix = ''.join(label for bit, label in ((4, 'ctrl-'), (2, 'alt-'), (1, 'shift-')) if modifiers & bit)
-    return {
-        'shift-tab': 'backtab',
-        'shift-backspace': 'backspace',
-        'ctrl-backspace': 'backspace',
-        'ctrl-h': 'backspace',
-        'ctrl-i': 'tab',
-        'ctrl-m': 'enter',
-        'ctrl-[': 'escape',
-        'ctrl-enter': 'enter',
-        'ctrl-shift-enter': 'enter',
-    }.get(prefix + name, prefix + name)
+    name = prefix + name
+    return _KEY_ALIASES.get(name, name)
 
 
 class PromptKeys:
-    """Reuse the portable escape/paste decoder while owning input attachment.
+    """Attach prompt-toolkit input and normalize paste, CSI-u, Kitty alternate-key and xterm reports.
 
-    Termflow's read_key currently drops bracketed paste and modified-key data.
-    Keep the existing decoder until those protocols are supported there too.
-    No prompt-toolkit layout, cursor writer or event loop is started.
+    `PromptSurface` scopes xterm's `CSI >4;1m` and Kitty's `CSI >5u` modes.
+    No prompt-toolkit application or renderer is started.
     """
 
     def __init__(
