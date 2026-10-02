@@ -183,6 +183,7 @@ def test_rows_details_and_keys(tmp_path: Path) -> None:
     assert menu.details(MenuItem('stray', value=None)) == ''
     assert menu.details(MenuItem('typed', value=0)) == ''
     assert len(fake.redraws) == 4
+    assert menu.close(fake, alpha).item is alpha
     assert menu.build() is not None
 
 
@@ -247,7 +248,7 @@ def test_filtered_actions_keep_the_query(
         monkeypatch=monkeypatch,
         capsys=capsys,
     )
-    assert result.cancelled
+    assert result.item is not None and result.item.value == 'directory'
     for frame in frames[-5:]:
         assert 'search: directory' in frame and '○ alpha' not in frame
     assert '● directory' in frames[-4] and '● directory' in frames[-3]

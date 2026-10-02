@@ -157,6 +157,10 @@ class PluginMenu(Generic[DepsT]):
         menu.replace_items(self.items())
         return None
 
+    def close(self, menu: Redrawable, item: MenuItem) -> MenuResult:
+        """Shift+Q: close; every change was already applied."""
+        return MenuResult(item=item)
+
     def build(self) -> Menu:
         """Wire rows, details, and keys into a termflow menu."""
 
@@ -166,7 +170,7 @@ class PluginMenu(Generic[DepsT]):
                 # Key handlers only run with matching rows; slash must also recover from no matches.
                 menu.clear_search()
                 return Key.HOME
-            return Key.ESCAPE if key == 'Q' else key
+            return Key.ESCAPE if key == 'Q' and menu.highlighted is None else key
 
         menu = (
             MenuBuilder('Plugins')
@@ -179,6 +183,7 @@ class PluginMenu(Generic[DepsT]):
             .on_key('C', self.configure)
             .on_key('R', self.reload)
             .on_key('D', self.remove)
+            .on_key('Q', self.close)
             .footer_hint(_HINT)
             .key_source(read_key)
             .build()
