@@ -131,7 +131,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
           allowed_non_write_users: "*"
-          allowed_bots: "pydanty"
+          allowed_bots: "pydanty,dependabot"
           claude_args: |
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
             --json-schema '{"type":"object","properties":{"category":{"type":"string"}},"required":["category"]}'
@@ -241,7 +241,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ github.token }}
           allowed_non_write_users: "*"
-          allowed_bots: "pydanty"
+          allowed_bots: "pydanty,dependabot"
           claude_args: |
             --allowedTools "Bash(gh pr view:*)"
             --json-schema '{"type":"object","properties":{"package":{"type":"string","enum":["core","harness","clai2","evals","graph","clai"]}},"required":["package"]}'
@@ -259,7 +259,7 @@ jobs:
             - graph: `pydantic-graph` (`pydantic_graph/`)
             - clai: the original CLI (`clai/`). Its implementation lives in `pydantic_ai_slim/pydantic_ai/_cli/`, so a change there belongs to `clai`.
 
-            Tests and docs belong to the package they cover: `tests/harness/` and `docs/harness/` are harness, `tests/clai2/` is clai2, `tests/evals/` is evals, and so on.
+            Tests and docs belong to the package they cover: `tests/harness/` and `docs/harness/` are harness, except `docs/harness/clai2.md`, which is clai2. `tests/clai2/` is clai2, `tests/test_cli.py` and `docs/cli.md` are clai, `tests/evals/` is evals, and so on.
 
             Pick exactly one. When a PR spans packages, pick the package whose users the change is for, as the title and description state it. Supporting edits in another package (a shared helper, a test fixture, a docs link) do not decide it. When the title and description leave it open, pick the package with the most changed source lines.
 
