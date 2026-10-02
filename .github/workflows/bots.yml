@@ -78,8 +78,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  # Security: The classify job runs the LLM with READ-ONLY permissions and no label API access.
-  # The LLM's output is validated against an allowlist before the apply job takes any write action.
+  # Security: Each classify job runs the LLM with READ-ONLY permissions and no label API access.
+  # The LLM's output is validated against an allowlist before its apply job takes any write action.
   # This prevents prompt injection from adding arbitrary labels (e.g. 'douwebot' to trigger the review job).
   category-classify:
     name: Category Classify
@@ -193,6 +193,127 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
+
+  # The release announcement groups changelog entries by package, so every PR gets exactly one
+  # `pkg:` label. This is its own classify/apply pair rather than a second field on
+  # `category-classify`, so a failure here can never cost a PR its category label, and each
+  # pair skips on its own label.
+  package-classify:
+    name: Package Classify
+    if: github.event.action != 'labeled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      package: ${{ steps.extract.outputs.package }}
+      skip: ${{ steps.check-label.outputs.has_label }}
+    steps:
+      - name: Check if package label already exists
+        id: check-label
+        run: |
+          PACKAGE_LABELS=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json labels --jq '[.labels[].name | select(startswith("pkg:"))] | join(", ")')
+          if [ -n "$PACKAGE_LABELS" ]; then
+            echo "has_label=true" >> "$GITHUB_OUTPUT"
+            echo "PR already has package label: $PACKAGE_LABELS"
+          else
+            echo "has_label=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Checkout repository
+        if: steps.check-label.outputs.has_label == 'false'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install bubblewrap
+        if: steps.check-label.outputs.has_label == 'false'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Classify PR package with Claude Code
+        if: steps.check-label.outputs.has_label == 'false'
+        id: classify
+        uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allowed_non_write_users: "*"
+          allowed_bots: "pydanty"
+          claude_args: |
+            --allowedTools "Bash(gh pr view:*)"
+            --json-schema '{"type":"object","properties":{"package":{"type":"string","enum":["core","harness","clai2","evals","graph","clai"]}},"required":["package"]}'
+          prompt: |
+            Pick the package that PR #${{ github.event.pull_request.number }} in ${{ github.repository }} belongs to. The release announcement lists the PR's changelog entry under that package.
+
+            Run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` for the title and description.
+            Run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json files --jq '.files[] | "\(.additions + .deletions)\t\(.path)"'` for the changed files and their changed-line counts. It lists at most 100 files.
+
+            Packages:
+            - core: `pydantic-ai-slim` (`pydantic_ai_slim/`), the root `pydantic-ai` package, and `examples/`. Repository infrastructure (`.github/`, `scripts/`, root tooling and config) also belongs here.
+            - harness: `pydantic-ai-harness` (`src/pydantic_ai_harness/`)
+            - clai2: `pydantic-clai2` (`src/pydantic_clai2/`)
+            - evals: `pydantic-evals` (`pydantic_evals/`)
+            - graph: `pydantic-graph` (`pydantic_graph/`)
+            - clai: the original CLI (`clai/`). Its implementation lives in `pydantic_ai_slim/pydantic_ai/_cli/`, so a change there belongs to `clai`.
+
+            Tests and docs belong to the package they cover: `tests/harness/` and `docs/harness/` are harness, `tests/clai2/` is clai2, `tests/evals/` is evals, and so on.
+
+            Pick exactly one. When a PR spans packages, pick the package whose users the change is for, as the title and description state it. Supporting edits in another package (a shared helper, a test fixture, a docs link) do not decide it. When the title and description leave it open, pick the package with the most changed source lines.
+
+            Return your choice as JSON with a "package" field set to one of: core, harness, clai2, evals, graph, clai.
+
+      - name: Extract and validate package
+        if: steps.check-label.outputs.has_label == 'false'
+        id: extract
+        run: |
+          PACKAGE=$(echo "$STRUCTURED_OUTPUT" | jq -r .package | tr -d '[:space:]')
+          case "$PACKAGE" in
+            core | harness | clai2 | evals | graph | clai) ;;
+            *)
+              echo "::error::Invalid package '$PACKAGE' from Claude — must be one of: core harness clai2 evals graph clai"
+              exit 1
+              ;;
+          esac
+          echo "package=$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "Classified as: pkg:$PACKAGE"
+        env:
+          STRUCTURED_OUTPUT: ${{ steps.classify.outputs.structured_output }}
+
+  package-apply:
+    name: Package Apply
+    needs: package-classify
+    if: needs.package-classify.outputs.skip != 'true' && needs.package-classify.outputs.package != ''
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Validate and apply package label
+        run: |
+          case "$PACKAGE" in
+            core | harness | clai2 | evals | graph | clai) ;;
+            *)
+              echo "::error::Invalid package '$PACKAGE' — must be one of: core harness clai2 evals graph clai"
+              exit 1
+              ;;
+          esac
+
+          # A label someone added while the classifier ran wins, so the PR keeps exactly one.
+          PACKAGE_LABELS=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels?per_page=100" --jq '[.[].name | select(startswith("pkg:"))] | join(", ")')
+          if [ -n "$PACKAGE_LABELS" ]; then
+            echo "PR gained package label $PACKAGE_LABELS while classifying; leaving it."
+            exit 0
+          fi
+
+          gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels" \
+            --method POST -f "labels[]=pkg:$PACKAGE"
+          echo "Applied label: pkg:$PACKAGE"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: ${{ needs.package-classify.outputs.package }}
 
   review:
     name: douwebot
