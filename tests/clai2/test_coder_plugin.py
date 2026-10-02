@@ -10,6 +10,17 @@ from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import SubAgents
@@ -18,7 +29,7 @@ from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, Cod
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionStart
+from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
 
 
@@ -58,7 +69,10 @@ def coder_host(*, terminal: bool = False, **settings: JsonValue) -> PluginHost[o
 def test_settings_source_validates_saves_and_resets() -> None:
     host = coder_host(sub_agents=False, instructions='Keep this guidance.')
     source = CoderSource(host)
-    sub_agents, folders = source.rows()
+    unrestricted, sub_agents, folders = source.rows()
+    assert source.current(unrestricted) == 'false'
+    assert source.apply(unrestricted, 'true') == 'Saved Unrestricted filesystem.'
+    assert host.settings(CoderSettings).unrestricted_filesystem is True
     assert source.current(sub_agents) == 'false'
     assert source.current(folders) == '[]'
     assert source.problem(folders, '["agents", " bad"]') is not None
@@ -84,9 +98,9 @@ def test_menu_edits_save_only_chosen_settings() -> None:
         save_settings=saved.append,
     )
     source = CoderSource(host)
-    source.apply(source.rows()[0], 'false')
+    source.apply(source.rows()[1], 'false')
     assert saved[-1] == {'unrestricted_filesystem': True, 'sub_agents': False}
-    source.reset(source.rows()[0])
+    source.reset(source.rows()[1])
     assert saved[-1] == {'unrestricted_filesystem': True}
 
 
@@ -108,6 +122,38 @@ async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, me
     monkeypatch.setattr(coder_folders, 'run_coder_flow', run_flow)
     monkeypatch.setattr(coder_plugin, 'run_worker', run_worker)
     assert await plugin.configure() == ('\n'.join(messages) or 'No Coder settings changed.')
+
+
+@pytest.mark.parametrize('unrestricted', [False, True])
+async def test_unrestricted_filesystem_setting_controls_paths_outside_the_project(
+    tmp_path: Path, unrestricted: bool
+) -> None:
+    project, outside = tmp_path / 'project', tmp_path / 'outside.txt'
+    project.mkdir()
+    outside.write_text('reachable-content')
+    settings: dict[str, JsonValue] = {
+        'unrestricted_filesystem': unrestricted,
+        'repo_context': False,
+        'sub_agents': False,
+    }
+    host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings=settings)
+    loaded = load_plugin(CoderPlugin, host)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_file', {'path': str(outside)})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), deps_type=type(None))
+    result = await agent.run('read it', capabilities=[*loaded.capabilities, LocalWorkspace(project)])
+    returns = [
+        str(part.content)
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, (ToolReturnPart, RetryPromptPart))
+    ]
+    assert any('reachable-content' in content for content in returns) is unrestricted
 
 
 @pytest.mark.parametrize('factory', ['pydantic_ai_harness:Coder', 'pydantic_ai_harness.coder:Coder'])

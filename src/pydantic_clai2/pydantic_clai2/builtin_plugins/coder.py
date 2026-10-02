@@ -39,7 +39,9 @@ class CoderSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
     instructions: str | None = Field(default=None, description='Replace the default coding instructions.')
-    unrestricted_filesystem: bool = Field(default=False, description='Allow file tools outside the project root.')
+    unrestricted_filesystem: bool = Field(
+        default=False, description='Let file tools reach any path on this machine, not only the project directory.'
+    )
     workspace: str | None = Field(default=None, description='Deprecated workspace option, retained for saved settings.')
     repo_context: bool = Field(default=True, description='Include repository instructions with coding tools.')
     sub_agents: bool = Field(default=True, description='Enable delegation to sub-agents.')
@@ -81,9 +83,9 @@ class CoderSettings(BaseModel):
 
 
 class CoderSource(Generic[DepsT]):
-    """The two delegation settings, saved through the same validated model."""
+    """File access and delegation settings, saved through the same validated model."""
 
-    title = 'Coder sub-agents'
+    title = 'Coder settings'
 
     def __init__(self, host: PluginHost[DepsT]) -> None:
         self.host = host
@@ -91,6 +93,14 @@ class CoderSource(Generic[DepsT]):
     def rows(self) -> tuple[FieldRow, ...]:
         folders = self.host.settings(CoderSettings).agent_folders
         return (
+            FieldRow(
+                key='unrestricted_filesystem',
+                label='Unrestricted filesystem',
+                description=CoderSettings.model_fields['unrestricted_filesystem'].description or '',
+                default='false',
+                choices=('true', 'false'),
+                allow_custom=False,
+            ),
             FieldRow(
                 key='sub_agents',
                 label='Sub-agents',
@@ -113,7 +123,12 @@ class CoderSource(Generic[DepsT]):
 
     def current(self, row: FieldRow) -> str:
         settings = self.host.settings(CoderSettings)
-        return json.dumps(settings.agent_folders if row.key == 'agent_folders' else settings.sub_agents)
+        values: dict[str, JsonValue] = {
+            'unrestricted_filesystem': settings.unrestricted_filesystem,
+            'sub_agents': settings.sub_agents,
+            'agent_folders': list[JsonValue](settings.agent_folders),
+        }
+        return json.dumps(values[row.key])
 
     def _updated(self, row: FieldRow, raw: str) -> CoderSettings:
         data: dict[str, JsonValue] = self.host.settings(CoderSettings).model_dump(mode='json')
@@ -156,7 +171,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
 
     async def configure(self) -> str:
         if not self.host.console.is_terminal:
-            return 'Configure agent folders from a terminal: /plugins configure coder'
+            return 'Configure Coder from a terminal: /plugins configure coder'
         from .coder_folders import run_coder_flow
 
         messages = await run_worker(lambda: run_coder_flow(CoderSource(self.host)))

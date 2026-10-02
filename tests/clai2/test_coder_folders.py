@@ -19,7 +19,7 @@ from pydantic_clai2.builtin_plugins.coder_folders import DirectoryPicker, Folder
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.ui.menus.field_menu import Runners, save_and_close_item
+from pydantic_clai2.ui.menus.field_menu import FieldRow, Runners, save_and_close_item
 from tests.clai2.menu_script import Script, pick, typed
 
 # One fixed terminal for every test, independent of the host's (CI sets a wide `COLUMNS`).
@@ -97,6 +97,10 @@ def folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard)
     return FolderMenu(CoderSource(host), project=tmp_path)
 
 
+def folders_row(folders: FolderMenu[object]) -> FieldRow:
+    return next(row for row in folders.source.rows() if row.key == 'agent_folders')
+
+
 def test_configure_flow_preserves_order_preferences_and_updates_summary(folders: FolderMenu[object]) -> None:
     for name in ('first', 'replacement'):
         (folders.project / name).mkdir()
@@ -118,7 +122,7 @@ def test_configure_flow_preserves_order_preferences_and_updates_summary(folders:
         'sub_agents': True,
         'agent_folders': ['agents', './replacement'],
     }
-    row = folders.source.rows()[1]
+    row = folders_row(folders)
     assert row.display(folders.source.current(row)) == '2 selected'
 
 
@@ -174,7 +178,7 @@ def test_keyboard_add_edit_remove_and_empty_state(
 def test_rejected_input_does_not_mutate_settings(
     folders: FolderMenu[object], text: str, named: bool, error: str, keyboard: Keyboard
 ) -> None:
-    folders.source.apply(folders.source.rows()[1], '["agents"]')
+    folders.source.apply(folders_row(folders), '["agents"]')
     (folders.project / 'file.txt').write_text('not a directory')
     assert error in (folders.problem(text, named=named, index=None) or '')
     keyboard.press(['enter', 'escape'])
@@ -189,7 +193,7 @@ def test_duplicate_aliases_and_editing_current_entry(folders: FolderMenu[object]
     directory = folders.project / 'shared'
     directory.mkdir()
     (folders.project / 'alias').symlink_to(directory, target_is_directory=True)
-    folders.source.apply(folders.source.rows()[1], '["./shared"]')
+    folders.source.apply(folders_row(folders), '["./shared"]')
     for spelling in ('shared', './shared', str(directory), './alias', './shared/../shared'):
         assert folders.problem(spelling, named=False, index=None) == 'This folder is already in the list.'
         assert folders.problem(spelling, named=False, index=0) is None
@@ -204,7 +208,7 @@ def test_duplicate_aliases_and_editing_current_entry(folders: FolderMenu[object]
 
 
 def test_cancellation_at_each_level_keeps_saved_values(folders: FolderMenu[object], keyboard: Keyboard) -> None:
-    folders.source.apply(folders.source.rows()[1], '["agents"]')
+    folders.source.apply(folders_row(folders), '["agents"]')
     script = Script(
         lists=[
             pick(0),
