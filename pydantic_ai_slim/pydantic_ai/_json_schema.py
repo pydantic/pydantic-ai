@@ -138,7 +138,7 @@ class JsonSchemaTransformer(ABC):
         # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
         # walking them there would reshape subtrees that otherwise pass through unchanged, collapsing their
         # single-member unions and running `transform()` on them, and an inlining transformer would raise `UserError`
-        # on a `$ref` that doesn't resolve into `$defs`.
+        # on a `$ref` it can't resolve.
         type_ = schema.get('type')
         if type_ == 'object':
             schema = self._handle_object(schema)
