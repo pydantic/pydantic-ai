@@ -415,7 +415,7 @@ async def test_an_expired_sign_in_without_a_refresh_token_saved_while_a_refresh_
     endpoint = TokenEndpoint()
     store(tokens(expires_in=0))
     lock_after(lambda: store(tokens(expires_in=0, refresh_token=None)), monkeypatch)
-    with pytest.raises(UserError, match=r'Run /plugins configure example to sign in'):
+    with pytest.raises(UserError, match=r'Not signed in to Example\. Run /plugins configure example to sign in\.'):
         await session(endpoint).token()
     assert endpoint.forms == []
 
