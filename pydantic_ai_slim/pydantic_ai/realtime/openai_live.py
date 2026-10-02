@@ -554,7 +554,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._gave_up = False
         # Live said the session is ending (expired, or lost on its side): the clean close that follows is a drop.
         self._redial_on_close = False
-        # Whether the last reconnect forked the stored session, rather than replaying the history.
+        # Whether the last reconnect carried the conversation over: by fork, or by replaying the history.
         self._restored = False
         # A WebRTC sideband sees the call's output audio too, but the browser is what plays it, so it
         # only drives the turn clock here.
@@ -780,7 +780,6 @@ class OpenAILiveConnection(RealtimeConnection):
                             recoverable=False,
                         )
                         return
-                    # Only a fork has the conversation; a replacement session knows what it was seeded with.
                     yield RealtimeSessionReconnectEvent(state_restored=self._restored)
                     pending = self._start_read()
                     continue
@@ -817,7 +816,8 @@ class OpenAILiveConnection(RealtimeConnection):
             return False
         self._ws = ws
         self._session_id = session_id
-        self._restored = forked
+        # Like the gpt-realtime replay, a replay restores the call once a session has offered its history.
+        self._restored = forked or self._message_history is not None
         self._redial_on_close = False
         self._forget_session_state()
         return True

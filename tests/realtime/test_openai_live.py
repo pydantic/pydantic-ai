@@ -2488,7 +2488,8 @@ async def test_a_replacement_session_is_seeded_with_the_history_so_far(model: Op
             messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
         ) as connection:
             connection.set_message_history(lambda: history)
-            await _first_events(connection, 1)
+            # Like gpt-realtime's replay, a replay of the offered history restores the call.
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
     # A replay has nothing to refuse: the image is left out rather than raising.
     assert json.loads(second.sent[0])['session']['input'] == [
         {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Look at this:'}]}
@@ -2643,7 +2644,7 @@ async def test_a_session_live_refuses_to_fork_is_replayed_instead(model: OpenAIL
             messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
         ) as connection:
             connection.set_message_history(lambda: history)
-            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
     assert urls[1:] == ['wss://api.openai.com/v1/live/sessions/s1/fork', 'wss://api.openai.com/v1/live/sessions']
     replacement = json.loads(sockets[2].sent[0])['session']
     assert replacement['store'] is True

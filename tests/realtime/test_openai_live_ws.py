@@ -609,7 +609,7 @@ async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
     events, answer = await _ask_after_a_drop(model, cassette, pcm, paced=realtime_recording)
 
     reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
-    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=False)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
     first, replacement = _session_starts(cassette)
     assert 'store' not in first and 'store' not in replacement
     assert replacement['input'] == first['input']

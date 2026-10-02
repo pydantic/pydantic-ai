@@ -4881,8 +4881,7 @@ class RealtimeSessionReconnectEvent:
 
     state_restored: bool = False
     """Whether the reconnect carried the conversation through without cutting a turn off, regardless of
-    mechanism — native provider resumption or a local-history replay. A GPT-Live replay is text-only
-    and capped, so it doesn't count as restored.
+    mechanism — native provider resumption or a local-history replay.
 
     `True` means nothing in flight was lost: the provider either resumed the in-flight response itself
     (Gemini Live, xAI Grok Voice) or there was no turn in progress when the connection dropped.
