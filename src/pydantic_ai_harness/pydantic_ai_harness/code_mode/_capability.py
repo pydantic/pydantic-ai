@@ -11,8 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch as _ToolSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
