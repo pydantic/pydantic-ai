@@ -335,12 +335,11 @@ class SessionCore:
         elif isinstance(item, ToolCall):
             self._tool_call(item)
         elif isinstance(item, RealtimeSessionReconnectEvent):
-            # The new connection hears none of what was being said on the old one: a turn still spoken is over.
+            # The new connection hears none of what was being said on the old one: a turn still spoken is over,
+            # with the audio sent for it.
+            for turn_id in [turn_id for turn_id, turn in self._turns.items() if turn.speaking]:
+                self._speech_ended(turn_id)
             self._user_speaking = False
-            for turn in self._turns.values():
-                if turn.speaking:
-                    turn.speaking = False
-                    self._turn_said(turn)
         elif isinstance(item, ConversationItemCreated):
             if item.replayed:
                 # A resumed conversation's replay of what history already has (xAI): nothing in it is new.

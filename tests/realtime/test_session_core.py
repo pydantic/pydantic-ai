@@ -580,6 +580,7 @@ def test_a_repeated_or_replayed_call_is_recorded_once() -> None:
         call,
         call,
         ConversationItemCreated(item_id='item_old', tool_call_id='call_old', replayed=True),
+        ConversationItemCreated(tool_call_id='call_older', replayed=True),
         ConversationItemCreated(item_id='item_new'),
         ToolCall('call_old', tool_name='lookup', args='{}', response_id='r1'),
         said('r1', 'Replayed.', item_id='item_old'),
@@ -603,13 +604,20 @@ def test_a_new_call_whose_id_matches_a_replayed_item_is_recorded() -> None:
 def test_a_turn_still_spoken_when_the_connection_is_replaced_is_over() -> None:
     """xAI added it at speech start; the speech end was lost with the old connection, and the new one won't hear it."""
     session_core = feed(
-        core(input_transcription_enabled=False),
+        core(input_transcription_enabled=False, retain_input_audio=True),
         RealtimeInputSpeechStartEvent(item_id='u1'),
         UserTurnStarted(turn_id='u1'),
         UserTurnEnded(turn_id='u1', still_speaking=True),
+        AudioSent(data=b'\x01\x00'),
+        RealtimeSessionReconnectEvent(state_restored=True),
         RealtimeSessionReconnectEvent(state_restored=True),
         started('r1'),
         said('r1', 'Hm.'),
         ended('r1'),
+        UserTurnStarted(turn_id='u2'),
+        UserTurnEnded(turn_id='u2'),
     )
-    assert summary(session_core.all_messages()) == snapshot(['{user:None}', 'r1 [assistant:Hm.] complete stop'])
+    # It keeps the audio sent for it, which the next turn doesn't inherit.
+    assert summary(session_core.all_messages()) == snapshot(
+        ['{user:None+audio}', 'r1 [assistant:Hm.] complete stop', '{user:None}']
+    )

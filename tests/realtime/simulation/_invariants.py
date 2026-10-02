@@ -482,7 +482,12 @@ class Checker:
             recorded_turns = sum(is_user_speech_request(message) for message in messages)
             self.report(
                 'history.phantom_turn',
-                [(f'history has {recorded_turns} spoken turns, but the provider had {spoken}', {})]
+                [
+                    (
+                        f'history has {recorded_turns} spoken turns, but the provider had {spoken}',
+                        {'extra': recorded_turns - spoken},
+                    )
+                ]
                 if recorded_turns > spoken
                 else [],
             )

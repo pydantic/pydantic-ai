@@ -632,7 +632,10 @@ FRAME_CUT_OFF_BY_CLOSE = Finding(
 
 
 def _provider_reply_before_any_echo(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A response the provider started on its own was read after the input went out, before any of ours was."""
+    """A response the provider started on its own was read after the input went out, before any of ours was.
+
+    When the violation names a response (`history.order`), it is that one.
+    """
     key = violation.context.get('input')
     if not isinstance(key, str) or (input_ := sim.truth.input(key)) is None:  # pragma: lax no cover
         return False
@@ -641,12 +644,13 @@ def _provider_reply_before_any_echo(sim: Simulation, violation: InvariantViolati
     first_echo = min(
         (r.started_read for r in responses if r.trigger == 'create' and r.started_read is not None), default=None
     )
+    named = _context_responses(sim, violation)
     return any(
         response.trigger != 'create'
         and response.started_read is not None
         and response.started_read > issued
         and (first_echo is None or response.started_read < first_echo)
-        for response in responses
+        for response in (responses if named is None else named)
     )
 
 
@@ -723,7 +727,8 @@ UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
     evidence='simulated',
     codes=frozenset({'history.phantom_turn'}),
     providers=frozenset({'openai', 'azure'}),
-    matches=lambda sim, violation: bool(sim.truth.speech_stopped_uncommitted),
+    # No more phantom turns than stops taken back: each of those makes at most one.
+    matches=lambda sim, violation: violation.context.get('extra', 0) <= len(sim.truth.speech_stopped_uncommitted),
 )
 
 
