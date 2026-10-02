@@ -44,7 +44,7 @@ def run(*, splash: Splash | None = None) -> None:
     _validate_args(args, parser)
     try:
         from pydantic_ai.usage import UsageLimits
-        from pydantic_clai2._app import DEFAULT_PLUGINS, chat, create_agent
+        from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
         from pydantic_clai2.commands import config_command, plugins_command
         from pydantic_clai2.config import resolve_settings
@@ -102,7 +102,7 @@ def run(*, splash: Splash | None = None) -> None:
                 usage_limits=UsageLimits(request_limit=settings.request_limit),
                 settings=settings,
                 store=store,
-                builtin_plugins=DEFAULT_PLUGINS,
+                builtin_plugins=DEFAULT_PLUGINS if args.agent else STOCK_PLUGINS,
                 project=project,
                 resume=args.resume,
                 load_plugins=agent is None,

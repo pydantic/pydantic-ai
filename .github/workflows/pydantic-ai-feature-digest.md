@@ -7,7 +7,7 @@ on:
   schedule:
     - cron: '20 9 * * 3'
   workflow_dispatch:
-if: github.repository == 'pydantic/pydantic-ai'
+if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai') }}
 permissions:
   contents: read
   issues: read
@@ -142,8 +142,11 @@ imports:
   - shared/repo-context.md
   - shared/rigor.md
   - shared/engine-minimax.md
+  - shared/provider-health.md
   - shared/pre-steps.md
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 # Pick this week's feature digest
 

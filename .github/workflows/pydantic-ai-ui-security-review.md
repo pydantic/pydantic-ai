@@ -35,7 +35,7 @@ on:
 # only here resolves to empty there, `activation` skips, and `detect` — which the
 # compiler makes depend on `activation` — skips with it, taking the agent down
 # too. That is why this workflow had never once run its agent (#6766 item 7).
-if: ${{ needs.detect.outputs.touched == 'true' }}
+if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.detect.outputs.touched == 'true') }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -52,10 +52,9 @@ tools:
     # PR-scoped surface: read the PR, related issues, repo, and search.
     toolsets: [pull_requests, repos, search, issues]
 safe-outputs:
-  # Failures, noops and missing-tool/data/incomplete reports stay in the run, not in public `[aw]` issues.
-  report-failure-as-issue: false
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
     report-as-issue: false
   missing-tool:
@@ -94,6 +93,7 @@ imports:
   - shared/review-context.md
   - shared/checkout.md
   - shared/engine-minimax.md
+  - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/security-findings.md
@@ -197,6 +197,8 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 <!-- Keeps `detect` in `activation.needs` — see the `if:` comment in the frontmatter.
      UI security surface touched: ${{ needs.detect.outputs.touched }} -->

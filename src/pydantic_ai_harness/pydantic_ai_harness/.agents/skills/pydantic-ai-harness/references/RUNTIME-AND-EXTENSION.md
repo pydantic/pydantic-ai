@@ -383,6 +383,9 @@ or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `Absur
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 
+`ToolCallJudge` is spec-loadable when its model is a string and `tools` is `'all'`, a name list, or a
+metadata match. A live model, predicate selector, and `on_verdict` callback are code-only.
+
 A spec whose `model` is a provider string (`'openai:gpt-5'`) needs that provider's API key when the
 agent is built. In tests, pass `defer_model_check=True` and run under `agent.override(model='test')`.
 
