@@ -17,7 +17,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
-from typing import Concatenate, ParamSpec
+from typing import Concatenate, ParamSpec, TypeVar
 
 import anyio
 from typing_extensions import TypedDict
@@ -51,6 +51,7 @@ from pydantic_ai_harness.filesystem._events import (
 from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, Unreadable, run_ripgrep
 
 _P = ParamSpec('_P')
+_R = TypeVar('_R')
 
 logger = logging.getLogger(__name__)
 
@@ -278,12 +279,12 @@ def _sanitize_recoverable_error(error: BaseException, root: str) -> str:
 
 
 def _recoverable(
-    fn: Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[str]],
-) -> Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[str]]:
+    fn: Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[_R]],
+) -> Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[_R]]:
     """Surface model-correctable tool errors as `ModelRetry`, and workspace refusals as `ToolFailed`."""
 
     @functools.wraps(fn)
-    async def wrapper(self: FileSystemToolset, scope: _Scope, *args: _P.args, **kwargs: _P.kwargs) -> str:
+    async def wrapper(self: FileSystemToolset, scope: _Scope, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
             return await fn(self, scope, *args, **kwargs)
         # Before the recoverable tuple and `OSError`: `WorkspaceReadOnlyError` is a
@@ -594,7 +595,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 f'Unknown filesystem tools: {", ".join(unknown)}. Available: {", ".join(FILE_SYSTEM_TOOL_NAMES)}.'
             )
 
-        registrations: dict[str, Callable[..., Awaitable[str]]] = {
+        registrations: dict[str, Callable[..., Awaitable[str | list[str | BinaryContent]]]] = {
             'read_file': self._read_file_tool,
             'write_file': self._write_file_tool if content_hashes else self._write_file_tool_unhashed,
             'edit_file': self._edit_file_tool if content_hashes else self._edit_file_tool_unhashed,

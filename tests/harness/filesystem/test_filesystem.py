@@ -188,8 +188,9 @@ class FilesystemOnlyWorkspace:
         return await self._local.exists(path)
 
 
-def _reported_hash(result: str) -> str:
+def _reported_hash(result: str | list[str | BinaryContent]) -> str:
     """Extract the content hash a tool reports, from a `[hash:xxxx]` suffix."""
+    assert isinstance(result, str)
     return result.partition('hash:')[2].split()[0].rstrip(']')
 
 
@@ -2781,5 +2782,8 @@ class TestReadFileInARun:
         assert isinstance(request, ModelRequest)
         tool_return = request.parts[0]
         assert isinstance(tool_return, ToolReturnPart)
-        assert isinstance(tool_return.content, list)
-        assert tool_return.content[1] == BinaryContent(data=png, media_type='image/png')
+        content_hash = hashlib.sha256(png).hexdigest()[:12]
+        assert tool_return.content == [
+            f'[chart.png | image/png | {len(png)} bytes | hash:{content_hash}]\n',
+            BinaryContent(data=png, media_type='image/png'),
+        ]
