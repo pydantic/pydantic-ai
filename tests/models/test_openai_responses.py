@@ -17013,9 +17013,11 @@ async def test_openai_responses_function_call_grouping_around_active_tool_search
             },
             {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
             {
-                'type': 'function_call_output',
+                'type': 'tool_search_output',
+                'execution': 'client',
+                'tools': [],
                 'call_id': 'search-a',
-                'output': '{"discovered_tools":[]}',
+                'status': 'completed',
             },
         ]
     )
