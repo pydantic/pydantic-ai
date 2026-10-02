@@ -1705,7 +1705,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
                 if candidate.grounding_metadata:
                     # Supports index into the latest chunk list, which may have arrived in an earlier chunk.
-                    if candidate.grounding_metadata.grounding_chunks:
+                    if candidate.grounding_metadata.grounding_chunks is not None:
                         self._grounding_chunks = candidate.grounding_metadata.grounding_chunks
                     grounding_citations = _map_grounding_citations(
                         [Part(text=text_run.content) for text_run in self._text_runs],
@@ -2097,9 +2097,7 @@ def _map_grounding_source(chunk: GroundingChunk) -> CitationSource | None:
             provider_details={'domain': web.domain} if web.domain else None,
         )
     if (maps := chunk.maps) and maps.uri:
-        details = maps.model_dump(mode='json', exclude_none=True, by_alias=False)
-        for key in ('uri', 'title', 'text'):
-            details.pop(key, None)
+        details = maps.model_dump(mode='json', exclude_none=True, by_alias=False, exclude={'uri', 'title', 'text'})
         return WebCitationSource(
             url=maps.uri,
             title=maps.title,
@@ -2107,34 +2105,31 @@ def _map_grounding_source(chunk: GroundingChunk) -> CitationSource | None:
             provider_details=details or None,
         )
     if (image := chunk.image) and image.source_uri:
-        details = image.model_dump(mode='json', exclude_none=True, by_alias=False)
-        for key in ('source_uri', 'title'):
-            details.pop(key, None)
+        details = image.model_dump(mode='json', exclude_none=True, by_alias=False, exclude={'source_uri', 'title'})
         return WebCitationSource(
             url=image.source_uri,
             title=image.title,
             provider_details=details or None,
         )
     if context := chunk.retrieved_context:
-        details = context.model_dump(mode='json', exclude_none=True, by_alias=False)
+        details = context.model_dump(
+            mode='json', exclude_none=True, by_alias=False, exclude={'text', 'document_name', 'title', 'rag_chunk'}
+        )
+        if context.rag_chunk and (
+            rag_chunk := context.rag_chunk.model_dump(mode='json', exclude_none=True, by_alias=False, exclude={'text'})
+        ):
+            details['rag_chunk'] = rag_chunk
         excerpts = list(
             dict.fromkeys(
                 text for text in (context.text, context.rag_chunk.text if context.rag_chunk else None) if text
             )
         )
-        details.pop('text', None)
-        if isinstance(rag_chunk := details.get('rag_chunk'), dict):
-            rag_chunk_details = cast(dict[str, Any], rag_chunk)
-            rag_chunk_details.pop('text', None)
-            if not rag_chunk_details:
-                details.pop('rag_chunk')
         if any((context.document_name, context.title, excerpts, details)):
             return DocumentCitationSource(
                 document_id=context.document_name,
                 title=context.title,
                 excerpts=excerpts,
-                provider_details={key: value for key, value in details.items() if key not in {'document_name', 'title'}}
-                or None,
+                provider_details=details or None,
             )
     return None
 

@@ -462,9 +462,7 @@ def _map_citation_source(
     excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
     details.pop('title', None)
     details.pop('sourceContent', None)
-    location = citation.get('location')
-    web = location.get('web') if isinstance(location, Mapping) else None
-    if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
+    if url := citation.get('location', {}).get('web', {}).get('url'):
         details.pop('location', None)
         return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
     if not (title or excerpts or details):
