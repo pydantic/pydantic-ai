@@ -8,8 +8,10 @@ see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-Context management is the built-in `compaction` plugin,
-[described below](#compacting-the-conversation).
+`coder` includes its own context management: it clears old tool results as the
+context fills. The fuller built-in `compaction` plugin,
+[described below](#compacting-the-conversation), stays greyed out in `/plugins`
+while `coder` is on, since the two overlap, and takes over when you disable `coder`.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
@@ -1040,7 +1042,8 @@ for that.
 
 ## Compacting the conversation
 
-The built-in `compaction` plugin uses harness's `FallbackCompaction` with
+The built-in `compaction` plugin runs while `coder` is off (`/plugins disable coder`).
+It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
 It protects the most recent 50,000 tokens. `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall

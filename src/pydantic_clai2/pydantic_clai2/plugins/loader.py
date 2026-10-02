@@ -44,6 +44,7 @@ from pydantic_clai2.plugins import (
     collect,
 )
 from pydantic_clai2.plugins._factories import build, import_file, settings_capability
+from pydantic_clai2.plugins.compatibility import INCLUDED, included_by
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
@@ -116,6 +117,8 @@ class PluginEntry(Generic[DepsT]):
     error: str | None = None
     ignored: str | None = None
     """The notice for saved settings this build ignored at the last load, if any."""
+    included_in: str | None = None
+    """The loaded plugin that already includes this one, which keeps it off; see `compatibility.INCLUDED`."""
 
     @property
     def name(self) -> str:
@@ -139,6 +142,8 @@ class PluginEntry(Generic[DepsT]):
     @property
     def state(self) -> str:
         """Human-readable enabled/loaded/failed state."""
+        if self.included_in is not None:
+            return f'included in {self.included_in}'
         if not self.declaration.enabled:
             return 'disabled'
         if self.loaded is not None:
@@ -223,6 +228,13 @@ class PluginLoader(Generic[DepsT]):
         for name, previous in self._entries.items():
             if name not in refreshed and previous.loaded is not None:
                 refreshed[name] = previous
+        includes = {
+            name: _includes(entry.declaration.factory, entry.loaded)
+            for name, entry in refreshed.items()
+            if entry.loaded is not None
+        }
+        for entry in refreshed.values():
+            entry.included_in = included_by(entry.declaration.factory, includes)
         self._entries = refreshed
         return list(refreshed.values())
 
@@ -309,7 +321,7 @@ class PluginLoader(Generic[DepsT]):
 
     def _guarded(self, name: str, capability: AgentCapability[DepsT]) -> AgentCapability[DepsT]:
         built = self._from_settings.get(name)
-        if built is None or capability is not built or _has_hooks(built):
+        if built is None or capability is not built or _binds(built, Hooks):
             return capability
         if name not in self._guards:
             self._guards[name] = PluginGuard[DepsT](built, plugin=name)
@@ -373,7 +385,8 @@ class PluginLoader(Generic[DepsT]):
         if self.enabled:
             self._ensure_plugins_dir()
         for entry in self._registration_order():
-            if entry.declaration.enabled and entry.loaded is None:
+            # Read afresh: a plugin loaded earlier in this loop may include this one.
+            if entry.declaration.enabled and entry.loaded is None and self._entry(entry.name).included_in is None:
                 try:
                     await self.load(entry.name, fresh=fresh)
                 except PluginError as exc:
@@ -387,11 +400,12 @@ class PluginLoader(Generic[DepsT]):
     async def load(self, name: str, *, fresh: bool = False) -> None:
         """Import, build the plugin, collect its contributions, and fire `session_start`.
 
-        A failure leaves nothing registered.
+        A failure leaves nothing registered. Loading a plugin unloads the plugins it includes.
         """
         entry = self._entry(name)
         if entry.loaded is not None:
             return
+        _check_not_included(entry)
         declaration, ignored = self._applied(entry)
         entry.ignored = ignored
 
@@ -433,6 +447,10 @@ class PluginLoader(Generic[DepsT]):
                 raise PluginSettingsError(name, exc) from exc
             raise PluginError(name, exc) from exc
         entry.error = None
+        included = _includes(entry.declaration.factory, loaded)
+        for other in self.entries():
+            if other.loaded is not None and other.declaration.factory in included:
+                await self.unload(other.name)
 
     def _applied(self, entry: PluginEntry[DepsT]) -> tuple[PluginSettings, str | None]:
         """The declaration to load, without saved settings that need features this build lacks, and the notice.
@@ -540,6 +558,7 @@ class PluginLoader(Generic[DepsT]):
     async def enable(self, name: str) -> None:
         """Remember the plugin as enabled and load it now."""
         entry = self._entry(name)
+        _check_not_included(entry)
         _requested('enable', name)
         declaration = entry.declaration.model_copy(update={'enabled': True})
         self._store.save_plugin(declaration, requires=self._requirements(entry))
@@ -557,6 +576,7 @@ class PluginLoader(Generic[DepsT]):
         requires = self._requirements(entry)
         await self.unload(name)
         self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
+        await self._load_released(entry)
 
     async def remove(self, name: str) -> str:
         """Unload the plugin and forget its saved declaration; a shipped declaration comes back as declared."""
@@ -566,15 +586,25 @@ class PluginLoader(Generic[DepsT]):
         await self.unload(name)
         if entry.path is not None and not entry.shipped:
             self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
+            await self._load_released(entry)
             return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
         shipped = self._project.get(name) or self._builtin.get(name)
+        if shipped is not None and shipped.enabled and self._entry(name).included_in is None:
+            await self.load(name)
+        else:
+            await self._load_released(entry)
         if shipped is None:
             return f'Removed {name}.'
-        if shipped.enabled:
-            await self.load(name)
         origin = 'declared by the project' if name in self._project else 'built in'
         return f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.'
+
+    async def _load_released(self, owner: PluginEntry[DepsT]) -> None:
+        """Load the enabled plugins `owner` could include that it no longer keeps off."""
+        included = INCLUDED.get(owner.declaration.factory, {})
+        for entry in self._registration_order():
+            if entry.declaration.factory in included and entry.declaration.enabled and entry.included_in is None:
+                await self.load(entry.name)
 
     async def reload(self, name: str) -> None:
         """Unload, re-import the module, and load again."""
@@ -600,6 +630,8 @@ class PluginLoader(Generic[DepsT]):
             if self._entry(name).declaration.settings != before:
                 await self.unload(name)
                 await self.load(name)
+                # New settings may change what it includes, such as `coder` with `sub_agents` off.
+                await self._load_released(self._entry(name))
 
     def configurable(self, name: str) -> bool:
         """Whether the plugin is loaded and offers a settings menu by overriding `configure`."""
@@ -687,16 +719,34 @@ class PluginLoader(Generic[DepsT]):
         return importlib.reload(module) if fresh else module
 
 
-def _has_hooks(capability: AbstractCapability[DepsT]) -> bool:
-    """Whether any part of `capability` is a `Hooks`, which may gate a run on purpose."""
-    if isinstance(capability, Hooks):
+def _binds(capability: AbstractCapability[DepsT], kind: type[object]) -> bool:
+    """Whether any part of `capability` is a `kind`."""
+    if isinstance(capability, kind):
         return True
     # `apply` does not descend into a wrapper's lone leaf, so look behind every wrapper too.
-    if isinstance(capability, WrapperCapability) and _has_hooks(capability.wrapped):
+    if isinstance(capability, WrapperCapability) and _binds(capability.wrapped, kind):
         return True
     parts: list[AbstractCapability[DepsT]] = []
     capability.apply(parts.append)
-    return any(part is not capability and _has_hooks(part) for part in parts)
+    return any(part is not capability and _binds(part, kind) for part in parts)
+
+
+def _includes(factory: str, loaded: LoadedPlugin[DepsT]) -> frozenset[str]:
+    """The factories a loaded plugin includes, given the capabilities it actually binds."""
+    bound: list[AbstractCapability[DepsT]] = [
+        capability for capability in loaded.capabilities if isinstance(capability, AbstractCapability)
+    ]
+    return frozenset(
+        included
+        for included, kind in INCLUDED.get(factory, {}).items()
+        if kind is None or any(_binds(capability, kind) for capability in bound)
+    )
+
+
+def _check_not_included(entry: PluginEntry[DepsT]) -> None:
+    """Refuse to turn on a plugin that a loaded plugin already includes."""
+    if entry.included_in is not None:
+        raise ValueError(f'{entry.name} is included in {entry.included_in}; disable {entry.included_in} to use it.')
 
 
 def _requested(action: str, name: str) -> None:
