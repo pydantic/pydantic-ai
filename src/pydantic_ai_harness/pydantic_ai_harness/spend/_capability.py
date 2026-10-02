@@ -280,7 +280,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         innermost capability placed after this one still wraps inside it. `InputGuardrail` is
         the one that reaches a billed response before the counter does. List
         `SpendLimits` last among innermost capabilities where that matters; closing it
-        outright is <https://github.com/pydantic/pydantic-ai-harness/issues/534>.
+        outright is <https://github.com/pydantic/pydantic-ai/issues/7177>.
         """
         return CapabilityOrdering(position='innermost')
 
