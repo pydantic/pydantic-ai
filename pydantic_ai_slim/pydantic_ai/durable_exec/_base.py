@@ -13,6 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import replace
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, TypeVar, cast, runtime_checkable
 from weakref import ReferenceType, ref
@@ -261,6 +262,13 @@ def _durable_policies(workspace: Workspace) -> list[tuple[object, ...]]:
 
 def _same_durable_workspace(left: Workspace, right: Workspace) -> bool:
     return workspace_layers(left) == workspace_layers(right) and _durable_policies(left) == _durable_policies(right)
+
+
+def _as_capability(value: object, capability: AbstractCapability[Any]) -> object:
+    """Name `capability` on a `RunContext` argument, the way a durable unit's operation body sees it."""
+    if isinstance(value, RunContext):
+        return replace(cast(RunContext[Any], value), _capability=capability)
+    return value
 
 
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
@@ -668,7 +676,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise RuntimeError('A durable operation capability must have an explicit `id`.')
         key = (capability_id, operation)
         declaration = self._capability_declarations[key]
-        if not self.in_durable_context or in_durable_unit():
+        if not self.in_durable_context:
+            return await bind_declaration_body(declaration, capability)(*args, **kwargs)
+        if in_durable_unit():
+            # The body runs as the capability, as it would in its own unit, so the events it emits
+            # are its own rather than those of the capability whose tool called it.
+            args = tuple(_as_capability(value, capability) for value in args)
+            kwargs = {key: _as_capability(value, capability) for key, value in kwargs.items()}
             return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
         request_context = next(

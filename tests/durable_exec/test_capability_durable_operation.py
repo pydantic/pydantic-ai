@@ -1135,6 +1135,50 @@ async def test_operation_called_from_a_wrapped_tool_runs_inside_the_tool_unit() 
     assert capability.calls == 1
 
 
+class CallsAnotherCapabilitysOperation(AbstractCapability[Any]):
+    id = 'tool_owner'
+
+    def __init__(self, emitter: EmittingOperation) -> None:
+        self.emitter = emitter
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def checkpoint(ctx: RunContext[Any]) -> str:
+            await self.emitter.checkpoint(ctx)
+            return 'done'
+
+        return toolset
+
+
+async def test_operation_run_inside_another_capabilitys_unit_emits_as_its_own_capability() -> None:
+    """Run inline in another capability's tool unit, the operation runs as its own capability, as in its own unit."""
+    observed: list[str | None] = []
+
+    async def observe(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, OperationCheckpointEvent):
+                observed.append(event.capability_id)
+
+    emitter = EmittingOperation()
+    agent = Agent(
+        TestModel(),
+        name='cross_capability_emit',
+        capabilities=[
+            emitter,
+            CallsAnotherCapabilitysOperation(emitter),
+            ProcessEventStream(observe),
+            RecordingDurability(),
+        ],
+    )
+
+    await agent.run('test')
+
+    # Once from `before_run`, outside any unit, and once from the other capability's tool unit.
+    assert observed == ['emitting_operation', 'emitting_operation']
+
+
 @requires_temporal
 def test_wrapped_temporal_durability_registers_capability_operation() -> None:
     agent = Agent(
