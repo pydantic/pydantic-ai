@@ -13,6 +13,9 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from cassetter import RawRequest, RawResponse
 
+from pydantic_ai.realtime import _session as realtime_session  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._core import SessionCore
+
 from .. import cassette_hooks
 from ..conftest import sanitize_filename, try_import
 from .ws_cassettes import ProviderName, RealtimeCassette, patched_ws_connect, realtime_cassette_plan
@@ -161,6 +164,31 @@ def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
         'before_record_request': _zero_sdp_addresses,
         'before_record_response': _scrub_ephemeral_secret,
     }
+
+
+@pytest.fixture(autouse=True)
+def _shadow_core(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Run the new session core in shadow of the current one, and fail on anything the two disagree about.
+
+    Every session over a connection that identifies its responses, turns, and inputs (the OpenAI protocol)
+    builds its history twice; they must match when it closes. A test whose trace the current core gets
+    wrong in a way the new one fixes says so with `@pytest.mark.shadow_divergence(reason)`.
+    """
+    monkeypatch.setattr(realtime_session, '_CORE_MODE', 'shadow')
+    divergences: list[str] = []
+    compare = realtime_session.RealtimeSession._compare_shadow  # pyright: ignore[reportPrivateUsage]
+
+    def recorded(session: realtime_session.RealtimeSession, core: SessionCore) -> None:
+        compare(session, core)
+        divergences.extend(session._shadow_divergences)  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(realtime_session.RealtimeSession, '_compare_shadow', recorded)
+    yield
+    node = cast('pytest.Item', request.node)  # pyright: ignore[reportUnknownMemberType]
+    if node.get_closest_marker('shadow_divergence') is None:
+        assert not divergences, '\n'.join(divergences)
+    else:
+        assert divergences, 'the session cores agree on this trace now: drop its `shadow_divergence` mark'
 
 
 @pytest.fixture(autouse=True)

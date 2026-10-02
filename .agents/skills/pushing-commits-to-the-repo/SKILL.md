@@ -82,11 +82,11 @@ applied automatically — don't set them.
 The repo has two standards reviewers, and they are independent:
 
 - **`CI Review`** runs automatically once the `CI` workflow succeeds on the PR's current head. It
-  owns the `APPROVE`/`REQUEST_CHANGES` verdict and has the more rigorous process — severity scale,
-  sub-agent fan-out, per-finding verification.
+  submits an `APPROVE` or `REQUEST_CHANGES` verdict and has the more rigorous process — severity
+  scale, sub-agent fan-out, per-finding verification.
 - **`douwebot`** runs only when the `douwebot` label is applied, on a stronger model. It posts
-  inline comments and no verdict, and it deletes the label when it finishes, so each application
-  buys exactly one review of the diff as it stands at that moment.
+  inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review, and it deletes the label when
+  it finishes, so each application buys exactly one review of the diff as it stands at that moment.
 
 Applying the label adds a second opinion; it does not suppress or replace `CI Review`.
 
@@ -108,8 +108,8 @@ before handing the PR back or requesting merge:
   `agent_docs/` — a security guard against a PR editing the reviewer's own instructions. The guard
   is skipped for an author with write or admin access on the repo. Don't apply the label to a PR the
   guard covers; the red check is the guard working.
-- **Afterwards, re-enter the loop.** The review posts comments that need the same triage as any
-  other.
+- **Afterwards, re-enter the loop.** The review posts inline comments and a formal verdict that
+  need the same triage as any other review.
 
 ## Before handing the PR back
 

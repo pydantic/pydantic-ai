@@ -1166,3 +1166,27 @@ async def test_map_user_prompt_with_text_content():
 
     assert msg.content[0].text == snapshot('hello')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
     assert msg.content[1].text == snapshot('there')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+async def test_non_json_response_body_raises_model_api_error(allow_model_requests: None, stream: bool) -> None:
+    """A 200 response body, or a streamed chunk, that `huggingface_hub` can't decode as JSON surfaces as `ModelAPIError`.
+
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    error = json.JSONDecodeError('Expecting value', '   ', 3)
+    mock_client = (
+        MockHuggingFace.create_stream_mock([text_chunk('Hello'), error])
+        if stream
+        else MockHuggingFace.create_mock(error)
+    )
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x')))
+    with pytest.raises(ModelAPIError) as exc_info:
+        if stream:
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('Hello')
+
+    assert exc_info.value.__cause__ is error
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

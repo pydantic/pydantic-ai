@@ -3,9 +3,9 @@
 `UsageLimits` in Pydantic AI caps tokens, requests and cost for the duration of
 one run. `SpendLimits` covers what that leaves: periods longer than a run,
 partitioning by tenant or user, and a counter that several worker processes
-share. It prices each response with
-[`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], adds it to
-every configured window, and refuses the next request once a window is spent.
+share. It prices each model response it records with
+[`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], adds it to every
+configured window, and refuses the next request once a window is spent.
 
 The gate is local and immediate. Provider usage APIs and observability backends
 aggregate after the fact and are read by polling, so a number there moves only
@@ -30,7 +30,6 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
-from pydantic_ai_harness.spend._composition import warn_about_inner_wrappers
 from pydantic_ai_harness.spend._events import SpendBudgetStatus, SpendRecordedEvent
 from pydantic_ai_harness.spend._exceptions import SpendLimitExceeded, UnpricedModelError, UnpricedModelWarning
 from pydantic_ai_harness.spend._snapshot import BudgetStatus, SpendSnapshot, Spent, money_precision
@@ -50,7 +49,7 @@ if TYPE_CHECKING:
 
 
 SpendCallback = Callable[[SpendSnapshot], None | Awaitable[None]]
-"""Called after each model response with what it cost and where the budgets stand."""
+"""Called after each response `SpendLimits` records."""
 
 PriceFunc = Callable[[ModelResponse], Decimal | None]
 """Prices a response. Return `None` to fall back to the `genai-prices` registry."""
@@ -78,11 +77,11 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     With no budgets the capability only reports through `SpendRecordedEvent`. Add a
     `Budget` with no ceiling to keep a running total that never blocks.
 
-    What the gate guarantees: no request **starts** after a budget is
-    exhausted. What it does not: that spend stays under the ceiling. The
-    request that crosses the line completes, and concurrent runs can each pass
-    the check before any of them records anything. This is a brake on a runaway
-    loop, not an accounting ledger.
+    Once a recorded response spends a window, `SpendLimits` refuses the next
+    request. It does not guarantee that spend stays under the ceiling: the request
+    that crosses the line completes, and concurrent runs can each pass the check
+    before any of them records anything. This is a brake on a runaway loop, not an
+    accounting ledger.
 
     State lives across runs on purpose, so `for_run` is left alone: a daily
     budget that reset every run would not be a daily budget. Per-run isolation
@@ -162,14 +161,6 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     Instance-level and never reset, matching the capability's own posture that state
     outlives a run: a per-run set would warn again on every run for the same model.
-    """
-
-    _reported_arrangements: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
-    """Capability arrangements already reported by `SpendCompositionWarning`, so each reports once.
-
-    Instance-level and never reset, like `_warned_unpriced`. Keyed on the arrangement rather
-    than being a single flag because `agent.run(capabilities=...)` can put a different chain
-    around this instance on each run, and a flag set by a safe first run would hide the rest.
     """
 
     _store: BatchSpendStore = field(init=False, repr=False, compare=False)
@@ -269,19 +260,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return 'SpendLimits'
 
     def get_ordering(self) -> CapabilityOrdering:
-        """Sit innermost, so the accrual happens as close to the provider call as ordering allows.
-
-        Innermost puts this capability's `wrap_model_request` inside every capability outside
-        that tier, so their wrappers -- and every capability's `after_model_request` -- run
-        outside the accrual and cannot reject a response the counter has not already seen.
-
-        This orders against non-innermost capabilities only. Innermost members are not
-        ordered among themselves, and the one listed later nests further in, so another
-        innermost capability placed after this one still wraps inside it. `InputGuardrail` is
-        the one that reaches a billed response before the counter does. List
-        `SpendLimits` last among innermost capabilities where that matters; closing it
-        outright is <https://github.com/pydantic/pydantic-ai-harness/issues/534>.
-        """
+        """Keep the established innermost placement around the model-request lifecycle."""
         return CapabilityOrdering(position='innermost')
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
@@ -297,19 +276,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Refuse the request if any budget with a ceiling is already spent.
-
-        Also where the arrangement `get_ordering` cannot rule out is reported. The sorted
-        chain is readable from `RunContext.root_capability` from `before_run` onward but not
-        before it: `for_agent` sees only the capabilities the agent was constructed with, and
-        `ctx.root_capability` is still `None` in `for_run`, so neither covers a capability
-        added through `agent.run(capabilities=...)`. `before_run` would serve as well, since
-        the chain is fixed for a run; the read sits here to stay on the request path, beside
-        the accrual it is about. Re-reading per request costs nothing because
-        `_reported_arrangements` makes it idempotent, and keying on the arrangement rather
-        than on having reported is what covers a chain that differs between runs.
-        """
-        warn_about_inner_wrappers(ctx.root_capability, self, self._reported_arrangements)
+        """Refuse the request if any budget with a ceiling is already spent."""
         enforcing = [(budget, key) for budget, key in await self._keyed(ctx) if budget.enforces]
         read = await self._read(list(dict.fromkeys(key for _, key in enforcing)))
         for budget, key in enforcing:
@@ -323,25 +290,42 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Price what the provider returned and add it to every window, before an outer capability can reject it.
+        """Accrue every response the provider billed during the wrapped lifecycle.
 
-        The accrual belongs here rather than in `after_model_request` because
-        `after_model_request` runs outside this chain, once the whole chain has returned.
-        A capability whose own `wrap_model_request` awaits the response and then raises
-        `ModelRetry` sends the run straight to a fresh request, and the response it
-        rejected -- generated, billed, and kept in history -- is never counted. Ordering
-        cannot close that: the rejecting wrapper does not have to be innermost, and one
-        listed *before* this capability still nests outside it.
-
-        Wrapping is also why a request the provider never saw is not charged for.
-        `SkipModelRequest` from an earlier `before_model_request` reaches
-        `after_model_request` with a response the run never paid for; it does not reach
-        `handler`, so nothing accrues here.
+        Core records each billed response on the request context as the model returns it, so
+        this sees a response even when a hook nested inside this wrapper rejects or replaces it,
+        and never sees a response a hook made up without calling the model (a cache hit or
+        `SkipModelRequest`).
         """
-        response = await handler(request_context)
+        usage_response_offset = len(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
+        response: ModelResponse | None = None
+        try:
+            response = await handler(request_context)
+        finally:
+            usage_responses = request_context._usage_responses[usage_response_offset:]  # pyright: ignore[reportPrivateUsage]
+            first_error: Exception | None = None
+            for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset):
+                try:
+                    error = await self._accrue_response(ctx, usage_response, response_index)
+                except Exception as exc:
+                    error = exc
+                if first_error is None:
+                    first_error = error
+            # Only on the success path: pricing-policy and callback errors have never been
+            # able to outrank the request's own exception, and a retryable failure such as
+            # `ModelRetry` must keep propagating so the run retries instead of dying on a
+            # reporting error. The responses are accrued above either way.
+            if first_error is not None and response is not None:
+                raise first_error
+        assert response is not None
+        return response
+
+    async def _accrue_response(
+        self, ctx: RunContext[AgentDepsT], response: ModelResponse, response_index: int
+    ) -> Exception | None:
         usd, priced, price_error = self._price_of(response)
         keyed = await self._keyed(ctx)
-        token = self._dedup_token(ctx, response)
+        token = self._dedup_token(ctx, response, response_index)
         entries: dict[str, SpendEntry] = {}
         for budget, key in keyed:
             # Budgets sharing a name, window, and scope share a counter, which is
@@ -369,6 +353,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             )
         statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
 
+        error: Exception | None = None
         snapshot = SpendSnapshot(
             model=response.model_name,
             usage=response.usage,
@@ -403,9 +388,12 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             )
         )
         if self.on_spend is not None:
-            result = self.on_spend(snapshot)
-            if inspect.isawaitable(result):
-                await result
+            try:
+                result = self.on_spend(snapshot)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                error = exc
 
         if price_error is not None:
             # Raised after the store and `on_spend` have seen the response, for the reason
@@ -413,9 +401,15 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             # otherwise report a broken pricing function as an unknown model. Raising from
             # a wrapper rather than from `after_model_request` does not change that: the
             # accrual is already committed above.
-            raise UserError(f'`SpendLimits.price` {price_error} for a response.')
+            if error is None:
+                error = UserError(f'`SpendLimits.price` {price_error} for a response.')
 
-        if not priced and self.on_unpriced == 'zero' and any(budget.usd is not None for budget in self.budgets):
+        if (
+            not priced
+            and self.on_unpriced == 'zero'
+            and error is None
+            and any(budget.usd is not None for budget in self.budgets)
+        ):
             # Only this combination is silent: the response adds nothing in dollars, so a
             # USD ceiling can never be reached by requests the registry cannot price. A
             # token ceiling still holds, so it is not warned about.
@@ -430,17 +424,17 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     stacklevel=2,
                 )
 
-        if not priced and self.on_unpriced == 'raise':
+        if not priced and self.on_unpriced == 'raise' and error is None:
             # Raised last, after the store is updated and `on_spend` has seen the
             # response. The request happened and its tokens were really spent, so
             # dropping them would leave a token ceiling understating what the
             # model was asked to do, and an audit that skipped exactly the
             # unpriced responses would be missing the ones worth knowing about.
-            raise UnpricedModelError(
+            error = UnpricedModelError(
                 f'No price for model {response.model_name or "<unnamed>"}. Supply `SpendLimits.price`, '
                 "or set on_unpriced='zero' to count the request as free."
             )
-        return response
+        return error
 
     async def status(
         self,
@@ -603,7 +597,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             raise UserError(f"Budget {budget.name!r} uses window='{budget.window}', which needs a run.")
         return store_key(budget, bucket_id, scope_key(budget, ctx, scope))
 
-    def _dedup_token(self, ctx: RunContext[AgentDepsT], response: ModelResponse) -> str:
+    def _dedup_token(self, ctx: RunContext[AgentDepsT], response: ModelResponse, response_index: int) -> str:
         """Identify one response from replay-stable run and response data.
 
         Durable execution journals `_accrue`, so ordinary replay returns its recorded totals
@@ -634,7 +628,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             provider_details=None,
         )
         digest = sha256(ModelMessagesTypeAdapter.dump_json([stable_response])).hexdigest()
-        return delimited(ctx.run_id or '', str(ctx.run_step), digest)
+        token = delimited(ctx.run_id or '', str(ctx.run_step), digest)
+        # Preserve existing single-response replay keys; distinguish subsequent provider responses.
+        return delimited(token, str(response_index)) if response_index else token
 
     def _check(self, budget: Budget[AgentDepsT], spent: Spent, ctx: RunContext[AgentDepsT]) -> None:
         """Raise if `spent` has reached either of the budget's ceilings."""
@@ -689,7 +685,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         was asked to do -- the same reasoning `on_unpriced='raise'` already follows.
         """
         if self.price is not None:
-            supplied = self.price(response)
+            try:
+                supplied = self.price(response)
+            except Exception as exc:
+                return Decimal(0), False, f'raised {type(exc).__name__}: {exc}'
             if supplied is not None:
                 if not supplied.is_finite():
                     # Checked before the comparison below, which raises `InvalidOperation`

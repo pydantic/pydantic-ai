@@ -67,7 +67,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
 
-    from .mock_xai import MockXai
+    from .mock_xai import MockXai, get_grok_text_chunk
     from .test_bedrock import _bedrock_model_with_error  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='provider SDKs not installed')
@@ -784,6 +784,24 @@ async def test_xai_error_category(
     assert {cls for cls in _CATEGORIES if isinstance(exc, cls)} == categories
     for attr, expected in attrs.items():
         assert getattr(exc, attr) == expected, attr
+
+
+async def test_xai_error_category_mid_stream(allow_model_requests: None):
+    """A gRPC error that ends a stream after it started is marked `in_stream`; one before the first response isn't."""
+    error = _rpc_error('UNAVAILABLE', 'Service unavailable')
+    stream = cast(list[Any], [get_grok_text_chunk('Hello', ''), error])
+    model = XaiModel(
+        'grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=MockXai.create_mock_stream([stream]))
+    )
+    with pytest.raises(ModelOverloadedError) as exc_info:
+        async with Agent(model).run_stream('hello') as result:
+            await result.get_output()
+
+    exc = exc_info.value
+    assert isinstance(exc, ModelHTTPError)
+    assert exc.status_code == 503
+    assert exc.in_stream is True
+    assert exc.__cause__ is error
 
 
 async def test_huggingface_error_category(allow_model_requests: None):

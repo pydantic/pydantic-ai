@@ -107,8 +107,11 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
-    """Turn a gRPC error into the framework's HTTP-shaped errors, mapping its status code to the HTTP equivalent."""
+def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[None]:
+    """Turn a gRPC error into the framework's HTTP-shaped errors, mapping its status code to the HTTP equivalent.
+
+    `in_stream` marks an error that ended a stream after it had started sending responses.
+    """
     try:
         yield
     except grpc.RpcError as e:
@@ -120,11 +123,19 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             category = ContextWindowExceeded
         if status_code is not None:
             raise _model_errors.http_error_class(category)(
-                status_code=status_code, model_name=model_name, body=details, provider_error_code=grpc_status.name
+                status_code=status_code,
+                model_name=model_name,
+                body=details,
+                provider_error_code=grpc_status.name,
+                in_stream=in_stream,
             ) from e
         # Every status with a category also has an HTTP equivalent, so this one is unclassified.
         raise ModelAPIError(
-            model_name=model_name, message=details, body=details, provider_error_code=grpc_status.name
+            model_name=model_name,
+            message=details,
+            body=details,
+            provider_error_code=grpc_status.name,
+            in_stream=in_stream,
         ) from e
 
 
@@ -1130,7 +1141,7 @@ class XaiStreamedResponse(StreamedResponse):
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, in_stream=True):
             # Local state to avoid re-emmiting duplicate events.
             encrypted_contents: dict[int, str] = {}
             seen_tool_call_ids: set[str] = set()

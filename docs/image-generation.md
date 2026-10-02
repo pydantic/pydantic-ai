@@ -617,4 +617,6 @@ The direct API and agent image generation serve different use cases:
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | An agent should decide when to generate an image, with native execution when available and a direct image-model fallback otherwise. |
 | [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] | You need direct control over a conversational model provider's native image-generation tool. |
 
-See the [`ImageGeneration` capability](capabilities/image-generation.md) for provider-adaptive agent usage.
+See the [`ImageGeneration` capability](capabilities/image-generation.md) for provider-adaptive agent usage, and
+[Getting the Generated Image](capabilities/image-generation.md#getting-the-generated-image) for reading the image
+back out of an agent run.
