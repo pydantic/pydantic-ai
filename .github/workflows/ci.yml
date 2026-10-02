@@ -45,6 +45,7 @@ jobs:
       content_only: ${{ steps.classify.outputs.content_only }}
       docs_changed: ${{ steps.classify.outputs.docs_changed }}
       clai2_only: ${{ steps.classify.outputs.clai2_only }}
+      clai2_changed: ${{ steps.classify.outputs.clai2_changed }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
       - name: Classify pull request changes
@@ -58,6 +59,7 @@ jobs:
             echo 'content_only=false' >> "$GITHUB_OUTPUT"
             echo 'docs_changed=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
+            echo 'clai2_changed=true' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
 
@@ -130,6 +132,12 @@ jobs:
             esac
           }
 
+          # `test-clai2-clipboard` runs on macOS and Windows runners, so only for a change that reaches
+          # `pydantic-clai2` or the job itself.
+          is_clai2_input() {
+            is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
+          }
+
           is_pyright_input() {
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
@@ -142,6 +150,7 @@ jobs:
           content_only=true
           docs_changed=false
           clai2_only=true
+          clai2_changed=false
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
@@ -157,6 +166,10 @@ jobs:
               { [ -n "$previous_filename" ] && ! is_clai2 "$previous_filename"; }; then
               clai2_only=false
             fi
+            if is_clai2_input "$filename" || \
+              { [ -n "$previous_filename" ] && is_clai2_input "$previous_filename"; }; then
+              clai2_changed=true
+            fi
             if is_pyright_input "$filename" || \
               { [ -n "$previous_filename" ] && is_pyright_input "$previous_filename"; }; then
               pyright_changed=true
@@ -165,6 +178,7 @@ jobs:
           echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
           echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
           echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
+          echo "clai2_changed=$clai2_changed" >> "$GITHUB_OUTPUT"
           echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
 
   quality:
@@ -451,6 +465,7 @@ jobs:
           tests/test_examples.py
           tests/harness/test_docs_installation.py
           tests/test_docs_parity.py
+          tests/test_docs_navigation.py
           tests/harness/test_docs_parity.py
           tests/harness/test_doc_snippets.py
           tests/harness/test_workspace_quickstarts.py
@@ -536,6 +551,20 @@ jobs:
           cache-suffix: ${{ matrix.install.name }}
 
       - run: mkdir .coverage
+
+      # Every test install includes the `dev` group, whose `mongomock-motor` pulls in PyMongo, so only
+      # this install catches a module that imports `pymongo` (the `mongodb` extra) eagerly instead of
+      # behind its lazy `__getattr__`. It runs before `uv sync --only-dev`, which removes it again.
+      - name: import pydantic-ai-harness without extras or dependency groups
+        if: matrix.install.name == 'pydantic-ai-harness'
+        run: |
+          uv sync --package pydantic-ai-harness --no-default-groups
+          # Fail if a base dependency pulls PyMongo back in, rather than pass while testing nothing.
+          uv run --no-sync python -c "
+          import importlib.util
+          assert importlib.util.find_spec('pymongo') is None, 'the base install must not include pymongo'
+          import pydantic_ai_harness, pydantic_ai_harness.media, pydantic_ai_harness.step_persistence
+          "
 
       - run: uv sync --only-dev
 
@@ -1070,6 +1099,48 @@ jobs:
         env:
           PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
 
+  # CLAI2 pastes images through Pillow's native macOS and Windows clipboard readers and through
+  # `xclip` on Linux. Every other job runs on Linux and skips the opt-in native clipboard test, which
+  # replaces the system clipboard: safe here, where each runner's clipboard belongs to this job alone.
+  test-clai2-clipboard:
+    name: test clai2 clipboard on ${{ matrix.os }}
+    needs: classify
+    if: needs.classify.outputs.clai2_changed == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      CI: true
+      CLAI_TEST_CLIPBOARD: "1"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: clai2-clipboard
+
+      - run: uv sync --only-dev
+
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xclip xvfb
+
+      - name: run tests
+        shell: bash
+        run: |
+          tests=(tests/clai2/test_image_input.py tests/clai2/test_image_clipboard_native.py)
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a uv run --package pydantic-clai2 pytest "${tests[@]}"
+          else
+            uv run --package pydantic-clai2 pytest "${tests[@]}"
+          fi
+
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
@@ -1351,6 +1422,7 @@ jobs:
       - test-examples
       - test-fastmcp-4
       - test-harness-browser-use
+      - test-clai2-clipboard
       - harness-integration-changes
       - harness-localstack-integration
       - harness-mongodb-integration
@@ -1369,21 +1441,22 @@ jobs:
           # non-test content. Workflow and configuration changes keep the full test matrix.
           # Each reduced path must run its selected checks.
           # The harness integration jobs run only when their paths change (always on tags), and
-          # LocalStack also skips where its secret is unreadable.
+          # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
+          # a change reaches `pydantic-clai2` (always on pushes and tags).
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
               && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

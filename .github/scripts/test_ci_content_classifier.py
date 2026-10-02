@@ -226,6 +226,7 @@ def test_incomplete_pr_file_list_defaults_to_full_ci(
         'content_only': 'false',
         'docs_changed': 'false',
         'clai2_only': 'false',
+        'clai2_changed': 'true',
         'pyright_changed': 'true',
     }
 
@@ -237,8 +238,28 @@ def test_non_pr_events_keep_full_ci_defaults(tmp_path: Path):
         'content_only': 'false',
         'docs_changed': 'false',
         'clai2_only': 'false',
+        'clai2_changed': 'true',
         'pyright_changed': 'true',
     }
+
+
+@pytest.mark.parametrize(
+    ('changed_files', 'clai2_changed'),
+    [
+        ([('src/pydantic_clai2/pydantic_clai2/ui/prompt/image_input.py', '')], 'true'),
+        ([('tests/clai2/test_image_input.py', '')], 'true'),
+        ([('.github/workflows/ci.yml', '')], 'true'),
+        ([('src/pydantic_ai_harness/pydantic_ai_harness/media/__init__.py', '')], 'false'),
+        ([('docs/agent.md', '')], 'false'),
+        ([('src/code.py', 'src/pydantic_clai2/pydantic_clai2/code.py')], 'true'),
+    ],
+)
+def test_clai2_clipboard_runs_only_for_clai2_changes(
+    tmp_path: Path, changed_files: list[tuple[str, str]], clai2_changed: str
+):
+    outputs = _classify(tmp_path, changed_files)
+
+    assert outputs['clai2_changed'] == clai2_changed
 
 
 @pytest.mark.parametrize(
@@ -338,6 +359,7 @@ def test_docs_checks_cover_harness_readmes():
         'tests/test_examples.py',
         'tests/harness/test_docs_installation.py',
         'tests/test_docs_parity.py',
+        'tests/test_docs_navigation.py',
         'tests/harness/test_docs_parity.py',
         'tests/harness/test_doc_snippets.py',
         'tests/harness/test_workspace_quickstarts.py',
@@ -364,3 +386,11 @@ def test_aggregate_requires_the_selected_lightweight_job():
     assert {'docs-only', 'content-checks'} <= clai2_skips
     assert {'docs-only', 'content-checks'} <= tag_skips
     assert {'docs-only', 'content-checks'} <= default_skips
+    assert 'test-clai2-clipboard' in check['needs']
+    assert 'test-clai2-clipboard' not in clai2_skips | tag_skips
+
+
+def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
+    job = CONDITIONAL_JOB_ADAPTER.validate_python(_workflow()['jobs']['test-clai2-clipboard'])
+
+    assert job['if'] == "needs.classify.outputs.clai2_changed == 'true'"
