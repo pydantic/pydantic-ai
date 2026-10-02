@@ -737,6 +737,7 @@ def test_inline_defs_recursive_json_pointer_ref_raises(schema: dict[str, Any], r
         '#/properties/t/prefixItems/01',
         '#/properties/t/prefixItems/\u0661',
         '#/required/\u00b2',
+        pytest.param('#/properties/t/prefixItems/' + '1' * 4301, id='index-past-int-digit-limit'),
         '#/required/0',
         '#/$defs/Missing',
     ],
@@ -745,7 +746,8 @@ def test_inline_defs_dangling_ref_raises(ref: str):
     """A `$ref` that resolves to no schema object raises rather than inlining something else.
 
     RFC 6901 array indexes are ASCII digits without a leading zero. Under a looser digit check, `01` and an
-    Arabic-Indic `1` would reach `prefixItems[1]`, and a superscript `2` passes `str.isdigit()` but crashes `int()`.
+    Arabic-Indic `1` would reach `prefixItems[1]`, and a superscript `2` passes `str.isdigit()` but crashes `int()`,
+    as does an index longer than Python's integer string conversion limit.
     Unit test: the walker raises before any request is built.
     """
     schema = {

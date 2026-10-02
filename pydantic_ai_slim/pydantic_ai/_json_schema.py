@@ -13,9 +13,6 @@ from .exceptions import UserError
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
-_JSON_POINTER_ARRAY_INDEX = re.compile(r'0|[1-9][0-9]*')
-"""An RFC 6901 array index: ASCII digits without a leading zero."""
-
 
 class UseEnumMemberDocstrings:
     """Mix into an `Enum` to describe each of its members by the docstring written under it.
@@ -182,7 +179,8 @@ class JsonSchemaTransformer(ABC):
                 token = token.replace('~1', '/').replace('~0', '~')
                 if isinstance(node, dict):
                     node = node.get(token)
-                elif isinstance(node, list) and _JSON_POINTER_ARRAY_INDEX.fullmatch(token) and int(token) < len(node):
+                elif isinstance(node, list) and token in map(str, range(len(node))):
+                    # An RFC 6901 array index is written in canonical decimal: ASCII digits, no leading zero.
                     node = node[int(token)]
                 else:
                     node = None
