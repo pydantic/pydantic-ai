@@ -41,11 +41,16 @@ Use one fenced `diff` tree from the public entry point to the changed observable
 - Keep the shared caller prefix unmarked. Mark only diverging nodes, relevant arguments, or results.
 - Target 12 content lines inside the fence. Never exceed 20; collapse secondary branches instead.
 
-Apply a label — the repo triages and filters by them. Fetch the real list first with
-`gh label list --limit 100`, because the set changes and a guessed label silently fails to
-apply. Pick the one naming what the PR *is* (`bug`, `feature`, `docs`, `chore`, `refactor`) and
-add a topic label (`anthropic`, `MCP`, `evals`, …) where one fits:
-`gh pr edit <number> --add-label <label>`.
+Apply labels — the repo triages and filters by them. Fetch the real list first with
+`gh label list --limit 500`, because the set changes and a guessed label silently fails to
+apply. Add each label with `gh pr edit <number> --add-label <label>`:
+
+- **Kind** — one label naming what the PR *is*: `bug`, `feature`, `docs`, `chore` or `refactor`.
+- **Package** — exactly one of `pkg:core`, `pkg:harness`, `pkg:clai2`, `pkg:evals`, `pkg:graph`
+  and `pkg:clai`. The release announcement groups PRs by package. Each label's description lists
+  its paths. Tests and docs count toward the package they cover. Repository infrastructure is
+  `pkg:core`. When the PR spans packages, pick the package whose users the change is for.
+- **Topic** — a topic label (`anthropic`, `MCP`, `openai`, …) where one fits.
 
 Labelling needs triage permission on the repo (Pydantic team members and their agents). If it
 fails, quote the actual error rather than concluding you lack permission. Size labels are
