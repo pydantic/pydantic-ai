@@ -25,9 +25,6 @@ their initialization contributes to startup time.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
-Extra packages installed with `--with` must be added again after `/update`.
-See [Updating](README.md#updating) for how CLAI installs updates.
-
 ## Connect MCP servers
 
 `/mcp` is the front door for MCP servers, modelled on Code Puppy's `/mcp`. The
@@ -1540,6 +1537,9 @@ the extra and set the key, then add the class by name:
 pip install 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
+
+With `uv tool`, extra packages installed using `--with` must be added again after
+`/update`. See [Updating](README.md#updating) for how CLAI installs updates.
 
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'

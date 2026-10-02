@@ -186,11 +186,13 @@ def test_archive_overrides_preserve_declared_extras() -> None:
         requirement.name: requirement.extras
         for requirement in map(Requirement, Update(channel='bleeding', target=NEWER).overrides().splitlines())
     }
-    requirements = metadata.requires('pydantic-clai2')
-    assert requirements is not None
-    for requirement in map(Requirement, requirements):
-        if requirement.name in overrides and (requirement.marker is None or requirement.marker.evaluate()):
-            assert overrides[requirement.name] == requirement.extras
+    # Graph is a transitive dependency, so read each overridden package's requirements.
+    declared_extras: dict[str, set[str]] = {}
+    for name in overrides:
+        for requirement in map(Requirement, metadata.requires(name) or []):
+            if requirement.name in overrides and (requirement.marker is None or requirement.marker.evaluate()):
+                declared_extras.setdefault(requirement.name, set()).update(requirement.extras)
+    assert declared_extras == {name: extras for name, extras in overrides.items() if name != 'pydantic-clai2'}
 
 
 def _updates(
