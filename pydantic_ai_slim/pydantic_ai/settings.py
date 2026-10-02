@@ -480,7 +480,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (inline documents and Web Fetch)
+    * Anthropic (documents and Web Fetch)
     * Bedrock (TXT and PDF document inputs)
     * xAI (inline citations)
 

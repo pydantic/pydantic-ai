@@ -456,7 +456,7 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 
 def _map_citation_source(
     citation: CitationOutputTypeDef | CitationsDeltaTypeDef,
-) -> WebCitationSource | DocumentCitationSource:
+) -> WebCitationSource | DocumentCitationSource | None:
     details = dict(citation)
     title = citation.get('title')
     excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
@@ -467,13 +467,15 @@ def _map_citation_source(
     if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
         details.pop('location', None)
         return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
+    if not (title or excerpts or details):
+        return None
     return DocumentCitationSource(title=title, excerpts=excerpts, provider_details=details or None)
 
 
 def _map_citations(
     citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], anchor: ContentCitationAnchor | None
 ) -> list[Citation] | None:
-    sources = [_map_citation_source(citation) for citation in citations]
+    sources = [source for citation in citations if (source := _map_citation_source(citation))]
     return [Citation(sources=sources, anchor=anchor)] if sources else None
 
 
