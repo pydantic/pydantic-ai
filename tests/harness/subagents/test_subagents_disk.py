@@ -165,12 +165,12 @@ class TestDiskLoading:
             assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
 
     async def test_default_warns_about_definitions_in_its_own_workspace(self, tmp_path: Path) -> None:
-        # The capability's own workspace is checked instead of the run's, which has none here.
-        _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
-        cap: SubAgents[object] = SubAgents(workspace=LocalWorkspaceBackend(tmp_path))
+        _write_agent(tmp_path / 'app' / '.agents' / 'agents', 'planner.md', 'Plan.')
+        (tmp_path / 'run').mkdir()
+        cap: SubAgents[object] = SubAgents(workspace=LocalWorkspaceBackend(tmp_path / 'app'))
         with pytest.warns(HarnessDeprecationWarning, match='now defaults to `agent_folders=None`') as record:
-            assert await _listing(cap, None) is None
-        assert str(tmp_path / '.agents' / 'agents') in str(record[0].message)
+            assert await _listing(cap, LocalWorkspaceBackend(tmp_path / 'run')) is None
+        assert str(tmp_path / 'app' / '.agents' / 'agents') in str(record[0].message)
 
     async def test_loads_the_conventional_folder_when_requested(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
