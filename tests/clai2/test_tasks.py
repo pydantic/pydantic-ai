@@ -44,9 +44,9 @@ from pydantic_clai2.ui.menus.task_menu import TaskDetail, TaskMenu, open_tasks, 
 from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
-def task(*, task_id: str = 'a' * 32, parent_id: str | None = None) -> DelegationTask:
+def task(*, task_id: str = 'a' * 32, parent_id: str | None = None, conversation_id: str = 'root') -> DelegationTask:
     return DelegationTask(
-        id=task_id, parent_id=parent_id, agent_name='worker', prompt='inspect', conversation_id='root'
+        id=task_id, parent_id=parent_id, agent_name='worker', prompt='inspect', conversation_id=conversation_id
     )
 
 
@@ -419,9 +419,8 @@ async def test_task_commands_and_plugin_lifetime(tmp_path: Path) -> None:
     from prompt_toolkit.history import InMemoryHistory
 
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
-    from tests.clai2.test_forks import Model, shell_for
 
-    shell = shell_for(tmp_path, Model(), io.StringIO())
+    shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     assert shell.tasks.owner.directory == tmp_path / 'sessions.db.tasks'
     record = task()
     record.conversation_id = shell.session.summary.id
@@ -723,7 +722,6 @@ async def test_consumed_background_report_does_not_start_another_turn(
     from prompt_toolkit.output import DummyOutput
 
     from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
-    from tests.clai2.test_forks import Model as ForkModel, shell_for
 
     shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     shell.console = Console(file=io.StringIO(), force_terminal=True, width=100, height=24)

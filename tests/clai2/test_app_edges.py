@@ -21,7 +21,6 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_shell, create_stock_agent
 from pydantic_clai2.auth import CodexAuth
@@ -36,6 +35,7 @@ from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settin
 from pydantic_clai2.ui.prompt.live_prompt import PromptWakeup
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.menu_script import Script, pick, typed
+from tests.clai2.test_tasks import task
 
 PromptT = TypeVar('PromptT')
 
@@ -115,10 +115,6 @@ def stock_shell(tmp_path: Path, output: io.StringIO, model: FunctionModel | None
     )
 
 
-def delegated_task(conversation_id: str) -> DelegationTask:
-    return DelegationTask(id='a' * 32, agent_name='worker', prompt='inspect', conversation_id=conversation_id)
-
-
 async def test_plugin_commands_wait_for_a_running_delegated_task(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -126,7 +122,7 @@ async def test_plugin_commands_wait_for_a_running_delegated_task(
     inputs(monkeypatch, ['/plugins list', '/exit'])
     output = io.StringIO()
     shell = stock_shell(tmp_path, output)
-    child = delegated_task(shell.session.summary.id)
+    child = task(conversation_id=shell.session.summary.id)
     shell.tasks.owner.records[child.id] = child
     assert await shell.run() == 'exit'
     assert output.getvalue().endswith(
@@ -148,13 +144,16 @@ async def test_double_interrupt_during_a_background_report_turn_exits(
     inputs(monkeypatch, [PromptWakeup()])
     output = io.StringIO()
     shell = stock_shell(tmp_path, output, FunctionModel(stream_function=stream))
-    report = delegated_task(shell.session.summary.id)
+    conversation = shell.session.summary.id
+    report = task(conversation_id=conversation)
     report.background, report.status, report.outcome, report.output = True, 'finished', 'ok', 'child result'
-    shell.tasks.owner.records[report.id] = report
+    earlier = task(task_id='b' * 32, conversation_id=conversation)
+    earlier.status, earlier.outcome = 'finished', 'cancelled'
+    shell.tasks.owner.records.update({report.id: report, earlier.id: earlier})
     assert await shell.run() == 'exit'
     assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
-    # The interrupt stops only children the turn started, not the settled report it was reading.
-    assert not report.user_stopped
+    # The interrupt stops only children this turn started; one an earlier turn left cancelled stays resumable.
+    assert not earlier.user_stopped
 
 
 async def test_model_string_and_non_command_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
