@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -155,6 +155,88 @@ def _map_citations(citations: Sequence[BetaTextCitation] | None) -> list[Citatio
     return result or None
 
 
+def _map_citation_for_replay(citation: Citation, document_texts: list[str | None]) -> BetaTextCitationParam | None:
+    """Rebuild an Anthropic citation for message history, or return `None` to send the text without it.
+
+    `document_texts` holds the text of each document block in the request, in Anthropic's document index order, or
+    `None` for documents that aren't plain text. A character citation is only rebuilt if its range still selects its
+    excerpt from that document.
+    """
+    if citation.anchor is not None or len(citation.sources) != 1:
+        return None
+    source = citation.sources[0]
+
+    if isinstance(source, WebCitationSource):
+        encrypted_index = (citation.provider_details or {}).get('encrypted_index')
+        if not isinstance(encrypted_index, str) or len(source.excerpts) > 1:
+            return None
+        return BetaCitationWebSearchResultLocationParam(
+            type='web_search_result_location',
+            url=source.url,
+            title=source.title,
+            # Anthropic can return an empty `cited_text`, which is kept as no excerpt.
+            cited_text=source.excerpts[0] if source.excerpts else '',
+            encrypted_index=encrypted_index,
+        )
+
+    if len(source.excerpts) != 1:
+        return None
+    cited_text = source.excerpts[0]
+    details = source.provider_details or {}
+    document_index = details.get('document_index')
+    start = details.get('start_char_index')
+    end = details.get('end_char_index')
+    if (
+        details.get('type') != 'char_location'
+        or not isinstance(document_index, int)
+        or not isinstance(start, int)
+        or not isinstance(end, int)
+        or not 0 <= document_index < len(document_texts)
+    ):
+        return None
+    document_text = document_texts[document_index]
+    if document_text is None or not 0 <= start < end or document_text[start:end] != cited_text:
+        return None
+    return BetaCitationCharLocationParam(
+        type='char_location',
+        cited_text=cited_text,
+        document_index=document_index,
+        document_title=source.title,
+        start_char_index=start,
+        end_char_index=end,
+    )
+
+
+def _citation_document_texts(messages: Sequence[BetaMessageParam]) -> list[str | None]:
+    """Return the text of each document in `messages` in Anthropic's document index order.
+
+    The text is `None` for documents that aren't plain text or don't have citations enabled. Anthropic counts every
+    document block in the request, across all messages and including those in tool results. If this numbering is ever
+    wrong, the cited text no longer matches and the citation is sent as plain text.
+    """
+    result: list[str | None] = []
+
+    def add_documents(
+        blocks: str | Iterable[BetaContentBlockParam] | Iterable[beta_tool_result_block_param.Content],
+    ) -> None:
+        if isinstance(blocks, str):
+            return
+        # The SDK also allows response content block models here, which are never documents.
+        for block in (block for block in blocks if isinstance(block, dict)):
+            if block['type'] == 'tool_result':
+                add_documents(block.get('content', ''))
+            elif block['type'] == 'document':
+                source, citations = block['source'], block.get('citations')
+                if source['type'] == 'text' and citations is not None and citations.get('enabled'):
+                    result.append(source['data'])
+                else:
+                    result.append(None)
+
+    for message in messages:
+        add_documents(message['content'])
+    return result
+
+
 def _with_document_citations(
     block: BetaRequestDocumentBlockParam, include_citations: bool
 ) -> BetaRequestDocumentBlockParam:
@@ -216,11 +298,13 @@ try:
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
         BetaCitationCharLocation,
+        BetaCitationCharLocationParam,
         BetaCitationContentBlockLocation,
         BetaCitationPageLocation,
         BetaCitationsConfigParamParam,
         BetaCitationsDelta,
         BetaCitationsWebSearchResultLocation,
+        BetaCitationWebSearchResultLocationParam,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
         BetaCodeExecutionToolResultBlock,
@@ -274,6 +358,7 @@ try:
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextCitation,
+        BetaTextCitationParam,
         BetaTextDelta,
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
@@ -2445,7 +2530,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
-                            assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+                            citations: list[BetaTextCitationParam] = []
+                            if (
+                                response_part.citations
+                                and (response_part.provider_name or m.provider_name) == self.system
+                            ):
+                                document_texts = _citation_document_texts(anthropic_messages)
+                                citations = [
+                                    param
+                                    for citation in response_part.citations
+                                    if (param := _map_citation_for_replay(citation, document_texts))
+                                ]
+                            text_block = BetaTextBlockParam(text=response_part.content, type='text')
+                            if citations:
+                                text_block['citations'] = citations
+                            assistant_content_params.append(text_block)
                     elif isinstance(response_part, ToolCallPart):
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),

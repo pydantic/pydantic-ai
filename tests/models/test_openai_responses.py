@@ -31,6 +31,7 @@ from pydantic_ai import (
     ImageUrl,
     MarkerCitationAnchor,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -94,6 +95,7 @@ from ..conftest import (
     try_import,
 )
 from .citation_utils import IsCitationList, citations_from_messages
+from .conftest import json_objects
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -205,6 +207,117 @@ def test_openai_invalid_url_citation_range_is_unanchored():
     [part] = result.parts
     assert isinstance(part, TextPart)
     assert part.citations == [Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])]
+
+
+def _responses_history_with_citations(provider_name: str) -> list[ModelMessage]:
+    """Message history as it comes back from JSON storage, with a cited answer."""
+    return ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(parts=[UserPromptPart('Research the topic.')]),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'The source supports this claim.',
+                            id='msg-historical',
+                            provider_name=provider_name,
+                            citations=[
+                                Citation(
+                                    sources=[WebCitationSource(url='https://example.com/source', title='Source')],
+                                    anchor=MarkerCitationAnchor(start=0, end=10),
+                                ),
+                                Citation(
+                                    sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')],
+                                    provider_details={'index': 3},
+                                ),
+                                # Not replayed: the anchor is past the end of the text, the citation has several
+                                # sources, or the file citation has no filename or index.
+                                Citation(
+                                    sources=[WebCitationSource(url='https://example.com/other', title='Other')],
+                                    anchor=MarkerCitationAnchor(start=20, end=40),
+                                ),
+                                Citation(
+                                    sources=[
+                                        WebCitationSource(url='https://example.com/one', title='One'),
+                                        WebCitationSource(url='https://example.com/two', title='Two'),
+                                    ],
+                                    anchor=MarkerCitationAnchor(start=0, end=10),
+                                ),
+                                Citation(
+                                    sources=[DocumentCitationSource(document_id='file-123')],
+                                    provider_details={'index': 3},
+                                ),
+                                Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')]),
+                            ],
+                        )
+                    ],
+                    provider_name=provider_name,
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+
+async def test_openai_responses_replays_own_citations(allow_model_requests: None):
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        _responses_history_with_citations('openai'),
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'id': 'msg-historical',
+            'content': [
+                {
+                    'text': 'The source supports this claim.',
+                    'type': 'output_text',
+                    'annotations': [
+                        {
+                            'type': 'url_citation',
+                            'url': 'https://example.com/source',
+                            'title': 'Source',
+                            'start_index': 0,
+                            'end_index': 10,
+                        },
+                        {'type': 'file_citation', 'file_id': 'file-123', 'filename': 'report.pdf', 'index': 3},
+                    ],
+                }
+            ],
+            'type': 'message',
+            'status': 'completed',
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ('provider_name', 'send_item_ids'),
+    [
+        pytest.param('openrouter', True, id='other-provider'),
+        pytest.param('openai', False, id='item-ids-not-sent'),
+    ],
+)
+async def test_openai_responses_sends_citations_as_text_without_item_id(
+    allow_model_requests: None, provider_name: str, send_item_ids: bool
+):
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        _responses_history_with_citations(provider_name),
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=send_item_ids),
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'][1] == {
+        'role': 'assistant',
+        'content': 'The source supports this claim.',
+    }
 
 
 async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):
@@ -13169,6 +13282,73 @@ async def test_openai_responses_model_file_search_tool_stream(
             ]
         )
 
+    finally:
+        await _cleanup_openai_resources(file, vector_store, async_client)
+
+
+async def test_openai_responses_file_citation_context_replay(
+    tmp_path: Path, allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Responses accepts a replayed file annotation, but the next model cannot read its filename."""
+    async_client = AsyncOpenAI(api_key=openai_api_key, http_client=request_capture.client)
+    test_file_path = tmp_path / 'citation-source.txt'
+    test_file_path.write_text('The return window is thirty days from purchase.')
+
+    file = None
+    vector_store = None
+    try:
+        file = await async_client.files.create(file=test_file_path, purpose='assistants')
+        vector_store = await async_client.vector_stores.create(name='citation-context-replay')
+        await async_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
+
+        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=async_client))
+        settings = OpenAIResponsesModelSettings(openai_send_reasoning_ids=True)
+        first_result = await Agent(
+            model,
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[vector_store.id]))],
+            model_settings=settings,
+        ).run('According to the file, what is the return window? Answer in one sentence without naming the file.')
+
+        [citation] = citations_from_messages(first_result.all_messages())
+        [source] = citation.sources
+        assert isinstance(source, DocumentCitationSource)
+        assert source.document_id == file.id
+        assert source.title == test_file_path.name
+
+        history = ModelMessagesTypeAdapter.validate_json(
+            ModelMessagesTypeAdapter.dump_json(first_result.all_messages())
+        )
+        second_result = await Agent(model, model_settings=settings).run(
+            'Do not search again. Based only on the structured file citation attached to the previous assistant '
+            'message, reply with the exact cited filename. If it is unavailable, reply exactly UNAVAILABLE.',
+            message_history=history,
+        )
+
+        second_request = request_capture.bodies('/responses')[-1]
+        [prior_assistant] = [item for item in json_objects(second_request['input']) if item.get('role') == 'assistant']
+        assert prior_assistant == snapshot(
+            {
+                'id': IsStr(),
+                'type': 'message',
+                'role': 'assistant',
+                'status': 'completed',
+                'content': [
+                    {
+                        'type': 'output_text',
+                        'text': 'The return window is thirty days from purchase.',
+                        'annotations': [
+                            {
+                                'type': 'file_citation',
+                                'file_id': IsStr(),
+                                'filename': 'citation-source.txt',
+                                'index': IsInt(),
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        assert second_result.output == snapshot('UNAVAILABLE')
     finally:
         await _cleanup_openai_resources(file, vector_store, async_client)
 

@@ -2064,6 +2064,38 @@ def _map_responses_citations(
     return citations or None
 
 
+def _map_responses_citations_for_replay(
+    citations: list[Citation] | None, text: str
+) -> list[responses.response_output_text_param.Annotation]:
+    """Rebuild the URL and file citation annotations OpenAI returned for this text, skipping any that can't be rebuilt."""
+    annotations: list[responses.response_output_text_param.Annotation] = []
+    for citation in citations or []:
+        if len(citation.sources) != 1:
+            continue
+        source = citation.sources[0]
+        anchor = citation.anchor
+        if isinstance(source, WebCitationSource):
+            if isinstance(anchor, MarkerCitationAnchor) and source.title is not None and anchor.end <= len(text):
+                annotations.append(
+                    responses.response_output_text_param.AnnotationURLCitation(
+                        type='url_citation',
+                        url=source.url,
+                        title=source.title,
+                        start_index=anchor.start,
+                        end_index=anchor.end,
+                    )
+                )
+        elif anchor is None and source.document_id is not None and source.title is not None:
+            index = (citation.provider_details or {}).get('index')
+            if isinstance(index, int):
+                annotations.append(
+                    responses.response_output_text_param.AnnotationFileCitation(
+                        type='file_citation', file_id=source.document_id, filename=source.title, index=index
+                    )
+                )
+    return annotations
+
+
 def _map_chat_citations(annotations: Sequence[BaseModel], text: str) -> list[Citation] | None:
     citations: list[Citation] = []
     for annotation in annotations:
@@ -3681,7 +3713,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             message_item['content'] = [
                                 *message_item['content'],
                                 responses.ResponseOutputTextParam(
-                                    text=item.content, type='output_text', annotations=[]
+                                    text=item.content,
+                                    type='output_text',
+                                    # Citations are only replayed with the message ID of the output they came from.
+                                    annotations=_map_responses_citations_for_replay(item.citations, item.content),
                                 ),
                             ]
                             if send_phase:
@@ -3792,7 +3827,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
-                            elif (  # pragma: no cover
+                            elif (
                                 item.tool_name == FileSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())

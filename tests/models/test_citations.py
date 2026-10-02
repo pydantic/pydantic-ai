@@ -15,6 +15,7 @@ from pydantic_ai import (
     DocumentCitationSource,
     MarkerCitationAnchor,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelResponse,
     TextPart,
     WebCitationSource,
@@ -39,7 +40,7 @@ with try_import() as google_available:
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as openrouter_available:
@@ -353,10 +354,10 @@ WEB_CASES = [
         expected=snapshot(
             [
                 ExpectedWebCitation(
-                    ['github.com'],
-                    [0],
-                    MarkerCitationAnchor(start=119, end=205),
-                    '([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
+                    source_labels=['github.com'],
+                    excerpt_counts=[0],
+                    anchor=MarkerCitationAnchor(start=119, end=205),
+                    anchor_text='([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
                 )
             ]
         ),
@@ -383,10 +384,10 @@ WEB_CASES = [
         expected=snapshot(
             [
                 ExpectedWebCitation(
-                    ['github.com'],
-                    [0],
-                    MarkerCitationAnchor(start=249, end=335),
-                    '([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
+                    source_labels=['github.com'],
+                    excerpt_counts=[0],
+                    anchor=MarkerCitationAnchor(start=249, end=335),
+                    anchor_text='([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
                 )
             ]
         ),
@@ -774,3 +775,78 @@ async def test_document_citations(
         result = await agent.run(prompt)
 
     assert citations_from_messages(result.all_messages()) == case.expected
+
+
+NativeCitationReplayProvider = Literal[
+    'anthropic-messages', 'anthropic-document', 'bedrock-converse', 'openai-responses'
+]
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+@pytest.mark.parametrize(
+    'provider',
+    [
+        pytest.param('anthropic-messages', id='anthropic-messages'),
+        pytest.param('anthropic-document', id='anthropic-document'),
+        pytest.param('bedrock-converse', id='bedrock-converse'),
+        pytest.param('openai-responses', id='openai-responses'),
+    ],
+)
+async def test_native_citation_replay_after_persisted_history(
+    provider: NativeCitationReplayProvider,
+    request: pytest.FixtureRequest,
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+) -> None:
+    """Each provider accepts its own persisted native citation history on the next request."""
+    available = {
+        'anthropic-messages': anthropic_available,
+        'anthropic-document': anthropic_available,
+        'bedrock-converse': bedrock_available,
+        'openai-responses': openai_available,
+    }[provider]
+    if not available():
+        pytest.skip(f'{provider} dependencies not installed')
+    agent: Agent[None, str]
+    first_prompt: str | list[str | BinaryContent]
+    if provider in ('anthropic-messages', 'anthropic-document'):
+        model = AnthropicModel(
+            'claude-sonnet-4-5',
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            settings=ANTHROPIC_SETTINGS,
+        )
+        if provider == 'anthropic-messages':
+            agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+            first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
+        else:
+            agent = Agent(model, model_settings=ModelSettings(include_citations=True))
+            first_prompt = [
+                'According to the document, what is the return window? Answer in one sentence and cite the document.',
+                BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+            ]
+    elif provider == 'bedrock-converse':
+        agent = Agent(
+            BedrockConverseModel(
+                'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
+            ),
+            model_settings=ModelSettings(include_citations=True),
+        )
+        first_prompt = [
+            'According to the document, what is the return window? Answer in one sentence and cite the document.',
+            BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+        ]
+    else:
+        agent = Agent(
+            OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key)),
+            capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+            model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        )
+        first_prompt = "Use web search to find Pydantic AI's GitHub repository and cite it."
+
+    first_result = await agent.run(first_prompt)
+    assert citations_from_messages(first_result.all_messages())
+
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
+    second_result = await agent.run('Continue.', message_history=history)
+    assert second_result.output

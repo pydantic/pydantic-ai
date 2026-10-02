@@ -426,6 +426,9 @@ _(This example is complete, it can be run "as is")_
     `bytes`. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent] for binary data and it
     round-trips exactly, in this adapter and in any model of your own.
 
+    Citations survive persistence, but are only sent back to the provider that produced them. See
+    [citations in message history](citations.md#citations-in-message-history).
+
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
     those fields are dropped entirely. That loss is by design, not a state-loss bug.
@@ -532,6 +535,10 @@ Possession of the endpoint is therefore the authorization boundary, so design ar
 Since messages are defined by simple dataclasses, you can manually create and manipulate, e.g. for testing.
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
+
+Provider-specific metadata is less portable than the message itself. For example,
+[citations](citations.md#citations-in-message-history) are sent to a different provider as plain text, though they stay
+on the stored messages.
 
 In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5.2` model, in a second agent run using the `google:gemini-3-pro-preview` model.
 

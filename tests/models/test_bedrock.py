@@ -31,6 +31,7 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -1824,6 +1825,172 @@ async def test_bedrock_partial_citation_block(
     )
 
     assert response.parts == [expected]
+
+
+def _bedrock_history_with_citations(
+    provider_name: str,
+    location: dict[str, Any] = {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
+    anchor: ContentCitationAnchor | None = ContentCitationAnchor(start=0, end=len('Thirty days.')),
+    text: str = 'Thirty days.',
+    citation_count: int = 1,
+) -> list[ModelMessage]:
+    """Message history as it comes back from JSON storage, with a text document and a cited answer."""
+    return ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'What is the return window?',
+                                BinaryContent(
+                                    data=b'The return window is thirty days from purchase.', media_type='text/plain'
+                                ),
+                            ]
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            text,
+                            citations=[
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            title='Document 1',
+                                            excerpts=['thirty days'],
+                                            provider_details={'location': location},
+                                        )
+                                    ],
+                                    anchor=anchor,
+                                )
+                            ]
+                            * citation_count,
+                        ),
+                        TextPart('Uncited note.'),
+                    ],
+                    provider_name=provider_name,
+                ),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+
+async def _bedrock_replayed_answer(
+    bedrock_provider: BedrockProvider, mocker: MockerFixture, history: list[ModelMessage]
+) -> dict[str, Any]:
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        settings=ModelSettings(include_citations=True),
+    )
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+    await model.request(history, None, ModelRequestParameters())
+    return [message for message in mock_converse.call_args.kwargs['messages'] if message['role'] == 'assistant'][-1]
+
+
+async def test_bedrock_replays_own_citations(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    history = _bedrock_history_with_citations('bedrock')
+
+    assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'citationsContent': {
+                        'content': [{'text': 'Thirty days.'}],
+                        'citations': [
+                            {
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
+                                'sourceContent': [{'text': 'thirty days'}],
+                                'title': 'Document 1',
+                            }
+                        ],
+                    }
+                },
+                {'text': 'Uncited note.'},
+            ],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    'history',
+    [
+        pytest.param(_bedrock_history_with_citations('anthropic'), id='other-provider'),
+        pytest.param(
+            _bedrock_history_with_citations(
+                'bedrock', location={'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}}
+            ),
+            id='range-does-not-select-excerpt',
+        ),
+        pytest.param(
+            _bedrock_history_with_citations(
+                'bedrock', location={'documentChar': {'documentIndex': 1, 'start': 21, 'end': 32}}
+            ),
+            id='no-such-document',
+        ),
+        pytest.param(
+            _bedrock_history_with_citations(
+                'bedrock', location={'documentPage': {'documentIndex': 0, 'start': 1, 'end': 2}}
+            ),
+            id='page-location',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart('Read the policy.')]),
+                ModelResponse(parts=[ToolCallPart('read_policy', {}, tool_call_id='call-1')], provider_name='bedrock'),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            'read_policy',
+                            [BinaryContent(data=b'Refunds take a week.', media_type='text/plain')],
+                            tool_call_id='call-1',
+                        )
+                    ]
+                ),
+                *_bedrock_history_with_citations('bedrock'),
+            ],
+            id='tool-return-document',
+        ),
+        pytest.param(
+            _bedrock_history_with_citations('bedrock', anchor=ContentCitationAnchor(start=0, end=6)),
+            id='citation-covers-part-of-text',
+        ),
+        pytest.param(_bedrock_history_with_citations('bedrock', citation_count=2), id='two-citations'),
+    ],
+)
+async def test_bedrock_sends_unverifiable_citations_as_text(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    history: list[ModelMessage],
+) -> None:
+    assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == {
+        'role': 'assistant',
+        'content': [{'text': 'Thirty days.'}, {'text': 'Uncited note.'}],
+    }
+
+
+async def test_bedrock_sends_citations_on_empty_text_as_text(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    history = _bedrock_history_with_citations('bedrock', anchor=None, text='')
+
+    assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == {
+        'role': 'assistant',
+        'content': [{'text': ''}, {'text': 'Uncited note.'}],
+    }
 
 
 async def test_bedrock_stream_citation_mapping(
