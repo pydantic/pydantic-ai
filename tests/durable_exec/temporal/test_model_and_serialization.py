@@ -2998,6 +2998,24 @@ def test_decision_hand_offs_cross_with_their_fields():
     assert (unsure.probabilities, unsure.threshold) == ({'search': 0.4, 'reply': 0.6}, 0.5)
 
 
+def test_a_subclass_with_plain_reduce_state_crosses_with_it():
+    """State without a custom `__setstate__` is restored by `BaseException.__setstate__`, as pickle restores it."""
+
+    class StatefulModelError(ModelAPIError):
+        extra: int | None = None
+
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+            return self.__class__, (self.model_name, self.message), {'extra': self.extra}
+
+    # Only Pydantic AI's own classes cross, so present this one as one of them.
+    StatefulModelError.__module__ = 'pydantic_ai.exceptions'
+    error = StatefulModelError('gpt-test', 'boom')
+    error.extra = 5
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, StatefulModelError)
+    assert rebuilt.extra == 5
+
+
 def test_a_body_that_cannot_be_encoded_is_raised_unchanged():
     recursive: list[object] = []
     recursive.append(recursive)
