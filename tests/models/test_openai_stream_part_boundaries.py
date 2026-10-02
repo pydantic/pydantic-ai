@@ -278,6 +278,21 @@ class ResumedContentCase:
 
 RESUMED_CONTENT_CASES = [
     ResumedContentCase(
+        id='adjacent-reasoning-fields-keep-distinct-parts',
+        stream=lambda: [
+            _reasoning_chunk('Think.'),
+            chunk([ChoiceDelta.model_construct(role='assistant', reasoning='Again')]),
+            chunk([ChoiceDelta.model_construct(role='assistant', reasoning='.')]),
+            chunk([ChoiceDelta()], finish_reason='stop'),
+        ],
+        expected_parts=snapshot(
+            [
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                ThinkingPart(content='Again.', id='reasoning', provider_name='openai'),
+            ]
+        ),
+    ),
+    ResumedContentCase(
         id='reasoning-tool-reasoning',
         stream=lambda: [
             _reasoning_chunk('Think.'),

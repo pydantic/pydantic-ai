@@ -4068,11 +4068,9 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
-    # These keys rotate when a different part starts, so text or reasoning that resumes later in the
-    # stream opens a new part instead of sending a delta to the ended one. `'content'` rotates only
-    # while it names a `TextPart`, so a `</think>` arriving after another part still closes its tag.
-    _vendor_part_id: str = field(default='content', init=False)
-    _thinking_vendor_part_generation: int = field(default=0, init=False)
+    # Content segments are anonymous; reasoning segments also carry their field identity.
+    _content_generation: int = field(default=0, init=False)
+    _reasoning_generation: int = field(default=0, init=False)
     _held_text_whitespace: str = field(default='', init=False)
     _awaiting_text_after_reasoning: bool = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
@@ -4185,6 +4183,18 @@ class OpenAIStreamedResponse(StreamedResponse):
             self._map_thinking_delta(choice), self._map_text_delta(choice), self._map_tool_call_delta(choice)
         )
 
+    def _advance_part_boundary(self, source: Literal['reasoning', 'content', 'tool']) -> None:
+        if source != 'reasoning':
+            self._reasoning_generation += 1
+            self._awaiting_text_after_reasoning = False
+
+        # Keep the content key while it names a ThinkingPart so closing tags retain their context.
+        if source != 'content' and isinstance(
+            self._parts_manager.get_part_by_vendor_id(('content', self._content_generation)), TextPart
+        ):
+            self._content_generation += 1
+            self._awaiting_text_after_reasoning = source == 'reasoning'
+
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps thinking delta content to events.
 
@@ -4216,16 +4226,13 @@ class OpenAIStreamedResponse(StreamedResponse):
                 )
                 continue
             for event in self._parts_manager.handle_thinking_delta(
-                vendor_part_id=(field_name, self._thinking_vendor_part_generation),
+                vendor_part_id=('reasoning', field_name, self._reasoning_generation),
                 id=field_name,
                 content=reasoning,
                 provider_name=self.provider_name,
             ):
-                if isinstance(event, PartStartEvent) and isinstance(
-                    self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
-                ):
-                    self._vendor_part_id = f'{self._vendor_part_id}-{event.index}'
-                    self._awaiting_text_after_reasoning = True
+                if isinstance(event, PartStartEvent):
+                    self._advance_part_boundary('reasoning')
                 yield event
             break
 
@@ -4239,15 +4246,14 @@ class OpenAIStreamedResponse(StreamedResponse):
         if content:
             emitted = False
             for event in self._parts_manager.handle_text_delta(
-                vendor_part_id=self._vendor_part_id,
+                vendor_part_id=('content', self._content_generation),
                 content=content,
                 thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                 ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
             ):
                 emitted = True
                 if isinstance(event, PartStartEvent):
-                    self._thinking_vendor_part_generation += 1
-                    self._awaiting_text_after_reasoning = False
+                    self._advance_part_boundary('content')
                     if isinstance(event.part, ThinkingPart):
                         event.part.id = 'content'
                         event.part.provider_name = self.provider_name
@@ -4276,10 +4282,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             )
             if maybe_event is not None:
                 if isinstance(maybe_event, PartStartEvent):
-                    self._thinking_vendor_part_generation += 1
-                    self._awaiting_text_after_reasoning = False
-                    if isinstance(self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart):
-                        self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
+                    self._advance_part_boundary('tool')
                 yield maybe_event
 
     def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
