@@ -1,12 +1,19 @@
 """Settings survive upgrades, branch switches, and rejected operations."""
 
+import io
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from rich.console import Console
 
+from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import config_command, plugins_command
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -58,6 +65,44 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert reopened.model_settings('test') == {'max_tokens': 100}
     with closing(sqlite3.connect(path)) as connection:
         assert list(connection.iterdump()) == snapshot
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+
+
+@pytest.mark.parametrize('value_json', ['false', 'true'])
+async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, value_json: str) -> None:
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('display.tool_output', value_json))
+
+    # File diffs no longer depend on this setting; its saved shell/grep preference stays intact.
+    assert store.load().tool_output is (value_json == 'true')
+    reopened = SettingsStore(path)
+    assert reopened.overrides() == {'display.tool_output': value_json == 'true'}
+    output = io.StringIO()
+    renderer = StreamRenderer(
+        Console(file=output), stop_loading=lambda: None, show_tool_output=reopened.load().tool_output
+    )
+    for event in (
+        FileChangeRequestEvent(
+            path='file.txt', root_dir='/tmp', operation='write', diff='visible diff', truncated=False
+        ),
+        FileWrittenEvent(path='file.txt', root_dir='/tmp', content_hash='hash'),
+        CommandStartedEvent(command='echo preview', pid=1),
+        CommandOutputEvent(text='shell preview\n'),
+        CommandFinishedEvent(pid=1, output_path='/tmp/output', status_path='/tmp/status', exit_code=0, truncated=False),
+        FunctionToolCallEvent(part=ToolCallPart('grep', {'pattern': 'preview'}, tool_call_id='grep')),
+        FunctionToolResultEvent(part=ToolReturnPart('grep', 'grep preview\n', tool_call_id='grep')),
+    ):
+        await renderer.on_stream_event(event)
+    await renderer.finish()
+    assert 'visible diff' in output.getvalue()
+    assert ('shell preview' in output.getvalue()) == (value_json == 'true')
+    assert ('grep preview' in output.getvalue()) == (value_json == 'true')
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute(
+            'SELECT value_json FROM settings WHERE key = ?', ('display.tool_output',)
+        ).fetchone() == (value_json,)
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
 
 

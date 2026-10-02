@@ -23,7 +23,7 @@ A coding agent often discovers, mid-task, that it wants a behavior its host does
 
 - `author_capability(name, code)` -- write `code` to `<directory>/<name>.py`, import it, and validate it. Validation requires exactly one `pydantic_ai.capabilities.AbstractCapability` subclass that constructs with no arguments; the side-effect-free static getters (`get_instructions`, `get_toolset`, `get_native_tools`, `get_model_settings`, `get_serialization_name`) are exercised. The async lifecycle hooks are not run -- they need a live `RunContext`.
 - `list_authored_capabilities()` -- list authored capabilities with their status and any validation error.
-- `disable_authored_capability(name)` -- stop a capability from being injected on the next run.
+- `disable_authored_capability(name)` -- mark a capability disabled, so `load_active()` skips it.
 
 A "hook" is not a standalone object in pydantic-ai -- it is a method on a capability. So authoring a hook means authoring a capability that overrides one lifecycle method. A single overridden hook is a valid capability.
 
@@ -50,6 +50,8 @@ Writing and validation happen in the current run; activation happens on the next
 A capability **cannot** be added to a live, already-executing run. pydantic-ai resolves the effective capability set once at the start of each run (the run's root capability is fixed; there is no setter). So an authored capability is live on the **next** `agent.run(...)`, not the run that authored it. Authoring writes and validates the capability immediately, but its tools and hooks only exist once the next run's toolset and capability chain are assembled at run start.
 
 ### Integration contract
+
+The successful `author_capability` result tells the model the capability does not take effect in the current run. Writing and validating a capability does not schedule or inject it automatically.
 
 The orchestrator drives the loop, so it owns the one-line contract: thread the store's active capabilities into each run via `agent.run(..., capabilities=...)`. With that in place, the authored capability is live on the very next loop iteration -- no process restart:
 

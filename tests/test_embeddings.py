@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from collections.abc import Iterator, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -35,6 +36,7 @@ from pydantic_ai.embeddings import (
     InstrumentedEmbeddingModel,
     KnownEmbeddingModelName,
     TestEmbeddingModel,
+    WrapperEmbeddingModel,
     infer_embedding_model,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -2296,6 +2298,38 @@ async def test_settings():
     assert model.last_settings == snapshot(
         {'dimensions': 512, 'from_model': True, 'from_embedder': True, 'from_embed': True}
     )
+
+
+def test_embedder_compares_by_identity():
+    """An `Embedder` is a stateful client, so two are equal only when they are the same object.
+
+    Field equality compared only `instrument`, so it made two `Embedder`s over different models equal
+    whenever their `instrument` matched, and left the class unhashable. No request is involved, so
+    this is not a VCR test.
+    """
+    model = TestEmbeddingModel('small')
+    embedder = Embedder(model)
+
+    assert embedder == embedder
+    assert embedder != Embedder(model)
+    assert {embedder: 'small'}[embedder] == 'small'
+
+
+def test_wrapper_embedding_model_deepcopy():
+    """`deepcopy` builds the copy without `__init__`, so `wrapped` is unset when `__getattr__` runs.
+
+    `copy` probes the new instance for `__setstate__`; forwarding that to an unset `wrapped` recursed
+    until `RecursionError`. No request is involved, so this is not a VCR test.
+    """
+    model = WrapperEmbeddingModel(TestEmbeddingModel('wrapped'))
+
+    copied = deepcopy(model)
+
+    assert copied is not model
+    assert copied.wrapped is not model.wrapped
+    assert copied.model_name == 'wrapped'
+    # Only the wrapped `TestEmbeddingModel` defines it, so reading it proves the copy still forwards.
+    assert copied.last_settings is None
 
 
 def test_result():

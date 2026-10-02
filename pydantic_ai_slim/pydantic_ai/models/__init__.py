@@ -2484,6 +2484,10 @@ def _legacy_fabricated_tool_search_reveals(
 
     All three confidence signals are required: a framework-prefixed id, direct adjacency to a
     `load_capability` return, and discoveries confined to that capability's current tools.
+
+    This is the one place core identifies its own tools by name rather than by `tool_kind`: these
+    exchanges come from history written by earlier versions, whose parts may lack a `tool_kind`
+    or have it stripped on loading, so the name is the only signal left.
     """
     capability_by_load_call_id = _load_capability_ids_by_call(messages)
     tools_by_capability: dict[str, set[str]] = {}
@@ -2565,7 +2569,11 @@ def _search_return_discovered_names(part: ToolReturnPart) -> list[str] | None:
 def _replace_tool_search_exchanges_with_deltas(
     messages: list[ModelMessage], translated_call_ids: dict[str, list[str]]
 ) -> list[ModelMessage]:
-    """Replace selected search call/return pairs with wire-only availability deltas."""
+    """Replace selected search call/return pairs with wire-only availability deltas.
+
+    Part of the legacy-history path (see `_legacy_fabricated_tool_search_reveals`), so the pair is
+    matched by name: a call id alone could also belong to another tool.
+    """
     transformed: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):
