@@ -1,8 +1,8 @@
 # Citations
 
-Pydantic AI normalizes provider-returned web and document citations onto
-[`TextPart.citations`][pydantic_ai.messages.TextPart.citations] without changing the model's text. Some providers need
-citations to be explicitly requested. Set `include_citations=True` to request them where supported:
+Pydantic AI puts the web and document citations a provider returns on
+[`TextPart.citations`][pydantic_ai.messages.TextPart.citations], without changing the model's text. Some providers only
+return citations when asked. Set `include_citations=True` to ask for them:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, BinaryContent
@@ -117,12 +117,12 @@ deliberately whether to log, render, or send them to a client.
 
 ## Provider support
 
-| Provider/API | Normalized response | Request behavior | Provider support notes |
+| Provider/API | Citations returned | How to enable | Provider support notes |
 | --- | --- | --- | --- |
 | [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search and document citations | `include_citations=True` enables citations for documents and requests them for Web Fetch; Web Search returns citations without it | Anthropic [rejects](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility) document citations combined with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of client-provided search results are not included |
-| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Document citations | `include_citations=True` enables citations for text and PDF documents | The cited text block is the anchor; the location in the source document is in `provider_details` |
-| [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Search, file search and Web Fetch grounding | Enable the grounding tool | Gemini's UTF-8 byte offsets are converted to character offsets |
-| [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerateContentResponse#GroundingMetadata) | Search and Vertex retrieval grounding | Enable the grounding tool | Retrieved document resource names map to `document_id` |
+| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Document citations | `include_citations=True` enables citations for text and PDF documents | The anchor covers the whole cited block of text; the location in the document is in the source's `provider_details` |
+| [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Search, file search and Web Fetch grounding | Enable the grounding tool | |
+| [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerateContentResponse#GroundingMetadata) | Search and Vertex retrieval grounding | Enable the grounding tool | A retrieved document's resource name is its `document_id` |
 | [OpenAI Chat and Responses](https://platform.openai.com/docs/guides/tools-web-search) | URL citations, and Responses file citations | Enable Web Search for URL citations, or File Search for file citations | Other annotation types, such as `container_file_citation` and `file_path`, are only available as raw annotations |
-| [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/web-search) | Web search URL citations | Enable web search; Perplexity Sonar models always search | Citations without usable offsets have no anchor |
-| [xAI](https://docs.x.ai/developers/tools/citations) | Web, X, and collection citations | `include_citations=True` requests inline citations | Citations get marker anchors when their offsets fall inside the text; collection citations are document sources |
+| [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/web-search) | Web search URL citations | Enable web search; Perplexity Sonar models always search | Citations have no anchor when the model gives no position in the text, as with Perplexity Sonar |
+| [xAI](https://docs.x.ai/developers/tools/citations) | Web, X, and collection citations | `include_citations=True` requests inline citations | Inline citations have marker anchors; collection citations are document sources |

@@ -4247,6 +4247,37 @@ async def test_openai_chat_stream_annotations_before_referenced_text(allow_model
     ]
 
 
+async def test_openai_chat_stream_annotations_on_thinking_only_response(allow_model_requests: None):
+    """Annotations that can't be attached to text don't add an empty text part."""
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=0, end_index=3
+        ),
+    )
+    stream = [
+        text_chunk('<think>'),
+        text_chunk('reasoning'),
+        text_chunk('</think>'),
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])], finish_reason='stop'
+        ),
+    ]
+    model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)),
+        profile=OpenAIModelProfile(thinking_tags=('<think>', '</think>')),
+    )
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('Question')], None, ModelRequestParameters()
+    ) as response:
+        async for _ in response:
+            pass
+
+    assert response.get().parts == snapshot([ThinkingPart(content='reasoning', id='content', provider_name='openai')])
+
+
 async def test_openai_chat_stream_skips_unsupported_annotation(allow_model_requests: None):
     citation = chat.chat_completion_message.Annotation(
         type='url_citation',
