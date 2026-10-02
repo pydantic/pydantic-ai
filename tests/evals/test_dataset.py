@@ -224,6 +224,22 @@ async def test_dataset_init(
     assert len(dataset.evaluators) == 1
 
 
+async def test_unnamed_cases_have_unique_names_when_explicit_name_collides():
+    """Automatically generated case names must not collide with explicit names in reports."""
+
+    async def task(value: int) -> int:
+        return value * 2
+
+    dataset = Dataset(name='case_name_collision', cases=[Case(inputs=1), Case(name='Case 1', inputs=2)])
+    baseline = await dataset.evaluate(lambda value: value, name='baseline', progress=False)
+    report = await dataset.evaluate(task, name='test', progress=False)
+
+    case_names = {case.name for case in report.cases}
+    assert len(case_names) == 2
+    rendered = report.render(baseline=baseline, include_output=True, include_durations=False, include_averages=False)
+    assert all(case_name in rendered for case_name in case_names)
+
+
 async def test_add_evaluator(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
