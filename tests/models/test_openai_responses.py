@@ -16985,13 +16985,13 @@ async def test_openai_responses_function_call_grouping_around_active_tool_search
             parts=[
                 ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
                 ThinkingPart(content='inspect ordinary result'),
-                ToolCallPart('search_tools', {'queries': ['weather']}, tool_call_id='search-a'),
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-a'),
             ]
         ),
         ModelRequest(
             parts=[
                 ToolReturnPart('read', 'contents', tool_call_id='call-a'),
-                ToolReturnPart('search_tools', {'discovered_tools': []}, tool_call_id='search-a'),
+                ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='search-a'),
             ]
         ),
     ]
