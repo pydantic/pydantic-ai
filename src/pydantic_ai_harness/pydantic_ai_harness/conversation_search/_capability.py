@@ -103,8 +103,9 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     `HarnessDeprecationWarning` once per instance: this default was `all` in earlier
     releases, and the change is otherwise silent because a store-wide caller keeps working
     and simply stops seeing other conversations. Set the option explicitly to opt out of
-    the warning; both values are supported and neither is deprecated. The warning will be
-    removed in the next breaking release; the conversation-scoped default will remain.
+    the warning; both values are supported and neither is deprecated. The transitional
+    warning will be removed in the next breaking release; the conversation-scoped default
+    will remain.
     """
 
     tool_id: str = 'conversation-search'
