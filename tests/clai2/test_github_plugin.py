@@ -14,16 +14,17 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys
-from pydantic_clai2.api_keys import KeyReference, SavedKey
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins.github import ENTERPRISE, SETUP, GitHubSource, enterprise_url
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.field_menu import CUSTOM, FieldRow
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.api_keys import KeyReference, SavedKey
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.gh_cli import GhToken
-from pydantic_clai2.github import ENTERPRISE, SETUP, GitHubSource, enterprise_url
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
-from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
 from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.ui.menus.field_menu import CUSTOM, FieldRow
+from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import Script, pick, typed
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'github')
@@ -59,7 +60,7 @@ def script(
     texts: list[TextInputResult] | None = None,
 ) -> Script:
     scripted = Script(lists=[*lists, CLOSE], choices=choices or [], texts=texts or [])
-    monkeypatch.setattr('pydantic_clai2.github.RUNNERS', scripted.runners)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.RUNNERS', scripted.runners)
     return scripted
 
 
@@ -71,7 +72,7 @@ def key_choice(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | Non
         labels.append(label)
         return choice
 
-    monkeypatch.setattr('pydantic_clai2.github.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.prompt_api_key', prompt_api_key)
     return labels
 
 
@@ -83,7 +84,7 @@ def github(auth: SavedKey | GhToken = GH, *, read_only: bool = True) -> list[Git
 
 
 def test_declared_disabled_with_no_settings() -> None:
-    assert BUILTIN.factory == 'pydantic_clai2.github'
+    assert BUILTIN.factory == 'pydantic_clai2.builtin_plugins.github'
     assert not BUILTIN.enabled
     assert BUILTIN.settings == {}
 
@@ -216,7 +217,7 @@ async def test_a_key_created_while_picking_still_needs_confirmation(
         api_keys.save_key(name='GITHUB_TOKEN', value='from-another-process')
         return 'typed-here'
 
-    monkeypatch.setattr('pydantic_clai2.github.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.prompt_api_key', prompt_api_key)
     script(monkeypatch, lists=[pick('login')], choices=[pick('key'), CLOSE])
     assert await shell.loader.configure('github') == 'GitHub settings unchanged.'
     assert api_keys.load_keys()['GITHUB_TOKEN'].get_secret_value() == 'from-another-process'
@@ -304,9 +305,9 @@ async def test_settings_cannot_hold_a_secret_or_invalid_options(tmp_path: Path, 
 async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('read_only')], choices=[pick('true')])
-    assert await shell.loader.command(['add', 'github', 'pydantic_clai2.github', '{"read_only": false}']) == (
-        'Replaced built-in github.\nSaved Tools.'
-    )
+    assert await shell.loader.command(
+        ['add', 'github', 'pydantic_clai2.builtin_plugins.github', '{"read_only": false}']
+    ) == ('Replaced built-in github.\nSaved Tools.')
     assert shell.loader.capabilities() == github()
 
 
@@ -314,7 +315,9 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
     shell = Shell(tmp_path)
     with pytest.raises(ValueError, match='not loaded; enable it before configuring'):
         await shell.loader.command(['configure', 'github'])
-    shell.store.save_plugin(BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.repo_context'}))
+    shell.store.save_plugin(
+        BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.builtin_plugins.repo_context'})
+    )
     assert await shell.loader.command(['enable', 'plain']) == 'Enabled plain.'
     with pytest.raises(ValueError, match='no settings menu'):
         await shell.loader.configure('plain')
@@ -357,7 +360,7 @@ async def test_cancelling_configure_cancels_an_open_token_picker(
             finished.append(label)
         return None  # pragma: no cover -- unreachable; keeps the signature honest
 
-    monkeypatch.setattr('pydantic_clai2.github.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.prompt_api_key', prompt_api_key)
     script(monkeypatch, lists=[pick('login')], choices=[pick('key')])
     with anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:

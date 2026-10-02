@@ -107,6 +107,9 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
+    _toolset: MemoryToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    """The one `memory` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
+
     def __post_init__(self) -> None:
         _validate_positive('max_tokens', self.max_tokens)
         _validate_non_negative('max_lines', self.max_lines)
@@ -151,8 +154,10 @@ class Memory(AbstractCapability[AgentDepsT]):
         return store, scope
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Provide the stable `memory` toolset."""
-        return MemoryToolset(self)
+        """Provide the stable `memory` toolset, shared with every per-run copy."""
+        if self._toolset is None:
+            self._toolset = MemoryToolset(self)
+        return self._toolset
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide trusted static guidance about using memory.

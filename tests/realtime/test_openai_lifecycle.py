@@ -30,9 +30,11 @@ from pydantic_ai.realtime._lifecycle import (
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.messages import BinaryAudio
     from pydantic_ai.realtime._openai_protocol import response_metadata_answers, response_request_metadata
     from pydantic_ai.realtime.codec import (
         CancelResponse,
+        CommitAudio,
         CreateResponse,
         RealtimeCodecEvent,
         ResponseDone,
@@ -822,3 +824,28 @@ async def test_a_reconnect_loses_a_request_the_connection_no_longer_counts_as_ac
     stream.feed(done('resp_1'))
     events = await stream.rest()
     assert [event for event in events if isinstance(event, InputLost)] == snapshot([InputLost(input_ids=(1,))])
+
+
+async def test_what_we_sent_ahead_of_our_commit_joins_the_conversation_before_its_turn() -> None:
+    """The provider handles frames in order: inputs not acknowledged yet when our commit went out came first."""
+    stream = Stream(
+        {'type': 'conversation.item.added', 'item': user_message_added()['item'] | {'id': 'pydantic_ai_item_1'}},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+        {'type': 'conversation.item.added', 'item': user_message_added()['item'] | {'id': 'pydantic_ai_item_0'}},
+        tool_output_added('call_a'),
+    )
+    await stream.connection.send('First.')
+    await stream.connection.send('Second.')
+    await stream.connection.send(ToolResult('call_a', output='a'))
+    await stream.connection.send(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    await stream.connection.send(CommitAudio())
+    assert [event for event in await stream.rest() if not isinstance(event, str)] == snapshot(
+        [
+            InputAdded(input_id=1),
+            InputAdded(input_id=0),
+            InputAdded(input_id=2),
+            UserTurnStarted(turn_id='item_u1'),
+            UserTurnEnded(turn_id='item_u1'),
+            InputLost(input_ids=(1, 2, 0)),
+        ]
+    )

@@ -122,6 +122,9 @@ class OpenAILifecycle:
         """Spoken turns that joined the conversation and are waiting for their transcript."""
         self._committed: set[str] = set()
         """Spoken turns already committed, so a repeated commit doesn't make a second turn of one."""
+        self._sent_before_commit: list[InputId] = []
+        """The inputs we sent ahead of the audio commit we sent last, not acknowledged yet then: the provider
+        handles frames in order, so they join the conversation before the turn the commit makes."""
 
     # --- what the connection sends ----------------------------------------------------------------
 
@@ -132,6 +135,13 @@ class OpenAILifecycle:
     def foreign_messages_sent(self, count: int) -> None:
         """User message items that are no input of the session's (seeded or replayed history) are on their way."""
         self._messages.extend([None] * count)
+
+    def audio_commit_sent(self) -> None:
+        """An `input_audio_buffer.commit` of ours went out, after everything sent before it."""
+        self._sent_before_commit = [
+            *(input_id for input_id in self._messages if input_id is not None),
+            *self._tool_outputs.values(),
+        ]
 
     def tool_output_sent(self, call_id: str, input_id: InputId) -> None:
         self._tool_outputs[call_id] = input_id
@@ -276,8 +286,24 @@ class OpenAILifecycle:
     def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """The input audio buffer was committed: the spoken turn joins the conversation here, if it hadn't."""
         item_id = InputAudioBufferCommittedEvent.model_validate(data).item_id
-        events = self._place(item_id)
+        events = self._place_sent_before_commit()
+        events += self._place(item_id)
         self._speaking.pop(item_id, None)
+        return events
+
+    def _place_sent_before_commit(self) -> list[LifecycleEvent]:
+        """Place what we sent ahead of our commit and the provider hasn't acknowledged yet: it came first."""
+        sent, self._sent_before_commit = self._sent_before_commit, []
+        events: list[LifecycleEvent] = []
+        for input_id in sent:
+            if input_id in self._messages:
+                # Its acknowledgement, when it comes, is then for no input of ours (and still keeps the order).
+                self._messages[self._messages.index(input_id)] = None
+            elif input_id in self._tool_outputs.values():
+                del self._tool_outputs[next(call for call, output in self._tool_outputs.items() if output == input_id)]
+            else:
+                continue
+            events.append(InputAdded(input_id=input_id))
         return events
 
     def speech_stopped(self, data: dict[str, Any]) -> list[LifecycleEvent]:

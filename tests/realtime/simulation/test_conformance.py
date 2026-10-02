@@ -2,13 +2,14 @@
 
 The simulator checks the contract on the traces its fake servers produce; this checks it on the real
 ones. Each cassette's provider frames are replayed through a fresh connection of the right class (with no
-session, and the recorded client frames ignored), and the codec events it yields are fed to the same
-`LifecycleChecker` the simulator uses. See `_conformance.py` for the rules.
+session; the recorded client frames are read only to count the inputs they sent), and the codec events it
+yields are fed to the same `LifecycleChecker` the simulator uses. See `_conformance.py` for the rules.
 """
 
 from __future__ import annotations as _annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -39,6 +40,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.usage import RequestUsage
 
+    from ..ws_cassettes import CassetteClose, CassetteMessage, RealtimeCassette
     from ._cassette_replay import replay_codec_events, replay_lifecycle_events, websocket_cassettes
     from ._conformance import LifecycleChecker
 
@@ -60,12 +62,76 @@ async def test_cassette_obeys_the_codec_lifecycle(recording: Path) -> None:
         for event in events:
             checker.feed(event)
         assert checker.issues == []
-    for events in await replay_lifecycle_events(recording):
-        checker = LifecycleChecker(lifecycle=True)
+    for events, inputs_sent in await replay_lifecycle_events(recording):
+        checker = LifecycleChecker(lifecycle=True, inputs_sent=lambda sent=inputs_sent: sent)
         for event in events:
             checker.feed(event)
         checker.finish()
         assert checker.issues == []
+
+
+def _response(event_type: str, response_id: str, status: str, inputs: str) -> dict[str, Any]:
+    """A Voice Live `response.created`/`response.done` frame echoing the `response.create` metadata."""
+    return {
+        'event_id': f'event_{event_type}_{response_id}',
+        'type': event_type,
+        'response': {
+            'object': 'realtime.response',
+            'id': response_id,
+            'status': status,
+            'status_details': None,
+            'output': [],
+            'usage': None,
+            'metadata': {'pydantic_ai_inputs': inputs},
+        },
+    }
+
+
+async def test_replay_counts_the_inputs_the_client_sent(tmp_path: Path) -> None:
+    """A response's echoed metadata names the inputs it answers, checked against what the client sent.
+
+    The server echoes `response.create`'s metadata, so the lifecycle stream says which inputs each
+    response answers. The replay counts the inputs the recorded `response.create` frames name, so an
+    answer to one of them isn't flagged as never sent, while an answer naming an input the client never
+    sent still is.
+    """
+    session = {'event_id': 'event_session', 'type': 'session.created', 'session': {'model': 'gpt-realtime'}}
+    item = {'id': 'pydantic_ai_item_0', 'type': 'message', 'role': 'user'}
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage('received', session),
+            CassetteMessage(
+                'sent', {'type': 'conversation.item.create', 'event_id': 'pydantic_ai.content.0', 'item': item}
+            ),
+            CassetteMessage(
+                'sent',
+                {
+                    'type': 'response.create',
+                    'event_id': 'pydantic_ai.response.0',
+                    'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+                },
+            ),
+            CassetteMessage('received', _response('response.created', 'resp_1', 'in_progress', '0')),
+            CassetteMessage('received', _response('response.done', 'resp_1', 'completed', '0')),
+            CassetteClose(code=1000, reason='', ok=True),
+            # Input indexes count up across a session, so input 0 still counts on the next socket, but input
+            # 1 was never sent.
+            CassetteMessage('received', session),
+            CassetteMessage('received', _response('response.created', 'resp_2', 'in_progress', '1')),
+            CassetteMessage('received', _response('response.done', 'resp_2', 'completed', '1')),
+        ]
+    )
+    path = tmp_path / 'test_azure_voice_live_ws' / 'echoed_metadata.yaml'
+    cassette.dump(path)
+
+    issues: list[list[str]] = []
+    for events, inputs_sent in await replay_lifecycle_events(path):
+        checker = LifecycleChecker(lifecycle=True, inputs_sent=lambda sent=inputs_sent: sent)
+        for event in events:
+            checker.feed(event)
+        checker.finish()
+        issues.append([issue.code for issue in checker.issues])
+    assert issues == snapshot([[], ['lifecycle.unknown_answer']])
 
 
 def feed_all(*events: RealtimeCodecEvent) -> list[str]:
