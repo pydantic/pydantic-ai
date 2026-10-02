@@ -1474,7 +1474,7 @@ class TestBedrock:
             else:
                 with pytest.raises(BaseExceptionGroup) as group_info:
                     await model.embed(['a', 'b', 'c'], input_type='document')
-                exceptions: tuple[BaseException, ...] = group_info.value.exceptions  # pyright: ignore[reportUnknownMemberType]
+                exceptions: tuple[BaseException, ...] = group_info.value.exceptions
                 assert all(isinstance(e, ValueError) for e in exceptions)
 
     @pytest.mark.parametrize('error_type', ['read-timeout', 'endpoint-connection'])
