@@ -26,6 +26,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     ImageGeneration,
+    NativeOrLocalTool,
     PrepareTools,
     ResolveModelId,
     SelectModel,
@@ -42,6 +43,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
+from pydantic_ai.images import ImageGenerator, TestImageGenerationModel
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -945,6 +947,72 @@ class TestDeclaredNativeAndLocal:
         sent = _sent_native_tools([_PerRunWebFetch(allowed_domains=['default.example'])])
 
         assert sent == [WebFetchTool(allowed_domains=['run.example'])]
+
+    @pytest.mark.parametrize(
+        ('capability', 'native'),
+        [
+            pytest.param(WebFetch[object](), WebFetchTool(max_uses=3), id='web_fetch'),
+            pytest.param(WebSearch[object](), WebSearchTool(max_uses=3), id='web_search'),
+            pytest.param(XSearch[object](), XSearchTool(include_output=True), id='x_search'),
+            pytest.param(ImageGeneration[object](), ImageGenerationTool(quality='high'), id='image_generation'),
+            pytest.param(
+                MCP[object]('https://mcp.example.com/api', native=True, local=False),
+                MCPServerTool(id='other', url='https://other.example.com/api'),
+                id='mcp',
+            ),
+        ],
+    )
+    def test_assigning_native_sends_the_assigned_tool(
+        self, allow_model_requests: None, capability: NativeOrLocalTool[object], native: AbstractNativeTool
+    ):
+        capability.native = native
+
+        assert capability.get_native_tools() == [native]
+        assert _sent_native_tools([capability]) == [native]
+
+    def test_assigning_local_runs_the_assigned_tool(self, allow_model_requests: None):
+        def old_search(query: str) -> str:
+            return 'old results'  # pragma: no cover
+
+        def new_search(query: str) -> str:
+            return 'new results'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name=info.function_tools[0].name, args={'query': 'q'})])
+
+        capability = WebSearch[object](native=False, local=old_search)
+        capability.local = new_search
+
+        result = Agent(FunctionModel(model_fn), capabilities=[capability]).run_sync('search')
+
+        returns = iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        assert [(part.tool_name, part.content) for part in returns] == [('new_search', 'new results')]
+
+    def test_assigning_an_image_generator_generates_through_it(self, allow_model_requests: None):
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        old_model = TestImageGenerationModel()
+        new_model = TestImageGenerationModel()
+        capability = ImageGeneration[object](native=False, local=ImageGenerator(old_model))
+        capability.local = ImageGenerator(new_model)
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        Agent(model, capabilities=[capability]).run_sync('draw')
+
+        assert old_model.last_settings is None
+        assert new_model.last_settings == {}
+
+    @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
+    def test_unchanged_declaration_keeps_the_resolved_toolset(self):
+        """The `MCPToolset` holds the connection an entered agent reuses, so reading it again must not rebuild it."""
+        capability = MCP[object]('https://mcp.example.com/api')
+
+        assert capability.get_toolset() is capability.get_toolset()
 
     def test_native_and_local_return_the_declaration(self):
         assert WebFetch[object]().native is True

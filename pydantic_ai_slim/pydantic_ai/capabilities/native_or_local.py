@@ -54,8 +54,9 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
       Returning `None` omits the native tool.
 
     The field keeps what was passed, so `dataclasses.replace` and merging resolve it again from the
-    new configuration. [`get_native_tools()`][pydantic_ai.capabilities.AbstractCapability.get_native_tools]
-    returns the tool it resolves to.
+    new configuration, and assigning it on a constructed capability resolves it again too.
+    [`get_native_tools()`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] returns the
+    tool it resolves to.
     """
 
     local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None
@@ -68,7 +69,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     - A `Tool` or `AbstractToolset` instance: use this specific local tool.
     - A bare callable: automatically wrapped in a `Tool`.
 
-    The field keeps what was passed, like `native`.
+    The field keeps what was passed and is resolved again when assigned, like `native`.
     [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] returns the toolset it
     resolves to.
     """
@@ -92,9 +93,10 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     _native_tool: AgentNativeTool[AgentDepsT] | None = field(init=False, repr=False, compare=False, default=None)
     """The native tool `native` resolves to, or `None` for `native=False`.
 
-    Resolved once per instance by `__post_init__`, so every `get_native_tools()` call returns the
-    same tool. Excluded from `compare` and `repr` because `native` already states it, and `init=False`
-    so `dataclasses.replace` never feeds it back.
+    Resolved by `_resolve_tools` at construction and again only once `native` or `local` is assigned,
+    so every `get_native_tools()` call in between returns the same tool. Excluded from `compare` and
+    `repr` because `native` already states it, and `init=False` so `dataclasses.replace` never feeds
+    it back.
     """
 
     _local_tool: Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None = field(
@@ -102,28 +104,29 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     )
     """The tool or toolset `local` resolves to, or `None` when there is none. See `_native_tool`.
 
-    Kept for the instance's lifetime rather than rebuilt per `get_toolset()` call: that runs at
+    Kept until `native` or `local` is assigned rather than rebuilt per `get_toolset()` call: that runs at
     agent construction and again per run, and a toolset such as `MCPToolset` holds the connection
     an entered agent reuses.
     """
+
+    _native_resolved_from: AgentNativeTool[AgentDepsT] | bool | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
+    """The `native` value `_native_tool` and `_local_tool` were resolved from.
+
+    `get_native_tools()` and `get_toolset()` resolve again once `native` is no longer this object.
+    """
+
+    _local_resolved_from: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = (
+        field(init=False, repr=False, compare=False, default=None)
+    )
+    """The `local` value the tools were resolved from. See `_native_resolved_from`."""
 
     def __post_init__(self) -> None:
         if self.native is False and self.local is False:
             raise UserError(f'{type(self).__name__}: both `native` and `local` cannot be False')
 
-        # Resolve native=True → default instance (subclass hook)
-        native = self.native
-        if native is True:
-            native = self._default_native()
-            if native is None:
-                raise UserError(
-                    f'{type(self).__name__}: native=True requires a subclass that overrides '
-                    f'`_default_native()`, or pass an `AbstractNativeTool` instance directly'
-                )
-        # Assigned directly rather than through the field default: the subclasses declare their own
-        # `__init__`, which never runs the dataclass field initializers.
-        self._native_tool = None if native is False else native
-        self._local_tool = self._resolve_local()
+        self._resolve_tools()
 
         # Catch contradictory config: native disabled but constraint fields require it.
         # Checked first because adding `local=` can't fix it — the user needs to either drop
@@ -137,6 +140,28 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
                 f'{type(self).__name__}(native=False) requires an explicit local tool — '
                 'pass `local=...` (e.g. a strategy string, `True`, a callable, or a `Tool`/`AbstractToolset`).'
             )
+
+    def _resolve_tools(self) -> None:
+        """Resolve `native` and `local` into `_native_tool` and `_local_tool`, recording what they came from.
+
+        Runs from `__post_init__`, and from `get_native_tools()` and `get_toolset()` once `native` or
+        `local` has been assigned since. Construction-time validation stays in `__post_init__`.
+        """
+        # Resolve native=True → default instance (subclass hook)
+        native = self.native
+        if native is True:
+            native = self._default_native()
+            if native is None:
+                raise UserError(
+                    f'{type(self).__name__}: native=True requires a subclass that overrides '
+                    f'`_default_native()`, or pass an `AbstractNativeTool` instance directly'
+                )
+        # Assigned directly rather than through the field defaults: the subclasses declare their own
+        # `__init__`, which never runs the dataclass field initializers.
+        self._native_tool = None if native is False else native
+        self._local_tool = self._resolve_local()
+        self._native_resolved_from = self.native
+        self._local_resolved_from = self.local
 
     # --- Subclass hooks (not abstract — direct use is supported) ---
 
@@ -213,9 +238,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     # --- Shared logic ---
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        if self.native is not self._native_resolved_from or self.local is not self._local_resolved_from:
+            self._resolve_tools()
         return [] if self._native_tool is None else [self._native_tool]
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        if self.native is not self._native_resolved_from or self.local is not self._local_resolved_from:
+            self._resolve_tools()
         local = self._local_tool
         if local is None or self._requires_native():
             return None

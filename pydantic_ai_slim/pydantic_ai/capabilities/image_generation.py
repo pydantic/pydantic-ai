@@ -798,6 +798,12 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
         return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 
+    def _resolve_tools(self) -> None:
+        if self.local is not self._local_resolved_from:
+            # `_direct_generator` is derived from `local`, so a cached one belongs to the previous value.
+            vars(self).pop('_direct_generator', None)
+        super()._resolve_tools()
+
     def _resolve_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         """Resolve `local` to the tool or toolset it declares.
 
