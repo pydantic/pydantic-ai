@@ -117,6 +117,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
+    PluginSettings(id='system_one', factory='pydantic_clai2.builtin_plugins.system_one'),
     PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
     PluginSettings(id='pylon', factory='pydantic_clai2.builtin_plugins.pylon', enabled=False),
     PluginSettings(id='google_workspace', factory='pydantic_clai2.builtin_plugins.google_workspace', enabled=False),

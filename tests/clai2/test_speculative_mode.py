@@ -14,7 +14,7 @@ import anyio
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, Hooks, LocalWorkspace
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -38,12 +38,13 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.builtin_plugins.system_one import SystemOneContext
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
-from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
+from pydantic_clai2.runtime.speculation import SPECULATION_ID, Speculation, SpeculationCounters
 from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
     SPECULATIVE_TOOLS,
@@ -141,7 +142,14 @@ class TestFold:
         agent: Agent[None, str] = Agent(
             FunctionModel(respond),
             deps_type=type(None),
-            capabilities=[Coder[None](repo_context=False), customization_guide(), LocalWorkspace(tmp_path)],
+            capabilities=[
+                Coder[None](repo_context=False),
+                customization_guide(),
+                SystemOneContext[None](),
+                # `rank_relevance` is offered only beside the speculative bundle, which runs under this id.
+                Hooks[None](id=SPECULATION_ID),
+                LocalWorkspace(tmp_path),
+            ],
         )
         await agent.run('hi')
         assert {*SPECULATIVE_TOOLS, *NATIVE_TOOLS} <= set(seen)

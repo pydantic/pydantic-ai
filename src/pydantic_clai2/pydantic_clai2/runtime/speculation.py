@@ -1,6 +1,6 @@
 """The Speculative Execution switch, its session counters, and the pinned row they paint.
 
-The switch is the `run.speculative_code_mode` setting, off by default. `Ctrl+X Ctrl+S` flips
+The switch is the `run.speculative_code_mode` setting, on by default. `Ctrl+X Ctrl+S` flips
 it; the next turn honours the new value and a run already in flight keeps the tools it started
 with. The wiring itself lives in `speculative_mode`, imported only while the switch is on so
 Monty stays out of startup.
@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from rich.console import Console
 
+from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_clai2.cli.command_context import CommandContext
@@ -18,6 +19,13 @@ from pydantic_clai2.ui.rendering import theme
 
 SETTING = 'run.speculative_code_mode'
 TOGGLE_KEYS = 'Ctrl+X Ctrl+S'
+SPECULATION_ID = 'clai_speculative_execution'
+"""The capability id the speculative bundle runs under, so other capabilities can tell it is on."""
+
+
+def speculating(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether this run binds the speculative bundle, checked without importing Monty."""
+    return SPECULATION_ID in ctx.capabilities
 
 
 @dataclass(kw_only=True)

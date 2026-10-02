@@ -26,7 +26,7 @@ class Settings(BaseModel):
         default=3, ge=0, description='Default retries per tool call. Explicit tool retry limits take precedence.'
     )
     speculative_code_mode: bool = Field(
-        default=False,
+        default=True,
         description=(
             'Fold tools into a sandboxed run_code that executes and speculates while the model writes. '
             'Ctrl+X Ctrl+S toggles it.'

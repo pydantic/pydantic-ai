@@ -15,6 +15,11 @@ from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 
 
+@pytest.fixture
+def native_tools() -> None:
+    """Compatibility is about the shipped defaults, not the suite's speculative-off stand-in."""
+
+
 @pytest.mark.parametrize(('version', 'has_model_settings'), [(0, False), (1, False), (1, True)])
 def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, has_model_settings: bool) -> None:
     path = tmp_path / 'config.db'
@@ -35,8 +40,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
 
     store = SettingsStore(path)
     assert store.load() == Settings(model='test', thinking=False)
-    # Databases from before speculative execution keep it off.
-    assert store.load().speculative_code_mode is False
+    # Speculative execution's default changed to on, so databases that never saved it now run with it.
+    assert store.load().speculative_code_mode is True
     # Databases from before `/spinner` keep the braille they always showed.
     assert store.load().spinner == 'working'
     # Databases from before `/update` follow stable releases.
@@ -59,6 +64,17 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     with closing(sqlite3.connect(path)) as connection:
         assert list(connection.iterdump()) == snapshot
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+
+
+@pytest.mark.parametrize(('saved', 'expected'), [('false', False), ('true', True)])
+def test_saved_speculative_choice_survives_the_default_change(tmp_path: Path, saved: str, expected: bool) -> None:
+    """A switch toggled under the old off default stays as the user left it."""
+    path = tmp_path / 'config.db'
+    SettingsStore(path).set('model', 'test')
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('run.speculative_code_mode', saved))
+    assert SettingsStore(path).load().speculative_code_mode is expected
+    assert SettingsStore(path).overrides() == {'model': 'test', 'run.speculative_code_mode': expected}
 
 
 @pytest.mark.parametrize(

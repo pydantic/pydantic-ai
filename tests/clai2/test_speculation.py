@@ -49,12 +49,21 @@ def speculation(tmp_path: Path, console: Console | None = None) -> Speculation:
     return Speculation(context=context, console=console or Console(file=io.StringIO()))
 
 
-class TestSwitch:
-    def test_off_by_default_and_older_settings_load(self) -> None:
-        assert Settings().speculative_code_mode is False
-        assert resolve_settings({'display.thinking': False}).speculative_code_mode is False
-        assert resolve_settings({'run.speculative_code_mode': True}).speculative_code_mode is True
+class TestDefault:
+    @pytest.fixture
+    def native_tools(self) -> None:
+        """Test the real default, not the suite's native-tools stand-in."""
 
+    def test_on_by_default_and_a_saved_off_still_wins(self, tmp_path: Path) -> None:
+        assert Settings().speculative_code_mode is True
+        assert resolve_settings({'display.thinking': False}).speculative_code_mode is True
+        assert resolve_settings({'run.speculative_code_mode': False}).speculative_code_mode is False
+        assert speculation(tmp_path).enabled
+        SettingsStore(tmp_path / 'config.db').set('run.speculative_code_mode', False)
+        assert not speculation(tmp_path).enabled
+
+
+class TestSwitch:
     def test_toggle_persists_and_shows_row_only_while_on(self, tmp_path: Path) -> None:
         switch = speculation(tmp_path)
         assert switch.row() == ''
