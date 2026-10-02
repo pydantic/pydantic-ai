@@ -76,6 +76,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def _refresh_initial_run_ctx_usage(self) -> None:
         """Snapshot the run's usage so far, which `usage` adds this response's usage on top of."""
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
+        # The step being streamed is counted in the run's usage once its response is committed, after
+        # the stream; count it here already so the stream's usage includes it.
+        self._initial_run_ctx_usage.requests += 1  # usage-attribution: a deepcopy, for the live usage view
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""

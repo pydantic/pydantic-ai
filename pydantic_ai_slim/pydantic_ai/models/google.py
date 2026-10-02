@@ -76,6 +76,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -737,11 +738,12 @@ class GoogleModel(Model[Client]):
             )
 
         try:
-            response = await self.client.aio.models.count_tokens(
-                model=self._model_name,
-                contents=contents,
-                config=config,
-            )
+            with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                response = await self.client.aio.models.count_tokens(
+                    model=self._model_name,
+                    contents=contents,
+                    config=config,
+                )
         except errors.APIError as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
@@ -968,7 +970,8 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
+            with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
@@ -1197,7 +1200,8 @@ class GoogleModel(Model[Client]):
         # iterator is first advanced, so API errors surface here rather than in
         # `_generate_content`'s try/except and need the same mapping.
         try:
-            first_chunk = await peekable_response.peek()
+            with map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                first_chunk = await peekable_response.peek()
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
@@ -1518,7 +1522,7 @@ class GeminiStreamedResponse(StreamedResponse):
             self.provider_details = {'timestamp': self._provider_timestamp}
         grounding_metadata: GroundingMetadata | None = None
         try:
-            async for chunk in self._response:
+            async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
                 # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
                 # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,

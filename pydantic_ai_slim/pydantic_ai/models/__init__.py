@@ -27,7 +27,13 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._genai_prices import lookup_context_window, preload_pricing_data
-from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
+from .._http import (
+    DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS,
+    DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+    create_async_httpx2_client as create_async_httpx2_client,
+    legacy_httpx,
+)
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -295,6 +301,11 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class _ModelRequestUsageLedger:
+    responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+
+
 @dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
@@ -314,6 +325,22 @@ class ModelRequestContext:
 
     model: Model
     messages: list[ModelMessage]
+    """Messages to send for this model request.
+
+    This is an independently owned shallow list, so top-level mutations and assignments change
+    only the current request. To rewrite the persistent
+    message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
+    instead, or update both explicitly when both effects are intended.
+
+    Messages a `before_model_request` hook appends here with `append`, `extend` or `+=` are also
+    added to the message history, but this is deprecated and emits a warning.
+
+    This is an independent top-level list, not an independent object graph. Retained messages
+    and their parts may be the same objects as those in persistent history. Filtering, reordering,
+    or assigning the outer sequence is request-only, but mutating a contained message or part in
+    place can affect persistent history. Construct replacements down to the level being changed
+    when isolation is required.
+    """
     model_settings: ModelSettings | None
 
     model_request_parameters: ModelRequestParameters
@@ -353,6 +380,23 @@ class ModelRequestContext:
     and non-streaming requests share the same hooks — so this field is how a hook can tell them
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
+
+    _usage_response_ledger: _ModelRequestUsageLedger = field(
+        default_factory=_ModelRequestUsageLedger, repr=False, compare=False
+    )
+
+    @property
+    def _usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The model responses whose usage was counted for this request.
+
+        Empty until the model responds. It includes responses a hook later replaced, and can hold more
+        than one response when a continued response was partly billed before an error hook recovered.
+        Request contexts copied with `dataclasses.replace()` see the same responses.
+
+        Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
+        `SpendLimits`, which pins this package's exact version.
+        """
+        return tuple(self._usage_response_ledger.responses)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1849,10 +1893,11 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
     providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+    Each call creates a new client instance. A provider that calls this itself, because you didn't pass
+    an `http_client`, closes the client when the provider (or agent) exits. A client you create with it
+    and pass as `http_client` is yours to close.
 
-    The default timeouts match those of OpenAI,
+    The default timeouts and connection pool limits match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
 
     Raises:
@@ -1869,6 +1914,9 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
+        limits=httpx.Limits(
+            max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+        ),
         headers={'User-Agent': get_user_agent()},
     )
 
