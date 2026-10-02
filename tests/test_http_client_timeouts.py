@@ -106,7 +106,7 @@ _DEFAULT = object()
         ),
     ],
 )
-async def test_created_client_never_lengthens_connect_or_pool(
+async def test_created_client_caps_scalar_connect_and_pool_timeouts(
     family: str,
     requested: object,
     expected: dict[str, float | None],
