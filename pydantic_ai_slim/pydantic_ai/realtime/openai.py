@@ -55,6 +55,7 @@ from ..messages import (
     BinaryAudio,
     BinaryImage,
     ModelMessage,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeOutputSpeechEndEvent,
     RealtimeOutputSpeechStartEvent,
     RealtimeSessionErrorEvent,
@@ -505,8 +506,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._output_speech_clear_sent = False
         # Input items server VAD committed because its `idle_timeout_ms` ran out with nobody speaking. The
         # server commits the silent buffer and starts a follow-up response to it, but no user turn happened,
-        # so the commit and its empty transcript are not surfaced as one. Kept until that transcript arrives, or
-        # only until the commit when transcription is off.
+        # so the commit and its transcription (empty, or failed) are not surfaced as one. Kept until that
+        # transcription ends, or only until the commit when transcription is off.
         self._idle_timeout_items: set[str] = set()
 
     @property
@@ -1016,9 +1017,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     self._generated_audio_bytes += len(event.data)
                 self._track_output_item(event.item_id, content_index, self._generated_audio_bytes)
         if event is not None and not (event_type == 'response.done' and superseded):
-            if not (isinstance(event, InputTranscript) and event.item_id in self._idle_timeout_items):
+            if not (
+                isinstance(event, InputTranscript | RealtimeInputTranscriptionErrorEvent)
+                and event.item_id in self._idle_timeout_items
+            ):
                 events.append(event)
-            elif event.is_final:
+            elif isinstance(event, RealtimeInputTranscriptionErrorEvent) or event.is_final:
+                # The item's transcription is over, whether it succeeded or failed.
                 self._idle_timeout_items.discard(event.item_id)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
                 # The transcript is already recorded, so a malformed `usage` payload costs the usage

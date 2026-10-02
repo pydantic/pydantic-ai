@@ -2606,6 +2606,30 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
     ]
 
 
+async def test_idle_timeout_commit_with_failed_transcription_records_no_user_turn() -> None:
+    """A failed transcription of the silent idle-timeout item is no spoken turn either, so history gets none."""
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+        {
+            'type': 'conversation.item.input_audio_transcription.failed',
+            'item_id': 'idle',
+            'content_index': 0,
+            'error': {'type': 'server_error', 'code': 'transcription_failed', 'message': 'No speech.'},
+        },
+    ]
+    connection = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        events = await collect_session_events(session)
+
+    assert not any(isinstance(event, RealtimeInputTranscriptionErrorEvent) for event in events)
+    assert session.new_messages() == []
+    assert connection._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_idle_timeout_commit_without_transcription_is_not_a_spoken_turn() -> None:
     """With transcription off, no transcript retires the idle-timeout item, so its commit does."""
     frames = [
