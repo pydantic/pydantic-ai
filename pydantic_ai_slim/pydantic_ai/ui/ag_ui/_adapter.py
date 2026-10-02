@@ -825,6 +825,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             if isinstance(part, TextPart):
                 if tool_calls_list:
                     flush()
+                # Check adjacency in the original parts, not the buffer: a part dropped from the dump still separates text.
                 if index > 0 and isinstance(msg.parts[index - 1], TextPart):
                     text_content[-1] += part.content
                 else:

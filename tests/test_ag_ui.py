@@ -2394,32 +2394,30 @@ def test_dump_load_roundtrip_basic() -> None:
     assert reloaded == original
 
 
-def test_dump_messages_concatenates_adjacent_text_parts() -> None:
-    """Adjacent TextParts concatenate with nothing inserted, matching ModelResponse.text."""
-    response = ModelResponse(parts=[TextPart(content='a'), TextPart(content='b')])
+@pytest.mark.parametrize(
+    'texts,expected',
+    [
+        pytest.param(['a', 'b'], 'ab', id='plain'),
+        pytest.param(['a', '\n', 'b'], 'a\nb', id='explicit-newline'),
+        pytest.param(['', 'a', '', 'b', ''], 'ab', id='empty-parts'),
+    ],
+)
+def test_dump_messages_concatenates_adjacent_text_parts(texts: list[str], expected: str) -> None:
+    """Adjacent TextParts concatenate with nothing inserted, matching `ModelResponse.text`."""
+    response = ModelResponse(parts=[TextPart(content=text) for text in texts])
 
     dumped = AGUIAdapter.dump_messages([response])
 
-    assert len(dumped) == 1
-    assert dumped[0].content == 'ab'
-    assert dumped[0].content == response.text
-
-
-def test_dump_messages_preserves_explicit_newlines_in_adjacent_text_parts() -> None:
-    """An explicit newline in its own TextPart survives adjacent concatenation unmodified."""
-    response = ModelResponse(parts=[TextPart(content='a'), TextPart(content='\n'), TextPart(content='b')])
-
-    dumped = AGUIAdapter.dump_messages([response])
-
-    assert len(dumped) == 1
-    assert dumped[0].content == 'a\nb'
-    assert dumped[0].content == response.text
+    assert response.text == expected
+    assert [(type(m).__name__, m.content) for m in dumped] == [('AssistantMessage', expected)]
 
 
 @requires_ag_ui('0.1.11')
 def test_dump_messages_keeps_separated_groups_around_reasoning() -> None:
-    """Text groups separated by a flushed ThinkingPart stay in separate messages."""
-    response = ModelResponse(parts=[TextPart(content='ab'), ThinkingPart(content='thinking'), TextPart(content='cd')])
+    """Text groups separated by a flushed ThinkingPart stay in separate messages, each concatenated."""
+    response = ModelResponse(
+        parts=[TextPart('a'), TextPart('b'), ThinkingPart(content='thinking'), TextPart('c'), TextPart('d')]
+    )
 
     dumped = AGUIAdapter.dump_messages([response], ag_ui_version='0.1.11')
 
@@ -2448,38 +2446,6 @@ def test_dump_messages_text_separated_by_dropped_part(separator: ThinkingPart | 
     dumped = AGUIAdapter.dump_messages([response], ag_ui_version='0.1.10')
 
     assert [(type(m).__name__, m.content) for m in dumped] == [('AssistantMessage', 'ab\ncd')]
-
-
-def test_dump_messages_interleaved_text_and_tool_calls() -> None:
-    """Text on both sides of a tool call serializes into separate messages with the tool call preserved."""
-    response = ModelResponse(
-        parts=[
-            TextPart(content='ab'),
-            ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1'),
-            TextPart(content='cd'),
-        ]
-    )
-
-    dumped = AGUIAdapter.dump_messages([response])
-
-    assert [type(m).__name__ for m in dumped] == ['AssistantMessage', 'AssistantMessage']
-    assistant_msg = dumped[0]
-    assert isinstance(assistant_msg, AssistantMessage)
-    assert assistant_msg.content == 'ab'
-    assert assistant_msg.tool_calls is not None
-    assert [call.function.name for call in assistant_msg.tool_calls] == ['get_weather']
-    assert dumped[1].content == 'cd'
-
-
-def test_dump_load_round_trip_stable_for_adjacent_text_parts() -> None:
-    """The documented dump -> load -> dump persistence flow introduces no character into adjacent text."""
-    response = ModelResponse(parts=[TextPart(content='a'), TextPart(content='b')])
-    original = AGUIAdapter.dump_messages([response])
-
-    dumped = AGUIAdapter.dump_messages(AGUIAdapter.load_messages(original))
-
-    assert len(dumped) == len(original) == 1
-    assert dumped[0].content == original[0].content == 'ab'
 
 
 def test_load_dump_preserves_message_id() -> None:
@@ -3583,15 +3549,18 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
     """Test round-trip for response with text interleaved around tool calls.
 
     When text appears after tool calls, the flush pattern splits them into
-    separate AssistantMessages to preserve ordering on round-trip.
+    separate AssistantMessages to preserve ordering on round-trip. Adjacent
+    TextParts within each group concatenate.
     """
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do things')]),
         ModelResponse(
             parts=[
-                TextPart(content='Before tools'),
+                TextPart(content='Before '),
+                TextPart(content='tools'),
                 ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
-                TextPart(content='After tools'),
+                TextPart(content='After '),
+                TextPart(content='tools'),
             ]
         ),
     ]
