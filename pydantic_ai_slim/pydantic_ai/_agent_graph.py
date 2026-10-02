@@ -2262,6 +2262,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # and/or image) rather than assuming text is always an option.
 
             text = ''
+            text_before_native_tool_call = ''
             compaction_text = ''
             tool_calls: list[_messages.ToolCallPart] = []
             files: list[_messages.BinaryContent] = []
@@ -2277,6 +2278,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # Text parts before a native tool call are essentially thoughts,
                     # not part of the final result output, so we reset the accumulated text.
                     # The part itself was already surfaced through `PartStartEvent` / `PartDeltaEvent`.
+                    text_before_native_tool_call = text or text_before_native_tool_call
                     text = ''
                 elif isinstance(part, _messages.NativeToolReturnPart):
                     # Already surfaced through `PartStartEvent` / `PartDeltaEvent`.
@@ -2294,6 +2296,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     text += part.content
                 else:
                     assert_never(part)
+
+            # Unless no text or function tool call follows the last native tool call: Gemini reports the searches
+            # that grounded its text in metadata after that text, so their calls come last. With function tool calls,
+            # the text is still commentary that `end_strategy='early'` mustn't take as the output.
+            if not tool_calls:
+                text = text or text_before_native_tool_call
 
             # Use compaction content as text fallback when the response has no other
             # actionable text (e.g. Anthropic pause_after_compaction=True)
