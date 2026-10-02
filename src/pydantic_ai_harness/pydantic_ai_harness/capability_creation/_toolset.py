@@ -72,7 +72,7 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         return '\n'.join(lines)
 
     async def disable_authored_capability(self, name: str) -> str:
-        """Disable an authored capability so it is no longer injected on the next run.
+        """Disable an authored capability so it is skipped when this agent loads its authored capabilities.
 
         Args:
             name: Name of the capability to disable.
@@ -80,5 +80,5 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         async with self._store_lock:
             found = await anyio.to_thread.run_sync(self._store.disable, name)
         if found:
-            return f'Capability {name!r} disabled; it will not be injected on the next run.'
+            return f'Capability {name!r} disabled; it is skipped when this agent loads its authored capabilities.'
         return f'No authored capability named {name!r}.'

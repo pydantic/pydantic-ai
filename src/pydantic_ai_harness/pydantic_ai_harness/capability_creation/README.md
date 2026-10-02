@@ -29,8 +29,8 @@ agent cannot author that extension during a run and make it available to the nex
   async lifecycle hooks are not run -- they need a live `RunContext`.
 - `list_authored_capabilities()` -- list authored capabilities with status and any
   validation error.
-- `disable_authored_capability(name)` -- stop a capability from being injected on the
-  next run.
+- `disable_authored_capability(name)` -- mark a capability disabled, so `load_active()`
+  skips it.
 
 A "hook" is not a standalone object in pydantic-ai -- it is a method on a capability. So
 authoring a hook means authoring a capability that overrides one lifecycle method.

@@ -23,7 +23,7 @@ A coding agent often discovers, mid-task, that it wants a behavior its host does
 
 - `author_capability(name, code)` -- write `code` to `<directory>/<name>.py`, import it, and validate it. Validation requires exactly one `pydantic_ai.capabilities.AbstractCapability` subclass that constructs with no arguments; the side-effect-free static getters (`get_instructions`, `get_toolset`, `get_native_tools`, `get_model_settings`, `get_serialization_name`) are exercised. The async lifecycle hooks are not run -- they need a live `RunContext`.
 - `list_authored_capabilities()` -- list authored capabilities with their status and any validation error.
-- `disable_authored_capability(name)` -- stop a capability from being injected on the next run.
+- `disable_authored_capability(name)` -- mark a capability disabled, so `load_active()` skips it.
 
 A "hook" is not a standalone object in pydantic-ai -- it is a method on a capability. So authoring a hook means authoring a capability that overrides one lifecycle method. A single overridden hook is a valid capability.
 
