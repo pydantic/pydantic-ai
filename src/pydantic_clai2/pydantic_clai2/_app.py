@@ -27,7 +27,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
-from pydantic_clai2.cli.self_update import Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -236,6 +236,9 @@ async def chat(
                     with transcript.capture(console):
                         await shell.loader.close(reason)
             if not shell.reload_requested:
+                if (executable := shell.updates.relaunch) is not None:
+                    summary = shell.session.summary
+                    raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
                 return
             shell.reload_requested = False
             if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
