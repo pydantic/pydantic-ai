@@ -323,11 +323,11 @@ the install command, e.g. `pydantic-monty is required for CodeMode. Install it w
 `RuntimeError: 'datetime.now' is not supported in this environment` (clock without `os_access`). See
 [Code Mode](./CODE-MODE.md#sandbox-restrictions) for the rules and how to grant host access.
 
-**Asserting a `SystemReminders` reminder.** It is ephemeral (absent from `result.all_messages()`), so
-check it inside the script. `interval` counts model requests from 1; on a firing request,
-`messages[-1].parts[-1]` is a `UserPromptPart` whose content list ends with
-`'<system-reminder>\n<text>\n</system-reminder>'` (raw text with `Reminder(tag=None)`), after a
-`CachePoint` when the request has user content.
+**Asserting a `SystemReminders` reminder.** Each firing is a `ModelRequest` holding one
+`SystemPromptPart(scope='turn')` in `result.all_messages()`, with content
+`'<system-reminder>\n<text>\n</system-reminder>'` (raw text with `Reminder(tag=None)`). `interval`
+counts model requests from 1. Inside a `FunctionModel` script the model sees only the current
+reminder, as `<system>`-tagged user text at the end of the last request.
 
 **Looks like it never fires.** Context-window-driven capabilities (the compaction family) cannot
 resolve a window for `TestModel`, so thresholds default high; pass `context_window=` or

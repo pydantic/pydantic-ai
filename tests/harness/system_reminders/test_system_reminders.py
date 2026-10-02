@@ -12,22 +12,21 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
-    CachePoint,
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
-    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness.compaction import SlidingWindowCompaction
 from pydantic_ai_harness.planning import Planning
 from pydantic_ai_harness.system_reminders import (
     DynamicReminder,
@@ -36,6 +35,7 @@ from pydantic_ai_harness.system_reminders import (
     Reminder,
     SystemReminders,
 )
+from tests.conftest import IsDatetime
 from tests.harness._recording_durability import (
     RecordingDurability,
     RestrictedRunContext,
@@ -79,34 +79,31 @@ def _make_request_context(messages: list[ModelMessage]) -> ModelRequestContext:
     )
 
 
-async def _run_wrap(
+async def _run_before(
     cap: SystemReminders[None],
     messages: list[ModelMessage],
     *,
     ctx: Any | None = None,
 ) -> list[ModelMessage]:
-    """Invoke `wrap_model_request` with a recording handler; return what the model was given."""
-    captured: dict[str, list[ModelMessage]] = {}
-
-    async def handler(rc: ModelRequestContext) -> ModelResponse:
-        captured['messages'] = list(rc.messages)
-        return ModelResponse(parts=[TextPart('ok')])
-
+    """Invoke `before_model_request`; return the messages the request goes out with."""
     request_context = _make_request_context(messages)
-    await cap.wrap_model_request(ctx or _ctx(), request_context=request_context, handler=handler)
-    return captured['messages']
+    request_context = await cap.before_model_request(ctx or _ctx(messages=list(messages)), request_context)
+    return request_context.messages
+
+
+def _turn_scoped(message: ModelMessage) -> SystemPromptPart | None:
+    """The reminder a message carries: a request holding only a turn-scoped system prompt."""
+    if isinstance(message, ModelRequest) and len(message.parts) == 1:
+        part = message.parts[0]
+        if isinstance(part, SystemPromptPart) and part.scope == 'turn':
+            return part
+    return None
 
 
 def _fired_text(messages: list[ModelMessage]) -> str | None:
-    """The reminder text injected into the tail this turn, or None if nothing fired.
-
-    A fired reminder is the only tail `UserPromptPart` with list content (a `CachePoint`
-    followed by the joined text); an unfired turn leaves the plain string prompt as the tail.
-    """
-    part = messages[-1].parts[-1]
-    if isinstance(part, UserPromptPart) and isinstance(part.content, list):
-        return ''.join(c for c in part.content if isinstance(c, str))
-    return None
+    """The reminder text added this turn, or None if nothing fired."""
+    reminder = _turn_scoped(messages[-1]) if messages else None
+    return reminder.content if reminder else None
 
 
 def _fresh_request() -> list[ModelMessage]:
@@ -127,26 +124,14 @@ def _all_text(messages: list[ModelMessage]) -> str:
     return '\n'.join(out)
 
 
-def _has_cache_point(messages: list[ModelMessage]) -> bool:
-    return any(
-        isinstance(part, UserPromptPart)
-        and not isinstance(part.content, str)
-        and any(isinstance(c, CachePoint) for c in part.content)
+def _turn_scoped_texts(messages: list[ModelMessage]) -> list[str]:
+    return [
+        part.content
         for msg in messages
         if isinstance(msg, ModelRequest)
         for part in msg.parts
-    )
-
-
-def _injected_leads_with_cache_point(messages: list[ModelMessage]) -> bool:
-    """Whether the reminder appended this turn (the tail's last part) leads with a `CachePoint`."""
-    part = messages[-1].parts[-1]
-    return (
-        isinstance(part, UserPromptPart)
-        and isinstance(part.content, list)
-        and len(part.content) > 0
-        and isinstance(part.content[0], CachePoint)
-    )
+        if isinstance(part, SystemPromptPart) and part.scope == 'turn'
+    ]
 
 
 # --- Reminder validation ---
@@ -176,16 +161,17 @@ class TestRenderContent:
     async def test_default_tag_wraps(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('stay focused')])
         assert (
-            _fired_text(await _run_wrap(cap, _fresh_request())) == '<system-reminder>\nstay focused\n</system-reminder>'
+            _fired_text(await _run_before(cap, _fresh_request()))
+            == '<system-reminder>\nstay focused\n</system-reminder>'
         )
 
     async def test_custom_tag(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('x', tag='note')])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == '<note>\nx\n</note>'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == '<note>\nx\n</note>'
 
     async def test_no_tag_raw(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('x', tag=None)])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'x'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'x'
 
 
 # --- SystemReminders validation ---
@@ -213,14 +199,14 @@ class TestStaticCadence:
     async def test_interval_1_fires_every_request(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('always', tag=None)])
         for _ in range(3):
-            seen = await _run_wrap(cap, _fresh_request())
+            seen = await _run_before(cap, _fresh_request())
             assert _fired_text(seen) == 'always'
 
     async def test_interval_3_fires_on_third(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('third', interval=3, tag=None)])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'third'
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'third'
 
     async def test_six_turn_matrix(self) -> None:
         cap = SystemReminders[None](
@@ -228,12 +214,12 @@ class TestStaticCadence:
         )
         expected = [None, 'every 2', 'every 3', 'every 2', None, 'every 2\n\nevery 3']
         for want in expected:
-            assert _fired_text(await _run_wrap(cap, _fresh_request())) == want
+            assert _fired_text(await _run_before(cap, _fresh_request())) == want
 
     async def test_first_after(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('anchor', interval=15, first_after=15, tag=None)])
         for turn in range(1, 31):
-            fired = _fired_text(await _run_wrap(cap, _fresh_request()))
+            fired = _fired_text(await _run_before(cap, _fresh_request()))
             assert fired == ('anchor' if turn in (15, 30) else None)
 
 
@@ -243,16 +229,16 @@ class TestStaticCadence:
 class TestTrigger:
     async def test_trigger_true_and_interval(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('t', trigger=lambda ctx: True, tag=None)])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 't'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 't'
 
     async def test_trigger_false_suppresses(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('t', trigger=lambda ctx: False, tag=None)])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
 
     async def test_trigger_reads_context(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('late', trigger=lambda ctx: ctx.run_step > 10, tag=None)])
-        assert _fired_text(await _run_wrap(cap, _fresh_request(), ctx=_ctx(run_step=5))) is None
-        assert _fired_text(await _run_wrap(cap, _fresh_request(), ctx=_ctx(run_step=15))) == 'late'
+        assert _fired_text(await _run_before(cap, _fresh_request(), ctx=_ctx(run_step=5))) is None
+        assert _fired_text(await _run_before(cap, _fresh_request(), ctx=_ctx(run_step=15))) == 'late'
 
 
 # --- Max fires ---
@@ -261,25 +247,25 @@ class TestTrigger:
 class TestMaxFires:
     async def test_caps_fires(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('limited', max_fires=2, tag=None)])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'limited'
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'limited'
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'limited'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'limited'
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
 
     async def test_duplicate_instance_respects_max_fires(self) -> None:
         # The same Reminder instance listed twice shares one identity budget, so max_fires=1
         # fires it once per turn, not once per list entry.
         r = Reminder('r', max_fires=1, tag=None)
         cap = SystemReminders[None](reminders=[r, r])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'r'
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'r'
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
 
     async def test_per_reminder_independence(self) -> None:
         cap = SystemReminders[None](
             reminders=[Reminder('once', max_fires=1, tag=None), Reminder('twice', max_fires=2, tag=None)]
         )
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'once\n\ntwice'
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'twice'
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'once\n\ntwice'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'twice'
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
 
     async def test_callback_growing_reminders_does_not_raise(self) -> None:
         # A user callback that appends to the reminders list must not desync the fire counts:
@@ -293,8 +279,8 @@ class TestMaxFires:
                 reminders.append(Reminder('appended', tag=None))
 
         cap = SystemReminders[None](reminders=reminders, on_fire=grow)
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'first'
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'first\n\nappended'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'first'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'first\n\nappended'
 
     async def test_fire_budget_follows_identity_across_removal(self) -> None:
         # `_fire_counts` keys on reminder identity, not list index, so removing an earlier
@@ -303,10 +289,10 @@ class TestMaxFires:
         b = Reminder('b', max_fires=1, tag=None)  # fires once on request 1
         reminders: list[Reminder[None]] = [a, b]
         cap = SystemReminders[None](reminders=reminders)
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'b'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'b'
         reminders.pop(0)  # remove `a`; `b` shifts from index 1 to index 0
         # `b`'s max_fires=1 is spent; the index shift must not revive it.
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
 
     async def test_self_appending_dynamic_reminder_does_not_loop(self) -> None:
         # `_collect_dynamic` snapshots the sequence, so a reminder that appends to it does not
@@ -319,7 +305,7 @@ class TestMaxFires:
 
         dynamics.append(self_append)
         cap = SystemReminders[None](dynamic_reminders=dynamics)
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'once'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'once'
 
     async def test_dynamic_error_leaves_static_fire_state_untouched(self) -> None:
         # A raising dynamic reminder aborts the request; static fire state and on_fire are
@@ -336,7 +322,7 @@ class TestMaxFires:
             on_fire=fired.append,
         )
         with pytest.raises(RuntimeError, match='dynamic down'):
-            await _run_wrap(cap, _fresh_request())
+            await _run_before(cap, _fresh_request())
         assert cap._fire_counts == {}  # pyright: ignore[reportPrivateUsage]
         assert fired == []
 
@@ -347,75 +333,74 @@ class TestMaxFires:
 class TestDynamicReminders:
     async def test_sync_returns_text(self) -> None:
         cap = SystemReminders[None](dynamic_reminders=[lambda ctx: 'dyn'])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'dyn'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'dyn'
 
     async def test_sync_returns_none_skips(self) -> None:
         cap = SystemReminders[None](dynamic_reminders=[lambda ctx: None])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
 
     async def test_async_returns_text(self) -> None:
         async def gen(ctx: Any) -> str | None:
             return 'async dyn'
 
         cap = SystemReminders[None](dynamic_reminders=[gen])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 'async dyn'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 'async dyn'
 
     async def test_async_returns_none(self) -> None:
         async def gen(ctx: Any) -> str | None:
             return None
 
         cap = SystemReminders[None](dynamic_reminders=[gen])
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) is None
+        assert _fired_text(await _run_before(cap, _fresh_request())) is None
 
     async def test_static_and_dynamic_join(self) -> None:
         cap = SystemReminders[None](
             reminders=[Reminder('s', tag=None)],
             dynamic_reminders=[lambda ctx: 'd'],
         )
-        assert _fired_text(await _run_wrap(cap, _fresh_request())) == 's\n\nd'
+        assert _fired_text(await _run_before(cap, _fresh_request())) == 's\n\nd'
 
 
-# --- Injection / cache-safety mechanics ---
+# --- Injection mechanics ---
 
 
 class TestInjectionMechanics:
-    async def test_tail_leads_with_cache_point(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl='1h')
-        seen = await _run_wrap(cap, _fresh_request())
-        last = seen[-1]
-        assert isinstance(last, ModelRequest)
-        reminder = last.parts[-1]
-        assert isinstance(reminder, UserPromptPart)
-        assert isinstance(reminder.content, list)
-        assert isinstance(reminder.content[0], CachePoint)
-        assert reminder.content[0].ttl == '1h'
-        assert reminder.content[1] == 'r'
+    async def test_reminder_is_a_turn_scoped_request_in_history_and_request(self) -> None:
+        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
+        history: list[ModelMessage] = _fresh_request()
+        seen = await _run_before(cap, list(history), ctx=_ctx(messages=history))
+        assert seen[-1] == ModelRequest(parts=[SystemPromptPart('r', scope='turn', timestamp=IsDatetime())])
+        # The same request goes into the run's history, so the turn-scoped prompt is kept there and the
+        # model's provider can clear it rather than see it deleted.
+        assert history[-1] is seen[-1]
 
     async def test_default_tag_in_injection(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('stay focused')])
         assert (
-            _fired_text(await _run_wrap(cap, _fresh_request())) == '<system-reminder>\nstay focused\n</system-reminder>'
+            _fired_text(await _run_before(cap, _fresh_request()))
+            == '<system-reminder>\nstay focused\n</system-reminder>'
         )
 
     async def test_original_request_not_mutated_in_place(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
         original = ModelRequest(parts=[UserPromptPart('hello')])
-        seen = await _run_wrap(cap, [original])
-        assert len(original.parts) == 1  # append-only, fresh ModelRequest
-        assert seen[-1] is not original
+        seen = await _run_before(cap, [original])
+        assert len(original.parts) == 1
+        assert seen[0] is original
 
     async def test_no_fire_leaves_messages_untouched(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', interval=3, tag=None)])
         original = ModelRequest(parts=[UserPromptPart('hello')])
-        seen = await _run_wrap(cap, [original])
-        assert seen[-1] is original
-        assert len(original.parts) == 1
+        history: list[ModelMessage] = [original]
+        seen = await _run_before(cap, [original], ctx=_ctx(messages=history))
+        assert seen == [original]
+        assert history == [original]
 
     async def test_no_injection_when_tail_not_model_request(self) -> None:
         fired: list[str] = []
         cap = SystemReminders[None](reminders=[Reminder('r', max_fires=1, tag=None)], on_fire=fired.append)
         prior = ModelResponse(parts=[TextPart('prior')])
-        seen = await _run_wrap(cap, [prior])
+        seen = await _run_before(cap, [prior])
         assert seen[-1] is prior
         # No ModelRequest tail: no cadence slot spent, and the fire budget and on_fire untouched.
         assert cap._request_count == 0  # pyright: ignore[reportPrivateUsage]
@@ -424,74 +409,15 @@ class TestInjectionMechanics:
 
     async def test_empty_message_list_is_a_noop(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        seen = await _run_wrap(cap, [])
+        seen = await _run_before(cap, [])
         assert seen == []
         assert cap._request_count == 0  # pyright: ignore[reportPrivateUsage]
 
-
-# --- CachePoint guard (leading CachePoint is illegal without preceding user content) ---
-
-
-class TestCachePointGuard:
-    async def test_cache_point_with_user_prompt(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        seen = await _run_wrap(cap, _fresh_request())
-        assert _fired_text(seen) == 'r'
-        assert _injected_leads_with_cache_point(seen)
-
-    async def test_cache_point_with_tool_return(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        tail = ModelRequest(parts=[ToolReturnPart('tool', 'out', tool_call_id='c1')])
-        seen = await _run_wrap(cap, [tail])
-        assert _injected_leads_with_cache_point(seen)
-
-    async def test_cache_point_with_retry_prompt(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        tail = ModelRequest(parts=[RetryPromptPart('try again', tool_name='tool', tool_call_id='c1')])
-        seen = await _run_wrap(cap, [tail])
-        assert _injected_leads_with_cache_point(seen)
-
-    async def test_cache_point_with_binary_user_content(self) -> None:
-        img = BinaryContent(data=b'\x00', media_type='image/png')
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        seen = await _run_wrap(cap, [ModelRequest(parts=[UserPromptPart(content=[img])])])
-        assert _injected_leads_with_cache_point(seen)
-
-    async def test_cache_point_with_mixed_list_content(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        tail = ModelRequest(parts=[UserPromptPart(content=[CachePoint(), '', 'real'])])
-        seen = await _run_wrap(cap, [tail])
-        assert _injected_leads_with_cache_point(seen)
-
-    async def test_cache_point_with_text_content(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        seen = await _run_wrap(cap, [ModelRequest(parts=[UserPromptPart(content=[TextContent('goal')])])])
-        assert _injected_leads_with_cache_point(seen)
-
-    async def test_no_cache_point_with_empty_text_content(self) -> None:
-        # An empty TextContent maps to nothing (like an empty str), so no CachePoint may lead.
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        seen = await _run_wrap(cap, [ModelRequest(parts=[UserPromptPart(content=[TextContent('')])])])
-        assert _fired_text(seen) == 'r'
-        assert not _injected_leads_with_cache_point(seen)
-
-    async def test_no_cache_point_with_system_prompt_only(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        seen = await _run_wrap(cap, [ModelRequest(parts=[SystemPromptPart('sys')])])
-        assert _fired_text(seen) == 'r'
-        assert not _injected_leads_with_cache_point(seen)
-
-    async def test_no_cache_point_with_empty_user_prompt(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        seen = await _run_wrap(cap, [ModelRequest(parts=[UserPromptPart('')])])
-        assert _fired_text(seen) == 'r'
-        assert not _injected_leads_with_cache_point(seen)
-
-    async def test_no_cache_point_with_cachepoint_only_content(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
-        seen = await _run_wrap(cap, [ModelRequest(parts=[UserPromptPart(content=[CachePoint()])])])
-        assert _fired_text(seen) == 'r'
-        assert not _injected_leads_with_cache_point(seen)
+    def test_cache_ttl_is_deprecated(self) -> None:
+        with pytest.warns(
+            HarnessDeprecationWarning, match='`SystemReminders.cache_ttl` is deprecated and has no effect'
+        ):
+            SystemReminders[None](reminders=[Reminder('r')], cache_ttl='1h')
 
 
 # --- on_fire callback ---
@@ -501,13 +427,13 @@ class TestOnFire:
     async def test_static_fires_callback(self) -> None:
         seen_texts: list[str] = []
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)], on_fire=seen_texts.append)
-        await _run_wrap(cap, _fresh_request())
+        await _run_before(cap, _fresh_request())
         assert seen_texts == ['r']
 
     async def test_dynamic_fires_callback(self) -> None:
         seen_texts: list[str] = []
         cap = SystemReminders[None](dynamic_reminders=[lambda ctx: 'd'], on_fire=seen_texts.append)
-        await _run_wrap(cap, _fresh_request())
+        await _run_before(cap, _fresh_request())
         assert seen_texts == ['d']
 
 
@@ -516,8 +442,8 @@ class TestOnFire:
 
 class TestForRun:
     async def test_resets_counters_preserves_config(self) -> None:
-        cap = SystemReminders[None](reminders=[Reminder('r', max_fires=5, tag=None)], cache_ttl='1h')
-        await _run_wrap(cap, _fresh_request())
+        cap = SystemReminders[None](reminders=[Reminder('r', max_fires=5, tag=None)])
+        await _run_before(cap, _fresh_request())
         assert cap._request_count == 1  # pyright: ignore[reportPrivateUsage]
         assert cap._fire_counts == {id(cap.reminders[0]): 1}  # pyright: ignore[reportPrivateUsage]
 
@@ -526,13 +452,12 @@ class TestForRun:
         assert fresh._request_count == 0  # pyright: ignore[reportPrivateUsage]
         assert fresh._fire_counts == {}  # pyright: ignore[reportPrivateUsage]
         assert fresh.reminders is cap.reminders
-        assert fresh.cache_ttl == '1h'
 
     async def test_two_runs_independent(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
         run1 = await cap.for_run(_ctx())
         run2 = await cap.for_run(_ctx())
-        await _run_wrap(run1, _fresh_request())
+        await _run_before(run1, _fresh_request())
         assert run1._request_count == 1  # pyright: ignore[reportPrivateUsage]
         assert run2._request_count == 0  # pyright: ignore[reportPrivateUsage]
 
@@ -580,7 +505,7 @@ class TestGoalReanchor:
     async def test_composes_as_dynamic_reminder(self) -> None:
         cap = SystemReminders[None](dynamic_reminders=[GoalReanchor()])
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('do X')])]
-        seen = await _run_wrap(cap, messages, ctx=_ctx(messages=messages))
+        seen = await _run_before(cap, messages, ctx=_ctx(messages=messages))
         fired = _fired_text(seen)
         assert fired is not None
         assert 'do X' in fired
@@ -679,7 +604,7 @@ class TestLLMReminder:
         capability = SystemReminders(dynamic_reminders=[GatedReminder(model=_capture_model({}))])
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('keep going')])]
 
-        seen = await _run_wrap(capability, messages, ctx=_ctx(messages=messages))
+        seen = await _run_before(capability, messages, ctx=_ctx(messages=messages))
 
         assert _fired_text(seen) == 'subclass override'
 
@@ -694,7 +619,7 @@ class TestLLMReminder:
         )
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('keep going')])]
 
-        seen = await _run_wrap(capability, messages, ctx=_ctx(messages=messages))
+        seen = await _run_before(capability, messages, ctx=_ctx(messages=messages))
 
         assert _fired_text(seen) == 'generated from snapshot'
 
@@ -972,27 +897,70 @@ class TestEndToEnd:
         result = await agent.run('do the work')
         assert result.output is not None
 
-    async def test_reminder_reaches_model_but_not_persisted(self) -> None:
-        captured: dict[str, list[ModelMessage]] = {}
+    async def test_reminder_is_sent_for_its_own_request_and_kept_in_history(self) -> None:
+        """Each reminder reaches the request it was added to, and only that one, and stays in history.
+
+        `FunctionModel` can't clear a turn-scoped prompt itself, so it's sent each one while it's
+        current, as `<system>`-tagged text at the end of the request, and never again.
+        """
+        seen: list[list[ModelMessage]] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            captured['messages'] = messages
+            seen.append(messages)
+            if len(seen) < 3:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{len(seen)}')])
             return ModelResponse(parts=[TextPart('done')])
 
         agent: Agent[None, str] = Agent(
             FunctionModel(model_fn),
-            capabilities=[SystemReminders(reminders=[Reminder('stay focused')])],
+            capabilities=[SystemReminders(dynamic_reminders=[lambda ctx: f'request {ctx.run_step}'])],
         )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
         result = await agent.run('go')
         assert result.output == 'done'
 
-        sent = _all_text(captured['messages'])
-        assert '<system-reminder>' in sent
-        assert 'stay focused' in sent
-        assert _has_cache_point(captured['messages'])
-        # The invariant: neither the reminder nor its CachePoint enters the durable history.
-        assert '<system-reminder>' not in _all_text(result.all_messages())
-        assert not _has_cache_point(result.all_messages())
+        assert [[text for text in _all_text(messages).splitlines() if 'request' in text] for messages in seen] == [
+            ['<system>request 1</system>'],
+            ['<system>request 2</system>'],
+            ['<system>request 3</system>'],
+        ]
+        assert _turn_scoped_texts(result.all_messages()) == ['request 1', 'request 2', 'request 3']
+
+    async def test_reminder_survives_compaction_listed_after_it(self) -> None:
+        """A compaction capability listed after `SystemReminders` keeps the current reminder.
+
+        Compaction rewrites the history and the request together; the reminder is in the last request,
+        which a sliding window keeps, so it still reaches the model.
+        """
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) < 4:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{len(seen)}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[
+                SystemReminders(reminders=[Reminder('stay focused', tag=None)]),
+                SlidingWindowCompaction(max_messages=3, keep_messages=2),
+            ],
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        await agent.run('go')
+
+        # The window trims every request after the second, and each one still carries its reminder.
+        assert [len(messages) for messages in seen] == [1, 3, 3, 3]
+        assert all('<system>stay focused</system>' in _all_text(messages) for messages in seen)
 
     async def test_composes_with_planning(self) -> None:
         captured: dict[str, list[ModelMessage]] = {}
@@ -1023,7 +991,10 @@ class TestEndToEnd:
         sent = _all_text(captured['messages'])
         assert '<plan-reminder>' in sent
         assert '<system-reminder>' in sent
-        # Neither ephemeral reminder is persisted.
+        # Planning's reminder is request-only; this one is kept in history as a turn-scoped prompt.
         durable = _all_text(result.all_messages())
         assert '<plan-reminder>' not in durable
-        assert '<system-reminder>' not in durable
+        assert _turn_scoped_texts(result.all_messages()) == [
+            '<system-reminder>\nstay focused\n</system-reminder>',
+            '<system-reminder>\nstay focused\n</system-reminder>',
+        ]

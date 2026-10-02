@@ -412,8 +412,10 @@ print(agent.run_sync('Set up storage').output)
 
 ## SystemReminders
 
-Appends reminders to the tail of each model request as an ephemeral user part behind a
-`CachePoint`: never written to message history, never busts the prompt cache.
+Adds reminders at the tail of each model request as a turn-scoped `SystemPromptPart`
+(`scope='turn'`): the model sees each one for that request only, it's kept in message history,
+and it never busts the prompt cache. Turn on caching on the model (e.g. `anthropic_cache`); its
+breakpoint lands before the reminder. `cache_ttl` is deprecated and has no effect.
 
 ```python
 from pydantic_ai import Agent
