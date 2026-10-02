@@ -104,6 +104,11 @@ navigation:
           - "storage"
           - "persistence"
           - "core-concepts/storage"
+      - page: "Prompt Caching"
+        path: "prompt-caching.md"
+        slug: "core-concepts/prompt-caching"
+        aliases:
+          - "prompt-caching"
       - page: "Direct Model Requests"
         path: "direct.md"
         slug: "core-concepts/direct"
