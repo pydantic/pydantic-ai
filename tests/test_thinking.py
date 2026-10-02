@@ -724,6 +724,30 @@ class TestGoogleThinkingTranslation:
         params_false = ModelRequestParameters(thinking=False)
         assert GoogleModel._translate_thinking(model, settings, params_false) == snapshot({'thinking_level': 'LOW'})
 
+    @pytest.mark.parametrize(
+        'model_name',
+        [
+            'gemini-3.1-pro',
+            'gemini-3.5-pro',
+            'gemini-3.5-pro-preview',
+            'au.gemini-3.1-pro-preview',
+            'publishers/google/models/au.gemini-3.5-pro',
+        ],
+    )
+    def test_thinking_pro_models_clamp_minimal_and_false_to_low(self, model_name: str):
+        """Gemini 3+ Pro models (including regional/resource-prefixed IDs) never emit `MINIMAL`."""
+        model = FunctionModel(_echo, profile=google_model_profile(model_name))
+        settings: ModelSettings = {}
+
+        params_minimal = ModelRequestParameters(thinking='minimal')
+        assert GoogleModel._translate_thinking(model, settings, params_minimal) == {
+            'include_thoughts': True,
+            'thinking_level': 'LOW',
+        }
+
+        params_false = ModelRequestParameters(thinking=False)
+        assert GoogleModel._translate_thinking(model, settings, params_false) == {'thinking_level': 'LOW'}
+
     def test_thinking_unknown_levels_rejected(self):
         """Levels the resolver can't order (e.g. lowercase misspellings) are rejected as config errors."""
         model = FunctionModel(
