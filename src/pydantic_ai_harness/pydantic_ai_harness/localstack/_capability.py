@@ -40,9 +40,9 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     print(result.output)
     ```
 
-    Each AWS CLI command and health check runs as a durable operation, so under
-    durable execution a recovered run reuses the recorded output instead of
-    running the command again.
+    Against an external LocalStack instance, each AWS CLI command and health
+    check runs as a durable operation, so under durable execution a recovered
+    run reuses the recorded output instead of running the command again.
     """
 
     endpoint_url: str = 'http://localhost.localstack.cloud:4566'
@@ -127,11 +127,15 @@ class LocalStack(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT]:
         """Build and return the LocalStack toolset."""
+        # A managed container starts empty in the process that recovers a run, so its commands run
+        # again there to rebuild its state, rather than replaying recorded output into an empty one.
+        operations = (
+            None
+            if self.manage_container
+            else LocalStackOperations(aws_cli=self._aws_cli, localstack_health=self._localstack_health)
+        )
         return self._build_toolset(
-            self.endpoint_url,
-            manage_container=self.manage_container,
-            id=self.id,
-            operations=LocalStackOperations(aws_cli=self._aws_cli, localstack_health=self._localstack_health),
+            self.endpoint_url, manage_container=self.manage_container, id=self.id, operations=operations
         )
 
     @durable_operation('aws_cli')

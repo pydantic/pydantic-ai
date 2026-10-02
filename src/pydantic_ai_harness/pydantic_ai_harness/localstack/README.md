@@ -177,16 +177,15 @@ asyncio.run(main())
 
 ## Durable execution
 
-Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/), each AWS CLI command and health check is
-recorded, so a recovered run reuses its output instead of running the command
-again. Temporal and Prefect record each tool call in its own activity or task.
-DBOS runs function tools in workflow code, so there the command runs as its
-own step.
+Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/), each AWS CLI command and health check
+against an external LocalStack instance is recorded, so a recovered run reuses
+its output instead of running the command again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the command runs as its own step.
 
-Recovery does not run the recorded commands again, so a managed container
-started by the process that recovers the run lacks the resources they created.
-Point `endpoint_url` at a LocalStack instance that outlives the process when
-its state has to survive recovery.
+A managed container (`manage_container=True`) starts empty in the process that
+recovers a run, so on DBOS `LocalStack` does not record its commands: recovery
+runs them again, which rebuilds the container's state.
 
 The records are named after the capability's `id`, which defaults to
 `localstack`, so durable execution needs no configuration.
