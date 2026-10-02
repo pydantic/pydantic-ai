@@ -24,6 +24,15 @@ _API = 'https://api.github.com'
 _CHECK_NAME = 'Test Quality Review'
 _MAX_CHECK_SUMMARY_BYTES = 65_535
 _TEST_NAME = re.compile(r'(?:test_.*|.*_test)\.py\Z')
+_TEST_COMMAND = re.compile(
+    r'^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:'
+    r'uv\s+run(?:\s+(?:--(?:directory|extra|group|package|project|python|with|with-editable|with-requirements)(?:=|\s+)\S+|--[\w-]+(?:=[^\s]+)?))*\s+'
+    r'(?:pytest|tox|nox|unittest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest))'
+    r'|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)'
+    r'|(?:pytest|tox|nox|unittest)\b'
+    r'|make\s+(?:test|testcov|test-[\w-]+|integration-[\w-]+)\b'
+    r')'
+)
 _INVENTORY = Path('.test-quality-context/candidate-inventory.json')
 _CI_EVIDENCE = Path('.test-quality-context/ci-evidence.json')
 
@@ -121,11 +130,72 @@ def _relevant_pyproject_changed(before: str, after: str) -> bool:
     return False
 
 
+def _indented_yaml_block(lines: list[str], start: int, parent_indent: int) -> tuple[list[str], int]:
+    """Return a YAML block scalar's indented body and the next unconsumed line."""
+    block: list[str] = []
+    while start < len(lines):
+        line = lines[start]
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if stripped and indent <= parent_indent:
+            break
+        block.append(line)
+        start += 1
+    return block, start
+
+
+def _workflow_selects_tests(source: str) -> bool:
+    """Inspect only workflow `run` values and indented run blocks for test commands."""
+    lines = source.splitlines()
+    commands: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if not stripped or stripped.startswith('#'):
+            index += 1
+            continue
+        if stripped.startswith('- '):
+            stripped = stripped[2:]
+        is_run = stripped.startswith('run:') and (len(stripped) == 4 or stripped[4].isspace())
+        if not is_run:
+            _, separator, value = stripped.partition(':')
+            if separator and value.strip().startswith(('|', '>')):
+                _, index = _indented_yaml_block(lines, index + 1, indent)
+                continue
+            index += 1
+            continue
+        value = stripped[4:].strip()
+        index += 1
+        if value.startswith(('|', '>')):
+            block, index = _indented_yaml_block(lines, index, indent)
+            commands.extend(block)
+        else:
+            commands.append(value)
+
+    pending = ''
+    for line in [*commands, '']:
+        command = line.strip()
+        if not command or command.startswith('#'):
+            continue
+        if pending:
+            command = f'{pending} {command}'
+            pending = ''
+        if command.endswith('\\'):
+            pending = command[:-1].rstrip()
+            continue
+        if any(_TEST_COMMAND.match(segment.strip()) for segment in re.split(r'&&|\|\||[;|]', command)):
+            return True
+    return False
+
+
 def build_candidates(
     files: Iterable[Mapping[str, object]],
     *,
     pyproject_before: str | None = None,
     pyproject_after: str | None = None,
+    workflow_contents: Mapping[str, tuple[str | None, str | None]] | None = None,
 ) -> tuple[list[Candidate], bool, str]:
     """Select candidate changes and fail closed when PR file metadata is incomplete."""
     candidates: list[Candidate] = []
@@ -142,6 +212,22 @@ def build_candidates(
         if isinstance(previous, str) and previous:
             names.insert(0, previous)
         relevant_paths = list(dict.fromkeys(name for name in names if _path_is_test_candidate(name)))
+        workflow_paths = [
+            name
+            for name in names
+            if name.startswith('.github/workflows/')
+            and name.endswith(('.yml', '.yaml'))
+            and not name.endswith('.lock.yml')
+            and name != '.github/workflows/ci.yml'
+        ]
+        for workflow_path in workflow_paths:
+            contents = workflow_contents.get(workflow_path) if workflow_contents is not None else None
+            if contents is None:
+                return [], False, 'pinned workflow content could not be compared'
+            if contents == (None, None):
+                return [], False, 'pinned workflow content is missing from both revisions'
+            if any(content is not None and _workflow_selects_tests(content) for content in contents):
+                relevant_paths.append(workflow_path)
         if path == 'pyproject.toml' or previous == 'pyproject.toml':
             if pyproject_before is None or pyproject_after is None:
                 return [], False, 'pinned pyproject.toml sections could not be compared'
@@ -633,7 +719,31 @@ def _candidate_inventory(
     ):
         before = _git_text('show', f'{merge_base_sha}:pyproject.toml')
         after = _git_text('show', f'{pinned.head_sha}:pyproject.toml')
-    candidates, complete, reason = build_candidates(files, pyproject_before=before, pyproject_after=after)
+    changed_workflows = {
+        path
+        for file in files
+        for path in (file.get('previous_filename'), file.get('filename'))
+        if isinstance(path, str)
+        and path.startswith('.github/workflows/')
+        and path.endswith(('.yml', '.yaml'))
+        and not path.endswith('.lock.yml')
+        and path != '.github/workflows/ci.yml'
+    }
+    workflow_contents: dict[str, tuple[str | None, str | None]] = {}
+    for path in changed_workflows:
+        revisions: list[str | None] = []
+        for revision in (merge_base_sha, pinned.head_sha):
+            tree_paths = _git_text('ls-tree', '-r', '--name-only', revision, '--', path).splitlines()
+            revisions.append(_git_text('show', f'{revision}:{path}') if path in tree_paths else None)
+        if revisions == [None, None]:
+            raise ValueError('changed workflow could not be found in either pinned revision')
+        workflow_contents[path] = (revisions[0], revisions[1])
+    candidates, complete, reason = build_candidates(
+        files,
+        pyproject_before=before,
+        pyproject_after=after,
+        workflow_contents=workflow_contents,
+    )
     if not complete:
         raise ValueError(reason)
     return jobs, candidates, merge_base_sha

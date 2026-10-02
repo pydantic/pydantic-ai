@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -70,6 +71,81 @@ def test_new_test_is_candidate_and_unrelated_source_is_not() -> None:
 
     assert complete and [item.path for item in candidate] == ['pkg/test_new.py']
     assert unrelated_complete and unrelated == []
+
+
+def test_current_ci_test_workflows_are_candidates() -> None:
+    workflow_paths = [
+        '.github/workflows/benchmark.yml',
+        '.github/workflows/latest-versions-canary.yml',
+        '.github/workflows/sandbox-live.yml',
+        '.github/workflows/gateway-model-health.yml',
+    ]
+    repo_root = Path(__file__).parents[2]
+
+    for path in workflow_paths:
+        source = (repo_root / path).read_text(encoding='utf-8')
+        candidates, complete, reason = build_candidates(
+            [{'filename': path, 'status': 'modified'}], workflow_contents={path: (source, source)}
+        )
+
+        assert complete, reason
+        assert [candidate.path for candidate in candidates] == [path]
+
+
+def test_changed_workflow_commands_are_detected_in_both_revisions() -> None:
+    old = 'jobs:\n  test:\n    steps:\n      - run: uv run pytest tests/old.py\n'
+    new = 'jobs:\n  test:\n    steps:\n      - run: |\n          uv run --no-sync \\\n            python -m unittest\n'
+    files: list[Mapping[str, object]] = [
+        {
+            'filename': '.github/workflows/new-tests.yml',
+            'previous_filename': '.github/workflows/old-tests.yaml',
+            'status': 'renamed',
+        },
+        {'filename': '.github/workflows/removed-tests.yml', 'status': 'removed'},
+    ]
+
+    candidates, complete, reason = build_candidates(
+        files,
+        workflow_contents={
+            '.github/workflows/old-tests.yaml': (old, None),
+            '.github/workflows/new-tests.yml': (None, new),
+            '.github/workflows/removed-tests.yml': (old, None),
+        },
+    )
+
+    assert complete, reason
+    assert [candidate.relevant_paths for candidate in candidates] == [
+        ['.github/workflows/old-tests.yaml', '.github/workflows/new-tests.yml'],
+        ['.github/workflows/removed-tests.yml'],
+    ]
+
+
+def test_workflow_comments_prompts_and_non_test_commands_are_not_candidates() -> None:
+    source = """# run: pytest tests/commented.py
+name: Documentation only
+prompt: |
+  run: pytest tests/prompt.py
+  pytest tests/prompt.py
+jobs:
+  docs:
+    steps:
+      - run: echo "pytest is mentioned, but not invoked"
+"""
+    candidates, complete, reason = build_candidates(
+        [{'filename': '.github/workflows/docs.yml', 'status': 'modified'}],
+        workflow_contents={'.github/workflows/docs.yml': (source, source)},
+    )
+
+    assert complete, reason
+    assert candidates == []
+
+
+def test_changed_workflow_without_pinned_content_fails_closed() -> None:
+    candidates, complete, reason = build_candidates([{'filename': '.github/workflows/tests.yml', 'status': 'modified'}])
+
+    assert candidates == []
+    assert not complete
+    assert reason
 
 
 def test_pyproject_candidate_requires_pytest_or_coverage_configuration_change() -> None:

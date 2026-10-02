@@ -24,7 +24,7 @@ concurrency:
 network:
   allowed: [defaults, python, api.minimax.io]
 tools:
-  bash: ["git show", "git diff", "git grep"]
+  bash: ["git show", "git diff"]
   cli-proxy: false
   github: false
 safe-outputs:
