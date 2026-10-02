@@ -1704,8 +1704,9 @@ class GeminiStreamedResponse(StreamedResponse):
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
                 if candidate.grounding_metadata:
+                    # Supports index into the latest chunk list, which may have arrived in an earlier chunk.
                     if candidate.grounding_metadata.grounding_chunks:
-                        self._grounding_chunks.extend(candidate.grounding_metadata.grounding_chunks)
+                        self._grounding_chunks = candidate.grounding_metadata.grounding_chunks
                     grounding_citations = _map_grounding_citations(
                         [Part(text=text_run.content) for text_run in self._text_runs],
                         candidate.grounding_metadata,
