@@ -19,10 +19,9 @@ from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHt
 from pydantic_ai import RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
-
-from ._settings import Server, Servers, SSEServer, StdioServer, http_client, missing, resolve
-from ._store import MCPStore
-from ._tokens import TokenStore, oauth
+from pydantic_clai2.mcp._settings import Server, Servers, SSEServer, StdioServer, http_client, missing, resolve
+from pydantic_clai2.mcp._store import MCPStore
+from pydantic_clai2.mcp._tokens import TokenStore, oauth
 
 Source = Literal['user', 'plugin', 'project']
 State = Literal['running', 'ready', 'stopped', 'error']
@@ -145,7 +144,7 @@ class MCPServers:
         try:
             await stack.enter_async_context(connection.toolset)
             listed = await connection.toolset.list_tools()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- any connection failure is reported, not raised.
             await stack.aclose()
             connection.error = f'{type(exc).__name__}: {exc}'
             self.log(name, f'start failed: {connection.error}')

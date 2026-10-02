@@ -15,11 +15,12 @@ from termflow.tui.completion import (
 )
 
 from pydantic_ai.models import known_model_names
-
-from .config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
-from .settings_store import SettingsStore
-from .spinners import BUILTIN_SPINNERS
-from .theme import names as theme_names
+from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, UPDATE_CHANNELS, PluginSettings
+from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
+from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
+from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
+from pydantic_clai2.ui.rendering.theme import names as theme_names
 
 
 def is_command_input(text: str) -> bool:
@@ -58,6 +59,8 @@ class Command:
     description: str
     handler: Callable[[list[str]], str | Awaitable[str]]
     complete: Callable[[list[str]], Iterable[str]] = lambda _: ()
+    available: Callable[[], bool] = lambda: True
+    """Whether dispatch, help, and completion expose this command in the current session."""
     raw: bool = False
     """Pass the argument text unparsed, as one element, so free-form prompts keep quotes and apostrophes."""
     during_turn: bool = False
@@ -94,6 +97,10 @@ class Commands(Completer):
         for name in names:
             self._commands.pop(name, None)
 
+    def __contains__(self, name: object) -> bool:
+        """Whether a command called `name` (without its slash) is registered."""
+        return name in self._commands
+
     def __iter__(self) -> Iterator[Command]:
         """Iterate a snapshot, so callers may register or unregister while looping."""
         return iter(list(self._commands.values()))
@@ -105,7 +112,7 @@ class Commands(Completer):
             return self.help([])
         name, rest = parts[0], parts[1] if len(parts) > 1 else ''
         command = self._commands.get(name)
-        if command is None:
+        if command is None or not command.available():
             raise ValueError(f'Unknown command /{name}. Use /help.')
         if command.raw:
             return command.handler([rest] if rest else [])
@@ -117,12 +124,19 @@ class Commands(Completer):
         if len(words) != 1 or not is_command_input(text):
             return False
         command = self._commands.get(words[0][1:])
-        return command is not None and command.during_turn
+        return command is not None and command.available() and command.during_turn
 
     async def execute_async(self, text: str) -> str:
-        """Await asynchronous plugin commands without blocking the event loop."""
-        result = self.execute(text)
-        return result if isinstance(result, str) else await result
+        """Await asynchronous plugin commands without blocking the event loop.
+
+        The UI telemetry span names a registered command and counts its arguments; the arguments, and any
+        unregistered name, which is just typed text, stay out.
+        """
+        name, *arguments = text.removeprefix('/').split() or ['help']
+        command = name if name in self else 'unknown'
+        with telemetry.span('command /{command}', command=command, arguments=len(arguments)):
+            result = self.execute(text)
+            return result if isinstance(result, str) else await result
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
         """Complete slash commands, contextual arguments, and @file paths."""
@@ -144,7 +158,7 @@ class Commands(Completer):
         if len(words) <= 1 and not text.endswith(' '):
             prefix = text[1:]
             for command in list(self._commands.values()):
-                if prefix in command.name:
+                if prefix in command.name and command.available():
                     yield Completion(
                         command.name,
                         start_position=-len(prefix),
@@ -155,7 +169,7 @@ class Commands(Completer):
         if not words:
             return
         command = self._commands.get(words[0])
-        if command is None:
+        if command is None or not command.available():
             return
         args = words[1:]
         if text.endswith(' '):
@@ -167,7 +181,9 @@ class Commands(Completer):
 
     def help(self, _: list[str]) -> str:
         """Generate help from the same registry used for completion."""
-        return '\n'.join(f'/{command.name}: {command.description}' for command in self._commands.values())
+        return '\n'.join(
+            f'/{command.name}: {command.description}' for command in self._commands.values() if command.available()
+        )
 
 
 def config_command(store: SettingsStore, args: list[str]) -> str:
@@ -190,8 +206,11 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
     return 'Saved. Applies when you restart CLAI.'
 
 
-def set_completions(args: list[str]) -> Iterable[str]:
-    """Complete setting names and values without network calls or credentials."""
+def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> Iterable[str]:
+    """Complete setting names and values without network calls or credentials.
+
+    `plugin_models` are `PREFIX:NAME` models that loaded plugins offer, completed beside the built-in ones.
+    """
     if len(args) <= 1:
         return (*SETTING_FIELDS, 'api_key')
     if len(args) == 2 and args[0] == 'display.theme':
@@ -199,13 +218,15 @@ def set_completions(args: list[str]) -> Iterable[str]:
     if len(args) == 2 and args[0] == 'display.spinner':
         return tuple(BUILTIN_SPINNERS)
     if len(args) == 2 and args[0] == 'model':
-        from .model_catalog import CODEX_MODELS
+        from pydantic_clai2.models.model_catalog import CODEX_MODELS
 
-        names = known_model_names()
+        names = (*plugin_models, *known_model_names())
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})
         return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
     if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):
         return ('true', 'false')
+    if len(args) == 2 and args[0] == 'updates.channel':
+        return UPDATE_CHANNELS
     return ()
 
 
@@ -220,17 +241,31 @@ def config_completions(args: list[str]) -> Iterable[str]:
     return ()
 
 
+PLUGINS_USAGE = 'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
+
+
+def added_plugin(args: list[str]) -> PluginSettings:
+    """The declaration `plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
+    if len(args) not in (3, 4) or args[0] != 'add':
+        raise ValueError(PLUGINS_USAGE)
+    settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
+    return PluginSettings(id=args[1], factory=args[2], settings=settings)
+
+
 def plugins_command(store: SettingsStore, args: list[str]) -> str:
     """Manage explicit plugin declarations without importing plugins."""
+    if len(args) > 1:
+        args = [args[0], canonical_plugin_id(args[1]), *args[2:]]
     declarations = store.plugins()
     if not args or args == ['list']:
         return (
             '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in declarations)
             or 'No plugins.'
         )
-    if len(args) in (3, 4) and args[0] == 'add':
-        settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
-        store.save_plugin(PluginSettings(id=args[1], factory=args[2], settings=settings))
+    if args[0] == 'add':
+        added = added_plugin(args)
+        # Without importing, only a capability class's tags are known; a plugin's own come when it saves.
+        store.save_plugin(added, requires=CAPABILITY_REQUIREMENTS.get(added.factory))
     elif len(args) == 2 and args[0] in ('enable', 'disable'):
         plugin = next((p for p in declarations if p.id == args[1]), None)
         if plugin is None:
@@ -239,5 +274,5 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
     elif len(args) == 2 and args[0] == 'remove':
         store.delete_plugin(args[1])
     else:
-        raise ValueError('Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID')
+        raise ValueError(PLUGINS_USAGE)
     return 'Saved. Plugin code is trusted and loads on next startup.'

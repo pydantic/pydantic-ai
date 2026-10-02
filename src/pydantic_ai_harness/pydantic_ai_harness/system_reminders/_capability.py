@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
@@ -31,6 +32,11 @@ from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
     from pydantic_ai.models import ModelRequestContext
+
+logger = logging.getLogger(__name__)
+
+_WARNED_RUNS_KEPT = 256
+"""How many recent run ids an `LLMReminder` remembers for its once-per-run failure warning."""
 
 
 @dataclass
@@ -247,7 +253,10 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 try:
                     transcript = _build_compact_transcript(ctx.messages, dynamic.max_context_messages)
                     result, error_type = await self._generate_reminder(ctx, index, transcript)
-                except Exception:
+                except Exception as exc:
+                    dynamic._log_failure(  # pyright: ignore[reportPrivateUsage]
+                        exc, ctx.run_id, 'LLMReminder generation operation failed; using GoalReanchor text instead'
+                    )
                     result, error_type = None, 'DurabilityError'
                 if error_type is not None:
                     result = GoalReanchor[AgentDepsT]()(ctx)
@@ -266,11 +275,14 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         reminder = self._dynamic_snapshot[index]
         if not _is_llm_reminder(reminder):  # pragma: no cover - operation inputs originate above
             raise RuntimeError(f'Dynamic reminder {index} is no longer an LLMReminder.')
+        if _request_reserved_for_parent(ctx):
+            return None, 'RequestLimitReserved'
         try:
             return await reminder._generate_from_transcript(ctx, transcript), None  # pyright: ignore[reportPrivateUsage]
         except Exception as exc:
             # Reminders are best-effort. Journal the fallback decision rather than inheriting an
             # engine's potentially unbounded retry policy and stalling the agent run.
+            reminder._log_failure(exc, ctx.run_id)  # pyright: ignore[reportPrivateUsage]
             return None, type(exc).__name__
 
     @classmethod
@@ -330,16 +342,41 @@ class LLMReminder(Generic[AgentDepsT]):
     max_context_messages: int = 10
     instructions: str = _LLM_INSTRUCTIONS
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False, compare=False)
+    _warned_runs: dict[str, None] = field(default_factory=dict[str, None], init=False, repr=False, compare=False)
+    """Runs whose generation failure was already logged, oldest first (an ordered set, bounded)."""
 
     def __post_init__(self) -> None:
         if self.max_context_messages < 1:
             raise ValueError(f'max_context_messages must be >= 1, got {self.max_context_messages}')
 
     async def __call__(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        if _request_reserved_for_parent(ctx):
+            return GoalReanchor[AgentDepsT]()(ctx)
         try:
             return await self._generate(ctx)
-        except Exception:
+        except Exception as exc:
+            self._log_failure(exc, ctx.run_id)
             return GoalReanchor[AgentDepsT]()(ctx)
+
+    def _log_failure(
+        self,
+        exc: Exception,
+        run_id: str | None,
+        message: str = 'LLMReminder generation failed; using GoalReanchor text instead',
+    ) -> None:
+        """Warn once per run that generation failed and `GoalReanchor` text is used instead.
+
+        A misconfigured model (wrong name, missing API key) fails on every turn. One warning with
+        the traceback per run shows why, without repeating it for every model request. Without a
+        run id there is nothing to deduplicate on, so every failure is logged.
+        """
+        if run_id is not None:
+            if run_id in self._warned_runs:
+                return
+            self._warned_runs[run_id] = None
+            if len(self._warned_runs) > _WARNED_RUNS_KEPT:
+                del self._warned_runs[next(iter(self._warned_runs))]
+        logger.warning(message, exc_info=exc)
 
     async def _generate(self, ctx: RunContext[AgentDepsT]) -> str | None:
         """Generate without fallback so a durability engine can retry transient failures."""
@@ -359,6 +396,12 @@ class LLMReminder(Generic[AgentDepsT]):
         )
         text = result.output.strip()
         return text or None
+
+
+def _request_reserved_for_parent(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether a nested request would spend the request already approved for the parent."""
+    limits = reserved_usage_limits(ctx.usage_limits)
+    return limits is not None and limits.request_limit is not None and ctx.usage.requests >= limits.request_limit
 
 
 def _is_llm_reminder(value: object) -> TypeGuard[LLMReminder[AgentDepsT]]:

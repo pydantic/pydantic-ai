@@ -87,7 +87,7 @@ Scoping is applied to the `RunRecord`s a `HistorySource` returns, so a custom so
 
 ### Migrating from the `scope='all'` default
 
-This default changed. Earlier releases defaulted to `scope='all'`, so one search ranked every run in the store; it now defaults to `conversation`. Nothing raises on upgrade -- a caller who relied on the old default keeps working and simply stops seeing other conversations -- so leaving `scope` unset emits a `HarnessDeprecationWarning` once per capability instance naming the change.
+This default changed. Earlier releases defaulted to `scope='all'`, so one search ranked every run in the store; it now defaults to `conversation`. Nothing raises on upgrade -- a caller who relied on the old default keeps working and simply stops seeing other conversations -- so leaving `scope` unset emits a `HarnessDeprecationWarning` once per capability instance naming the change. This transitional warning will be removed in the next breaking release; the conversation-scoped default will remain.
 
 Set the option explicitly to resolve it. Both values are supported and neither is deprecated:
 
