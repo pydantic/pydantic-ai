@@ -273,11 +273,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     # the tool raised this itself and it ends the run like a sequential tool.
                     await anyio.lowlevel.checkpoint_if_cancelled()
                     outcome = e
-                except Exception as e:
+                except BaseException as e:
                     # Unexpected failures, including an exhausted retry budget, end the run as they
                     # would for a sequential tool.
-                    outcome = e
-                except BaseException as e:
                     outcome = e
                 else:
                     outcome = _format_background_result(tool_name, task_id, result)
