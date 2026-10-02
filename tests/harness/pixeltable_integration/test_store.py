@@ -24,11 +24,8 @@ from pydantic_ai_harness.memory import (
     MemoryConflictError,
     MemoryMutation,
     MemoryOperation,
-    MemoryOperationConflictError,
-    MemoryStore,
-    SearchableMemoryStore,
+    PixeltableMemoryStore,
 )
-from pydantic_ai_harness.pixeltable import PixeltableMemoryStore
 
 from .support import create_table, insert_rows
 
@@ -145,96 +142,12 @@ def _synthetic_error() -> NoReturn:
 
 
 class TestPixeltableMemoryStore:
-    def test_implements_public_protocols(self, store: PixeltableMemoryStore) -> None:
-        assert isinstance(store, MemoryStore)
-        assert isinstance(store, SearchableMemoryStore)
-
-    async def test_compare_and_set_contract(self, store: PixeltableMemoryStore) -> None:
-        created = await store.write('notes/main.md', 'one', expected_version=None)
-        assert created.version is not None
-        assert not created.replayed
-        assert not created.existed
-        file = await store.read('notes/main.md', max_chars=1_000)
-        assert file is not None
-        assert file.content == 'one'
-        assert file.version == created.version
-        assert file.operation_id is None
-
-        updated = await store.write('notes/main.md', 'two', expected_version=file.version)
-        assert updated.version is not None
-        assert updated.version != created.version
-        assert updated.existed
-        with pytest.raises(MemoryConflictError, match='changed before it could be written'):
-            await store.write('notes/main.md', 'stale', expected_version=file.version)
-        with pytest.raises(MemoryConflictError, match='changed before it could be deleted'):
-            await store.delete('notes/main.md', expected_version=file.version)
-
-        deleted = await store.delete('notes/main.md', expected_version=updated.version)
-        assert deleted == MemoryMutation(version=None, replayed=False, existed=True)
-        assert await store.read('notes/main.md', max_chars=1_000) is None
-
-    async def test_versions_do_not_repeat_after_delete_and_recreate(self, store: PixeltableMemoryStore) -> None:
-        first = await store.write('main.md', 'same', expected_version=None)
-        await store.delete('main.md', expected_version=first.version)
-        recreated = await store.write('main.md', 'same', expected_version=None)
-        assert recreated.version != first.version
-        with pytest.raises(MemoryConflictError):
-            await store.write('main.md', 'stale', expected_version=first.version)
-        with pytest.raises(MemoryConflictError):
-            await store.delete('main.md', expected_version=first.version)
-
-    async def test_read_and_listing_bounds(self, store: PixeltableMemoryStore) -> None:
-        created = await store.write('a.md', '0123456789', expected_version=None)
-        await store.write('b.md', 'b', expected_version=None)
-        await store.write('c.md', 'c', expected_version=None)
-
-        bounded = await store.read('a.md', max_chars=4)
-        assert bounded is not None
-        assert bounded.content == '0123'
-        assert bounded.version == created.version
-        assert bounded.truncated
-        complete = await store.read('a.md', max_chars=20)
-        assert complete is not None
-        assert complete.content == '0123456789'
-        assert not complete.truncated
-        assert await store.list_paths(limit=2) == ['a.md', 'b.md']
-
     async def test_list_paths_prefix_isolation(self, store: PixeltableMemoryStore) -> None:
         await store.write('tenant-a/main.md', 'a', expected_version=None)
         await store.write('tenant-b/main.md', 'b', expected_version=None)
         await store.write('tenant-a/other.md', 'c', expected_version=None)
         assert await store.list_paths('tenant-a/', limit=10) == ['tenant-a/main.md', 'tenant-a/other.md']
         assert await store.list_paths('tenant-b/', limit=10) == ['tenant-b/main.md']
-
-    async def test_operation_receipts(self, store: PixeltableMemoryStore) -> None:
-        operation = MemoryOperation(id='run-1:call-1', fingerprint='write:notes/main.md:one')
-        first = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
-        assert not first.replayed
-        replay = await store.write('notes/main.md', 'one', expected_version=None, operation=operation)
-        assert replay == MemoryMutation(version=first.version, replayed=True, existed=False)
-        assert await store.get_operation(operation) == replay
-        file = await store.read('notes/main.md', max_chars=1_000)
-        assert file is not None
-        assert file.operation_id == operation.id
-
-        with pytest.raises(MemoryOperationConflictError, match='reused with different arguments'):
-            await store.get_operation(MemoryOperation(id=operation.id, fingerprint='different'))
-        assert await store.get_operation(MemoryOperation(id='run-1:unknown', fingerprint='x')) is None
-
-        update = MemoryOperation(id='run-1:call-2', fingerprint='write:notes/main.md:two')
-        updated = await store.write('notes/main.md', 'two', expected_version=first.version, operation=update)
-        assert updated.existed
-        assert (await store.write('notes/main.md', 'two', expected_version=first.version, operation=update)).replayed
-
-        delete_operation = MemoryOperation(id='run-1:call-3', fingerprint='delete:missing.md')
-        deleted = await store.delete('missing.md', expected_version=None, operation=delete_operation)
-        assert deleted == MemoryMutation(version=None, replayed=False, existed=False)
-        assert (await store.delete('missing.md', expected_version=None, operation=delete_operation)).replayed
-
-        existing = MemoryOperation(id='run-1:call-4', fingerprint='delete:notes/main.md')
-        removed = await store.delete('notes/main.md', expected_version=updated.version, operation=existing)
-        assert removed.existed
-        assert await store.read('notes/main.md', max_chars=10) is None
 
     async def test_rejects_unsafe_reserved_and_long_paths(self, store: PixeltableMemoryStore) -> None:
         for path in ('../escape.md', '/absolute.md', 'a//b.md', 'a/../../b.md', 'a b.md'):
@@ -266,16 +179,6 @@ class TestPixeltableMemoryStore:
             await store.delete('a.md', expected_version=None, operation=too_long)
         with pytest.raises(ValueError, match='operation id exceeds 248'):
             await store.get_operation(too_long)
-
-    async def test_argument_validation(self, store: PixeltableMemoryStore) -> None:
-        with pytest.raises(ValueError, match='max_chars must be positive'):
-            await store.read('a.md', max_chars=0)
-        with pytest.raises(ValueError, match='limit must be positive'):
-            await store.list_paths(limit=0)
-        with pytest.raises(ValueError):
-            await store.list_paths('../x', limit=10)
-        with pytest.raises(ValueError):
-            await store.search('bad prefix/', 'q', limit=1, max_files=1, max_chars=1, max_file_chars=1)
 
     async def test_table_escape_hatch(self, store: PixeltableMemoryStore) -> None:
         created = await store.write('note.md', 'hello', expected_version=None)
@@ -390,32 +293,6 @@ class TestPixeltableMemoryStoreSchema:
 
 
 class TestPixeltableMemoryStoreSearch:
-    async def test_scoped_bounded_search(self, store: PixeltableMemoryStore) -> None:
-        for path, content in (
-            ('tenant-a/main/alpha.md', 'alpha alpha'),
-            ('tenant-a/main/beta.md', 'alpha'),
-            ('tenant-a/main/other.md', 'unrelated'),
-            ('tenant-b/main/private.md', 'alpha alpha alpha'),
-        ):
-            await store.write(path, content, expected_version=None)
-
-        result = await store.search(
-            'tenant-a/main/', 'alpha', limit=10, max_files=10, max_chars=80, max_file_chars=1_000
-        )
-        assert [match.path for match in result.matches] == ['tenant-a/main/alpha.md', 'tenant-a/main/beta.md']
-        assert result.scanned == 3
-        assert not result.truncated
-        assert sum(len(match.path) + len(match.snippet) for match in result.matches) <= 80
-
-        bounded = await store.search(
-            'tenant-a/main/', 'alpha', limit=10, max_files=1, max_chars=80, max_file_chars=1_000
-        )
-        assert bounded.scanned == 1
-        assert bounded.truncated
-        tiny = await store.search('tenant-a/main/', 'alpha', limit=10, max_files=10, max_chars=1, max_file_chars=1_000)
-        assert tiny.matches == []
-        assert tiny.truncated
-
     async def test_search_empty_and_invalid_bounds(self, store: PixeltableMemoryStore) -> None:
         await store.write('a.md', 'alpha', expected_version=None)
         for query, limit, max_files, max_chars, max_file_chars in (
@@ -431,15 +308,6 @@ class TestPixeltableMemoryStoreSearch:
             assert empty.matches == []
             assert empty.scanned == 0
             assert not empty.truncated
-
-    async def test_search_snippets_cover_tiny_and_offset_windows(self, store: PixeltableMemoryStore) -> None:
-        await store.write('a', '012345alpha-tail', expected_version=None)
-        tiny = await store.search('', 'alpha', limit=1, max_files=1, max_chars=3, max_file_chars=1_000)
-        assert len(tiny.matches) == 1
-        assert len(tiny.matches[0].snippet) == 2
-        offset = await store.search('', 'alpha', limit=1, max_files=1, max_chars=12, max_file_chars=1_000)
-        assert len(offset.matches) == 1
-        assert offset.matches[0].snippet.startswith('...')
 
     async def test_list_paths_and_search_bound_prefix_in_table(self, store: PixeltableMemoryStore) -> None:
         for path, content in (
@@ -497,6 +365,25 @@ class TestPixeltableMemoryStoreSearch:
         for statement in statements:
             assert 'COLLATE "C"' in statement
             assert 'LIMIT' in statement
+
+    async def test_read_projects_bounded_content_in_sql(self, store: PixeltableMemoryStore) -> None:
+        await store.write('a.md', 'x' * 10_000, expected_version=None)
+        statements: list[str] = []
+
+        def record(*args: object) -> None:
+            statement = args[2]
+            if isinstance(statement, str) and 'SELECT' in statement:
+                statements.append(statement)
+
+        event.listen(Engine, 'before_cursor_execute', record)
+        try:
+            result = await store.read('a.md', max_chars=10)
+        finally:
+            event.remove(Engine, 'before_cursor_execute', record)
+        assert result is not None
+        assert result.content == 'x' * 10
+        assert result.truncated
+        assert any('substr(' in statement.lower() for statement in statements)
 
     async def test_search_bounds_each_file_and_ignores_namespace_prefix(self, store: PixeltableMemoryStore) -> None:
         namespace = 'n' * 180

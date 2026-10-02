@@ -10,7 +10,8 @@ and views: `list_tables`, `describe_table`, `query_table` (equality filters), an
 over an embedding index. `PixeltableMemoryStore` keeps [Memory](memory.md) in a Pixeltable table, so
 the agent's notes sit in the same catalog as the data it searches. Each works without the other.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pixeltable/)
+[Catalog source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pixeltable/)
+and [memory store source](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/memory/_pixeltable.py)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -49,7 +50,8 @@ An agent that searches it and keeps notes across runs:
 ```python {test="skip" py="3.11"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableMemoryStore
+from pydantic_ai_harness.pixeltable import Pixeltable
+from pydantic_ai_harness.memory import PixeltableMemoryStore
 
 agent = Agent(
     'openai:gpt-5.6-sol',
@@ -70,7 +72,7 @@ print(result.output)
 | `list_tables` | The allowed table and view paths. |
 | `describe_table` | Kind, comment, columns (type, `is_computed`, `is_stored`), and indexes. |
 | `query_table` | Rows matching equality filters (`{"status": "open"}`); timestamp, date, and UUID values are ISO strings. |
-| `similarity_search` | Nearest rows by `column.similarity(string=query)`, with a `score` field. If the table has a column by that name, the field takes `similarity_` prefixes until it is free (`similarity_score`, then `similarity_similarity_score`). |
+| `similarity_search` | Nearest rows by `column.similarity(string=query)`, with a `score` field. If `score` already names a table column, the score field is prefixed to avoid a collision. |
 
 - `tables` is a required allowlist of table paths or directory prefixes; `['*']` allows the whole
   catalog, including any memory table. A view inside an allowed directory exposes its base table's
@@ -78,13 +80,15 @@ print(result.output)
   columns dropped since.
 - Default columns skip media, array, and binary columns. Computed columns that are not stored rerun
   their function (possibly a model call) on every read, so the tools skip them by default and reject
-  them in `columns` and `where`. A named media column returns a file URL.
+  them in `columns` and `where`. Explicit media columns are rejected because their local file paths
+  are not usable by a remote model.
 - `max_rows` (default 20) and `max_chars` (default 8000) bound the results of `query_table` and
   `similarity_search`. An oversized string is cut to end in `...`, any other oversized value becomes
   `null`, and `truncated` is set. Both return the `{"table", "rows", "truncated"}` envelope.
   `list_tables` and `describe_table` return their own shapes, sized by the allowlist and the schema.
-- Pixeltable errors become [`ModelRetry`](../tools-advanced.md#tool-retries) with a hint
-  such as "Call describe_table", so the model can correct its call.
+- Invalid requests, missing tables, and transient provider errors become
+  [`ModelRetry`](../tools-advanced.md#tool-retries); infrastructure and authorization failures
+  propagate to the application.
 - The default instructions tell the model to describe unfamiliar tables first and to treat table
   contents as untrusted data. Pass `guidance='...'` to replace them, or `guidance=''` to add none.
 
@@ -95,16 +99,11 @@ print(result.output)
 
 - Each memory path is a `kind == 'file'` row. Writes are compare-and-set on a UUID version, enforced by
   a conditional `update` or `delete` and the primary key on `path`.
-- A write that carries an operation id journals its intent as an `__op__/<id>` row before applying
-  it. A crash rolls forward on replay; a writer that loses the compare-and-set withdraws an intent that
-  no peer claimed, so a retry does not apply it twice. The path roots `__op__` and `__meta__` are
-  reserved, paths are at most 255 characters, and operation ids at most 248.
-- `search_memory` uses the same lexical scoring as the other stores, over the files under the
-  tenant's prefix. Listing and search order paths with the `"C"` collation in SQL, so the database
-  applies the bound in code point order whatever its default collation is.
-- `store.table` is an ordinary Pixeltable table: query it, join it with application data, or add an
-  embedding index on `content`. A direct `update` of `content` is not a Memory write and leaves the
-  version unchanged.
+- Operation receipts let retries recover or replay a write without applying it twice. The path roots
+  `__op__` and `__meta__` are reserved. Paths are limited to 255 characters and operation ids to 248.
+- `search_memory` uses the same lexical scoring and prefix isolation as the other stores.
+- `store.table` supports queries, joins, and computed columns. Route writes and deletes through the
+  store; direct table mutations bypass version and receipt bookkeeping.
 - Pixeltable keeps old row versions for every update and delete, and receipts are not pruned, so the
   table grows with history.
 
@@ -117,8 +116,7 @@ what that run reaches.
 
 ## Telemetry
 
-The package adds no spans. Core's tool-call spans already record each catalog tool call, and
-`Memory` emits the `memory.*` spans for store operations.
+The package adds no spans; core records tool calls and `Memory` emits `memory.*` spans.
 
 ## Agent spec (YAML/JSON)
 
@@ -148,4 +146,4 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate it.
 
 ::: pydantic_ai_harness.pixeltable.PixeltableToolset
 
-::: pydantic_ai_harness.pixeltable.PixeltableMemoryStore
+::: pydantic_ai_harness.memory.PixeltableMemoryStore

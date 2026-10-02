@@ -211,8 +211,9 @@ logfire-api = false
 # Admit termflow-md 0.11.0 for CLAI2's swappable agent-history primitives; later releases stay quarantined.
 # TODO: Remove after 2026-10-07 15:58 UTC.
 termflow-md = "2026-09-30T15:58:29Z"
-# Pixeltable 0.7.12 is the latest release tested by the Harness integration.
-pixeltable = "2026-10-01T00:00:00Z"
+# Admit Pixeltable 0.7.12 for the Harness integration; later releases stay quarantined.
+# TODO: Remove after 2026-10-07 18:59 UTC.
+pixeltable = "2026-09-30T18:59:00Z"
 # Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
 # TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
 # This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
@@ -466,7 +467,6 @@ markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
-    "expensive: long-running local volume tests",
     "temporal: starts or connects to a local Temporal dev server",
 ]
 filterwarnings = [

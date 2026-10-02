@@ -7,7 +7,6 @@ import uuid
 from collections.abc import Iterator
 from datetime import date, datetime
 from pathlib import Path
-from typing import NoReturn
 
 import numpy as np
 import pixeltable as pxt
@@ -17,10 +16,6 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableToolset
 
 from .support import DIM, create_table, get_table, insert_rows, tiny_embed
-
-
-def _synthetic_error(*args: object, **kwargs: object) -> NoReturn:
-    raise pxt.RequestError(pxt.ErrorCode.INVALID_ARGUMENT, 'synthetic failure')
 
 
 @pytest.fixture
@@ -93,17 +88,20 @@ class TestPixeltableToolsetAllowlist:
         with pytest.raises(ModelRetry, match='Cannot open table'):
             _tools([catalog]).query_table(f'{catalog}.missing')
 
+    def test_infrastructure_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def unavailable() -> list[str]:
+            raise pxt.ServiceUnavailableError(pxt.ErrorCode.DATABASE_UNAVAILABLE, 'database unavailable')
+
+        monkeypatch.setattr(pxt, 'list_tables', unavailable)
+        with pytest.raises(pxt.ServiceUnavailableError, match='database unavailable'):
+            _tools(['*']).list_tables()
+
     def test_moved_table_is_not_served_under_its_old_name(self, catalog: str) -> None:
         tools = _tools([f'{catalog}.other'])
         assert tools.query_table(f'{catalog}.other')['rows']
         pxt.move(f'{catalog}.other', f'{catalog}.moved')
         with pytest.raises(ModelRetry, match='Cannot open table'):
             tools.query_table(f'{catalog}.other')
-
-    def test_list_tables_error_is_a_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pxt, 'list_tables', _synthetic_error)
-        with pytest.raises(ModelRetry, match='synthetic failure'):
-            _tools(['*']).list_tables()
 
 
 class TestPixeltableToolsetDescribe:
@@ -124,12 +122,6 @@ class TestPixeltableToolsetDescribe:
         assert tools.describe_table(f'{catalog}.open_chunks')['kind'] == 'view'
         assert tools.list_tables()['tables'] == [f'{catalog}.open_chunks']
         assert {row['status'] for row in tools.query_table(f'{catalog}.open_chunks')['rows']} == {'open'}
-
-    def test_metadata_error_is_a_retry(self, catalog: str, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The concrete table class overrides `get_metadata`.
-        monkeypatch.setattr(type(get_table(f'{catalog}.chunks')), 'get_metadata', _synthetic_error)
-        with pytest.raises(ModelRetry, match='synthetic failure'):
-            _chunks(catalog).describe_table(f'{catalog}.chunks')
 
 
 class TestPixeltableToolsetQuery:
@@ -160,7 +152,7 @@ class TestPixeltableToolsetQuery:
         with pytest.raises(ModelRetry, match='No selectable columns'):
             tools.query_table(f'{catalog}.chunks', columns=['vec'])
 
-    def test_named_media_column_returns_file_url(self, catalog: str, tmp_path: Path) -> None:
+    def test_named_media_column_is_rejected(self, catalog: str, tmp_path: Path) -> None:
         docs = create_table(f'{catalog}.docs', {'doc': pxt.Document, 'title': pxt.String})
         note = tmp_path / 'note.md'
         note.write_text('# note\n')
@@ -168,17 +160,17 @@ class TestPixeltableToolsetQuery:
         tools = _tools([f'{catalog}.docs'])
 
         assert tools.query_table(f'{catalog}.docs')['rows'] == [{'title': 'note'}]
-        url = tools.query_table(f'{catalog}.docs', columns=['doc', 'title'])['rows'][0]['doc']
-        assert isinstance(url, str)
-        assert url.startswith('file:')
+        with pytest.raises(ModelRetry, match='local file path'):
+            tools.query_table(f'{catalog}.docs', columns=['doc', 'title'])
 
-    def test_row_and_char_bounds(self, catalog: str) -> None:
+    def test_row_bound(self, catalog: str) -> None:
         rows = _chunks(catalog, max_rows=2).query_table(f'{catalog}.chunks', limit=10)
         assert len(rows['rows']) == 2
         assert rows['truncated']
         assert not _chunks(catalog).query_table(f'{catalog}.chunks', limit=3)['truncated']
         assert _chunks(catalog).query_table(f'{catalog}.chunks', limit=2)['truncated']
 
+    def test_character_bound(self, catalog: str) -> None:
         tiny = _chunks(catalog, max_chars=100).query_table(f'{catalog}.chunks', columns=['text'])
         assert tiny['truncated']
         assert len(json.dumps(tiny, ensure_ascii=False)) <= 100
@@ -254,32 +246,6 @@ class TestPixeltableToolsetQuery:
         assert row['flag'] is True
         assert row['x'] == 1.5
         assert row['j'] == {'k': [1, {'x': 2}]}
-
-    def test_non_json_cells_are_converted(self, catalog: str, monkeypatch: pytest.MonkeyPatch) -> None:
-        when = datetime(2024, 1, 2, 3, 4, 5)
-        key = uuid.uuid4()
-        raw: dict[str, object] = {
-            'f32': np.float32(1.5),
-            'pair': np.array([1, 2]),
-            'day': np.datetime64('2024-01-02'),
-            'when': when,
-            'key': key,
-            'nested': {1: (np.int64(2), None)},
-        }
-
-        def collect(self: pxt.Query) -> list[dict[str, object]]:
-            return [raw]
-
-        monkeypatch.setattr(pxt.Query, 'collect', collect)
-        (row,) = _chunks(catalog).query_table(f'{catalog}.chunks')['rows']
-        assert row == {
-            'f32': 1.5,
-            'pair': '[1 2]',
-            'day': '2024-01-02',
-            'when': when.isoformat(),
-            'key': str(key),
-            'nested': {'1': [2, None]},
-        }
 
     def test_argument_errors_are_retries(self, catalog: str) -> None:
         tools = _chunks(catalog)
@@ -380,22 +346,6 @@ class TestPixeltableToolsetQuery:
         # A filter would run the column for every row (and crash pixeltable with an AssertionError).
         with pytest.raises(ModelRetry, match='computed on read'):
             tools.query_table(f'{catalog}.chunks', where={'virtual': 0})
-
-    def test_projection_errors_are_retries(self, catalog: str, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Expression construction must not escape the tool as a hard error.
-        monkeypatch.setattr(pxt.Table, 'select', _synthetic_error)
-        with pytest.raises(ModelRetry, match='synthetic failure'):
-            _chunks(catalog).query_table(f'{catalog}.chunks')
-
-    def test_where_errors_are_retries(self, catalog: str, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pxt.Query, 'where', _synthetic_error)
-        with pytest.raises(ModelRetry, match='synthetic failure'):
-            _chunks(catalog).query_table(f'{catalog}.chunks', where={'pos': 0})
-
-    def test_collect_errors_are_retries(self, catalog: str, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pxt.Query, 'collect', _synthetic_error)
-        with pytest.raises(ModelRetry, match='synthetic failure'):
-            _chunks(catalog).query_table(f'{catalog}.chunks')
 
 
 class TestPixeltableToolsetSimilarity:

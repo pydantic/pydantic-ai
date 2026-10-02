@@ -1,7 +1,6 @@
 """Read-only Pixeltable catalog tools for a Pydantic AI agent.
 
-External assumptions (Pixeltable 0.7.8 to 0.7.9, verified 2026-09-23 against
-<https://github.com/pixeltable/pixeltable/tree/v0.7.9>; re-check when raising the floor):
+External assumptions (source checked at Pixeltable 0.7.9; integration tested at 0.7.12):
 
 - An unstored computed column reruns its function on every read, so projections and filters naming
   one are rejected. (A `where` comparing one to a literal also raises a bare `AssertionError` in
@@ -16,6 +15,7 @@ import json
 import uuid
 from collections.abc import Callable, Mapping
 from datetime import date, datetime
+from typing import NoReturn
 
 import pixeltable as pxt
 from pixeltable.catalog.table_metadata import ColumnMetadata, TableMetadata
@@ -131,19 +131,20 @@ def _cell(value: object) -> object:
         return {str(key): _cell(item) for key, item in value.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
     if isinstance(value, (list, tuple)):
         return [_cell(item) for item in value]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-    item = getattr(value, 'item', None)
-    if callable(item):
-        try:
-            converted = item()
-        except (ValueError, TypeError):
-            converted = None
-        else:
-            if isinstance(converted, (str, int, float, bool)):
-                return converted
     isoformat = getattr(value, 'isoformat', None)
     if callable(isoformat):
         return isoformat()
     return str(value)
+
+
+def _retry_or_raise(exc: Exception, prefix: str = '') -> NoReturn:
+    if not isinstance(exc, pxt.Error):
+        raise ModelRetry(f'{prefix}{exc}') from exc
+    if isinstance(exc, (pxt.RequestError, pxt.NotFoundError, pxt.ConcurrencyError)) or (
+        isinstance(exc, pxt.ExternalServiceError) and exc.is_retryable
+    ):
+        raise ModelRetry(f'{prefix}{exc.message}') from exc
+    raise exc
 
 
 def _row(row: Mapping[str, object]) -> dict[str, object]:
@@ -219,7 +220,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         try:
             tables = pxt.list_tables()
         except pxt.Error as exc:
-            raise ModelRetry(str(exc)) from exc
+            _retry_or_raise(exc)
         return TableNames(tables=sorted(_norm(path) for path in tables if _allowed(path, self._tables)))
 
     def describe_table(self, table: str) -> TableDescription:
@@ -261,8 +262,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         Args:
             table: Pixeltable table path.
             columns: Columns to return. Omit to skip media, array, and binary
-                columns. Computed columns that are not stored are rejected. A
-                named media column is returned as a file URL.
+                columns. Unstored computed and explicit media columns are rejected.
             where: Equality filters mapping column name to value. Media, array, and
                 binary columns reject non-null filters; `None` matches null rows.
             limit: Maximum rows to return, capped by the capability.
@@ -275,7 +275,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         try:
             query = self._project(t, columns, metadata)
         except (pxt.Error, TypeError, ValueError) as exc:
-            raise ModelRetry(str(exc)) from exc
+            _retry_or_raise(exc)
         query = self._where(query, t, where, metadata)
         return self._collect(table, query, limit)
 
@@ -322,13 +322,13 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             assert isinstance(query_obj, pxt.Query)
             return self._collect(table, query_obj, limit)
         except pxt.Error as exc:
-            raise ModelRetry(str(exc)) from exc
+            _retry_or_raise(exc)
 
     def _metadata(self, t: pxt.Table) -> TableMetadata:
         try:
             return t.get_metadata()
         except pxt.Error as exc:
-            raise ModelRetry(str(exc)) from exc
+            _retry_or_raise(exc)
 
     def _open_table(self, table: str) -> pxt.Table:
         if not _allowed(table, self._tables):
@@ -338,7 +338,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         try:
             t = pxt.get_table(table)
         except pxt.Error as exc:
-            raise ModelRetry(f'Cannot open table {table!r}: {exc}') from exc
+            _retry_or_raise(exc, f'Cannot open table {table!r}: ')
         assert t is not None  # if_not_exists='error' raises instead of returning None
         return t
 
@@ -374,7 +374,9 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
                 continue
             ref = t[name]
             if _is_media_type(type_):
-                named[name] = ref.fileurl
+                raise ModelRetry(
+                    f'Media column {name!r} exposes a local file path; use a safe application URL instead.'
+                )
             else:
                 items.append(ref)
         if not items and not named:
@@ -416,7 +418,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
                 clause = t[name] == value
                 pred = clause if pred is None else pred & clause
             except (pxt.Error, TypeError, ValueError) as exc:
-                raise ModelRetry(f'Cannot filter {name!r} by {value!r}: {exc}') from exc
+                _retry_or_raise(exc, f'Cannot filter {name!r} by {value!r}: ')
         if pred is None:  # pragma: no cover - `where` is non-empty here
             return query
         try:
@@ -424,7 +426,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             assert isinstance(filtered, pxt.Query)
             return filtered
         except (pxt.Error, TypeError, ValueError) as exc:
-            raise ModelRetry(str(exc)) from exc
+            _retry_or_raise(exc)
 
     def _collect(self, table: str, query: pxt.Query, limit: int) -> RowsResult:
         if limit < 1:
@@ -435,7 +437,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             assert isinstance(limited, pxt.Query)
             fetched = list(limited.collect())
         except pxt.Error as exc:
-            raise ModelRetry(str(exc)) from exc
+            _retry_or_raise(exc)
         has_more = len(fetched) > n
         rows = [_row(dict(row)) for row in fetched[:n]]
         return _bounded_payload(_norm(table), rows, has_more=has_more, max_chars=self._max_chars)

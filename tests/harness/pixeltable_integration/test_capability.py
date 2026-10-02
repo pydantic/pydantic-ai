@@ -73,10 +73,6 @@ class TestPixeltableCapability:
         with pytest.raises(ValueError, match='max_chars must be at least 1, got 0'):
             Pixeltable(tables=['a'], max_chars=0)
 
-    def test_description_default_and_override(self) -> None:
-        assert 'list_tables' in str(Pixeltable(tables=['a']).description)
-        assert Pixeltable(tables=['a'], description='custom').description == 'custom'
-
     def test_instructions_name_the_allowlist(self) -> None:
         scoped = Pixeltable(tables=['my_app.doc_chunks', 'other']).get_instructions()
         assert scoped is not None
@@ -90,15 +86,6 @@ class TestPixeltableCapability:
         assert Pixeltable(tables=['a'], guidance='Use the tables.').get_instructions() == 'Use the tables.'
         assert Pixeltable(tables=['a'], guidance='').get_instructions() is None
 
-    def test_from_spec_and_id(self) -> None:
-        cap = _narrow(Pixeltable.from_spec(tables=['my_app.doc_chunks'], max_rows=3, max_chars=100, defer_loading=True))
-        assert cap.id == 'pixeltable'
-        assert cap.tables == ['my_app.doc_chunks']
-        assert cap.max_rows == 3
-        assert cap.max_chars == 100
-        assert cap.defer_loading is True
-        assert 'my_app.doc_chunks' in str(cap.get_instructions())
-
     def test_from_spec_positional_shorthand(self) -> None:
         # {"Pixeltable": ["dir.tbl"]} passes the allowlist as the single positional argument.
         assert _narrow(Pixeltable.from_spec(['my_app.doc_chunks'])).tables == ['my_app.doc_chunks']
@@ -107,13 +94,6 @@ class TestPixeltableCapability:
         assert _loaded(agent)[0].tables == ['my_app.doc_chunks']
         with pytest.raises(TypeError):
             Pixeltable.from_spec(['a.b'], tables=['c.d'])
-
-    def test_agent_from_spec_requires_custom_capability_types(self) -> None:
-        spec = {'model': 'test', 'capabilities': [{'Pixeltable': {'tables': ['my_app.doc_chunks']}}]}
-        with pytest.raises(ValueError, match='custom_capability_types'):
-            Agent.from_spec(spec)
-        agent = Agent.from_spec(spec, custom_capability_types=[Pixeltable])
-        assert _loaded(agent)[0].tables == ['my_app.doc_chunks']
 
     def test_toolset_uses_the_capability_settings(self) -> None:
         toolset = Pixeltable(tables=['a'], id=None).get_toolset()

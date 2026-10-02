@@ -8,7 +8,6 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from pydantic_ai_harness.pixeltable._capability import Pixeltable
-from pydantic_ai_harness.pixeltable._store import PixeltableMemoryStore
 from pydantic_ai_harness.pixeltable._toolset import PixeltableToolset
 
-__all__ = ['Pixeltable', 'PixeltableMemoryStore', 'PixeltableToolset']
+__all__ = ['Pixeltable', 'PixeltableToolset']

@@ -81,6 +81,7 @@ Every `MemoryStore.read` call includes a finite `max_chars`, and every `list_pat
 | `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
 | `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. |
 | `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. The caller owns the pool lifecycle. |
+| `PixeltableMemoryStore(table_name=...)` | Durable Pixeltable catalog storage; install `[pixeltable]` on Python 3.11+. See the [Pixeltable guide](../pixeltable/). |
 
 ```python
 from pydantic_ai_harness import Memory

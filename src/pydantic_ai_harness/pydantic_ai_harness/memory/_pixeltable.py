@@ -1,7 +1,6 @@
 """Pixeltable backend for Harness `Memory`: one table row per memory path, plus journaled receipts.
 
-External assumptions (Pixeltable 0.7.8 to 0.7.9, verified 2026-09-23 against the source at
-<https://github.com/pixeltable/pixeltable/tree/v0.7.9>; re-check when raising the floor):
+External assumptions (source checked at Pixeltable 0.7.9; integration tested at 0.7.12):
 
 - A String primary key on a data-versioned table is enforced as a unique index on `left(path, 256)`
   (`pixeltable/store.py`), so paths are capped at 255 characters here.
@@ -107,7 +106,11 @@ def _insert_rows(t: pxt.Table, rows: list[dict[str, object]]) -> None:
     try:
         t.insert(rows)  # pyright: ignore[reportUnknownMemberType]
     except pxt.Error as exc:
-        if 'Duplicate primary key' in str(exc):
+        if (
+            isinstance(exc, pxt.RequestError)
+            and exc.error_code == pxt.ErrorCode.CONSTRAINT_VIOLATION
+            and exc.message.startswith('Duplicate primary key')
+        ):
             raise MemoryConflictError(str(exc)) from exc
         raise
 
@@ -439,14 +442,20 @@ class PixeltableMemoryStore:
         _check_store_path(path)
         if max_chars <= 0:
             raise ValueError('max_chars must be positive')
-        row = self._file_row(self._ensure_table(), path)
-        if row is None:
+        t = self._ensure_table()
+        query = t.where((t.path == path) & (t.kind == _KIND_FILE)).select(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            content=t.content.slice(0, max_chars + 1), version=t.version, operation_id=t.last_operation_id
+        )
+        assert isinstance(query, pxt.Query)
+        rows = query.collect()
+        if not rows:
             return None
+        row = rows[0]
         content = row['content'] or ''
         return MemoryFile(
             content=content[:max_chars],
             version=str(row['version']),
-            operation_id=row['last_operation_id'],
+            operation_id=row['operation_id'],
             truncated=len(content) > max_chars,
         )
 
