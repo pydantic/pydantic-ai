@@ -572,6 +572,8 @@ class MyAgentWorkflow:
 
 An external actor then cancels the run by signalling the workflow: `await handle.signal(MyAgentWorkflow.cancel)`. As the example shows, catch [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] inside the workflow to complete normally; as with [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] above, an uncaught `RunCancelled` fails the workflow as a typed application error, without the run state.
 
+A `DurableRunCancellation` binds to a single run, and binding it to another raises a [`UserError`][pydantic_ai.exceptions.UserError]. A workflow that runs the agent once per turn should assign a fresh one before each run, so a signal that arrives between turns can't cancel the next one.
+
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `TemporalAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
 ### Suspended Turns and Background Mode

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
 from ..capabilities.abstract import AbstractCapability
+from ..exceptions import UserError
 from ..tools import AgentDepsT, RunContext
 
 if TYPE_CHECKING:
@@ -41,7 +42,7 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
     For Temporal, wire `cancel()` to a [`@workflow.signal`](https://docs.temporal.io/develop/python/message-passing#signals)
     handler:
 
-    ```python {test="skip" typecheck="skip"}
+    ```python {test="skip" typecheck="skip - imports a user-defined agent module"}
     from temporalio import workflow
 
     from pydantic_ai import RunCancelled
@@ -76,8 +77,10 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
     (`await handle.signal(MyAgentWorkflow.cancel)`). The capability itself is engine-agnostic; on
     other engines, `cancel()` has to be called from user code running in the same workflow or flow.
 
-    A single instance binds to a single run; create a fresh one per durable execution (e.g. in the
-    workflow's `__init__`), not a module-level singleton shared across concurrent runs.
+    A single instance binds to a single run, and binding it to another raises a
+    [`UserError`][pydantic_ai.exceptions.UserError]. A workflow that runs the agent once can create it
+    in `__init__`; one that runs the agent repeatedly (e.g. once per chat turn) should assign a fresh
+    instance before each run, so a signal arriving between runs can't reach the next one.
     """
 
     _safe_at_runtime: ClassVar[bool] = True
@@ -87,6 +90,7 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
 
     _cancellation: RunCancellation | None = field(default=None, init=False, repr=False)
     _cancel_requested: bool = field(default=False, init=False, repr=False)
+    _bound: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
@@ -102,6 +106,11 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
         # on the same loop: the controller is always captured before a `cancel()` can reach it.
         cancellation: RunCancellation | None = ctx.__dict__.get('_cancellation')
         with self._lock:
+            if self._bound:
+                raise UserError(
+                    'This `DurableRunCancellation` is already bound to a run; create a new instance for each run.'
+                )
+            self._bound = True
             self._cancellation = cancellation
             already_requested = self._cancel_requested
         if already_requested and cancellation is not None:

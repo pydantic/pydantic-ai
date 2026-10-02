@@ -14,9 +14,9 @@ import asyncio
 
 import pytest
 
-from pydantic_ai import Agent, RunCancelled
+from pydantic_ai import Agent, RunCancelled, UserError
 from pydantic_ai.durable_exec import DurableRunCancellation
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -40,7 +40,8 @@ async def test_cancel_from_sibling_task_surfaces_run_cancelled():
 
     with pytest.raises(RunCancelled) as exc_info:
         await task
-    assert [type(message).__name__ for message in exc_info.value.all_messages()] == ['ModelRequest']
+    [message] = exc_info.value.all_messages()
+    assert isinstance(message, ModelRequest)
 
 
 async def test_cancel_before_run_binds_controller_still_cancels():
@@ -71,6 +72,17 @@ async def test_cancel_after_run_finishes_is_a_no_op():
     cancellation.cancel()
     await asyncio.sleep(0)
     assert await asyncio.sleep(0, result='unrelated') == 'unrelated'
+
+
+async def test_reusing_an_instance_for_another_run_raises():
+    """An instance binds to a single run: a `cancel()` meant for one run must never reach the next, so
+    binding it to a second run is rejected rather than silently carrying a stale request over."""
+    cancellation = DurableRunCancellation()
+    agent = Agent(TestModel())
+    await agent.run('hello', capabilities=[cancellation])
+
+    with pytest.raises(UserError, match='already bound to a run'):
+        await agent.run('hello again', capabilities=[cancellation])
 
 
 def test_capability_is_not_spec_constructible():
