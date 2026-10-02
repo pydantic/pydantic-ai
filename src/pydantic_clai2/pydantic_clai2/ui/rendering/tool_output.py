@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
 from rich.console import Console
 from rich.text import Text
-from termflow.diff import DiffRenderer, DiffTheme
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
@@ -205,12 +204,7 @@ class ToolOutput:
         safe_diff = terminal_text(diff)
         if safe_diff:
             if self.console.is_terminal:
-                colors = (
-                    DiffTheme(addition=theme.DIFF_ADDITION, deletion=theme.DIFF_DELETION, marker_brighten=2.0)
-                    if theme.current() is None
-                    else None
-                )
-                self.console.file.write(DiffRenderer(theme=colors).render(safe_diff))
+                self.console.file.write(theme.diff_renderer().render(safe_diff))
                 self.console.file.flush()
             else:
                 self.console.print(safe_diff, markup=False, highlight=False)

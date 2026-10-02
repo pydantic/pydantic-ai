@@ -3955,7 +3955,8 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
     with pytest.raises(
         UserError,
         match=re.escape(
-            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
+            "`ImageGenerationTool` is not supported by model 'gemini-2.5-flash'. "
+            "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
         ),
     ):
         await agent.run('Generate an image of an axolotl.')

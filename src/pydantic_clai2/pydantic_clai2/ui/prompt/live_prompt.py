@@ -405,7 +405,7 @@ class LivePrompt:
                                 )
                             ),
                         )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 -- optional suggestions must not end a session.
                         error = f'Completion unavailable: {exc}'
                     finally:
                         self._completion_scope = None
