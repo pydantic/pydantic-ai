@@ -332,8 +332,8 @@ and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
 the configured telemetry destination first.
 
-Startup plugin load failures, including missing optional dependencies, are recorded
-with their exception and traceback through this same instance. This does not require
+Startup plugin load failures reported in the terminal, including missing optional dependencies,
+are recorded with their exception and traceback through this same instance. This does not require
 `ui_events`. Reporting waits until startup loading finishes, so failures before the
 observability plugin loaded are included. Disabling observability stops this reporting;
 the existing terminal messages remain.
@@ -1631,12 +1631,14 @@ Five `async` methods fire outside the agent run, in the shell:
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
-| `on_plugin_load_failed` | startup loading finished, once per failed plugin | `plugin`, `error` | no |
+| `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
-of load order. It covers startup loading, not individual `/plugins` actions. A handler
-failure is printed without stopping startup or preventing other handlers from running.
+of load order. It covers startup loading, not individual `/plugins` actions. Declarations
+whose own module is not installed stay quiet, as on the terminal; a missing dependency
+inside an available plugin is reported. A handler failure is printed without stopping
+startup or preventing other handlers from running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running

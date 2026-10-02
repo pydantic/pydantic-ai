@@ -379,8 +379,8 @@ class PluginLoader(Generic[DepsT]):
                 try:
                     await self.load(entry.name, fresh=fresh)
                 except PluginError as exc:
-                    failures.append(PluginLoadFailed(plugin=entry.name, error=exc.error))
                     if not _module_absent(entry, exc.error):
+                        failures.append(PluginLoadFailed(plugin=entry.name, error=exc.error))
                         self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
                 # `load` refreshed the entries, so read the notice from the current one.
                 ignored = self._entries[entry.name].ignored

@@ -118,6 +118,39 @@ async def test_startup_errors_without_working_observability_still_print(
         await harness.loader.close('exit')
 
 
+@pytest.mark.parametrize('module_present', [False, True])
+async def test_startup_only_reports_import_errors_inside_available_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder: Recorder, module_present: bool
+) -> None:
+    monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
+    monkeypatch.setitem(sys.modules, 'fastmcp', None)
+    if module_present:
+        (tmp_path / 'clai2_startup_test_plugin.py').write_text('import fastmcp\n')
+    harness = Harness(
+        tmp_path,
+        builtin=(
+            PluginSettings(id='mcp', factory='clai2_startup_test_plugin'),
+            PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
+        ),
+    )
+    try:
+        await harness.loader.load_all()
+        entry = next(entry for entry in harness.loader.entries() if entry.name == 'mcp')
+        assert entry.error is not None
+        assert 'ModuleNotFoundError' in entry.error
+        errors = recorder.spans()
+        if module_present:
+            assert "Plugin 'mcp': ModuleNotFoundError:" in harness.text
+            assert len(errors) == 1
+            assert (errors[0].attributes or {})['plugin'] == 'mcp'
+            assert 'fastmcp' in str((errors[0].events[0].attributes or {})['exception.message'])
+        else:
+            assert harness.text == ''
+            assert errors == []
+    finally:
+        await harness.loader.close('exit')
+
+
 async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path, recorder: Recorder) -> None:
     observer = tmp_path / 'observer.py'
     observer.write_text(
