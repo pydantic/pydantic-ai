@@ -1,3 +1,7 @@
+---
+description: "Use xAI Grok models with Pydantic AI: configure the provider and use image generation, X search, file attachments, reasoning effort and multi-agent models."
+---
+
 # xAI
 
 ## Install
@@ -30,6 +34,9 @@ from pydantic_ai import Agent
 agent = Agent('xai:grok-4.3')
 ...
 ```
+
+!!! tip
+    For voice agents, use Grok Voice with a [realtime session](../realtime/xai.md) instead.
 
 Or initialise the model directly:
 

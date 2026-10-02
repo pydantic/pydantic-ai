@@ -5,14 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
-import pytest
-
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext, StepNode
 from pydantic_graph.join import JoinNode, reduce_list_append
 
 from ..._inline_snapshot import snapshot
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass

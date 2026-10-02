@@ -1,0 +1,212 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.8-live
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Answer in one short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.105
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.114
+  data:
+    client_content:
+      turns:
+      - parts:
+        - inlineData:
+            data: AgACAAEAAQACAAEAAQACAAIAAgACAAIAAgACAAIAAgAC
+            mime_type: audio/pcm;rate=16000
+        role: user
+      - parts:
+        - text: Nice to meet you!
+        role: model
+      turnComplete: false
+- kind: message
+  direction: sent
+  at: 0.115
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is my name?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.124
+  data:
+    sessionResumptionUpdate:
+      newHandle: 5e765a01-4d2b-4497-be7c-5a8fb9f540d6
+      resumable: true
+- kind: message
+  direction: received
+  at: 0.636
+  data: {}
+- kind: message
+  direction: received
+  at: 0.647
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.856
+  data: {}
+- kind: message
+  direction: received
+  at: 0.859
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AwAVAAwAAAAMABQABAAAAAoAFQACAAoAFgD9/wkAFAAJ
+        role: model
+      outputTranscription:
+        text: 'Your name '
+- kind: message
+  direction: received
+  at: 0.925
+  data: {}
+- kind: message
+  direction: received
+  at: 0.94
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: +hECE80T9hDVEb0TSRTqFOoUDhQqFMYU0BNuE7QTxBLV
+        role: model
+- kind: message
+  direction: received
+  at: 0.983
+  data: {}
+- kind: message
+  direction: received
+  at: 1.001
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Yel56QbsPu6175jw3fA58ov13ffy93f6lP4lAS4E/wQW
+        role: model
+- kind: message
+  direction: received
+  at: 1.043
+  data: {}
+- kind: message
+  direction: received
+  at: 1.054
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 1/zF+qD6TvpZ+lD5avfw8/3teeqG6EflueZk69DqPO6J
+        role: model
+- kind: message
+  direction: received
+  at: 1.088
+  data: {}
+- kind: message
+  direction: received
+  at: 1.095
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: yuaf4/nj3eby6ZDsu+6a8UT3Of7XA1QHLgkvC5gP/RU5
+        role: model
+      outputTranscription:
+        text: is Alice.
+- kind: message
+  direction: received
+  at: 1.127
+  data: {}
+- kind: message
+  direction: received
+  at: 1.135
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: J/ffB53/ffphBbj/2vjcBowA/vgxB40Ah/dpCIcAwPfE
+        role: model
+- kind: message
+  direction: received
+  at: 1.182
+  data: {}
+- kind: message
+  direction: received
+  at: 1.194
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Y/8V/+wAYwFp/7z+OwDFAMD/gf+QALX/Uf+NAPX/Uf8o
+        role: model
+- kind: message
+  direction: received
+  at: 1.211
+  data: {}
+- kind: message
+  direction: received
+  at: 1.214
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: EwAOAAcABgAGAAYACAAKAAAA/v8CAAAAAQD9//n/+f/4
+        role: model
+- kind: message
+  direction: received
+  at: 1.241
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 2.453
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 618
+      responseTokenCount: 46
+      totalTokenCount: 664
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 317
+      - modality: AUDIO
+        tokenCount: 264
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 46
+      thoughtsTokenCount: 50

@@ -12,6 +12,25 @@ JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
 
+class UseEnumMemberDocstrings:
+    """Mix into an `Enum` to describe each of its members by the docstring written under it.
+
+    This is the enum counterpart to `model_config = ConfigDict(use_attribute_docstrings=True)` on a Pydantic
+    model, which is how a model's fields get their docstrings as descriptions. With it, the enum is described
+    to the model as `anyOf` of `const`s carrying those docstrings as descriptions, rather than as a bare list
+    of values, so the model can tell similar options apart. Without it the docstrings are ignored and the
+    schema is unchanged.
+
+    The two are expressed differently because an `Enum` has no `model_config` to carry a flag, and cannot carry
+    a plain class attribute either — annotated or not, any assigned value becomes a member. A base class is the
+    only marker left, so mix it in ahead of `str`, `int` or `Enum`:
+    `class Urgency(UseEnumMemberDocstrings, str, Enum)`. It changes nothing else about the enum: its members,
+    their values, and their `str`/`int` behaviour are exactly what they would be without it.
+
+    See [enum options](../tools.md#enum-options) for an example.
+    """
+
+
 @dataclass(init=False)
 class JsonSchemaTransformer(ABC):
     """Walks a JSON schema, applying transformations to it at each level.
@@ -107,7 +126,11 @@ class JsonSchemaTransformer(ABC):
                     return self._walk_def(key, siblings)
                 return deepcopy(self._walked_def(key))
 
-        # Handle the schema based on its type / structure
+        # Handle the schema based on its type / structure. Object and array keywords are only walked when `type` is
+        # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
+        # walking them there would reshape subtrees that otherwise pass through unchanged, collapsing their
+        # single-member unions and running `transform()` on them, and an inlining transformer would raise `UserError`
+        # on a `$ref` that doesn't resolve into `$defs`.
         type_ = schema.get('type')
         if type_ == 'object':
             schema = self._handle_object(schema)
@@ -175,7 +198,11 @@ class JsonSchemaTransformer(ABC):
         if prefix_items := schema.get('prefixItems'):
             schema['prefixItems'] = [self._handle(item) for item in prefix_items]
 
-        if items := schema.get('items'):
+        items: _JsonSchemaNode | list[_JsonSchemaNode] | None = schema.get('items')
+        if isinstance(items, list):
+            # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
+            schema['items'] = [self._handle(item) for item in items]
+        elif items:
             schema['items'] = self._handle(items)
 
         return schema
@@ -224,7 +251,15 @@ class JsonSchemaTransformer(ABC):
 
 
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
-    """Transforms the JSON Schema to inline $defs."""
+    """Transforms the JSON Schema to inline `$defs`.
+
+    Object keywords (`properties`, `additionalProperties`, `patternProperties`) are only walked when `type` is
+    `'object'`, and array keywords (`items`, `prefixItems`) only when it is `'array'`. On a schema with no `type`, or
+    with a `type` list such as `['object', 'null']`, they are left as written, so a `$ref` inside them is not inlined
+    and can point at a definition the output no longer contains. If the schema is only meant to accept objects (or
+    arrays), set `type` to `'object'` (or `'array'`) to have it inlined; for a nullable one, put it in an `anyOf`
+    with `{'type': 'null'}` instead of using a `type` list.
+    """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)

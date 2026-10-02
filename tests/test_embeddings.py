@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -25,10 +25,13 @@ if sys.version_info < (3, 11):
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
+from opentelemetry.trace import StatusCode
+
 from pydantic_ai.embeddings import (
     Embedder,
     EmbeddingResult,
     EmbeddingSettings,
+    EmbedInputType,
     InstrumentedEmbeddingModel,
     KnownEmbeddingModelName,
     TestEmbeddingModel,
@@ -41,7 +44,6 @@ from pydantic_ai.usage import RequestUsage
 from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.usefixtures('allow_model_requests'),
 ]
 
@@ -53,6 +55,11 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
+    import cohere
+    from cohere.types.embed_by_type_response import EmbedByTypeResponse
+    from cohere.types.embed_by_type_response_embeddings import EmbedByTypeResponseEmbeddings
+
+    from pydantic_ai.embeddings import cohere as cohere_embeddings
     from pydantic_ai.embeddings.cohere import (
         CohereEmbeddingModel,
         CohereEmbeddingSettings,
@@ -534,6 +541,23 @@ class TestOpenAI:
                     },
                 },
             ]
+        )
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
+def test_cohere_empty_billed_units():
+    """An empty SDK billing object is a defensive case that a VCR recording cannot reliably produce."""
+    for billed_units in (cohere.ApiMetaBilledUnits(), cohere.ApiMetaBilledUnits(input_tokens=0, output_tokens=0)):
+        response = EmbedByTypeResponse(
+            id='test',
+            embeddings=EmbedByTypeResponseEmbeddings(float_=[[0.1]]),
+            meta=cohere.ApiMeta(billed_units=billed_units),
+        )
+        assert (
+            cohere_embeddings._map_usage(  # pyright: ignore[reportPrivateUsage]
+                response, 'cohere', 'https://api.cohere.com', 'embed-v4.0'
+            )
+            == RequestUsage()
         )
 
 
@@ -2328,3 +2352,37 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_exception_honors_include_content(capfire: CaptureLogfire, include_content: bool):
+    """A failing embedding request follows `include_content` like the agent's spans do.
+
+    A provider error carries its response body in the exception message, so the exception event and
+    the ERROR status description on the embedding span are withheld when content capture is off.
+    """
+
+    class FailingEmbeddingModel(TestEmbeddingModel):
+        async def embed(
+            self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        ) -> EmbeddingResult:
+            raise ModelHTTPError(status_code=400, model_name='failing', body='invalid input: embed-secret')
+
+    embedder = Embedder(FailingEmbeddingModel(), instrument=InstrumentationSettings(include_content=include_content))
+    with pytest.raises(ModelHTTPError):
+        await embedder.embed('hello', input_type='document')
+
+    [span] = [span for span in capfire.exporter.exported_spans if span.status.status_code is StatusCode.ERROR]
+    [event] = [event for event in span.events if event.name == 'exception']
+    attributes = dict(event.attributes or {})
+    assert attributes['exception.type'] == 'pydantic_ai.exceptions.ModelHTTPError'
+    assert attributes['exception.escaped'] == 'False'
+    if include_content:
+        assert {'exception.message', 'exception.stacktrace'} <= set(attributes)
+        assert 'embed-secret' in str(attributes['exception.message'])
+        assert span.status.description is not None
+    else:
+        assert set(attributes) == {'exception.type', 'exception.escaped'}
+        assert span.status.description is None
+        assert 'embed-secret' not in str(capfire.exporter.exported_spans)

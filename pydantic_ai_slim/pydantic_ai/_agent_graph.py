@@ -11,8 +11,10 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import field, replace
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
+import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -42,7 +44,18 @@ from pydantic_ai.toolsets._tool_search import (
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
-from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import (
+    _display,
+    _enqueue,
+    _output,
+    _system_prompt,
+    _usage_attribution,
+    exceptions,
+    messages as _messages,
+    models,
+    result,
+    usage as _usage,
+)
 from ._cancel import RunCancellation
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -50,8 +63,19 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._genai_prices import best_effort_price, fill_response_cost
-from ._run_context import AnchoredEvidence, EventStreamBuffer, dispatch_event_stream, set_current_run_context
+from ._run_context import (
+    AnchoredEvidence,
+    EventStreamBuffer,
+    dispatch_event_stream,
+    recorded_workspace_ref,
+    set_current_run_context,
+)
 from .exceptions import ToolRetryError
+from .messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
+)
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
 # `_continuation` module (see its `__all__`); the leading underscore is a module-privacy
@@ -79,6 +103,7 @@ from .toolsets._instruction_collection import collect_toolset_instructions
 if TYPE_CHECKING:
     from .agent import Agent
     from .models.instrumented import InstrumentationSettings
+    from .workspaces import Workspace, WorkspaceRef
 
 __all__ = (
     'GraphAgentState',
@@ -98,7 +123,6 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 EndStrategy = Literal['early', 'graceful', 'exhaustive']
 """How to handle function tool calls a model requests alongside a result that ends the run.
 
@@ -146,7 +170,7 @@ _AGENT_GRAPH_SLEEP: ContextVar[AgentGraphSleepFunc | None] = ContextVar(
 def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
     """Set a custom async sleep function for agent graph delays.
 
-    By default, the agent graph uses `asyncio.sleep` when it needs to wait during
+    By default, the agent graph uses `anyio.sleep` when it needs to wait during
     a run. Durable execution frameworks (Temporal, Prefect, DBOS, Restate, etc.)
     should use this context manager to register their own durable sleep so that
     delays survive workflow replays and don't waste activity time.
@@ -171,12 +195,12 @@ def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
 
 
 async def _agent_graph_sleep(delay: float) -> None:
-    """Sleep using the registered agent graph sleep function, or asyncio.sleep."""
+    """Sleep using the registered agent graph sleep function, or anyio.sleep."""
     sleep_func = _AGENT_GRAPH_SLEEP.get()
     if sleep_func is not None:
         await sleep_func(delay)
     else:
-        await asyncio.sleep(delay)
+        await anyio.sleep(max(delay, 0))
 
 
 DepsT = TypeVar('DepsT')
@@ -346,6 +370,11 @@ class GraphAgentState:
     identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
     `get_tools` scheduling replay-deterministic."""
 
+    def __post_init__(self) -> None:
+        # Keep the persisted shape a plain list while ensuring every live graph state uses the
+        # thread-safe list subclass. Pydantic deserialization also runs this hook.
+        self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
+
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
         if (
@@ -418,11 +447,25 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
     # place — never reassigned. The per-step refresh relies on that shared identity for both, and
     # `discovered_tool_names` additionally on the in-step reveals written by tool execution.
-    # `loaded_capability_ids` is refreshed from history only: a capability loaded during a step
-    # lands from the next one, so nothing writes it mid-step. Reassigning either (here, or by
+    # `loaded_capability_ids` is refreshed from history only: a capability the *model* loads during
+    # a step lands from the next one, since its load return only reaches history at the step's end.
+    # It is still refreshed a second time within the step, after history processing has rewritten
+    # that history — the only way its contents move mid-step. Reassigning either (here, or by
     # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
+
+    # Resolved once before the graph starts; never changes during the run.
+    workspace: Workspace
+    carried_workspace_ref: WorkspaceRef | None = None
+    """The ref from history this run's responses record when it has no attached workspace; `None` after `'new'`."""
+    adopted_response: _messages.ModelResponse | None = None
+    """The trailing history response a no-prompt run continues from, which records this run's ref like its own."""
+
+    @property
+    def workspace_ref(self) -> WorkspaceRef | None:
+        """The `workspace_ref` this run records on its responses."""
+        return recorded_workspace_ref(self.workspace, self.carried_workspace_ref)
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -430,13 +473,16 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
 
+    display_banner: _display.BannerDisplay
+    """Shows the first-run banner, once this run has resolved the model and tools it will use."""
+
     agent: Agent[DepsT, Any] | None = None
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
-    pending_immediate_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
-        default_factory=dict[int, list[asyncio.Event]], repr=False
+    pending_immediate_dispatches: dict[int, list[anyio.Event]] = dataclasses.field(
+        default_factory=dict[int, list[anyio.Event]], repr=False
     )
     """Settlement signals for buffered events dispatched immediately, keyed by `id(event)`.
 
@@ -451,6 +497,25 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     Runtime-only and id-keyed like `pending_immediate_dispatches`, and excluded from persistence for
     the same reason."""
+
+    durable_operations: dict[tuple[str, str], Callable[..., Awaitable[Any]]] = dataclasses.field(
+        default_factory=dict[tuple[str, str], Callable[..., Awaitable[Any]]], repr=False
+    )
+    """Per-run durable capability operation dispatchers, keyed by `(capability id, operation name)`.
+
+    Shared by reference into every `RunContext` this run and only ever mutated in place, like
+    `loaded_capability_ids` above: the durability capability fills it once at run setup, and every
+    later `build_run_context` has to see the same populated mapping or a durable operation called
+    from a per-request hook would silently run inline.
+    """
+
+    run_capabilities_by_id: dict[str, AbstractCapability[DepsT]] = dataclasses.field(
+        default_factory=dict[str, AbstractCapability[Any]], repr=False
+    )
+    """The run's capability instances by `id`, used for worker-side durable recovery.
+
+    Shared by reference and mutated in place, for the same reason as `durable_operations`.
+    """
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -564,17 +629,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if self.deferred_tool_results is not None:
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
-        if (
-            messages
-            and isinstance(last_message := messages[-1], _messages.ModelRequest)
-            and last_message.state == 'interrupted'
-        ):
-            # A trailing request interrupted during tool execution means the last response's
-            # still-unanswered calls will never be executed, so they are closed out with
-            # synthesized returns. A 'complete' trailing request (e.g. from a run that ended in
-            # `DeferredToolRequests`) is left alone: its response's open calls may still receive
-            # `deferred_tool_results`.
-            messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)
+        messages[:] = _repair_interrupted_tail(messages, has_new_prompt=self.user_prompt is not None)
 
         next_message: _messages.ModelRequest | None = None
         is_resuming_without_prompt = False
@@ -585,27 +640,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
-                next_message = _messages.ModelRequest(
-                    parts=last_message.parts,
-                    run_id=last_message.run_id,
-                    conversation_id=last_message.conversation_id,
-                    metadata=last_message.metadata,
-                )
+                next_message = _resumed_request(last_message)
                 is_resuming_without_prompt = True
 
-                # Extract `UserPromptPart` content from the popped message and add to `ctx.deps.prompt`
-                user_prompt_parts = [part for part in last_message.parts if isinstance(part, _messages.UserPromptPart)]
-                if user_prompt_parts:
-                    if len(user_prompt_parts) == 1:
-                        ctx.deps.prompt = user_prompt_parts[0].content
-                    else:
-                        combined_content: list[_messages.UserContent] = []
-                        for part in user_prompt_parts:
-                            if isinstance(part.content, str):
-                                combined_content.append(part.content)
-                            else:
-                                combined_content.extend(part.content)
-                        ctx.deps.prompt = combined_content
+                if (prompt := _request_prompt(last_message)) is not None:
+                    ctx.deps.prompt = prompt
             elif isinstance(last_message, _messages.ModelResponse):
                 if last_message.state == 'suspended' and self.user_prompt is None:
                     # The history ends in a turn a provider paused mid-flight (Anthropic
@@ -620,6 +659,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
                     )
                 if self.user_prompt is None:
+                    # The response may later be stamped with the run's workspace ref; don't mutate the caller's copy.
+                    if ctx.deps.workspace.attached or ctx.deps.workspace_ref is not None:
+                        last_message = replace(last_message)
+                        messages[-1] = last_message
+                        ctx.deps.adopted_response = last_message
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
                     run_context = replace(
                         build_run_context(ctx),
@@ -646,15 +690,13 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         'Resume it by running the agent with this message history and no new prompt.'
                     )
                 elif last_message.tool_calls:
-                    if last_message.state == 'interrupted':
-                        # The response was cut off (e.g. a cancelled stream), so its tool calls
-                        # will never be executed; close them out with synthesized returns instead
-                        # of refusing the new prompt.
-                        messages[:] = _repair_dangling_tool_calls(messages, repair_last_response=True)
-                    else:
-                        raise exceptions.UserError(
-                            'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
-                        )
+                    # An interrupted response's calls were already closed out by `_repair_interrupted_tail`.
+                    raise exceptions.UserError(
+                        'Cannot provide a new user prompt when the message history contains unprocessed tool calls. '
+                        'Run the agent with this message history and no new prompt to execute the calls, pass '
+                        '`deferred_tool_results` if they were deferred, or call '
+                        '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
+                    )
 
         if not run_context:
             run_context = build_run_context(ctx)
@@ -689,11 +731,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         last_model_request: _messages.ModelRequest | None = None
         last_model_response: _messages.ModelResponse | None = None
-        for message in reversed(messages):
+        response_index: int | None = None
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
             if isinstance(message, _messages.ModelRequest):
                 last_model_request = message
             elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
                 last_model_response = message
+                response_index = index
                 break
 
         if not last_model_response:
@@ -704,6 +749,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError(
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
             )
+
+        assert response_index is not None
+        last_model_response = replace(last_model_response)
+        messages[response_index] = last_model_response
 
         tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
         tool_call_results.update(deferred_tool_results.to_tool_call_results())
@@ -759,6 +808,91 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         )
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+def _repair_interrupted_tail(
+    messages: list[_messages.ModelMessage], *, has_new_prompt: bool
+) -> list[_messages.ModelMessage]:
+    """Close out the tool calls that an interrupted end of the history leaves unanswered for good.
+
+    A trailing request interrupted during tool execution means the last response's still-unanswered
+    calls will never be executed. A response that was itself cut off (e.g. a cancelled stream) and is
+    followed by a new prompt won't have its calls executed either. Both get synthesized returns. A
+    'complete' trailing request (e.g. from a run that ended in `DeferredToolRequests`) is left alone:
+    its response's open calls may still receive `deferred_tool_results`.
+    """
+    if not messages:
+        return messages
+    last_message = messages[-1]
+    if (isinstance(last_message, _messages.ModelRequest) and last_message.state == 'interrupted') or (
+        has_new_prompt
+        and isinstance(last_message, _messages.ModelResponse)
+        and last_message.state == 'interrupted'
+        and last_message.tool_calls
+    ):
+        return _repair_dangling_tool_calls(messages, repair_last_response=True)
+    return messages
+
+
+def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
+    """The request a run resuming from `request` without a new prompt sends, before its instructions are added."""
+    return _messages.ModelRequest(
+        parts=request.parts,
+        run_id=request.run_id,
+        conversation_id=request.conversation_id,
+        metadata=request.metadata,
+    )
+
+
+def _request_prompt(request: _messages.ModelRequest) -> str | Sequence[_messages.UserContent] | None:
+    """The user prompt a request carries, as a run resuming from it without a new prompt reports it."""
+    user_prompt_parts = [part for part in request.parts if isinstance(part, _messages.UserPromptPart)]
+    if not user_prompt_parts:
+        return None
+    if len(user_prompt_parts) == 1:
+        return user_prompt_parts[0].content
+    combined_content: list[_messages.UserContent] = []
+    for part in user_prompt_parts:
+        if isinstance(part.content, str):
+            combined_content.append(part.content)
+        else:
+            combined_content.extend(part.content)
+    return combined_content
+
+
+def first_step_selection_messages(
+    message_history: Sequence[_messages.ModelMessage] | None,
+    user_prompt: str | Sequence[_messages.UserContent] | None,
+    *,
+    has_deferred_tool_results: bool = False,
+) -> tuple[list[_messages.ModelMessage], str | Sequence[_messages.UserContent] | None]:
+    """The `messages` and `prompt` a run's first-step `ModelSelectionContext` gets.
+
+    The model is selected before `UserPromptNode` builds the first request, because building it
+    needs the selected model. This previews what `RunContext.messages` and `RunContext.prompt` will
+    hold when that request is sent, minus what depends on the model: the request's system prompt
+    parts on a fresh run and its instructions. It shares `UserPromptNode`'s history cleanup and
+    prompt extraction so the two can't drift.
+    """
+    messages = _clean_message_history(list(message_history or []))
+    if has_deferred_tool_results:
+        # The first request holds the results of tools that run with the selected model.
+        return messages, user_prompt
+    messages = _repair_interrupted_tail(messages, has_new_prompt=user_prompt is not None)
+    if user_prompt is not None:
+        return [*messages, _messages.ModelRequest(parts=[_messages.UserPromptPart(user_prompt)])], user_prompt
+    last_message = messages[-1] if messages else None
+    if isinstance(last_message, _messages.ModelRequest):
+        # Resuming without a new prompt: the trailing request is the one being sent.
+        return [*messages[:-1], _resumed_request(last_message)], _request_prompt(last_message)
+    if isinstance(last_message, _messages.ModelResponse) and (
+        last_message.tool_calls or last_message.state == 'suspended'
+    ):
+        # The step's request holds the results of tools that run with the selected model, or there is
+        # none: a suspended response is resumed rather than answered.
+        return messages, None
+    # Without a new prompt, the request carries only what the selected model adds to it.
+    return [*messages, _messages.ModelRequest(parts=[])], None
 
 
 async def _get_instructions(
@@ -921,7 +1055,7 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
-        provisional.incr(continuation_usage)
+        provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
         run_context.usage_limits.check_tokens(provisional)
         if continuation_usage.cost is not None:
             # Continuation usage is provisional, so only warn after the run successfully finishes.
@@ -1137,6 +1271,31 @@ async def model_request_stream(
             await sr.aclose()
 
 
+def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+    """Show the first-run banner, from whichever path prepared the run's first request.
+
+    Called once the step's tool manager is built, the earliest point that knows which tools the
+    model will be offered: dynamic toolsets and MCP servers have been resolved by now. Output tools
+    are left out, as the banner reports the output type separately and counting them would make the
+    number move with the output mode rather than with what the agent was given.
+
+    Every reason there won't be a banner is checked before any of that is gathered, so a run that
+    isn't getting one counts nothing: this is on a path every run takes, and past the first one it
+    comes down to reading a flag.
+
+    An instrumented run has what the banner would point it to, so it stays out of the way — without
+    spending the claim, since another agent in this process may not be instrumented. `clai` differs:
+    its banner is also its session header, so it shows one either way.
+    """
+    if ctx.state.run_step != 1 or ctx.deps.instrumentation_settings is not None or not _display.banner_pending():
+        return
+
+    ctx.deps.display_banner(
+        model=ctx.deps.model_id or ctx.deps.model.model_id,
+        tools=sum(tool_def.kind != 'output' for tool_def in ctx.deps.tool_manager.tool_defs),
+    )
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -1193,7 +1352,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
             skip_mrp = await _prepare_request_parameters(ctx, instruction_parts=None)
             skip_sr = CompletedStreamedResponse(e.response, model_request_parameters=skip_mrp)
@@ -1212,8 +1371,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 3. This coroutine waits for stream_ready (or early task completion), yields the stream
         #    to the caller, and sets stream_done when the caller is finished consuming it.
         # 4. The handler resumes, the stream context manager closes, and the task completes.
-        stream_ready = asyncio.Event()
-        stream_done = asyncio.Event()
+        stream_ready = anyio.Event()
+        stream_done = anyio.Event()
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
@@ -1234,7 +1393,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # separate request steps.
             async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                 agent_stream_holder.append(agent_stream)
                 stream_ready.set()
@@ -1319,7 +1478,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await agent_stream.aclose_events()
                 return
             self._did_stream = True
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=model_request_parameters,
@@ -1363,7 +1522,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             conversation_id=ctx.state.conversation_id,
                         )
                         fill_response_cost(partial_response)
-                        ctx.state.usage.incr(partial_response.usage)
+                        partial_response.workspace_ref = ctx.deps.workspace_ref
+                        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
                         ctx.state.message_history.append(partial_response)
                 else:
                     try:
@@ -1406,6 +1566,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _model_request_parameters=model_request_parameters,
             _output_validators=ctx.deps.output_validators,
             _run_ctx=build_run_context(ctx),
+            _carried_workspace_ref=ctx.deps.carried_workspace_ref,
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
@@ -1431,7 +1592,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            ctx.state.usage.requests += 1
+            _usage_attribution.record_request(ctx.state.usage)
             return await self._finish_handling(ctx, e.response)
 
         _handler_response: _messages.ModelResponse | None = None
@@ -1486,11 +1647,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # ModelRetry from wrap_model_request or on_model_request_error — retry the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
-                ctx.state.usage.requests += 1
+                _usage_attribution.record_request(ctx.state.usage)
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, e)
         self.last_request_context = request_context
-        ctx.state.usage.requests += 1
+        _usage_attribution.record_request(ctx.state.usage)
 
         return await self._finish_handling(ctx, model_response)
 
@@ -1533,6 +1694,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Note: for_run_step may already have been called by UserPromptNode for the
         # resume-without-prompt path; ToolManager.for_run_step is a no-op for the same step.
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        _display_first_run_banner(ctx)
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         instruction_parts = await _get_instructions(ctx, run_context)
@@ -1602,6 +1765,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
+
+        # Processing may have added or removed `load_capability` exchanges, and the durable history it
+        # just rewrote is what the rest of the step reads availability from. Refresh so the execution
+        # gate agrees with the reveal state `_with_outgoing_reveal_state` derives below from the same
+        # messages; `ToolManager.for_run_step` re-resolves off this set at dispatch, so a capability
+        # that became active here still governs its own tools through `prepare_tools`.
+        _refresh_loaded_capability_ids(ctx)
+
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages,
@@ -1663,7 +1834,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             outgoing_namespace_before: dict[str, Any] = (
                 dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
             )
-            counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
+            with set_current_run_context(run_context):
+                counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
 
             # Counting models may persist framework-only state on the request they counted. When
             # normalization merged consecutive requests, that request is temporary, so copy only keys
@@ -1701,7 +1873,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 provider_name=model.system,
             )
             counted_usage.cost = counted_price.total_price if counted_price is not None else None
-            usage.incr(counted_usage)
+            usage.incr(counted_usage)  # usage-attribution: a deepcopy, to check a limit before the request
 
             ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
 
@@ -1745,6 +1917,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
         instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
@@ -1808,6 +1982,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # replace its contents (dropping the suspended response) rather than the reference;
         # `_finish_handling` then appends the final merged response after the base history.
         ctx.state.message_history[:] = base_messages
+
+        # Same reason as in `_prepare_request`: processing may have changed which capabilities the
+        # durable history shows as loaded, and the tool calls this continuation comes back with are
+        # dispatched against that history.
+        _refresh_loaded_capability_ids(ctx)
+
         ctx.deps.new_message_index = _first_new_message_index(
             base_messages,
             ctx.state.run_id,
@@ -1881,7 +2061,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         fill_response_cost(response)
-        ctx.state.usage.incr(response.usage)
+        response.workspace_ref = ctx.deps.workspace_ref
+        _usage_attribution.record_usage(ctx.state.usage, response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             # More model responses may provide priceable usage, so only warn after the run successfully finishes.
@@ -1966,8 +2147,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # The root capability's wrapper is always a generator, so the guard never falls through
             # today; it's here because `wrap_run_event_stream` may return any `AsyncIterable`.
             aclose: Callable[[], Awaitable[None]] | None = getattr(stream, 'aclose', None)
-            if aclose is not None:  # pragma: no branch
-                await aclose()
+            try:
+                if aclose is not None:  # pragma: no branch
+                    await aclose()
+            finally:
+                self.model_response.workspace_ref = ctx.deps.workspace_ref
 
     def _wrapped_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -2031,8 +2215,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
-                # Check for content filter on a response with no content
-                if (is_empty or is_blank_text_only) and self.model_response.finish_reason == 'content_filter':
+                # A refusal can arrive after the model has already emitted thinking (e.g. Anthropic's
+                # `stop_reason: 'refusal'`), so a thinking-only response is filtered too. Re-prompting it
+                # would only repeat the refused request.
+                if self.model_response.finish_reason == 'content_filter':
                     details = self.model_response.provider_details or {}
                     body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
 
@@ -2163,6 +2349,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         try:
             async for event in _run_stream():
+                self.model_response.workspace_ref = ctx.deps.workspace_ref
                 yield event
         except GeneratorExit:
             # Being closed is teardown, not a stream failure. `run()` re-raises `_stream_error` when
@@ -2209,8 +2396,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
         # The manager was already prepared for this same run step before the model request, so
-        # `for_run_step` deliberately returns it unchanged, keeping the retries it accumulated —
-        # which is why the evidence lands field by field rather than by swapping in `run_context`.
+        # `for_run_step` normally returns it unchanged, keeping the retries it accumulated — which is
+        # why the evidence lands field by field rather than by swapping in `run_context`. (It does
+        # re-resolve when capability availability moved since preparation, e.g. a history processor
+        # injected a `load_capability` exchange; that path carries the same retries through and ends
+        # up holding `run_context`, whose evidence this assignment then re-applies harmlessly.)
         # Only the retrospective evidence is carried: replacing the prospective shared sets would
         # affect the next request's reveal pruning and search ranking.
         assert ctx.deps.tool_manager.ctx is not None
@@ -2428,10 +2618,10 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         run_step=ctx.state.run_step,
-        # The current request has already been appended, but selection describes the model
-        # that will handle it. Expose the history available before this request step, matching
-        # bootstrap selection, and do not let selectors mutate graph state through the context.
-        messages=list(ctx.state.message_history[:-1]),
+        prompt=ctx.deps.prompt,
+        # The current request has already been appended, so this is what the step's `RunContext.messages`
+        # holds. Copy it so selectors can't mutate graph state through the context.
+        messages=list(ctx.state.message_history),
         usage=ctx.state.usage,
     )
     model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
@@ -2470,19 +2660,22 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
+        _durable_operations=ctx.deps.durable_operations,
+        _run_capabilities_by_id=ctx.deps.run_capabilities_by_id,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        workspace=ctx.deps.workspace,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
     # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
-    # `_mcp_tool_defs_cache` (see the invariant on `GraphAgentDeps.loaded_capability_ids`). Never
-    # add any of them as a `replace` kwarg — forking the object would silently break in-step
-    # capability loads / tool reveals / message enqueues / cancellation / event delivery /
-    # tool-defs caching.
+    # `_mcp_tool_defs_cache`, `_durable_operations`, `_run_capabilities_by_id` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
+    # the object would silently break in-step capability loads / tool reveals / message enqueues /
+    # cancellation / event delivery / tool-defs caching / durable operation dispatch.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
@@ -2690,24 +2883,38 @@ def build_agent_graph(
     UserPromptNode[DepsT, OutputT],
     result.FinalResult[OutputT],
 ]:
-    """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
+    """Build the execution [Graph][pydantic_graph.Graph] for a given agent.
+
+    `deps_type` and `output_type` only bind the type parameters: the graph depends on `name` alone,
+    so it is built once per name and shared by every run.
+    """
+    return _build_agent_graph(name)
+
+
+@lru_cache(maxsize=128)
+def _build_agent_graph(
+    name: str | None,
+) -> Graph[
+    GraphAgentState,
+    GraphAgentDeps[Any, Any],
+    UserPromptNode[Any, Any],
+    result.FinalResult[Any],
+]:
     g = GraphBuilder(
         name=name or 'Agent',
         state_type=GraphAgentState,
-        deps_type=GraphAgentDeps[DepsT, OutputT],
-        input_type=UserPromptNode[DepsT, OutputT],
-        output_type=result.FinalResult[OutputT],
+        deps_type=GraphAgentDeps[Any, Any],
+        input_type=UserPromptNode[Any, Any],
+        output_type=result.FinalResult[Any],
         auto_instrument=False,
     )
 
     g.add(
-        g.edge_from(g.start_node).to(UserPromptNode[DepsT, OutputT]),
-        g.node(UserPromptNode[DepsT, OutputT]),
-        g.node(ModelRequestNode[DepsT, OutputT]),
-        g.node(CallToolsNode[DepsT, OutputT]),
-        g.node(
-            SetFinalResult[DepsT, OutputT],
-        ),
+        g.edge_from(g.start_node).to(UserPromptNode[Any, Any]),
+        g.node(UserPromptNode[Any, Any]),
+        g.node(ModelRequestNode[Any, Any]),
+        g.node(CallToolsNode[Any, Any]),
+        g.node(SetFinalResult[Any, Any]),
     )
     return g.build(validate_graph_structure=False)
 
@@ -2810,300 +3017,3 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
         and message.instructions == request.instructions
         and message.metadata == request.metadata
     )
-
-
-SYNTHESIZED_TOOL_RETURN_METADATA_KEY = 'pydantic_ai_synthesized_tool_return'
-"""Metadata key set to `True` on `ToolReturnPart`s synthesized for tool calls that never received a result."""
-
-
-def _dangling_tool_calls_by_response(messages: list[_messages.ModelMessage]) -> dict[int, list[_messages.ToolCallPart]]:
-    """Find tool calls that will never receive a result, keyed by the index of their response.
-
-    Matching is an ordered walk: a tool result (`_is_tool_result_part` — a `ToolReturnPart` or
-    *tool-bound* `RetryPromptPart`; plain validation feedback doesn't answer a call even if its
-    `tool_call_id` collides) only answers a call that is open (produced by an earlier response and
-    not already answered) at that point. An out-of-place result — one preceding its call, a
-    duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
-    dangling call.
-    """
-    open_calls: dict[str, tuple[int, _messages.ToolCallPart]] = {}
-    dangling_by_response: dict[int, list[_messages.ToolCallPart]] = {}
-    for index, message in enumerate(messages):
-        if isinstance(message, _messages.ModelResponse):
-            for part in message.parts:
-                if isinstance(part, _messages.ToolCallPart):
-                    if shadowed := open_calls.get(part.tool_call_id):
-                        # A new call reusing the ID of an open call means the open call can no
-                        # longer be answered: any later result answers the new call instead.
-                        dangling_by_response.setdefault(shadowed[0], []).append(shadowed[1])
-                    open_calls[part.tool_call_id] = (index, part)
-        elif isinstance(message, _messages.ModelRequest):  # pragma: no branch
-            for part in message.parts:
-                if _is_tool_result_part(part):
-                    open_calls.pop(part.tool_call_id, None)
-    for response_index, call in open_calls.values():
-        dangling_by_response.setdefault(response_index, []).append(call)
-    return dangling_by_response
-
-
-def _insert_synthesized_returns(
-    request: _messages.ModelRequest, synthesized: list[_messages.ToolReturnPart]
-) -> _messages.ModelRequest:
-    """Insert synthesized returns after the request's existing tool results (if any).
-
-    They go ahead of user-facing parts — including a plain (non-tool-bound) `RetryPromptPart`,
-    which renders as user text — matching where providers expect tool results.
-    """
-    insert_at = next(
-        (
-            part_index + 1
-            for part_index in range(len(request.parts) - 1, -1, -1)
-            if _is_tool_result_part(request.parts[part_index])
-        ),
-        0,
-    )
-    return replace(request, parts=[*request.parts[:insert_at], *synthesized, *request.parts[insert_at:]])
-
-
-def _is_tool_result_part(
-    part: _messages.ModelRequestPart | _messages.ModelResponsePart,
-) -> TypeGuard[_messages.ToolReturnPart | _messages.RetryPromptPart]:
-    """Whether a part is a regular (locally-executed) tool result answering a `ToolCallPart`.
-
-    A `RetryPromptPart` with no `tool_name` is validation feedback rendered as a plain user message,
-    not a tool result, so it doesn't need (or have) a matching tool call. `NativeToolReturnPart` (a
-    sibling `BaseToolReturnPart` subclass) is intentionally excluded: native/builtin results are
-    co-located with their call in one `ModelResponse` and shaped by each model's own serializer, so
-    the pipeline leaves them alone.
-    """
-    return isinstance(part, _messages.ToolReturnPart) or (
-        isinstance(part, _messages.RetryPromptPart) and part.tool_name is not None
-    )
-
-
-def _drop_orphaned_tool_results(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """REMOVE regular tool results whose call is missing.
-
-    A `ToolReturnPart` or tool-bound `RetryPromptPart` (in a `ModelRequest`) whose `tool_call_id`
-    never appeared as a regular `ToolCallPart` in any preceding `ModelResponse` is "orphaned".
-    Providers reject a tool result without a matching tool call (Anthropic rejects a `tool_result`
-    with no `tool_use`; OpenAI Responses raises `No tool call found for function call output`).
-    Orphans arise from context eviction dropping the response that made the call, from a result
-    placed before its call in a hand-built history, or from adapter round-trips.
-
-    This operates only on regular, locally-executed tool call/result pairing across message
-    boundaries. Native/builtin parts (`NativeToolCallPart`/`NativeToolReturnPart`) are left untouched:
-    they're produced and resulted by the provider inline and shaped by each model's own serializer,
-    and a native result can even arrive in a *later* response (e.g. Anthropic tool search), so the
-    core pipeline must not treat them as droppable.
-
-    Removal, not reordering: a result that precedes its call could in principle be moved after it,
-    but that crosses message boundaries and reorders content, so the fundamentally-invalid result is
-    dropped instead (its now-unanswered call is later synthesized a result by
-    `_repair_dangling_tool_calls`). If dropping empties an interior `ModelRequest` the request is
-    dropped; if it empties the last message an empty `ModelRequest` is kept so the history still ends
-    on a request. Returns the input unchanged when there are no orphans.
-    """
-    seen_call_ids: set[str] = set()
-    repaired: list[_messages.ModelMessage] = []
-    changed = False
-    for index, message in enumerate(messages):
-        for part in message.parts:
-            if isinstance(part, _messages.ToolCallPart):
-                seen_call_ids.add(part.tool_call_id)
-        kept_parts = [
-            part
-            for part in message.parts
-            if not (_is_tool_result_part(part) and part.tool_call_id not in seen_call_ids)
-        ]
-        if len(kept_parts) == len(message.parts):
-            repaired.append(message)
-            continue
-        changed = True
-        if kept_parts or (isinstance(message, _messages.ModelRequest) and index == len(messages) - 1):
-            repaired.append(replace(message, parts=kept_parts))
-        # else: interior emptied `ModelRequest` — drop the message
-    return repaired if changed else messages
-
-
-def _repair_dangling_tool_calls(
-    messages: list[_messages.ModelMessage], *, repair_last_response: bool = False
-) -> list[_messages.ModelMessage]:
-    """Repair tool calls that are missing a matching result ("dangling" tool calls).
-
-    A run that was cancelled or crashed mid-tool-execution — or a hand-built history — can contain
-    `ToolCallPart`s with no matching `ToolReturnPart`/`RetryPromptPart` in a later `ModelRequest`.
-    Providers reject histories with dangling tool calls, so before a request is sent, every dangling
-    tool call gets a synthesized `ToolReturnPart` — marked with `SYNTHESIZED_TOOL_RETURN_METADATA_KEY`
-    in its `metadata` — inserted after the existing tool returns of the immediately following
-    `ModelRequest`, or as a new `ModelRequest` when no request follows.
-
-    This includes a call whose args string was cut off mid-stream (unparsable JSON): the call is
-    kept verbatim and closed out like any other dangling call, never removed. Malformed args are
-    already sendable — serializers degrade them gracefully (see `ToolCallPart.args_as_dict` and
-    `ToolCallPart.args_as_json_str`), as the tool-call retry flow relies on — and removing the call
-    would disturb the response's shape, e.g. leaving a thinking-only response whose signature was
-    computed over a turn that included the call.
-
-    The last `ModelResponse` is only repaired when `repair_last_response` is set: its tool calls
-    are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
-    trailing unparsable-args call is left for local args validation to turn into a retry prompt.
-
-    Matching is an ordered walk: a result only answers a call that is open (produced by an earlier
-    response and not already answered) at that point. An out-of-place result — one preceding its
-    call, a duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
-    dangling call; such orphaned results themselves are not repaired.
-
-    The repair is deterministic and idempotent: synthesized parts derive their timestamp from the
-    response they repair and contain no wall-clock or random data, so repairing the same history
-    twice (or on every run) yields the same output and never churns provider prompt-cache prefixes.
-    If there is nothing to repair, the input list is returned unchanged. Repair is silent — like
-    the other pipeline passes — with the `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` marker as the
-    mechanism for inspecting what was synthesized.
-    """
-    dangling_by_response = _dangling_tool_calls_by_response(messages)
-    if not repair_last_response:
-        last_response_index = next(
-            (
-                index
-                for index in range(len(messages) - 1, -1, -1)
-                if isinstance(messages[index], _messages.ModelResponse)
-            ),
-            None,
-        )
-        if last_response_index is not None:
-            dangling_by_response.pop(last_response_index, None)
-    if not dangling_by_response:
-        return messages
-
-    repaired: list[_messages.ModelMessage] = []
-    synthesized: list[_messages.ToolReturnPart] = []
-    for index, message in enumerate(messages):
-        if isinstance(message, _messages.ModelResponse):
-            if synthesized:
-                # The dangling calls of the previous response are followed by another response,
-                # so the synthesized returns need a new request in between.
-                repaired.append(_messages.ModelRequest(parts=synthesized))
-                synthesized = []
-
-            if dangling := dangling_by_response.get(index):
-                for call in dangling:
-                    synthesized.append(
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content=_messages.INTERRUPTED_TOOL_RETURN_CONTENT,
-                            tool_call_id=call.tool_call_id,
-                            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
-                            timestamp=message.timestamp,
-                            outcome='interrupted',
-                        )
-                    )
-            repaired.append(message)
-        elif isinstance(message, _messages.ModelRequest):  # pragma: no branch
-            if synthesized:
-                message = _insert_synthesized_returns(message, synthesized)
-                synthesized = []
-            repaired.append(message)
-
-    if synthesized:
-        repaired.append(_messages.ModelRequest(parts=synthesized))
-
-    return repaired
-
-
-def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Normalize the history's shape by merging consecutive same-role messages into one.
-
-    Neither adds nor removes content — it only combines adjacent `ModelRequest`s (or adjacent
-    synthetic `ModelResponse`s) that providers expect as a single turn, and within a merged request
-    hoists tool results ahead of user-facing parts (where providers require them). Runs last, after
-    the repair passes have settled call/result pairing, so it operates on a valid history and never
-    separates a result from the call it answers.
-    """
-    clean_messages: list[_messages.ModelMessage] = []
-    for message in messages:
-        last_message = clean_messages[-1] if len(clean_messages) > 0 else None
-
-        if isinstance(message, _messages.ModelRequest):
-            if (
-                last_message
-                and isinstance(last_message, _messages.ModelRequest)
-                # Requests can only be merged if they have the same instructions
-                and (
-                    not last_message.instructions
-                    or not message.instructions
-                    or last_message.instructions == message.instructions
-                )
-                # We intentionally don't block merging when `conversation_id` or application metadata
-                # differ. These fields are only bookkeeping for callers; they're never part of what gets
-                # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
-                # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
-                # model implementations read it, so combine only that reserved namespace below.
-            ):
-                parts = [*last_message.parts, *message.parts]
-                parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
-                metadata: dict[str, Any] | None = None
-                last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-                namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-                if is_str_dict(last_namespace) or is_str_dict(namespace):
-                    metadata = {
-                        _PYDANTIC_AI_METADATA_KEY: {
-                            **(last_namespace if is_str_dict(last_namespace) else {}),
-                            **(namespace if is_str_dict(namespace) else {}),
-                        }
-                    }
-                merged_message = _messages.ModelRequest(
-                    parts=parts,
-                    instructions=last_message.instructions or message.instructions,
-                    timestamp=message.timestamp or last_message.timestamp,
-                    metadata=metadata,
-                )
-                clean_messages[-1] = merged_message
-            else:
-                clean_messages.append(message)
-        elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
-            if (
-                last_message
-                and isinstance(last_message, _messages.ModelResponse)
-                # Responses can only be merged if they didn't really come from an API
-                and last_message.provider_response_id is None
-                and last_message.provider_name is None
-                and last_message.model_name is None
-                and message.provider_response_id is None
-                and message.provider_name is None
-                and message.model_name is None
-            ):
-                merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
-                clean_messages[-1] = merged_message
-            else:
-                clean_messages.append(message)
-    return clean_messages
-
-
-def _clean_message_history(
-    messages: list[_messages.ModelMessage], *, repair_last_response: bool = False
-) -> list[_messages.ModelMessage]:
-    """Make the message history provider-valid and normalize its shape, out of the box.
-
-    An ordered pipeline of pure `list[ModelMessage] -> list[ModelMessage]` passes over regular,
-    locally-executed tool call/result pairing across message boundaries. Following the principle
-    "massage the history however we can to make the model API accept it, and drop only what's
-    fundamentally unsendable", each pass ADDs (synthesizes) or REMOVEs content, never silently
-    dropping anything a provider could accept. Native/builtin parts are left entirely untouched:
-    they're produced and resulted by the provider inline and shaped by each model's own serializer
-    (which handles their own dangling/empty-id cases), and a native result can even arrive in a
-    later response, so the core pipeline must not touch them. Ordering matters:
-
-    1. `_drop_orphaned_tool_results` (REMOVE) — first, so an orphaned result can't survive into the
-       merge (which would hoist it to the front of a request) and so dropping it can expose a call
-       that then needs a synthesized result in pass 2.
-    2. `_repair_dangling_tool_calls` (ADD synthesized results) — the matching-graph repair; runs
-       before the merge changes message boundaries. Frontier-gated by `repair_last_response` so
-       the last response's still-answerable calls are left alone.
-    3. `_merge_consecutive_messages` (normalize) — last, once call/result pairing is valid, so it
-       never separates a result from its call.
-    """
-    messages = _drop_orphaned_tool_results(messages)
-    messages = _repair_dangling_tool_calls(messages, repair_last_response=repair_last_response)
-    messages = _merge_consecutive_messages(messages)
-    return messages

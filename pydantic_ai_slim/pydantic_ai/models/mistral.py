@@ -69,7 +69,7 @@ from ._tool_choice import resolve_tool_choice
 
 try:
     from mistralai.client import Mistral
-    from mistralai.client.errors import SDKError
+    from mistralai.client.errors import MistralError
     from mistralai.client.models import (
         AudioChunk as MistralAudioChunk,
         ChatCompletionChoiceFinishReason as MistralFinishReason,
@@ -121,12 +121,14 @@ from httpx import Timeout
 def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
-    except SDKError as e:
+    except MistralError as e:
+        # The SDK's base class also covers the `HTTPValidationError` it raises for a 422 and the
+        # `ResponseValidationError` it raises for a 200 body it can't parse, not just `SDKError`.
         if (status_code := e.status_code) >= 400:
             raise ModelHTTPError(
                 status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
             ) from e
-        raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
 
 
 LatestMistralModelNames = Literal[
@@ -515,9 +517,26 @@ class MistralModel(Model[Mistral]):
         """
         # 1) Handle anyOf first, because it's a different schema structure
         if any_of := value.get('anyOf'):
-            # Simplistic approach: pick the first option in anyOf
-            # (In reality, you'd possibly want to merge or union types)
-            return f'Optional[{cls._get_python_type(any_of[0])}]'
+            if all('const' in option for option in any_of):
+                # Described options (an `Enum` with member docstrings): the same type as a plain `enum`.
+                value = {key: val for key, val in value.items() if key != 'anyOf'}
+                if 'type' not in value:
+                    # An option's own `type` is what the schema says; fall back to the constant's Python type
+                    # only when it says nothing. `bool` is checked first, being a subclass of `int`.
+                    const = any_of[0]['const']
+                    value['type'] = any_of[0].get('type') or (
+                        'boolean'
+                        if isinstance(const, bool)
+                        else 'integer'
+                        if isinstance(const, int)
+                        else 'number'
+                        if isinstance(const, float)
+                        else 'string'
+                    )
+            else:
+                # Simplistic approach: pick the first option in anyOf
+                # (In reality, you'd possibly want to merge or union types)
+                return f'Optional[{cls._get_python_type(any_of[0])}]'
 
         # 2) If we have a top-level "type" field
         value_type = value.get('type')
@@ -909,7 +928,9 @@ class MistralStreamedResponse(StreamedResponse):
 
             param_schema = properties.get(param, {})
             param_type = param_schema.get('type')
-            param_items_type = param_schema.get('items', {}).get('type')
+            param_items = param_schema.get('items', {})
+            # Drafts before 2020-12 spell a tuple as an `items` list, which has no single item type to check.
+            param_items_type = None if isinstance(param_items, list) else param_items.get('type')
             param_value = json_dict[param]
 
             if param_type == 'array' and param_items_type:

@@ -88,7 +88,6 @@ with try_import() as huggingface_imports_successful:
 
     from .test_huggingface import MockHuggingFace
 
-pytestmark = pytest.mark.anyio
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
 
@@ -307,6 +306,7 @@ CASES = [
                     provider_url='https://api.openai.com/v1',
                     provider_details={'timestamp': IsDatetime()},
                     provider_response_id='123',
+                    finish_reason='stop',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),

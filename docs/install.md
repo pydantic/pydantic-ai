@@ -1,3 +1,7 @@
+---
+description: "Install Pydantic AI with pip or uv on Python 3.10+, or install pydantic-ai-slim with only the optional extras for the model providers and integrations you use."
+---
+
 # Installation
 
 Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pydantic-ai/) so installation is as simple as:
@@ -11,18 +15,19 @@ pip/uv-add pydantic-ai
 This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), and [Logfire](logfire.md) integrations.
 To use any other models or integrations, add the relevant extras to your install command, e.g. `pydantic-ai[bedrock,temporal]`. Alternatively, you can install the [`pydantic-ai-slim`](#slim-install) package with only the extras you need.
 
+## Next steps
+
+Build your first agent with the [Agents guide](agent.md), or start from one of the [examples](examples/setup.md).
+To see what your agent does, [set up Pydantic Logfire](logfire.md#using-logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account).
+To reach models from several providers with one API key, use the [Pydantic AI Gateway](gateway.md).
+If a coding agent is building with you, install the [Pydantic AI skill](coding-agent-skills.md).
+
 ## TLS certificates
 
 Pydantic AI's own HTTP requests, and those of providers migrated to [`httpx2`](https://httpx2.pydantic.dev/), verify TLS certificates against the operating system trust store rather than shipping a `certifi` bundle.
 Minimal container images and corporate proxies that rely on a private CA therefore need those certificates installed in the image (for example the `ca-certificates` package, plus your proxy's root CA).
 Alternatively, pass such a provider an `httpx2.AsyncClient` you configured yourself through its `http_client` argument — see the [provider docs](models/overview.md) for the client each one accepts.
 Providers whose SDKs still use legacy `httpx` (such as Groq and Cohere) keep its `certifi`-based verification and take a legacy `httpx.AsyncClient` instead.
-
-## Use with Pydantic Logfire
-
-Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
-
-Logfire comes included with `pydantic-ai` (but not the ["slim" version](#slim-install)), so you can typically start using it immediately by following the [Logfire setup docs](logfire.md#using-logfire).
 
 ## Running Examples
 
@@ -63,6 +68,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `snowflake` - installs the [Snowflake Cortex](models/snowflake.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `crusoe` - installs the [Crusoe](models/crusoe.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `cerebras` - installs the [Cerebras](models/cerebras.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
+* `typesafe` - installs the [TypeSafe (Jev)](models/typesafe.md) dependency `typesafe-sdk` [PyPI ↗](https://pypi.org/project/typesafe-sdk){:target="_blank"}
 * `huggingface` - installs [Hugging Face Model](models/huggingface.md) dependency `huggingface-hub` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
 * `sentence-transformers` - installs [Sentence Transformers Embedding Model](embeddings.md#sentence-transformers-local) dependency `sentence-transformers` [PyPI ↗](https://pypi.org/project/sentence-transformers){:target="_blank"}
 * `voyageai` - installs [VoyageAI Embedding Model](embeddings.md#voyageai) dependency `voyageai` [PyPI ↗](https://pypi.org/project/voyageai){:target="_blank"}
