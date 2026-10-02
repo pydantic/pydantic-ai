@@ -3,8 +3,8 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from functools import cached_property
-from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
@@ -19,7 +19,7 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai._model_request_attempts import failed_attempt, record_attempt_span
+from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe, get_first_param_type
 
@@ -259,13 +259,13 @@ class FallbackModel(Model):
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
             prepared_parameters = model_request_parameters
-            started_at = time_ns()
+            start = AttemptStart()
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
-                ended_at = time_ns()
+                duration = start.elapsed()
                 if not await self._should_fallback(exc):
                     self._set_span_attributes(pinned, prepared_parameters)
                     raise
@@ -278,7 +278,7 @@ class FallbackModel(Model):
                 messages = _rewind_messages(messages)
                 rewound = True
                 exceptions.append(exc)
-                self._record_failed_attempt(pinned, attempts, exc, started_at=started_at, ended_at=ended_at)
+                self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
@@ -288,25 +288,25 @@ class FallbackModel(Model):
 
         for model in self.models:
             prepared_parameters = model_request_parameters
-            started_at = time_ns()
+            start = AttemptStart()
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
-                ended_at = time_ns()
+                duration = start.elapsed()
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
-                    self._record_failed_attempt(model, attempts, exc, started_at=started_at, ended_at=ended_at)
+                    self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
                 raise exc
 
-            ended_at = time_ns()
+            duration = start.elapsed()
             if await self._should_fallback(response):
                 rejected_responses.append(response)
-                self._record_failed_attempt(model, attempts, response, started_at=started_at, ended_at=ended_at)
+                self._record_failed_attempt(model, attempts, response, start=start, duration=duration)
                 continue
 
             if attempts:
@@ -349,7 +349,7 @@ class FallbackModel(Model):
             assert isinstance(suspended_response, ModelResponse)
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
-                started_at = time_ns()
+                start = AttemptStart()
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
@@ -357,7 +357,7 @@ class FallbackModel(Model):
                         pinned.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
-                    ended_at = time_ns()
+                    duration = start.elapsed()
                     if not await self._should_fallback(exc):
                         self._set_span_attributes(pinned, prepared_parameters)
                         raise
@@ -369,7 +369,7 @@ class FallbackModel(Model):
                     messages = _rewind_messages(messages)
                     rewound = True
                     exceptions.append(exc)
-                    self._record_failed_attempt(pinned, attempts, exc, started_at=started_at, ended_at=ended_at)
+                    self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
                     # Fall through to normal chain below
                 else:
                     self._set_span_attributes(pinned, prepared_parameters)
@@ -384,7 +384,7 @@ class FallbackModel(Model):
         for model in self.models:
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
-                started_at = time_ns()
+                start = AttemptStart()
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
@@ -392,10 +392,10 @@ class FallbackModel(Model):
                         model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
-                    ended_at = time_ns()
+                    duration = start.elapsed()
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
-                        self._record_failed_attempt(model, attempts, exc, started_at=started_at, ended_at=ended_at)
+                        self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
                         continue
                     self._set_span_attributes(model, prepared_parameters)
                     raise exc
@@ -539,8 +539,8 @@ class FallbackModel(Model):
         attempts: list[ModelRequestAttempt],
         failure: Exception | ModelResponse,
         *,
-        started_at: int,
-        ended_at: int,
+        start: AttemptStart,
+        duration: timedelta,
     ) -> None:
         """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
         # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
@@ -548,7 +548,7 @@ class FallbackModel(Model):
             attempts.extend(failure.failed_attempts or [])
         elif isinstance(failure, FallbackExceptionGroup):
             attempts.extend(failure.attempts)
-        attempt = failed_attempt(model, failure, started_at=started_at, ended_at=ended_at)
+        attempt = failed_attempt(model, failure, start=start, duration=duration)
         attempts.append(attempt)
         # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
         if (span := self._fallback_span()) and (policy := open_request_policy()):

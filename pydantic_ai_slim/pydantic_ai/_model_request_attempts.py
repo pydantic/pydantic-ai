@@ -9,7 +9,9 @@ that makes more than one attempt at a request records them the same way.
 from __future__ import annotations as _annotations
 
 from contextlib import suppress
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from time import perf_counter_ns
 from typing import TYPE_CHECKING
 
 from opentelemetry.trace import Span, Status, StatusCode, Tracer, set_span_in_context
@@ -28,22 +30,32 @@ from .messages import ModelRequestAttempt, ModelResponse
 if TYPE_CHECKING:
     from .models import Model
 
-__all__ = ('failed_attempt', 'record_attempt_span')
+__all__ = ('AttemptStart', 'failed_attempt', 'record_attempt_span')
 
 ATTEMPT_ATTRIBUTE = 'pydantic_ai.model_request.attempt'
 """The zero-based position of an attempt among the attempts at its request."""
 
 
+@dataclass(frozen=True)
+class AttemptStart:
+    """When an attempt started: a wall-clock timestamp for the record, and a monotonic one to time it by."""
+
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    _monotonic_ns: int = field(default_factory=perf_counter_ns)
+
+    def elapsed(self) -> timedelta:
+        """How long it has been since the attempt started, unaffected by changes to the system clock."""
+        return timedelta(microseconds=(perf_counter_ns() - self._monotonic_ns) / 1e3)
+
+
 def failed_attempt(
-    model: Model, failure: Exception | ModelResponse, *, started_at: int, ended_at: int
+    model: Model, failure: Exception | ModelResponse, *, start: AttemptStart, duration: timedelta
 ) -> ModelRequestAttempt:
     """Describe an attempt at a request to `model` that raised `failure`, or returned the rejected response `failure`.
 
-    `started_at` and `ended_at` are `time.time_ns()` timestamps. A rejected response's cost is filled
-    in first, so the attempt carries it.
+    A rejected response's cost is filled in first, so the attempt carries it.
     """
-    timestamp = datetime.fromtimestamp(started_at / 1e9, tz=timezone.utc)
-    duration = timedelta(microseconds=(ended_at - started_at) / 1e3)
+    timestamp = start.timestamp
     if isinstance(failure, Exception):
         return ModelRequestAttempt(
             model_name=model.model_name,
@@ -106,7 +118,7 @@ def record_attempt_span(
             else:
                 span.set_status(Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler'))
         finally:
-            span.end(_to_ns(attempt.timestamp + attempt.duration))
+            span.end(start_time + round(attempt.duration.total_seconds() * 1e9))
 
 
 def _to_ns(value: datetime) -> int:
