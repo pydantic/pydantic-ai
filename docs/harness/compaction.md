@@ -115,7 +115,8 @@ agent = Agent(
 With a usage anchor, the provider-reported usage covers everything billed for the anchored request,
 including its instructions, tool definitions, and `FilePart` payloads. For the suffix after the
 anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
-or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads.
+or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads, and
+counts a file inside a tool return as the `See file <identifier>.` reference that stands in for it.
 Pending tool schemas newly revealed for the request are conservatively estimated by the
 implementation, since they are not covered by the earlier anchor.
 

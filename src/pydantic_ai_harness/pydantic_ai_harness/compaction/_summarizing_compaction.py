@@ -47,6 +47,7 @@ from pydantic_ai_harness.compaction._shared import (
     is_realtime_model,
     record_compaction_reclaim,
     resolve_token_trigger,
+    tool_return_text,
     validate_token_trigger,
 )
 
@@ -201,7 +202,7 @@ def _format_messages(
                 ):
                     lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
-                    content_str = str(part.content)
+                    content_str = tool_return_text(part)
                     if tool_return_max_chars is not None:
                         content_str = _truncate_with_marker(content_str, tool_return_max_chars)
                     lines.append(f'Tool [{part.tool_name}]: {content_str}')
