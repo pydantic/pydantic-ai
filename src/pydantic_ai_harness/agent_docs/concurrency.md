@@ -183,7 +183,7 @@ before writing cleanup.
   path, not just that the tool returned a timeout string.
 - Reach the real trigger. Level-cancellation behavior needs a real outer
   `anyio` cancel scope, not a bare `CancelledError` raise; Trio behavior needs
-  the `trio` parametrization this suite already runs, not a mental model of it.
+  a test parametrized with `anyio_backend='trio'`, not a mental model of it.
 - Know which backend a suite runs under before you trust it. Every `async def`
   test runs via anyio's pytest plugin (`anyio_mode = "auto"`), and the root
   `anyio_backend` fixture picks the backend from `--anyio-backend` (asyncio by
