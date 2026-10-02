@@ -198,7 +198,11 @@ class JsonSchemaTransformer(ABC):
         if prefix_items := schema.get('prefixItems'):
             schema['prefixItems'] = [self._handle(item) for item in prefix_items]
 
-        if items := schema.get('items'):
+        items: _JsonSchemaNode | list[_JsonSchemaNode] | None = schema.get('items')
+        if isinstance(items, list):
+            # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
+            schema['items'] = [self._handle(item) for item in items]
+        elif items:
             schema['items'] = self._handle(items)
 
         return schema
