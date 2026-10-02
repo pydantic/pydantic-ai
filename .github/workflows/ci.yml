@@ -819,9 +819,9 @@ jobs:
 
       - run: mkdir .coverage
 
-      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
-      # tests/durable_exec/temporal/conftest.py and the harness `temporal` tests); cache it so a
-      # CDN hiccup can't fail the suite at setup (#5399).
+      # The Temporal tests download the dev-server binary on first use, to the directory that
+      # `temporal_dev_server_cache_dir` in tests/temporal_utils.py returns; cache it so a CDN
+      # hiccup can't fail the suite at setup (#5399).
       # Separate key per resolution: the lowest leg may resolve a different temporalio version
       # wanting a different binary. A stale restored dir is safe because the SDK names the
       # binary by its own version and re-downloads on a miss.
