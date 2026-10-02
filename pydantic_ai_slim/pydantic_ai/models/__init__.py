@@ -2063,7 +2063,7 @@ def _customize_output_object(
 
 
 def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
-    """Whether any tool's wire representation depends on this model, or every function tool is plainly visible."""
+    """Whether any tool's wire representation depends on the model; when not, every function tool is plainly visible."""
     return bool(
         params.native_tools
         or params.introduced_tool_names

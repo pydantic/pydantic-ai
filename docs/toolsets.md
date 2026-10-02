@@ -74,8 +74,6 @@ Functions can be added as tools in four different ways:
 
 The `add_function()` and `add_tool()` methods can also be used from a tool function to dynamically register new tools during a run to be available in future run steps.
 
-A tool that joins the run after its first model request is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. That applies whether it was added this way, returned by a [dynamically built toolset](#dynamically-building-a-toolset), listed by an MCP server after a tool-list change, or let through by a [`prepare_tools`](tools-advanced.md#prepare-tools) function. On models with a native way to add tools mid-conversation (Anthropic's `tool_addition` and OpenAI Responses' `additional_tools`), the tool is delivered through that channel, so the request's `tools` list, and the prompt cache built on it, stays unchanged. Other models get it in `tools` along with a note in the conversation that it's now available.
-
 ```python {title="function_toolset.py"}
 from datetime import datetime
 
@@ -121,6 +119,8 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
 
 _(This example is complete, it can be run "as is")_
+
+A tool that joins the run after its first model request, however it got there, is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. See [Tools that appear mid-run](tools-advanced.md#mid-run-tool-additions) for how each provider delivers it.
 
 ### Toolset Instructions
 
