@@ -340,6 +340,7 @@ def test_python_test_jobs_use_content_only_output():
         'test-examples',
         'test-fastmcp-4',
         'test-harness-browser-use',
+        'test-clai2-clipboard',
         'coverage',
     ):
         job = CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])
@@ -393,4 +394,4 @@ def test_aggregate_requires_the_selected_lightweight_job():
 def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
     job = CONDITIONAL_JOB_ADAPTER.validate_python(_workflow()['jobs']['test-clai2-clipboard'])
 
-    assert job['if'] == "needs.classify.outputs.clai2_changed == 'true'"
+    assert "needs.classify.outputs.clai2_changed == 'true'" in job['if']

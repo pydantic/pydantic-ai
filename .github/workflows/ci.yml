@@ -1105,7 +1105,7 @@ jobs:
   test-clai2-clipboard:
     name: test clai2 clipboard on ${{ matrix.os }}
     needs: classify
-    if: needs.classify.outputs.clai2_changed == 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_changed == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
