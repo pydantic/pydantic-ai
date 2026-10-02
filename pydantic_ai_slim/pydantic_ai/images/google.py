@@ -41,6 +41,7 @@ try:
 
     from pydantic_ai.models.google import (
         _GEMINI_API_PROVIDER_NAMES,  # pyright: ignore[reportPrivateUsage]
+        _GOOGLE_CLOUD_PROVIDER_NAMES,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
 except ImportError as _import_error:
@@ -245,37 +246,42 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         if isinstance(image, BinaryImage):
             part = PartDict(inline_data=BlobDict(data=image.data, mime_type=image.media_type))
         elif isinstance(image, UploadedFile):
-            # Checked before the provider name: a file uploaded through the Gemini Files API carries
-            # `provider_name='google'`, which passes the name check on a Vertex-backed `GoogleProvider`
-            # and would otherwise be sent as a `fileData` part Vertex cannot resolve.
             if self._is_google_cloud:
-                raise UserError(
-                    'The Gemini Files API is not available on Google Cloud (Vertex AI), and Google image generation '
-                    'does not accept the `gs://` URIs Vertex uses instead, so `UploadedFile` cannot be used on this '
-                    'transport. Pass reference images as `BinaryImage` or `ImageUrl` instead.'
-                )
-            self._validate_uploaded_file_provider(image)
-            if not image.file_id.startswith('https://'):
-                raise UserError(
-                    'Google image generation requires `UploadedFile.file_id` to be a Google Files API URI '
-                    'starting with `https://`'
-                )
+                # Checked before the provider name: a file uploaded through the Gemini Files API carries
+                # `provider_name='google'`, which passes the name check on a Vertex-backed `GoogleProvider`
+                # and would otherwise be sent as a `fileData` part Vertex cannot resolve. Vertex's file
+                # store is Cloud Storage, so a `gs://` URI is the reference it resolves — the same
+                # `fileData` route `GoogleModel` takes for the conversational API.
+                if not image.file_id.startswith('gs://'):
+                    raise UserError(
+                        'The Gemini Files API is not available on Google Cloud (Vertex AI), so Google image '
+                        'generation on this transport requires `UploadedFile.file_id` to be a Cloud Storage URI '
+                        'starting with `gs://`. Pass other reference images as `BinaryImage` or `ImageUrl` instead.'
+                    )
+                self._validate_uploaded_file_provider(image)
+            else:
+                self._validate_uploaded_file_provider(image)
+                if not image.file_id.startswith('https://'):
+                    raise UserError(
+                        'Google image generation requires `UploadedFile.file_id` to be a Google Files API URI '
+                        'starting with `https://`'
+                    )
             part = PartDict(file_data=FileDataDict(file_uri=image.file_id, mime_type=image.media_type))
         elif isinstance(image, ImageUrl):
-            # Only the Gemini Developer API can resolve a Files API URI, so on the Vertex transport the
-            # URL is downloaded and inlined rather than forwarded as a `fileData` part.
-            if (
-                not image.force_download
-                and not self._is_google_cloud
-                and image.url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
-            ):
-                # Files API URIs carry no extension, so `media_type` can't be inferred from the URL.
+            # A URL the selected transport resolves itself — a Files API URI on the Gemini Developer API,
+            # a Cloud Storage `gs://` URI on Vertex — is forwarded as a `fileData` part rather than
+            # downloaded and inlined. Neither transport can resolve the other's references: Vertex has no
+            # Files API, and a `gs://` URL is not downloadable, so on the Gemini API it fails in
+            # `download_item` like any other unsupported scheme.
+            if not image.force_download and self._is_provider_hosted_url(image.url):
+                # Files API URIs carry no extension, and a Cloud Storage object name need not either,
+                # so `media_type` can't always be inferred from the URL.
                 try:
                     media_type = image.media_type
                 except ValueError as e:
                     raise UserError(
-                        'Google Files API image URLs carry no file extension, so `ImageUrl.media_type` '
-                        'cannot be inferred. Pass it explicitly, e.g. '
+                        'Google Files API and Cloud Storage image URLs can carry no file extension, so '
+                        '`ImageUrl.media_type` cannot be inferred. Pass it explicitly, e.g. '
                         "`ImageUrl(url, media_type='image/png')`."
                     ) from e
                 part = PartDict(file_data=FileDataDict(file_uri=image.url, mime_type=media_type))
@@ -294,21 +300,32 @@ class GoogleImageGenerationModel(ImageGenerationModel):
             part['media_resolution'] = media_resolution
         return part
 
-    def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
-        """Raise `UserError` unless the file carries a Gemini Developer API provider name.
+    def _is_provider_hosted_url(self, url: str) -> bool:
+        """Whether `url` names a file the selected transport resolves itself, so it travels as `fileData`.
 
-        Only reachable on that transport, as `_map_input_image` rejects every `UploadedFile` on Vertex
-        before this runs, so the accepted set is that transport's name family rather than `self.system`
-        alone. `google-gla` is the pre-v2 name for the transport and is still stamped on files in
-        persisted message history, and `self.system` covers the construction where `GoogleCloudProvider`
-        stores a Gemini API client as-is and keeps `name` `'google-cloud'`.
+        Keyed on the client's transport like the `UploadedFile` handling: only the Gemini Developer API
+        resolves Files API URIs, and only Vertex resolves Cloud Storage `gs://` URIs.
+        """
+        if self._is_google_cloud:
+            return url.startswith('gs://')
+        return url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
+
+    def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
+        """Raise `UserError` unless the file carries a provider name of the selected transport's family.
+
+        The accepted set is the transport's name family rather than `self.system` alone: `google-gla`
+        is the pre-v2 name for the Gemini Developer API and is still stamped on files in persisted
+        message history, and `google-vertex` is the pre-v2 name for Google Cloud. `self.system` covers
+        the constructions where a provider stores the other transport's client as-is and keeps its own
+        `name` (a Gemini API client in `GoogleCloudProvider`, a Vertex client in `GoogleProvider`).
 
         Wider than `GoogleModel._matching_provider_names`, which accepts a name family only when
         `self.system` belongs to one and otherwise matches `self.system` alone: here the family is
         accepted whatever `self.system` is, so a custom `BaseGoogleProvider` wrapping a Gemini API
         client can still reference files uploaded through the Files API.
         """
-        accepted = _GEMINI_API_PROVIDER_NAMES | {self.system}
+        family = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
+        accepted = family | {self.system}
         if item.provider_name not in accepted:
             raise UserError(
                 f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from typing import Literal, overload
 
+import anyio
 from typing_extensions import assert_never
 
 from ..exceptions import UserError
@@ -52,17 +52,21 @@ def resolve_advertised_tools(
     return tools, resolved
 
 
+DEFAULT_MAX_RECONNECTS = 50
+"""The `ReconnectPolicy.max_reconnects` default."""
+
+
 async def reconnect_with_backoff(
     policy: ReconnectPolicy, attempt: Callable[[], Awaitable[bool]], *, reconnects_used: int = 0
 ) -> bool:
     """Retry an attempt with exponential backoff until it succeeds or its budget is exhausted."""
-    if reconnects_used >= policy.get('max_reconnects', 50):
+    if reconnects_used >= policy.get('max_reconnects', DEFAULT_MAX_RECONNECTS):
         return False
     for i in range(policy.get('max_attempts', 3)):
         delay = min(policy.get('max_delay', 30.0), policy.get('base_delay', 0.5) * (2**i))
         if policy.get('jitter', True):
             delay *= 0.5 + random.random() * 0.5
-        await asyncio.sleep(delay)
+        await anyio.sleep(max(delay, 0))
         if await attempt():
             return True
     return False

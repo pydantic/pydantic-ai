@@ -18,7 +18,7 @@ import pydantic_ai
 import pydantic_ai._display as _display
 from pydantic_ai import Agent, ModelMessage, ModelRequest, UserPromptPart, __version__
 from pydantic_ai.agent import _registered_capability_count  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -912,6 +912,15 @@ def test_instrumented_agent_run_is_silent(monkeypatch: pytest.MonkeyPatch, stder
     agent.instrument = True
 
     agent.run_sync('hello')
+
+    assert stderr.getvalue() == ''
+
+
+def test_run_instrumented_by_an_explicit_capability_is_silent(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
+    """The banner defers to the `Instrumentation` capability that instruments the run, not just `instrument`."""
+    monkeypatch.setattr(sys, 'stderr', stderr)
+
+    Agent(TestModel()).run_sync('hello', capabilities=[Instrumentation()])
 
     assert stderr.getvalue() == ''
 

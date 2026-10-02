@@ -1,5 +1,6 @@
 ---
 title: Pydantic Evals
+description: "Pydantic Evals is a code-first Python framework for evaluating LLM apps and agents: score outputs and tool-call trajectories on datasets or live traffic."
 ---
 
 # Pydantic Evals
@@ -186,7 +187,7 @@ class MyEvaluator(Evaluator):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8
@@ -234,7 +235,7 @@ class MyEvaluator(Evaluator[str, str]):
         if ctx.output == ctx.expected_output:
             return 1.0
         elif (
-            isinstance(ctx.output, str)
+            ctx.expected_output is not None
             and ctx.expected_output.lower() in ctx.output.lower()
         ):
             return 0.8

@@ -38,6 +38,7 @@ from pydantic_ai import (
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
 if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
     from temporalio.client import Client
     from temporalio.testing import WorkflowEnvironment
 
@@ -133,11 +134,12 @@ async def client(temporal_target: str) -> Client:
 
 
 @pytest.fixture
-async def client_with_logfire(temporal_target: str) -> Client:
+async def client_with_logfire(temporal_target: str, capfire: CaptureLogfire) -> Client:
     from temporalio.client import Client
 
     from pydantic_ai.durable_exec.temporal import LogfirePlugin, PydanticAIPlugin
 
+    # The plugin captures the active span processor at connect time, so `capfire` must configure Logfire first.
     return await Client.connect(
         temporal_target,
         plugins=[PydanticAIPlugin(), LogfirePlugin()],

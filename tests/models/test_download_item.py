@@ -9,8 +9,6 @@ from pydantic_ai.models import UserError, download_item
 
 from ..conftest import IsInstance, IsStr
 
-pytestmark = [pytest.mark.anyio]
-
 
 @pytest.mark.parametrize(
     ('url', 'protocol'),

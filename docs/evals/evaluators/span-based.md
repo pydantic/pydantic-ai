@@ -1,3 +1,7 @@
+---
+description: "Evaluate how an AI system behaved, not only what it returned, by querying the OpenTelemetry spans from a run with span-based evaluators in Pydantic Evals."
+---
+
 # Span-Based Evaluation
 
 Evaluate AI system behavior by analyzing OpenTelemetry spans captured during execution.
@@ -412,9 +416,9 @@ from pydantic_evals.otel import SpanTree
 # Example API (requires span_tree from context)
 def example_api(span_tree: SpanTree) -> None:
     span_tree.find(lambda n: True)  # Find all matching nodes
+    span_tree.first({'name_contains': 'test'})  # Find the first matching node
     span_tree.any({'name_contains': 'test'})  # Check if any span matches
-    span_tree.all({'name_contains': 'test'})  # Check if all spans match
-    span_tree.count({'name_contains': 'test'})  # Count matching spans
+    len(span_tree.find({'name_contains': 'test'}))  # Count matching spans
 
     # Iteration
     for node in span_tree:
@@ -471,9 +475,10 @@ Test queries incrementally:
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
+from pydantic_evals.otel import SpanQuery
 
 # Start simple
-query = {'name_contains': 'tool'}
+query: SpanQuery = {'name_contains': 'tool'}
 
 # Add conditions gradually
 query = {'and_': [

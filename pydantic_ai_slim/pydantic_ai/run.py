@@ -1,12 +1,12 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
+import anyio
 from pydantic import model_serializer, model_validator
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, TypedDict
@@ -23,7 +23,10 @@ from . import (
 )
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
-from ._run_context import CustomEventT
+from ._run_context import (
+    CustomEventT,
+    no_workspace,
+)
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .output import OutputDataT
 from .tools import AgentDepsT
@@ -31,6 +34,7 @@ from .tools import AgentDepsT
 if TYPE_CHECKING:
     from ._run_context import RunContext
     from .result import FinalResult
+    from .workspaces import Workspace
 
 
 class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
@@ -165,6 +169,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             End(data=FinalResult(output='The capital of France is Paris.')),
         ]
         '''
+        assert agent_run.result is not None
         print(agent_run.result.output)
         #> The capital of France is Paris.
     ```
@@ -225,18 +230,22 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Once the run returns an [`End`][pydantic_graph.basenode.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
-        if self._result_override is not None:
-            return self._result_override
-        graph_run_output = self._graph_run.output
-        if graph_run_output is None:
-            return None
-        return AgentRunResult(
-            graph_run_output.output,
-            graph_run_output.tool_name,
-            self._graph_run.state,
-            self._graph_run.deps.new_message_index,
-            self._traceparent(required=False),
-        )
+        result = self._result_override
+        if result is None:
+            graph_run_output = self._graph_run.output
+            if graph_run_output is None:
+                return None
+            result = AgentRunResult(
+                graph_run_output.output,
+                graph_run_output.tool_name,
+                self._graph_run.state,
+                self._graph_run.deps.new_message_index,
+                self._traceparent(required=False),
+            )
+        # Not a dataclass field: Temporal serializes a result's dataclass fields, and a live workspace can't be.
+        # Always this run's: a result an `after_run` hook returns may come from another run.
+        result.__dict__['_workspace'] = self._graph_run.deps.workspace
+        return result
 
     def all_messages(self) -> list[_messages.ModelMessage]:
         """Return all messages for the run so far.
@@ -298,10 +307,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
             # previous loop body) before yielding another node the caller would go on to run. The
             # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
-            # has no awaited step to carry the pending `task.cancel()`: yield to the event loop so
+            # has no awaited step to carry the pending `task.cancel()`: yield to the scheduler so
             # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
             # 3.11+, and neither path awaits).
-            await asyncio.sleep(0)
+            await anyio.lowlevel.checkpoint()
         _utils.raise_if_cancelling()
 
         if previous is None:
@@ -538,6 +547,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     End(data=FinalResult(output='The capital of France is Paris.')),
                 ]
                 '''
+                assert agent_run.result is not None
                 print('Final result:', agent_run.result.output)
                 #> Final result: The capital of France is Paris.
         ```
@@ -721,6 +731,23 @@ class AgentRunResult(Generic[OutputDataT]):
     )
     _new_message_index: int = dataclasses.field(repr=False, compare=False, default=0)
     _traceparent_value: str | None = dataclasses.field(repr=False, compare=False, default=None)
+
+    @property
+    def workspace(self) -> Workspace:
+        """The [`Workspace`][pydantic_ai.workspaces.Workspace] the run used, still usable after it.
+
+        Pass it as `workspace=` to continue in it. A result not produced by a run has a placeholder.
+        """
+        # Set by `AgentRun.result`; see there.
+        workspace = self.__dict__.get('_workspace')
+        return workspace if workspace is not None else no_workspace()
+
+    def __getstate__(self) -> dict[str, Any]:
+        # DBOS pickles workflow results. The live workspace can hold secrets (`LocalWorkspace(env=)`) and
+        # means nothing in another process; its ref stays in the messages' `workspace_ref`.
+        state = self.__dict__.copy()
+        state.pop('_workspace', None)
+        return state
 
     @model_validator(mode='before')
     @classmethod
