@@ -1,6 +1,7 @@
 """Isolate settings and provider access for every CLAI test."""
 
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 from keyring.errors import PasswordDeleteError
 
 from pydantic_ai import models
-from pydantic_clai2.config import credential_store
+from pydantic_clai2.config import Settings, credential_store
 
 
 @pytest.fixture
@@ -97,6 +98,24 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
     # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
     credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture(autouse=True)
+def native_tools() -> Iterator[None]:
+    """Default speculative execution to off, so shells run native tools unless a test turns it on.
+
+    CLAI turns it on by default, folding tools into `run_code`, but most shell tests script
+    native tool calls with `TestModel`. Override this fixture to test the real default.
+    """
+    field = Settings.model_fields['speculative_code_mode']
+    shipped = field.default
+    field.default = False
+    Settings.model_rebuild(force=True)
+    try:
+        yield
+    finally:
+        field.default = shipped
+        Settings.model_rebuild(force=True)
 
 
 def stored_accounts() -> set[str]:

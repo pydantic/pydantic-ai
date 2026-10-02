@@ -29,6 +29,7 @@ CURATED = {
     'notifications',
     'herdr',
     'mcp',
+    'system_one',
     'day_ai',
     'ordinal',
     'github',
