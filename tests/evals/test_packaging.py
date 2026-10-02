@@ -9,6 +9,15 @@ from __future__ import annotations
 
 import importlib.metadata
 
+import pytest
+
+from ..conftest import try_import
+
+with try_import() as evals_metadata_available:
+    importlib.metadata.metadata('pydantic-evals')
+
+pytestmark = pytest.mark.skipif(not evals_metadata_available(), reason='pydantic-evals not installed')
+
 
 def _requires_dist() -> list[str]:
     return importlib.metadata.metadata('pydantic-evals').get_all('Requires-Dist') or []
