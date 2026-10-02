@@ -794,12 +794,11 @@ class TestReadFile:
             BinaryContent(data=data, media_type=media_type),
         ]
 
-    async def test_read_oversized_image_is_described(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr('pydantic_ai_harness.filesystem._toolset._MAX_MEDIA_BYTES', 10)
-        (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(8))
+    async def test_read_oversized_image_is_described(self, tmp_path: Path) -> None:
+        (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(5_000_000))
         toolset = _unhashed_toolset()
         result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
-        assert result == '[big.png | image/png | 16 bytes]\nToo large to view: the limit is 10 bytes.\n'
+        assert result == '[big.png | image/png | 5000008 bytes]\nToo large to view: the limit is 5000000 bytes.\n'
 
     async def test_read_traversal_blocked(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         with pytest.raises(ModelRetry):
