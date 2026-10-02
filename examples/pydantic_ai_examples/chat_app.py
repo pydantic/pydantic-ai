@@ -172,7 +172,7 @@ class Database:
                 await slf._asyncify(con.close)
         finally:
             # The executor runs con.close above, so shut it down after the connection is closed.
-            executor.shutdown()
+            await loop.run_in_executor(None, executor.shutdown)
 
     @staticmethod
     def _connect(file: Path) -> sqlite3.Connection:
