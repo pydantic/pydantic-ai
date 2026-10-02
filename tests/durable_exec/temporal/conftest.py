@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import warnings
 from collections.abc import AsyncIterator, Iterator
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,6 +35,7 @@ from pydantic_ai import (
     Agent,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -97,19 +97,12 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     from temporalio.testing import WorkflowEnvironment
 
-    # `start_local` downloads the dev-server binary to the system temp dir by default, which is empty on
-    # every CI run, so a CDN hiccup used to fail the entire suite at setup (#5399). Download to a stable
-    # per-user cache dir instead so CI can restore it via `actions/cache` and local runs reuse it across
-    # reboots. Resolved here rather than at module level: the workflow sandbox re-imports this module and
-    # restricts `Path.home()` access.
-    download_dest_dir = Path.home() / '.cache' / 'temporal-dev-server'
-    download_dest_dir.mkdir(parents=True, exist_ok=True)
     # Leave `ui` off (the `start_local` default). With `ui=True` and no explicit `ui_port`, the dev
     # server binds `port + 1000` without probing it first, and a bind failure there aborts the whole
     # process — surfacing as `ConnectionRefused` on the healthy gRPC port. No test reads the UI.
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
-        download_dest_dir=str(download_dest_dir),
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 

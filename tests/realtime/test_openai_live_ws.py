@@ -36,11 +36,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteMessage, RealtimeCassette
 
 with try_import() as imports_successful:
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
@@ -524,3 +524,94 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
     # The browser plays the audio, so the sideband records the reply without its bytes.
     assert answer_part.audio is None
     assert session.usage.input_tokens > 0
+
+
+_FAVORITE_COLOR = [
+    ModelRequest(parts=[UserPromptPart(content='My favorite color is turquoise.')]),
+    ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Got it, turquoise.')]),
+]
+
+
+async def _ask_after_a_drop(
+    model: OpenAILiveModel, cassette: RealtimeCassette, pcm: bytes, *, paced: bool
+) -> tuple[list[Any], str]:
+    """Drop the connection as soon as the session is up, then ask about the history from before the drop."""
+    agent = Agent(_BACKEND, instructions='Answer in a few words.')
+    events: list[Any] = []
+    async with agent.realtime(model, message_history=_FAVORITE_COLOR).session() as session:
+        await cassette.disconnect()
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                # The drop is the first thing that happens, so the reconnect is the first event.
+                if isinstance(event, RealtimeSessionReconnectEvent):  # pragma: no branch
+                    break
+        await _stream(session, pcm, cassette, paced=paced)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse)
+    return events, ' '.join(part.transcript or '' for part in reply.parts if isinstance(part, SpeechPart))
+
+
+def _session_starts(cassette: RealtimeCassette) -> list[dict[str, Any]]:
+    return [
+        interaction.data['session']
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage)
+        and interaction.direction == 'sent'
+        and interaction.data.get('type') == 'session.start'
+    ]
+
+
+async def test_a_stored_session_reconnects_by_forking(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """With `openai_live_store`, a dropped session is forked: the new one has the conversation, server-side."""
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_store=True, openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    pcm = assets_path.joinpath('favorite_color_question_24khz.pcm').read_bytes()
+
+    events, answer = await _ask_after_a_drop(model, cassette, pcm, paced=realtime_recording)
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    # The fork starts with no configuration of its own: it inherits the stored session's, history included.
+    first, fork = _session_starts(cassette)
+    assert first['store'] is True and len(first['input']) == 2
+    assert fork == {}
+    assert 'turquoise' in answer.lower()
+
+
+async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """Without storage, the replacement session is seeded with the history so far, and nothing is stored."""
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    pcm = assets_path.joinpath('favorite_color_question_24khz.pcm').read_bytes()
+
+    events, answer = await _ask_after_a_drop(model, cassette, pcm, paced=realtime_recording)
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    first, replacement = _session_starts(cassette)
+    assert 'store' not in first and 'store' not in replacement
+    assert replacement['input'] == first['input']
+    assert replacement['delegation'] == first['delegation']
+    assert 'turquoise' in answer.lower()

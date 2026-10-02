@@ -38,10 +38,3 @@ survivor; the recurring equivalent-mutant categories in this codebase are:
 
 Anything outside these categories should be treated as a real gap and killed
 with a new test.
-
-## Limitations
-
-Trio-parametrized tests are excluded during mutation testing (`-k 'not trio'`
-in `pyproject.toml [tool.mutmut]`) because trio segfaults in mutmut's
-subprocess environment on Python 3.14 / macOS. The kill rate is unaffected --
-the trio tests exercise the same code paths as the asyncio tests.

@@ -101,7 +101,7 @@ class Status:
                 if text:
                     # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
                     shown.append(_printable(text))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
                 shown.append(f'!{type(exc).__name__}')
         return '' if not shown else ' | ' + ' | '.join(shown)
 
