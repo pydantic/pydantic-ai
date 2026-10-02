@@ -1853,6 +1853,7 @@ def _spoken_reply(response_id: str, pcm: bytes, transcript: str) -> list[str]:
     ]
 
 
+@pytest.mark.shadow_divergence('the new session core does not apply `retain_audio_max_seconds` yet')
 async def test_retained_audio_eviction_keeps_a_committed_turn_in_its_place(monkeypatch: pytest.MonkeyPatch) -> None:
     """A spoken turn goes after what its commit followed, even once the retained-audio budget evicted that answer's audio.
 
