@@ -32,7 +32,7 @@ from typing import Any, Literal
 
 from .. import _utils
 from .._run_context import RunContext
-from ..exceptions import UnexpectedModelBehavior
+from ..exceptions import ModelAPIError, UnexpectedModelBehavior
 from ..messages import (
     FinalResultEvent,
     ModelMessage,
@@ -330,6 +330,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 yield event
         except self.get_stream_cancel_errors():
             if not self.cancelled:
+                raise
+        except ModelAPIError as e:
+            # Adapters map transport errors to `ModelAPIError`, so one caused by `cancel()` arrives wrapped.
+            if not (self.cancelled and isinstance(e.__cause__, self.get_stream_cancel_errors())):
                 raise
         else:
             if not self._cancelled:

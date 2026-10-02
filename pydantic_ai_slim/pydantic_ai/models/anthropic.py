@@ -1070,20 +1070,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        # A non-streaming request's transport errors reach us as the SDK's `APIConnectionError`, but a stream's don't.
-        try:
-            response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-            if isinstance(response, BetaMessage):
-                return self._process_response(response, model_request_parameters, model_settings)
-            # The request was streamed behind the scenes, see `_messages_create`.
-            async with response.source:
-                streamed_response = await self._process_streamed_response(
-                    response, model_request_parameters, model_settings
-                )
-                async for _ in streamed_response:
-                    pass
-        except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+        if isinstance(response, BetaMessage):
+            return self._process_response(response, model_request_parameters, model_settings)
+        # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
+        # that breaks the stream off, both while it opens and while it's read.
+        async with response.source:
+            streamed_response = await self._process_streamed_response(
+                response, model_request_parameters, model_settings
+            )
+            async for _ in streamed_response:
+                pass
         return streamed_response.get()
 
     async def count_tokens(
