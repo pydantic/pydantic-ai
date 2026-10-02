@@ -31,6 +31,7 @@ from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
     DEFAULT_MAX_CONNECTIONS,
     DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+    ConnectPoolTimeoutCap,
     create_async_httpx2_client as create_async_httpx2_client,
     legacy_httpx,
 )
@@ -1899,6 +1900,8 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     The default timeouts and connection pool limits match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
+    A number of seconds passed as an individual request's timeout can shorten the client's `connect`
+    timeout and its pool timeout (`timeout`), but never lengthen them.
 
     Raises:
         ImportError: If legacy `httpx` is not installed.
@@ -1918,6 +1921,7 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
             max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
         ),
         headers={'User-Agent': get_user_agent()},
+        event_hooks={'request': [ConnectPoolTimeoutCap(connect=connect, pool=timeout)]},
     )
 
 
