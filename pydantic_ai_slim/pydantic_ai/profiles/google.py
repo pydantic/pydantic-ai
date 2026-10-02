@@ -490,8 +490,9 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        # The subset has neither keyword, so their subschemas never reach Gemini. Walking them anyway would
-        # refuse a recursive `dict[str, Node]` over a `$ref` the declaration doesn't contain.
+        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither
+        # subschema reaches Gemini. Walking them anyway would refuse a recursive `dict[str, Node]` over a
+        # `$ref` the declaration doesn't contain.
         schema.pop('additionalProperties', None)
         schema.pop('patternProperties', None)
         return super()._handle_object(schema)

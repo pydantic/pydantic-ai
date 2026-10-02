@@ -25,6 +25,9 @@ interactions:
               children:
                 default: {}
                 type: OBJECT
+              children_by_slug:
+                default: {}
+                type: OBJECT
             required:
             - name
             type: OBJECT
@@ -32,12 +35,12 @@ interactions:
       outputAudioTranscription: {}
 - kind: message
   direction: received
-  at: 0.205
+  at: 0.198
   data:
     setupComplete: {}
 - kind: message
   direction: sent
-  at: 0.218
+  at: 0.215
   data:
     client_content:
       turns:
@@ -47,44 +50,44 @@ interactions:
       turnComplete: true
 - kind: message
   direction: received
-  at: 0.642
+  at: 0.589
   data:
     serverContent: {}
 - kind: message
   direction: received
-  at: 0.665
+  at: 0.609
   data:
     toolCall:
       functionCalls:
       - name: save_tree
         args:
           name: oak
-        id: fc_950730395950788700
+        id: fc_8623479724673009081
 - kind: message
   direction: sent
-  at: 0.672
+  at: 0.616
   data:
     tool_response:
       functionResponses:
-      - id: fc_950730395950788700
+      - id: fc_8623479724673009081
         name: save_tree
         response:
           output: Saved oak.
 - kind: message
   direction: received
-  at: 0.998
-  data:
-    sessionResumptionUpdate:
-      newHandle: 8e972421-cbe1-41ee-a7b1-2d3ee7543f4f
-      resumable: true
-- kind: message
-  direction: received
-  at: 1.072
+  at: 0.989
   data:
     serverContent: {}
 - kind: message
   direction: received
-  at: 1.235
+  at: 1.002
+  data:
+    sessionResumptionUpdate:
+      newHandle: 0e4fc998-adbf-4e10-98b7-7db9e8e45be1
+      resumable: true
+- kind: message
+  direction: received
+  at: 1.231
   data:
     serverContent:
       modelTurn:
@@ -96,173 +99,151 @@ interactions:
         text: The tree
 - kind: message
   direction: received
-  at: 1.26
+  at: 1.402
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: EgATAA0ACwAJAAwAEgAOABEAEQAPAAwACgAMAAgADgAL
+            data: CwALAAcAAQD8//b/8v/w/+7/7P/z//b/+P/8/wAAAwAE
 - kind: message
   direction: received
-  at: 1.339
+  at: 1.403
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: EfNr92n7BP5n/ykA4QALAV4BdgLNAxQF6QVKB0AJmAuq
+            data: m/b/9k731fef+Gb5Pfrh+mD72fsv/K/8hf1G/iX/GgAZ
 - kind: message
   direction: received
-  at: 1.347
+  at: 1.404
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 9gH6AR4DUgTkBRUGAgULAib+qPp/9zH2sfWS9gz34/e2
+            data: HeLa3WrbQdoY2l/brdtr28ra7dp93fnfc+GS4tXii+WD
 - kind: message
   direction: received
-  at: 1.437
+  at: 1.431
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: DiLlMHo0Mi62HxURZguNEFMdSCx1OKg/YEH9QMY/1T0m
+            data: HQKEARcAD/4c/BX7OPtN/J79X/5N/s/9Sv0w/dj9GP/g
+      outputTranscription:
+        text: ' named'
+- kind: message
+  direction: received
+  at: 1.518
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: LA0UDgAPnw8WEHoQuhDUEK4Q/g9OD6sOlw7FDskOoA5P
+- kind: message
+  direction: received
+  at: 1.519
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Jfqt+mv7KvwE/fH9z/65/5gAaQEqAssCPwOeA/QDVATE
       outputTranscription:
         text: ' "oak"'
 - kind: message
   direction: received
-  at: 1.484
+  at: 1.519
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: 3f/f/93/3v/f/+D/4P/f/+L/3//j/9//7v/0//H/+P/4
+            data: GwAnAC8APwBJAFsAYABrAHIAdgB3AHYAdABuAGcAVgBE
+- kind: message
+  direction: received
+  at: 1.667
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: oP8VANkApQLpBFwFfwXdBSwG/gVkBacEJAXGBQsF5QSG
       outputTranscription:
         text: ' has been'
 - kind: message
   direction: received
-  at: 1.496
+  at: 1.722
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: wPjD+uf7nvx9/PT77/vW+q/6Ivr4+Sv61/ms+jX6ufn1
-- kind: message
-  direction: received
-  at: 1.609
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: Ueyp657q1ekX6SfoTudd5oHlHeXS5FjkuuM148LibuL/
+            data: dhIEEpgRJxGuEB4Qgw/vDm8O9g1aDYUMmwusCrsJwAiR
       outputTranscription:
-        text: ' saved'
+        text: ' saved.'
 - kind: message
   direction: received
-  at: 1.617
+  at: 1.896
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: OP6l/An8KPwJ/HT8vfyn/IH9u/2//BP74PqE+6n7qvp8
+            data: TfNw84v2DftmAM4D1AVWB2gHXAYrBXcF/QdFDBAQ8hAa
 - kind: message
   direction: received
-  at: 1.676
+  at: 1.896
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: ZgYwBwAIzwh6CS8KxApHC7ELBQxJDHkMnAy2DL0MyAzL
-      outputTranscription:
-        text: ' with no'
+            data: SAHTAYwBu/9wAOMANQD4ASECRAAB/6T+MAKsB8kDYvxZ
 - kind: message
   direction: received
-  at: 1.683
+  at: 1.897
   data:
     serverContent:
       modelTurn:
         parts:
         - inlineData:
             mimeType: audio/pcm;rate=24000
-            data: cAGEAY8BnwG1AcMBxwHcAesB8QH/AQoCEAIdAiwCMgI/
+            data: 8f/z//P/9P/0//b/9v/4//j/+P/6//n//v/4//X/+f/4
 - kind: message
   direction: received
-  at: 1.784
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: gR3qGJcTeQ2MB9ACDv/S+/j40fYf9LXxme8+7hjvOPEw
-      outputTranscription:
-        text: ' children.'
-- kind: message
-  direction: received
-  at: 1.803
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: ifNg80LzAfTH9Gn1ufZv93r3cveG9r70b/MM8onx5PEy
-- kind: message
-  direction: received
-  at: 1.845
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: zAC8ALMAsgC1AL0AzgDiAPIA+AACAQYB/gDqAN8A1gDD
-- kind: message
-  direction: received
-  at: 1.876
-  data:
-    serverContent:
-      modelTurn:
-        parts:
-        - inlineData:
-            mimeType: audio/pcm;rate=24000
-            data: /f/+/////v/7//7//v/9/wAA//8AAP7//v8DAAAA/v/+
-- kind: message
-  direction: received
-  at: 1.928
+  at: 1.897
   data:
     serverContent:
       generationComplete: true
 - kind: message
   direction: received
-  at: 3.547
+  at: 2.961
   data:
     serverContent:
       turnComplete: true
     usageMetadata:
-      promptTokenCount: 496
-      responseTokenCount: 75
-      totalTokenCount: 571
+      promptTokenCount: 526
+      responseTokenCount: 62
+      totalTokenCount: 588
       promptTokensDetails:
       - modality: TEXT
-        tokenCount: 370
+        tokenCount: 386
       responseTokensDetails:
       - modality: AUDIO
-        tokenCount: 63
+        tokenCount: 50

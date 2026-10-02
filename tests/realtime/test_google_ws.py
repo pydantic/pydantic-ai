@@ -16,12 +16,12 @@ import json
 import wave
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 
 from pydantic_ai import Agent, RequestUsage, RunContext, ToolReturn
 from pydantic_ai.capabilities import WebSearch
@@ -535,13 +535,15 @@ async def test_tool_result_image(
 class _TreeNode(BaseModel):
     name: str
     children: dict[str, _TreeNode] = {}
+    children_by_slug: dict[Annotated[str, StringConstraints(pattern='^[a-z-]+$')], _TreeNode] = {}
 
 
 async def test_tool_with_recursive_map_values(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
-    """A tool taking a recursive `dict[str, Node]` field is declared, and the model calls it.
+    """A tool taking recursive `dict[str, Node]` fields is declared, and the model calls it.
 
-    Live's declaration format has no `additionalProperties`, so the recursion lives only in a subschema
-    that is dropped, and `children` goes out as a plain object like any other `dict` field.
+    A `dict`'s values sit under `additionalProperties`, or `patternProperties` when its keys carry a pattern.
+    Live declarations drop both, so the recursion lives only in subschemas that are dropped, and each field
+    goes out as a plain object like any other `dict` field.
     """
     provider, cassette = gemini_ws_cassette
     model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
@@ -570,7 +572,11 @@ async def test_tool_with_recursive_map_values(gemini_ws_cassette: tuple[Provider
                         'description': 'Save a tree of named nodes.',
                         'name': 'save_tree',
                         'parameters': {
-                            'properties': {'name': {'type': 'STRING'}, 'children': {'default': {}, 'type': 'OBJECT'}},
+                            'properties': {
+                                'name': {'type': 'STRING'},
+                                'children': {'default': {}, 'type': 'OBJECT'},
+                                'children_by_slug': {'default': {}, 'type': 'OBJECT'},
+                            },
                             'required': ['name'],
                             'type': 'OBJECT',
                         },
