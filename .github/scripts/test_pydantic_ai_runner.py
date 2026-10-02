@@ -591,6 +591,7 @@ def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, mon
     # plus long padding so the chunk blows well past the char cap.
     f.write_text('\n'.join(f'{i:06d}' + 'x' * 200 for i in range(1, 2001)) + '\n', encoding='utf-8')
     out = asyncio.run(pkg.read_file(_ctx(), str(f)))
+    assert isinstance(out, str)
     assert len(out) <= shared.MAX_TOOL_OUTPUT + 256  # bounded by the output cap
     m = re.search(r'Use offset=(\d+) to continue reading', out)
     assert m, 'continuation hint must survive char-budget truncation'
@@ -1809,7 +1810,7 @@ def test_stream_events_tags_retry_prompt_as_error():
 def test_read_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     out = asyncio.run(pkg.read_file(_ctx(), str(tmp_path / 'nope.txt')))
-    assert out.startswith('error:')
+    assert isinstance(out, str) and out.startswith('error:')
 
 
 def test_edit_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
