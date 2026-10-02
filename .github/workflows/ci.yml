@@ -1119,6 +1119,12 @@ jobs:
     env:
       CI: true
       CLAI_TEST_CLIPBOARD: "1"
+      # Drop the workflow-level `GIT_CONFIG_*` rewrite that puts the token in GitHub URLs: with it,
+      # `actions/checkout`'s fetch hung on macOS runners until the job timed out. This job installs
+      # no Git-sourced dependency, which is all the rewrite is for.
+      GIT_CONFIG_COUNT: "0"
+      GIT_CONFIG_KEY_0: ""
+      GIT_CONFIG_VALUE_0: ""
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
