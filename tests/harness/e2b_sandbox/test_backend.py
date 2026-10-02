@@ -852,6 +852,7 @@ class TestFilesystem:
         with pytest.raises(RateLimitException) as exc:
             await backend.list_dir('/srv')
         assert exc.value is error
+        assert exc.value.__cause__ is None
 
     async def test_symlink_whose_target_is_gone_reads_as_dangling(self, fake_e2b: FakeE2B) -> None:
         backend = await started()

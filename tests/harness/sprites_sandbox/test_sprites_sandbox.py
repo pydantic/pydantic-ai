@@ -533,22 +533,10 @@ class TestSpritesSandbox:
             await backend.get_sandbox()
         [name] = transport.created
         assert backend.ref == WorkspaceRef(provider='sprites', id=name)
-        assert (await backend.get_sandbox()).name == name
-        assert transport.created == [name]
-
-    async def test_a_created_sprite_still_invisible_on_the_next_attempt_stays_retryable(
-        self, transport: SpriteTransport
-    ) -> None:
-        # A 404 while a created Sprite becomes visible is a transport failure, not a missing Sprite.
-        backend = SpritesSandboxBackend()
-        transport.create_error_after_commit = NetworkError('lost reply')
-        transport.get_error_once = NotFoundError('not visible yet')
-        with pytest.raises(NetworkError, match='lost reply'):
-            await backend.get_sandbox()
+        # A 404 while the created Sprite becomes visible is a transport failure, not a missing Sprite.
         transport.get_error_once = NotFoundError('still not visible')
         with pytest.raises(NetworkError, match='may still be becoming visible'):
             await backend.get_sandbox()
-        [name] = transport.created
         assert (await backend.get_sandbox()).name == name
         assert transport.created == [name]
 

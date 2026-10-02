@@ -662,7 +662,6 @@ async def test_bounded_save_cleanup(monkeypatch: pytest.MonkeyPatch, operation: 
 
 async def test_child_budget_cannot_hide_parent_usage() -> None:
     from pydantic_ai.exceptions import UsageLimitExceeded
-    from pydantic_ai.usage import RunUsage, UsageLimits
 
     owner = DelegationTasks()
     child = Agent(TestModel(custom_output_text='evidence'), deps_type=object, name='worker')
