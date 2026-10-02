@@ -1,6 +1,6 @@
 """Saved sessions restore context, never tool execution or executable configuration."""
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -9,12 +9,31 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
+from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, ModelRetry, RunContext
 from pydantic_ai.agent import WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CombinedCapability,
+    Hooks,
+    LocalWorkspace,
+    ValidatedToolArgs,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersistence
@@ -23,9 +42,11 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
     SqliteConversationStore,
 )
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
+from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
+from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.runtime.sessions import activate
+from pydantic_clai2.runtime.sessions import PersistencePlugin
 
 
 def saved_session(tmp_path: Path) -> Session[None, str]:
@@ -173,9 +194,9 @@ async def test_cancellation_persists_and_live_session_cannot_resume(tmp_path: Pa
 async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     session = saved_session(tmp_path)
     host = PluginHost(name='persistence', console=Console(file=StringIO()), settings={}, conversation=session)
-    activate(host)
-    assert any(isinstance(cap, StepPersistence) for cap in host.capabilities)
-    session.plugins = host.capabilities
+    plugin = load_plugin(PersistencePlugin, host)
+    assert any(isinstance(cap, StepPersistence) for cap in plugin.capabilities)
+    session.plugins = list(plugin.capabilities)
     await session.prompt('hello')
     assert session.step_store is not None and session.summary.run_id is not None
     snapshot = await session.step_store.latest_snapshot(run_id=session.summary.run_id)
@@ -183,8 +204,7 @@ async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     assert snapshot.messages == session.messages
     assert snapshot.conversation_id == session.summary.id
     bare = PluginHost(name='persistence', console=Console(file=StringIO()), settings={})
-    activate(bare)
-    assert not bare.capabilities
+    assert not load_plugin(PersistencePlugin, bare).capabilities
 
 
 async def test_cancellation_still_propagates_when_saving_fails(
@@ -363,16 +383,6 @@ async def test_a_sandbox_on_the_agent_itself_replaces_the_session_directory(tmp_
     assert working_dirs == [str(sandbox.resolve())]
 
 
-async def test_a_capability_function_without_a_workspace_fails_the_coder_run(tmp_path: Path) -> None:
-    # The function may have picked a sandbox, so clai adds no directory; without one, `Coder` says so.
-    def capability_function(ctx: RunContext[None]) -> None:
-        return None
-
-    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Coder(), capability_function])
-    with pytest.raises(UserError, match='`Coder` needs a workspace'):
-        await Session(agent, deps=None, workspace=tmp_path).prompt('go')
-
-
 async def test_an_agent_without_a_capability_tree_gets_the_session_directory(tmp_path: Path) -> None:
     working_dirs: list[str] = []
 
@@ -437,3 +447,205 @@ async def test_a_group_plugin_that_supplies_the_workspace_replaces_the_session_d
     )
     await session.prompt('go')
     assert working_dirs == [str(sandbox.resolve())]
+
+
+@pytest.mark.parametrize('deny', [False, True])
+async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrails(tmp_path: Path, deny: bool) -> None:
+    hooks = Hooks[None]()
+    tools = Capability[None](instructions='Follow the plugin guardrail.')
+    executed: list[str] = []
+    guarded: list[str] = []
+    runs: list[tuple[str | None, str | None, str]] = []
+
+    @tools.tool_plain
+    def plugin_tool() -> str:
+        executed.append('plugin_tool')
+        return 'plugin result'
+
+    bindings: list[RunContext[None]] = []
+
+    def dynamic(ctx: RunContext[None]) -> Capability[None]:
+        bindings.append(ctx)
+        return Capability(instructions='Dynamic plugin instructions.')
+
+    @hooks.on.before_run
+    async def record(ctx: RunContext[None]) -> None:
+        runs.append((ctx.run_id, ctx.conversation_id, await ctx.workspace.working_dir()))
+
+    @hooks.on.before_tool_execute
+    async def guard(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        guarded.append(call.tool_name)
+        if deny and call.tool_name == 'plugin_tool':
+            raise ModelRetry('Denied by plugin')
+        return args
+
+    (tmp_path / 'note.txt').write_text('workspace content')
+    observed: list[AgentInfo] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        observed.append(info)
+        assert 'Follow the plugin guardrail.' in (info.instructions or '')
+        assert (info.instructions or '').count('Dynamic plugin instructions.') == 1
+        assert {'delegate_task', 'plugin_tool', 'read_file'} <= {tool.name for tool in info.function_tools}
+        first = messages[0]
+        assert isinstance(first, ModelRequest)
+        [prompt] = first.parts
+        assert isinstance(prompt, UserPromptPart)
+        if len(messages) == 1:
+            if prompt.content == 'parent task':
+                return ModelResponse(
+                    parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'child task'})]
+                )
+            assert prompt.content == 'child task'
+            return ModelResponse(
+                parts=[ToolCallPart('plugin_tool', {}), ToolCallPart('read_file', {'path': 'note.txt'})]
+            )
+        if prompt.content == 'child task':
+            returns = [
+                part
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, (ToolReturnPart, RetryPromptPart))
+            ]
+            assert any('workspace content' in str(part.content) for part in returns)
+            assert any(('Denied by plugin' if deny else 'plugin result') in str(part.content) for part in returns)
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        for index, part in enumerate(respond(messages, info).parts):
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+    model = FunctionModel(respond, stream_function=stream)
+    agent = create_stock_agent(model)
+    session = Session(
+        agent,
+        deps=None,
+        workspace=tmp_path,
+        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        plugins=[Coder(repo_context=False), tools, dynamic, hooks, LocalWorkspace(tmp_path)],
+    )
+    persistence = PluginHost[None](
+        name='persistence', console=Console(file=StringIO()), settings={}, conversation=session
+    )
+    session.plugins = [*session.plugins, *load_plugin(PersistencePlugin, persistence).capabilities]
+    assert (await session.prompt('parent task')).output == 'done'
+    assert executed == ([] if deny else ['plugin_tool'])
+    assert sorted(guarded) == ['delegate_task', 'plugin_tool', 'read_file']
+    assert len(observed) == 4
+    assert len(runs) == 2
+    assert len(bindings) == 2
+    assert bindings[0] is not bindings[1]
+    assert runs[0][0] != runs[1][0]
+    assert runs[0][1] == session.summary.id
+    assert runs[1][1] != session.summary.id
+    assert {workspace for _, _, workspace in runs} == {str(tmp_path.resolve())}
+    assert session.step_store is not None and session.summary.run_id is not None
+    snapshot = await session.step_store.latest_snapshot(run_id=session.summary.run_id)
+    assert snapshot is not None
+    assert snapshot.messages == session.messages
+    assert all(
+        part.content != 'child task'
+        for message in session.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    )
+    assert agent is not session.agent
+
+
+async def test_stock_agent_rebuilds_only_when_plugin_snapshot_changes(tmp_path: Path) -> None:
+    model = TestModel(call_tools=[], custom_output_text='answer')
+    agent = create_stock_agent(model)
+    session = Session(agent, deps=None, workspace=tmp_path)
+    await session.prompt('no plugins')
+    assert session.agent is agent
+    coder = Coder[None](repo_context=False)
+    session.plugins = [coder]
+    await session.prompt('enabled')
+    bound = session.agent
+    assert bound is not agent
+    assert model.last_model_request_parameters is not None
+    assert 'delegate_task' in {tool.name for tool in model.last_model_request_parameters.function_tools}
+    session.plugins = [coder]
+    await session.prompt('unchanged')
+    assert session.agent is bound
+    session.plugins = [Coder(repo_context=False, sub_agents=False)]
+    await session.prompt('reconfigured')
+    assert session.agent is not bound
+    assert 'delegate_task' not in {tool.name for tool in model.last_model_request_parameters.function_tools}
+    session.plugins = []
+    await session.prompt('disabled')
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
+        'read_clai_customization_guide'
+    }
+    assert session.summary.id
+    assert (
+        sum(
+            isinstance(part, UserPromptPart)
+            for message in session.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        == 5
+    )
+    await agent.run('original remains unchanged')
+    assert {tool.name for tool in model.last_model_request_parameters.function_tools} == {
+        'read_clai_customization_guide'
+    }
+
+
+@pytest.mark.parametrize('base_clai_agent', [False, True])
+async def test_supplied_agent_is_not_rebuilt_for_plugins(tmp_path: Path, base_clai_agent: bool) -> None:
+    model = TestModel(call_tools=[])
+    agent = create_agent('test') if base_clai_agent else Agent(model, deps_type=type(None))
+    session = Session(agent, deps=None, workspace=tmp_path, plugins=[Coder(repo_context=False, sub_agents=False)])
+    with agent.override(model=model):
+        await session.prompt('custom')
+    assert session.agent is agent
+    session.plugins = [Coder(repo_context=False)]
+    with pytest.raises(UserError, match='bound to the `Agent`'):
+        await session.prompt('delegation still requires agent-bound capabilities')
+    assert session.agent is agent
+
+
+async def test_running_stock_sessions_keep_independent_plugin_snapshots(tmp_path: Path) -> None:
+    entered, release = anyio.Event(), anyio.Event()
+    seen: dict[str, str] = {}
+
+    class Hold(Capability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            entered.set()
+            await release.wait()
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        [request] = messages
+        assert isinstance(request, ModelRequest)
+        [prompt] = request.parts
+        assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+        seen[prompt.content] = info.instructions or ''
+        yield 'done'
+
+    template = create_stock_agent(FunctionModel(stream_function=stream))
+    old = Session(template, deps=None, workspace=tmp_path, plugins=[Hold(instructions='OLD_SNAPSHOT_MARKER')])
+    new = Session(template, deps=None, workspace=tmp_path, plugins=[Capability(instructions='NEW_SNAPSHOT_MARKER')])
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(old.prompt, 'old')
+            await entered.wait()
+            await new.prompt('new')
+            assert old.agent is not new.agent
+            release.set()
+    assert 'OLD_SNAPSHOT_MARKER' in seen['old'] and 'NEW_SNAPSHOT_MARKER' not in seen['old']
+    assert 'NEW_SNAPSHOT_MARKER' in seen['new'] and 'OLD_SNAPSHOT_MARKER' not in seen['new']
+
+
+def test_stock_coder_enables_delegation() -> None:
+    assert next(plugin for plugin in STOCK_PLUGINS if plugin.id == 'coder').settings['sub_agents'] is True
+    assert next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'coder').settings['sub_agents'] is False

@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 from pydantic_ai import (
     Agent,
@@ -23,8 +23,10 @@ from pydantic_ai import (
     ModelRetry,
     RetryPromptPart,
     RunContext,
+    StructuredDict,
     TextPart,
     ToolCallPart,
+    ToolOutput,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
@@ -725,3 +727,159 @@ def test_int_inclusive_upper_bound_reachable():
     assert generated_values(2.5, 5.5, list(range(4))) == [2.5, 3.5, 4.5, 2.5]
     assert generated_values(2.0, 5.5, list(range(5))) == [2.0, 3.0, 4.0, 5.0, 2.5]
     assert generated_values(0.0, 1e20, [10**20]) == [10**20]
+
+
+class Cat(BaseModel):
+    kind: Literal['cat']
+    name: str
+
+
+class Dog(BaseModel):
+    kind: Literal['dog']
+    breed: str
+
+
+Discriminated = Annotated[Cat | Dog, Field(discriminator='kind')]
+
+
+def test_tool_output_oneof_discriminated_union():
+    outputs = [
+        Agent(model=TestModel(seed=seed), output_type=ToolOutput(Discriminated)).run_sync('hello').output
+        for seed in (0, 1)
+    ]
+
+    assert outputs == snapshot([Cat(kind='cat', name='a'), Dog(kind='dog', breed='b')])
+
+
+def test_function_tool_oneof_discriminated_union_arg():
+    received: list[Cat | Dog] = []
+
+    agent = Agent(model=TestModel())
+
+    @agent.tool_plain
+    def pet_name(pet: Discriminated) -> str:
+        received.append(pet)
+        return pet.kind
+
+    agent.run_sync('hello')
+
+    assert received == snapshot([Cat(kind='cat', name='a')])
+
+
+class DefaultedCat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+    color: Literal['black']
+
+
+class DefaultedDog(BaseModel):
+    kind: Literal['dog'] = 'dog'
+    breed: str
+
+
+def test_tool_output_oneof_discriminated_union_defaulted_tag():
+    """Pydantic leaves a defaulted tag out of `required`, but validation needs it to pick the member."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[DefaultedCat | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+class WhiteCat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+    color: Literal['white']
+
+
+def cat_color(cat: DefaultedCat | WhiteCat | dict[str, str]) -> str:
+    return cat['color'] if isinstance(cat, dict) else cat.color
+
+
+CatsByColor = Annotated[DefaultedCat | WhiteCat, Field(discriminator='color')]
+CatsByCallable = Annotated[
+    Annotated[DefaultedCat, Tag('black')] | Annotated[WhiteCat, Tag('white')], Discriminator(cat_color)
+]
+
+
+def test_tool_output_oneof_nested_discriminated_union_defaulted_tag():
+    """The outer tag must reach the member the inner union picks."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[CatsByColor | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+def test_tool_output_oneof_nested_callable_discriminator_defaulted_tag():
+    """A callable `Discriminator` emits `oneOf` with no `discriminator` keyword, but still passes the outer tag on."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[CatsByCallable | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+@pytest.mark.parametrize(
+    'discriminator', [pytest.param({}, id='absent'), pytest.param({'discriminator': 'value'}, id='swagger-2-string')]
+)
+def test_structured_dict_oneof_without_discriminator(discriminator: dict[str, str]):
+    """A `oneOf` without an OpenAPI `discriminator` object picks a member like `anyOf`."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'value': {'oneOf': [{'type': 'integer'}, {'type': 'string'}], **discriminator}},
+                'required': ['value'],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'value': 0})
+
+
+def test_structured_dict_oneof_boolean_member():
+    """A boolean subschema in `oneOf` has no structure to generate from, so `TestModel` writes a character."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'value': {'oneOf': [True, {'type': 'integer'}]}},
+                'required': ['value'],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'value': 'a'})
+
+
+def test_structured_dict_oneof_beside_type():
+    """A `oneOf` beside a `type` only narrows it, so the `type` drives generation."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}, 'c': {'type': 'string'}},
+                'required': ['a'],
+                'oneOf': [{'required': ['b']}, {'required': ['c']}],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'a': 0})

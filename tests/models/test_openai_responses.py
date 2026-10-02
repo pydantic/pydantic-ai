@@ -354,18 +354,8 @@ async def test_openai_response_with_null_text_and_citation(allow_model_requests:
 
     result = await direct_model_request(model, [ModelRequest.user_text_prompt('')])
 
-    assert result.parts == [
-        TextPart(
-            '',
-            id='msg-1',
-            provider_name='openai',
-            citations=[
-                Citation(
-                    sources=[WebCitationSource(url='https://example.com', title='Example')],
-                )
-            ],
-        )
-    ]
+    # Empty text makes no part, so its citations are dropped with it.
+    assert result.parts == []
 
 
 async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:  # pragma: lax no cover
@@ -9498,9 +9488,6 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='', id='msg_68cdc42eae2c81918eeacdbceb60d7fa08537600f5445fc6', provider_name='openai'
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2746,
@@ -9571,9 +9558,6 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                         tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    TextPart(
-                        content='', id='msg_68cdc4c5951c8191ace8044f1e89571508537600f5445fc6', provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(
@@ -9763,6 +9747,75 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
     )
 
 
+async def test_openai_responses_image_generation_stream_empty_final_answer(
+    allow_model_requests: None, openai_api_key: str
+):
+    """The empty `final_answer` message that follows a generated image makes no text part."""
+    model = OpenAIResponsesModel('gpt-5.6-luna', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                ImageGenerationTool(quality='low', size='1024x1024', output_format='jpeg', output_compression=50)
+            )
+        ],
+        output_type=BinaryImage,
+    )
+
+    async with agent.iter(user_prompt='Generate a simple image of a red circle.') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.response == snapshot(
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='image_generation',
+                    tool_call_id='ig_051dd45a6415155e006abc4ab95e9087d1ac076b4aaaf77bd0',
+                    provider_name='openai',
+                ),
+                FilePart(
+                    content=IsInstance(BinaryImage),
+                    id='ig_051dd45a6415155e006abc4ab95e9087d1ac076b4aaaf77bd0',
+                ),
+                NativeToolReturnPart(
+                    tool_name='image_generation',
+                    content={
+                        'status': 'completed',
+                        'background': 'opaque',
+                        'quality': 'low',
+                        'size': '1024x1024',
+                        'revised_prompt': 'A simple, clean graphic of a solid red circle centered on a plain white background. Minimalist, no text, no shadows, no border.',
+                    },
+                    tool_call_id='ig_051dd45a6415155e006abc4ab95e9087d1ac076b4aaaf77bd0',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                ),
+            ],
+            usage=RequestUsage(
+                details={'reasoning_tokens': 0},
+                input_tokens=1641,
+                output_reasoning_tokens=0,
+                output_tokens=48,
+                cost=Decimal('0.0003858'),
+            ),
+            model_name='gpt-5.6-luna',
+            timestamp=IsDatetime(),
+            provider_name='openai',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={'timestamp': IsDatetime(), 'service_tier': 'default', 'finish_reason': 'completed'},
+            provider_response_id='resp_051dd45a6415155e006abc4ab8b30c87d1b42b6dde07c02c5c',
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
 async def test_openai_responses_image_generation_tool_without_image_output(
     allow_model_requests: None, openai_api_key: str
 ):
@@ -9816,9 +9869,6 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id='ig_68cdec307db4819fbc6af5c42bc6f373079003437d26d0c0',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    TextPart(
-                        content='', id='msg_68cdec605234819fab332bfc0ba35a5d079003437d26d0c0', provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(
@@ -9884,9 +9934,6 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                         tool_call_id='ig_68cdec701280819fab216c216ff58efe079003437d26d0c0',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    TextPart(
-                        content='', id='msg_68cdecb54530819f9e25118291f5d1fe079003437d26d0c0', provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(
@@ -9987,9 +10034,6 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         tool_call_id='ig_0360827931d9421b0068dd833f660c81a09fc92cfc19fb9b13',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                    ),
-                    TextPart(
-                        content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2', provider_name='openai'
                     ),
                 ],
                 usage=RequestUsage(
@@ -10344,9 +10388,6 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332', provider_name='openai'
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=1294,
@@ -10445,9 +10486,6 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='', id='msg_0b6169df6e16e9690068dd8163a99c8191ae96a95eaa8e6365', provider_name='openai'
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=2675,
@@ -10526,9 +10564,6 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
-                    TextPart(
-                        content='', id='msg_08acbdf1ae54befc0068dd9d468248819786f55b61db3a9a60', provider_name='openai'
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=1889,
@@ -10553,6 +10588,43 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
             ),
         ]
     )
+
+
+async def test_openai_responses_image_generation_store_false(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """With `openai_store=False`, a history holding an image generation call can be sent back.
+
+    The API resolves an `image_generation_call` input item by its ID alone, and even an item carrying
+    its `result` inline fails with a 404 when the response that produced it wasn't stored. So the
+    call is left out of the replay.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.http_client(timeout=300)),
+    )
+    agent = Agent(
+        model,
+        output_type=BinaryImage,
+        capabilities=[NativeTool(ImageGenerationTool(quality='low', size='1024x1024'))],
+        model_settings=OpenAIResponsesModelSettings(openai_store=False),
+    )
+
+    result = await agent.run('Generate an image of a red circle on a white background.')
+    assert [type(part).__name__ for part in result.all_messages()[-1].parts] == snapshot(
+        ['ThinkingPart', 'NativeToolCallPart', 'FilePart', 'NativeToolReturnPart']
+    )
+
+    result = await agent.run(
+        'What color was the circle? Answer in a few words, without generating a new image.',
+        message_history=result.all_messages(),
+        output_type=str,
+    )
+    assert result.output == snapshot('The circle was red.')
+
+    _, second_request = request_capture.bodies('/v1/responses')
+    second_input = cast(list[dict[str, Any]], second_request['input'])
+    assert [item.get('type', 'message') for item in second_input] == snapshot(['message', 'reasoning', 'message'])
 
 
 async def test_openai_responses_history_with_combined_tool_call_id(allow_model_requests: None, openai_api_key: str):
@@ -14310,7 +14382,6 @@ async def test_openai_responses_null_text(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='', id='msg_001', provider_name='openai'),
                     TextPart(content='Hello', id='msg_001', provider_name='openai'),
                 ],
                 usage=RequestUsage(),
@@ -16576,7 +16647,6 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='', id='output-1', provider_name='openai'),
                     TextPart(content='final', id='output-1', provider_name='openai'),
                 ],
                 model_name='gpt-4o-123',

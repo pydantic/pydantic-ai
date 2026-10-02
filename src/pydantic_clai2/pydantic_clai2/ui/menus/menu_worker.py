@@ -9,6 +9,10 @@ from typing import TypeVar
 
 import anyio
 from termflow.tui.keys import read_key
+from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInputResult
+
+from pydantic_clai2.ui import telemetry
 
 ResultT = TypeVar('ResultT')
 _STOP: ContextVar[Event | None] = ContextVar('menu_stop', default=None)
@@ -45,18 +49,33 @@ def menu_key() -> str:
 
 
 async def run_worker(operation: Callable[[], ResultT]) -> ResultT:
-    """Request menu exit on cancellation, then join before releasing terminal ownership."""
+    """Request menu exit on cancellation, then join before releasing terminal ownership.
+
+    Every menu opens here, so this is where UI telemetry times it: a `menu {menu}` span named after
+    `operation`, noting whether the user cancelled it, but never what they picked or typed.
+    """
     stop = Event()
     token = _STOP.set(stop)
     try:
-        with _HOLD.get()():
+        with _HOLD.get()(), telemetry.span('menu {menu}', menu=telemetry.operation_name(operation)) as span:
             task = asyncio.create_task(asyncio.to_thread(operation))
             try:
-                return await asyncio.shield(task)
+                result = await asyncio.shield(task)
             except asyncio.CancelledError:
                 stop.set()
+                span.set('closed_by', 'owner')
                 with anyio.CancelScope(shield=True):
                     await asyncio.shield(task)
                 raise
+            _describe(span, result)
+            return result
     finally:
         _STOP.reset(token)
+
+
+def _describe(span: telemetry.UiSpan, result: object) -> None:
+    """How the menu ended, from its result's shape alone: values can be secrets or prompt text."""
+    if isinstance(result, MenuResult | TextInputResult):
+        span.set('cancelled', result.cancelled)
+    else:
+        span.set('result', type(result).__name__)

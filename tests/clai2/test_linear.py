@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 from typing import Protocol, TypeGuard
 
-import keyring
 import pytest
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
@@ -35,6 +34,7 @@ from pydantic_clai2.mcp import TokenStore, http_client
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus import field_menu
+from tests.clai2.conftest import stored_accounts
 
 Vault = dict[tuple[str, str], str]
 
@@ -54,26 +54,6 @@ def press(monkeypatch: pytest.MonkeyPatch) -> Press:
 
     script()
     return script
-
-
-@pytest.fixture
-def vault(monkeypatch: pytest.MonkeyPatch) -> Vault:
-    """A keyring that can also delete, so signing out and deleting keys are observable."""
-    entries: Vault = {}
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        del entries[service, account]
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
-    return entries
 
 
 class Prompt:
@@ -344,7 +324,7 @@ async def test_oauth_signs_in_with_keyring_tokens(tmp_path: Path, vault: Vault, 
     with pytest.raises(ValueError, match='Usage: /linear logout'):
         await run(commands, '/linear')
     assert (await run(commands, '/linear logout')).startswith('Signed out of Linear.')
-    assert vault == {}
+    assert stored_accounts() == set()
 
     await loader.disable('linear')
     assert 'linear' not in {command.name for command in commands}

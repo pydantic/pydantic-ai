@@ -11,7 +11,6 @@ import textwrap
 import time
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import TextIO
 
 from termflow.ansi.utils import visible_length
@@ -20,6 +19,7 @@ from termflow.tui.layout import collapsed, split_frame, truncate
 from termflow.tui.terminal import terminal_session, terminal_size
 
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
 
@@ -79,7 +79,10 @@ class SessionBrowser:
         self.output = output or sys.stdout
         self.key_source = key_source
         self.size = size
-        self.project = workspace if workspace in self.projects else next(iter(self.projects), '')
+        self.identities: dict[str, ProjectIdentity] = {}
+        self._resolve_projects()
+        current = self.identity(workspace).key
+        self.project = current if current in self.projects else next(iter(self.projects), '')
         self.mode = 'projects'
         self.query = ''
         self.buffer = ''
@@ -92,15 +95,30 @@ class SessionBrowser:
         self.confirm: ConversationSummary | None = None
         self.confirm_action = ''
 
+    def identity(self, workspace: str) -> ProjectIdentity:
+        """Return metadata cached for this browser opening, never reading Git during painting."""
+        return self.identities[workspace]
+
+    def _resolve_projects(self) -> None:
+        for workspace in dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)]):
+            if workspace not in self.identities:
+                self.identities[workspace] = project_identity(workspace)
+
+    def project_label(self, project: str) -> str:
+        """Disambiguate independent repositories with the same name without merging them."""
+        names = {self.identity(e.workspace).key: self.identity(e.workspace).name for e in self.entries}
+        name = names[project]
+        return name if list(names.values()).count(name) == 1 else project
+
     @property
     def projects(self) -> list[str]:
         """Projects in most-recent activity order, without basename identity collisions."""
-        return list(dict.fromkeys(entry.workspace for entry in self.entries))
+        return list(dict.fromkeys(self.identity(entry.workspace).key for entry in self.entries))
 
     @property
     def sessions(self) -> list[ConversationSummary]:
         """Search results are global; otherwise show the selected project."""
-        entries = [e for e in self.entries if self.query or e.workspace == self.project]
+        entries = [e for e in self.entries if self.query or self.identity(e.workspace).key == self.project]
         if self.sort == 1:
             entries.sort(key=lambda e: e.message_count, reverse=True)
         elif self.sort == 2:
@@ -117,6 +135,7 @@ class SessionBrowser:
         """Refresh cached summaries, including names generated while the browser is idle."""
         selected = self.selected
         self.entries = self.refresh(self.query, self.limit)
+        self._resolve_projects()
         if selected is not None:
             self.selected_id = selected.id
         if self.project not in self.projects:
@@ -156,12 +175,9 @@ class SessionBrowser:
         cursor = projects.index(self.project) if self.project in projects else 0
         start = max(0, cursor - budget + 2)
         lines = [colored('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', bold=self.mode == 'projects')]
-        labels = [Path(p).name for p in projects]
         for project in projects[start : start + budget - 1]:
-            label = Path(project).name or project
-            if labels.count(label) > 1:
-                label = project
-            count = sum(e.workspace == project for e in self.entries)
+            label = self.project_label(project)
+            count = sum(self.identity(e.workspace).key == project for e in self.entries)
             marker = '> ' if project == self.project else '  '
             line = f'{marker}{label} ({count})'
             lines.append(colored(line, bold=True) if project == self.project else plain(line))
@@ -174,10 +190,13 @@ class SessionBrowser:
         # Three lines per card leaves room for a date heading without splitting cards.
         capacity = max(1, (budget - 1) // 3)
         start = max(0, cursor - capacity + 1)
+        location = f'Search all projects: {self.query}' if self.query else ''
+        if not self.query and self.project:
+            location = self.project_label(self.project)
         lines = [
             colored(
                 f'{"SELECT SESSION" if self.mode == "sessions" else "SESSIONS"}: '
-                f'{"Search all projects: " + self.query if self.query else self.project} | '
+                f'{location} | '
                 f'Sort: {("recent", "messages", "tokens")[self.sort]}',
                 bold=self.mode == 'sessions',
             )
@@ -207,8 +226,12 @@ class SessionBrowser:
                 + ' '
                 + chips
             )
+            identity = self.identity(entry.workspace)
+            location = identity.checkout
             if self.query:
-                detail += f'  [{entry.workspace}]'
+                location = f'{self.project_label(identity.key)}: {location}' if location else entry.workspace
+            if location:
+                detail = f'  [{location}] ' + detail.lstrip()
             lines.append(colored(detail, role=theme.MUTED))
         if not entries:
             lines.append('No saved sessions match. Esc goes back.')

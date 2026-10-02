@@ -11,6 +11,7 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
@@ -227,11 +228,19 @@ class FieldMenu:
     def apply(self, row: FieldRow, raw: str) -> str:
         """Save and apply, or reset on empty input."""
         raw = raw.strip()
-        return self._source.apply(row, raw) if raw else self._source.reset(row)
+        if not raw:
+            return self.reset(row)
+        message = self._source.apply(row, raw)
+        # Only a listed choice is recorded: typed text can be a secret or a path.
+        chosen = {'choice': raw} if raw in row.choices and not row.secret else {}
+        telemetry.record('{menu} field {field} set', menu=self._source.title, field=row.key, **chosen)
+        return message
 
     def reset(self, row: FieldRow) -> str:
         """Forget the override and apply the default."""
-        return self._source.reset(row)
+        message = self._source.reset(row)
+        telemetry.record('{menu} field {field} reset', menu=self._source.title, field=row.key)
+        return message
 
     def row_for(self, key: object) -> FieldRow | None:
         """Look a row up by its key."""
