@@ -1402,6 +1402,9 @@ _TYPED_TOOL_PARTS: dict[tuple[str, str], _TypedToolPart] = {}
 Populated by `_register_typed_tool_part` from the `__init_subclass__` of the four tool part classes.
 """
 
+_post_validation_kinds: bool | None = None
+"""Whether a registered kind is outside the deserialization union, or `None` until next computed."""
+
 _PAYLOAD_ADAPTERS: dict[type[Any], pydantic.TypeAdapter[Any]] = {}
 """Per typed subclass: the adapter validating its narrowed `args` / `content`. Built on first use."""
 
@@ -1426,8 +1429,10 @@ def _register_typed_tool_part(cls: type[Any], base: type[Any], payload_field: st
             f'Tool kind {kind!r} is already registered for {base.__name__} by '
             f'{existing.cls.__module__}.{existing.cls.__qualname__}; tool kinds must be unique.'
         )
+    global _post_validation_kinds
     _TYPED_TOOL_PARTS[key] = _TypedToolPart(cls, base, payload_field)
     _PAYLOAD_ADAPTERS.pop(cls, None)
+    _post_validation_kinds = None
 
 
 def _payload_adapter(typed: _TypedToolPart) -> pydantic.TypeAdapter[Any]:
@@ -1451,7 +1456,14 @@ def _payload_adapter(typed: _TypedToolPart) -> pydantic.TypeAdapter[Any]:
         # (`__annotations__` on a class holds only its own annotations on Python 3.10+.)
         owner = next(k for k in typed.cls.__mro__ if typed.payload_field in getattr(k, '__annotations__', {}))
         holder = type('_Payload', (), {'__annotations__': {'value': payload_type}, '__module__': owner.__module__})
-        adapter = _PAYLOAD_ADAPTERS[typed.cls] = pydantic.TypeAdapter(get_type_hints(holder)['value'])
+        try:
+            resolved = get_type_hints(holder)['value']
+        except NameError as e:
+            raise UserError(
+                f'The `{typed.payload_field}` annotation of {owner.__qualname__} ({payload_type!r}) could not be '
+                f'resolved: {e}. Define the types it names at module level, where they can be looked up.'
+            ) from e
+        adapter = _PAYLOAD_ADAPTERS[typed.cls] = pydantic.TypeAdapter(resolved)
     return adapter
 
 
@@ -2218,23 +2230,16 @@ class ModelRequest:
     """
 
     def __post_init__(self) -> None:
-        # A tool part whose kind is registered outside core is left a base part by deserialization and
-        # promoted here; checked only while such a kind exists, as this runs for every message.
-        promote = _promotes_after_validation()
-        promoted: list[Any] | None = None
-        for index, part in enumerate(self.parts):
+        for part in self.parts:
             if isinstance(part, SpeechPart) and part.speaker != 'user':
                 # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
                 # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f"`SpeechPart` in `ModelRequest.parts` must have `speaker='user'`, got {part.speaker!r}"
                 )
-            if promote and (new := _promote_registered_part(part)) is not part:
-                if promoted is None:
-                    promoted = list(self.parts)
-                promoted[index] = new
-        if promoted is not None:
-            self.parts = promoted
+        # This runs for every message, so it costs one check unless a kind registered outside core exists.
+        if _post_validation_kinds is not False and _promotes_after_validation():
+            self.parts = _promote_registered_parts(self.parts)
 
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
@@ -2750,20 +2755,21 @@ def _narrow_call(part: _CallPartT, tool_kind: ToolPartKind | None) -> _CallPartT
     return _utils.copy_dataclass_fields(part, typed.cls, args=args, tool_kind=kind)
 
 
-_post_validation_kinds_cache: tuple[int, int, bool] = (-1, -1, False)
-
-
 def _promotes_after_validation() -> bool:
     """Whether any registered kind is promoted after validation, i.e. isn't in the deserialization union.
 
-    Recomputed only when either registry has grown, so the common case (core's kinds alone) costs a
-    tuple comparison per message.
+    Cached in `_post_validation_kinds`, which registering a kind resets.
     """
-    global _post_validation_kinds_cache
-    sizes = (len(_TYPED_TOOL_PARTS), len(_TYPED_PART_TAGS))
-    if _post_validation_kinds_cache[:2] != sizes:
-        _post_validation_kinds_cache = (*sizes, any(key not in _TYPED_PART_TAGS for key in _TYPED_TOOL_PARTS))
-    return _post_validation_kinds_cache[2]
+    global _post_validation_kinds
+    if _post_validation_kinds is None:
+        _post_validation_kinds = any(key not in _TYPED_PART_TAGS for key in _TYPED_TOOL_PARTS)
+    return _post_validation_kinds
+
+
+def _promote_registered_parts(parts: Sequence[Any]) -> Sequence[Any]:
+    """`parts` with each tool part of a post-validation kind promoted; the same object if none changed."""
+    promoted = [_promote_registered_part(part) for part in parts]
+    return promoted if any(new is not old for new, old in zip(promoted, parts)) else parts
 
 
 def _promote_registered_part(part: Any) -> Any:
@@ -3041,23 +3047,16 @@ class ModelResponse:
     """
 
     def __post_init__(self) -> None:
-        # A tool part whose kind is registered outside core is left a base part by deserialization and
-        # promoted here; checked only while such a kind exists, as this runs for every message.
-        promote = _promotes_after_validation()
-        promoted: list[Any] | None = None
-        for index, part in enumerate(self.parts):
+        for part in self.parts:
             if isinstance(part, SpeechPart) and part.speaker != 'assistant':
                 # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
                 # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f"`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'`, got {part.speaker!r}"
                 )
-            if promote and (new := _promote_registered_part(part)) is not part:
-                if promoted is None:
-                    promoted = list(self.parts)
-                promoted[index] = new
-        if promoted is not None:
-            self.parts = promoted
+        # This runs for every message, so it costs one check unless a kind registered outside core exists.
+        if _post_validation_kinds is not False and _promotes_after_validation():
+            self.parts = _promote_registered_parts(self.parts)
 
     @property
     def text(self) -> str | None:

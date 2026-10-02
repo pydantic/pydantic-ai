@@ -176,3 +176,18 @@ def test_an_intermediate_subclass_registers_nothing() -> None:
     part = ToolCallPart('t', {}, tool_kind='test-unknown')
     assert ToolCallPart.narrow_type(part) is part
     assert not isinstance(part, _Intermediate)
+
+
+def test_a_payload_type_defined_in_a_function_is_reported() -> None:
+    class LocalArgs(TypedDict):
+        name: str
+
+    @dataclass(repr=False)
+    class LocalCallPart(ToolCallPart):  # pyright: ignore[reportUnusedClass]
+        _: KW_ONLY
+
+        args: str | LocalArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+        tool_kind: Literal['test-local-args'] = 'test-local-args'  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    with pytest.raises(UserError, match='Define the types it names at module level'):
+        ModelResponse(parts=[ToolCallPart('t', {'name': 'x'}, tool_kind='test-local-args')])
