@@ -4,19 +4,12 @@ description: "Add durable execution to Pydantic AI agents so runs survive crashe
 
 # Durable Execution
 
-Capability authors can also move custom hook work into engine activities, steps, or tasks with [durable capability operations](../capabilities/custom.md#durable-capability-operations).
-
-[Append-on-change instructions](../agent.md#appending-instruction-changes) derive their baseline and replacements from persisted history. Instruction callbacks still follow the engine's replay rules: use a durable operation for external reads so replay uses the same values and produces the same history shape.
-
-Third-party runtime authors can use the stable [durable execution backend builder](./backends.md)
-to integrate another engine without importing Pydantic AI internals.
-
 Pydantic AI allows you to build durable agents that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. Durable agents have full support for [streaming](../agent.md#streaming-all-events) and [MCP](../mcp/client.md), with the added benefit of fault tolerance.
 
 !!! note "Durability is not storage"
     A durable engine keeps one run alive across crashes and restarts. It does not store your chat threads: saving a conversation and picking it up later is a different problem with a much lighter answer, laid out in [Persistence](../persistence.md).
 
-Pydantic AI supports seven durable execution solutions, plus a [builder](./backends.md) for any other engine. Five are co-maintained by the Pydantic and vendor teams:
+Pydantic AI supports eight durable execution solutions, plus a [builder](./backends.md) for any other engine. Five are co-maintained by the Pydantic and vendor teams:
 
 - [Temporal](./temporal.md)
 - [DBOS](./dbos.md)
@@ -28,3 +21,14 @@ Additional external SDK integrations:
 
 - [Kitaru](./kitaru.md)
 - [Apache Airflow](./airflow.md)
+- [Absurd](https://pydantic.dev/docs/ai/harness/absurd/)
+
+!!! warning "One durable execution engine per agent"
+    Each engine wraps every model request and tool call as its own durable unit, so attaching a second one, whether to the agent, for a single run, or through an agent spec, raises a [`UserError`][pydantic_ai.exceptions.UserError] before either is bound.
+
+Capability authors can also move custom hook work into engine activities, steps, or tasks with [durable capability operations](../capabilities/custom.md#durable-capability-operations).
+
+[Append-on-change instructions](../agent.md#appending-instruction-changes) derive their baseline and replacements from persisted history. Instruction callbacks still follow the engine's replay rules: use a durable operation for external reads so replay uses the same values and produces the same history shape.
+
+Third-party runtime authors can use the stable [durable execution backend builder](./backends.md)
+to integrate another engine without importing Pydantic AI internals.

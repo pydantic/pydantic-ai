@@ -5990,3 +5990,44 @@ async def test_groq_extra_headers_not_mutated(allow_model_requests: None):
 
     # The caller's dict is unchanged: no User-Agent leaked into it.
     assert user_headers == {'X-Custom': 'value'}
+
+
+@pytest.mark.parametrize(
+    ('stream', 'content', 'content_type'),
+    [
+        pytest.param(False, b'   ', 'application/json', id='request'),
+        pytest.param(
+            True,
+            b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"llama-3.3-70b-versatile",'
+            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
+            b'data: {not json\n\n',
+            'text/event-stream',
+            id='stream',
+        ),
+        pytest.param(True, b'data: {not json\n\n', 'text/event-stream', id='stream-first-chunk'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, content_type: str
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=content, headers={'content-type': content_type})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = AsyncGroq(api_key='test', base_url='http://localhost', max_retries=0, http_client=http_client)
+        agent = Agent(GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('Hello')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

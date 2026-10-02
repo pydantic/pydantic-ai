@@ -162,7 +162,9 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
         return ModelResponse(parts=[TextPart('done')])
 
     def append_request(ctx: RunContext[str], request: ModelRequestContext) -> ModelRequestContext:
-        request.messages.append(ModelRequest(parts=[UserPromptPart('Hook context.')]))
+        message = ModelRequest(parts=[UserPromptPart('Hook context.')])
+        request.messages = [*request.messages, message]
+        ctx.messages.append(message)
         return request
 
     history: list[ModelMessage] = []

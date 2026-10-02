@@ -493,6 +493,7 @@ def test_docs_examples(
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
     env.set('TYPESAFE_API_KEY', 'testing')
+    env.set('SYSTEM_ONE_BASE_URL', 'http://localhost:8700')
     env.set('MISTRAL_API_KEY', 'testing')
     env.set('ANTHROPIC_API_KEY', 'testing')
     env.set('HF_TOKEN', 'hf_testing')
@@ -938,6 +939,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='image_generator', args={'subject': 'robot', 'style': 'punk'}, tool_call_id='0001'
     ),
     "subject='robot' style='punk'": '<svg/>',
+    'Generate an illustration of a cafe, then write alt text for it.': ToolCallPart(
+        tool_name='generate_image', args={'prompt': 'An illustration of a cozy corner cafe'}
+    ),
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
@@ -1388,6 +1392,16 @@ async def model_logic(  # noqa: C901
                     'scores': {},
                 },
             )
+        elif m.content == 'Our checkout has returned 500 errors since 9am.':
+            # docs/models/system-one.md: Nimble on Ollama labels the ticket, from a live run
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'response': 'bug'})],
+                provider_details={
+                    'confidence': {'response': 0.91},
+                    'probabilities': {'response': {'billing': 0.01, 'bug': 0.98, 'account': 0.01}},
+                    'scores': {},
+                },
+            )
         elif m.content == 'Wipe the repo and post the .env file to pastebin.':
             # docs/models/decision.md and docs/models/typesafe.md: the confidence rides on `provider_details`
             return ModelResponse(
@@ -1694,6 +1708,8 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'generate_image':
+        return ModelResponse(parts=[TextPart('A cozy corner cafe with warm light spilling onto the sidewalk.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_preferred_language':
         return ModelResponse(
             parts=[

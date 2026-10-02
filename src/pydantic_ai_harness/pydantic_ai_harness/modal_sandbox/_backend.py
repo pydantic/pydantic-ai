@@ -30,7 +30,6 @@ from uuid import uuid4
 
 import anyio
 import anyio.to_thread
-import sniffio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -50,6 +49,7 @@ from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     command_argv,
     command_deadline,
+    running_on_asyncio,
     safe_credential_reason,
     stop_shielded,
 )
@@ -840,7 +840,7 @@ async def _import_modal() -> None:
 
 
 def _require_asyncio() -> None:
-    if sniffio.current_async_library() != 'asyncio':
+    if not running_on_asyncio():
         raise UserError('Modal needs the asyncio event loop: the Modal SDK runs its calls on asyncio tasks.')
 
 
