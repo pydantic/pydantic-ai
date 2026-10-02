@@ -782,11 +782,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             await self._ws.send(to_json(event).decode())
             return
         # Noted before it goes out, so nothing sent while it does is taken for ahead of it.
-        self._lifecycle.audio_commit_sent()
+        sent_before = self._lifecycle.audio_commit_sent()
         try:
             await self._ws.send(to_json(event).decode())
         except BaseException:
-            self._lifecycle.audio_commit_failed()
+            self._lifecycle.audio_commit_failed(sent_before)
             raise
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:

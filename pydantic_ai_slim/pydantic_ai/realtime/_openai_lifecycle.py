@@ -136,15 +136,18 @@ class OpenAILifecycle:
         """User message items that are no input of the session's (seeded or replayed history) are on their way."""
         self._messages.extend([None] * count)
 
-    def audio_commit_sent(self) -> None:
-        """An audio commit of ours is going out, after everything sent before it."""
-        self._sent_before_commits.append(
-            [*(input_id for input_id in self._messages if input_id is not None), *self._tool_outputs.values()]
-        )
+    def audio_commit_sent(self) -> list[InputId]:
+        """An audio commit of ours is going out, after everything sent before it: what it notes, for `audio_commit_failed`."""
+        sent_before = [*(input_id for input_id in self._messages if input_id is not None), *self._tool_outputs.values()]
+        self._sent_before_commits.append(sent_before)
+        return sent_before
 
-    def audio_commit_failed(self) -> None:
-        """The audio commit just reported going out never did."""
-        self._sent_before_commits.pop()
+    def audio_commit_failed(self, sent_before: list[InputId]) -> None:
+        """The audio commit `audio_commit_sent` noted never went out (unless a reconnect forgot it already)."""
+        for index, noted in enumerate(self._sent_before_commits):
+            if noted is sent_before:
+                del self._sent_before_commits[index]
+                return
 
     def tool_output_sent(self, call_id: str, input_id: InputId) -> None:
         self._tool_outputs[call_id] = input_id

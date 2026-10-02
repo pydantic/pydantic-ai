@@ -31,6 +31,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.messages import BinaryAudio
+    from pydantic_ai.realtime._openai_lifecycle import OpenAILifecycle
     from pydantic_ai.realtime._openai_protocol import response_metadata_answers, response_request_metadata
     from pydantic_ai.realtime.codec import (
         CancelResponse,
@@ -915,3 +916,16 @@ async def test_a_turn_cleared_before_it_joined_never_does() -> None:
     events = [event for event in await stream.rest() if not isinstance(event, str)]
     assert events == snapshot([UserTurnStarted(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u1')])
     assert stream.connection._lifecycle._idle_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_failed_commit_drops_only_what_it_noted() -> None:
+    """Another commit noted meanwhile stays; one a reconnect already forgot is nothing to drop."""
+    lifecycle = OpenAILifecycle()
+    lifecycle.message_sent(0)
+    first = lifecycle.audio_commit_sent()
+    second = lifecycle.audio_commit_sent()
+    lifecycle.audio_commit_failed(first)
+    assert list(lifecycle._sent_before_commits) == [second]  # pyright: ignore[reportPrivateUsage]
+    lifecycle.socket_replaced()
+    lifecycle.audio_commit_failed(second)
+    assert not lifecycle._sent_before_commits  # pyright: ignore[reportPrivateUsage]
