@@ -130,6 +130,7 @@ Live splits one agent across two models:
 | --- | --- |
 | The agent's [instructions](../agent.md#instructions) | The backend model, which does the work |
 | The agent's [tools](tools.md) | The backend model, advertised as function tools |
+| [Web search](tools.md#native-tools) | The backend model, as its native `web_search` tool |
 | `openai_live_instructions` | The Live model, which does the talking |
 
 When the Live model decides it cannot answer from the conversation alone, it opens a *delegation* and
@@ -387,8 +388,12 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 cacheable prefix as the session grows. OpenAI realtime does not expose `temperature` through
 Pydantic AI.
 
-Input transcription defaults to `'auto'`; set a supported transcription model ID to pin it or
-`None` to disable it. See [Input transcription](audio.md#input-transcription).
+Input transcription defaults to `'auto'`, which uses `gpt-live-transcribe`; set a supported
+transcription model ID to pin it or `None` to disable it. `gpt-live-transcribe` streams the
+transcript as the user speaks, but its final transcript can arrive after the reply's
+[turn is complete](events.md#the-turn-boundary). It is still recorded with the user turn it
+describes, so keep iterating the session if you need it before closing. See
+[Input transcription](audio.md#input-transcription).
 
 ## Reasoning {#reasoning}
 
@@ -404,8 +409,9 @@ On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSetti
 effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning off. The
 GA `gpt-realtime` ignores the setting.
 
-Neither family surfaces reasoning traces as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s:
-the Realtime API exposes effort as input only, and Live's reasoning happens on the backend.
+Neither family surfaces readable reasoning as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
+GPT-Live does record the backend's encrypted reasoning ahead of each web search, so the history can
+continue on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
 
 ## Browser WebRTC
 
@@ -433,9 +439,8 @@ secure offer-relay flow, and the sideband trust model, and the
 
 ## Feature support and limitations
 
-Pydantic AI doesn't route [native tools](tools.md#native-tools) to either family yet; configure local
-fallbacks for web capabilities. Both run [tool calls asynchronously](tools.md#concurrent-tool-execution),
-so the model keeps talking while a tool runs. See [Audio, images, and transcripts](audio.md),
+Both families run [tool calls asynchronously](tools.md#concurrent-tool-execution), so the model
+keeps talking while a tool runs. See [Audio, images, and transcripts](audio.md),
 [Turns and interruptions](turns.md), [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for
 the provider-agnostic workflows.
 
@@ -450,6 +455,7 @@ the provider-agnostic workflows.
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
 | Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
+| Native tools | Limited parameter support | Web search only, run by the [backend](#how-delegation-works); sources and citations aren't recorded |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
 | Reconnection | Limited parameter support | Over WebSockets; a sideband is not reconnected. With a [`reconnect`](lifecycle.md#reconnecting) policy, a session stored with `openai_live_store=True` is forked, keeping the conversation on OpenAI's side; otherwise the text of the [completed history is replayed](lifecycle.md#state-restoration) into a new session, as much of its recent end as Live's seeding caps allow |
 

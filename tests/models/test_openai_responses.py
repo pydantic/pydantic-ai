@@ -7277,7 +7277,8 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                             cost=Decimal('0.00475625'),
                         )
                     )
-                    assert run.usage == snapshot(RunUsage(requests=1))
+                    # The run counts the step once its response is committed, after the stream.
+                    assert run.usage == snapshot(RunUsage())
                 assert run.usage == snapshot(
                     RunUsage(
                         input_tokens=53,
