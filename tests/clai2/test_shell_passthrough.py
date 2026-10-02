@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import anyio
 import pytest
@@ -390,9 +391,9 @@ async def test_output_streams_before_exit_and_readers_are_drained(external_cance
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX fork and detached sessions')
-@pytest.mark.parametrize('cancel', [False, True])
+@pytest.mark.parametrize('cancellation', ['none', 'running', 'draining'])
 async def test_detached_descendant_cannot_hold_output_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancellation: Literal['none', 'running', 'draining']
 ) -> None:
     for name in list(os.environ):
         if name.startswith('COVERAGE_'):
@@ -411,7 +412,7 @@ async def test_detached_descendant_cannot_hold_output_open(
         'else:\n'
         '    os.close(writer)\n'
         '    os.read(reader, 1)\n'
-        f'    time.sleep(60 if {cancel} else 0)\n'
+        f'    time.sleep(60 if {cancellation == "running"} else 0)\n'
     )
 
     class Output(io.StringIO):
@@ -422,6 +423,17 @@ async def test_detached_descendant_cannot_hold_output_open(
             return size
 
     interrupts = Interrupts()
+    protocols: list[_ShellOutput] = []
+    process_exited = _ShellOutput.process_exited
+
+    def on_process_exit(output: _ShellOutput) -> None:
+        process_exited(output)
+        protocols.append(output)
+        if cancellation == 'draining':
+            # Resume the exit waiter into its final drain, then interrupt that drain.
+            asyncio.get_running_loop().call_soon(interrupts.cancel)
+
+    monkeypatch.setattr(_ShellOutput, 'process_exited', on_process_exit)
     tasks_before = asyncio.all_tasks()
     task = asyncio.create_task(
         run_shell_command(
@@ -433,13 +445,14 @@ async def test_detached_descendant_cannot_hold_output_open(
     try:
         with anyio.fail_after(10):
             await ready.wait()
-        if cancel:
+        if cancellation == 'running':
             assert interrupts.cancel()
         done, _ = await asyncio.wait({task}, timeout=10)
         assert task in done, 'Shell waited for a detached descendant to close stdout/stderr'
         context = task.result()
         assert '\nstdout:\nDETACHED_READY\n' in context
-        assert ('\nInterrupted\n' if cancel else '\nExit code 0\n') in context
+        assert ('\nExit code 0\n' if cancellation == 'none' else '\nInterrupted\n') in context
+        assert protocols[0].closed.is_set()
         os.kill(int(pid_file.read_text()), 0)  # The detached child is still alive when the command returns.
     finally:
         if pid_file.exists():

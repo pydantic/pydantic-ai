@@ -53,6 +53,11 @@ class _ShellOutput(asyncio.SubprocessProtocol):
     def connection_lost(self, exc: Exception | None) -> None:
         self.closed.set()
 
+    async def drain(self) -> None:
+        """Drain buffered output without waiting indefinitely for detached descendants."""
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self.closed.wait(), _OUTPUT_DRAIN_GRACE)
+
 
 def _taskkill_path() -> str:
     """Resolve `taskkill.exe` in the system directory, never through the working directory."""
@@ -135,10 +140,10 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
                 stderr=subprocess.PIPE,
             )
         )
-        process: asyncio.SubprocessTransport | None = None
         try:
             process, _ = await asyncio.shield(spawn_task)
             await output.exited.wait()
+            await output.drain()
         except asyncio.CancelledError:
             process, _ = await spawn_task
             _interrupt(process)
@@ -146,15 +151,13 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
                 await asyncio.wait_for(output.exited.wait(), _INTERRUPT_GRACE)
             await _kill_process_tree(process)
             await output.exited.wait()
+            await output.drain()
             raise
         finally:
-            if process is not None:
-                # Drain final buffered output, but do not wait forever for a detached descendant's pipes.
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(output.closed.wait(), _OUTPUT_DRAIN_GRACE)
-                process.close()
-                await output.closed.wait()
-                exit_code = process.get_returncode()
+            process, _ = await spawn_task
+            process.close()
+            await output.closed.wait()
+            exit_code = process.get_returncode()
 
     started = time.monotonic()
     error: str | None = None
