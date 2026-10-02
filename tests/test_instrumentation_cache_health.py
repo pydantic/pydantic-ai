@@ -14,10 +14,13 @@ from pydantic_ai import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelResponse,
+    ModelRetry,
+    RunContext,
     TextPart,
     ToolCallPart,
 )
 from pydantic_ai._cache_health import CacheHealthDetector, CacheMark, ConversationCacheMarkStore
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
@@ -89,6 +92,7 @@ def cache_spans(
     prompt: str | list[str | CachePoint] = 'prompt',
     sampler: Sampler | None = None,
     use_fallback: bool = False,
+    capabilities: Sequence[AbstractCapability[None]] = (),
 ) -> tuple[list[ReadableSpan], InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     tracer_provider = TracerProvider(sampler=sampler) if sampler is not None else TracerProvider()
@@ -121,7 +125,8 @@ def cache_spans(
     agent = Agent(
         FallbackModel(model) if use_fallback else model,
         capabilities=[
-            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False))
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)),
+            *capabilities,
         ],
     )
 
@@ -151,6 +156,33 @@ def test_stable_cache_health() -> None:
         {'pydantic_ai.cache.hit_ratio': 0.8, 'pydantic_ai.cache.established_tokens': 16000},
     ]
     assert all(not span.events for span in spans)
+
+
+def test_response_rejected_by_a_later_hook_still_counts() -> None:
+    """A response an `after_model_request` hook rejects with `ModelRetry` was still served, so it sets the mark."""
+
+    @dataclass
+    class RejectFirstResponse(AbstractCapability[None]):
+        rejected: bool = False
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if not self.rejected:
+                self.rejected = True
+                raise ModelRetry('Try again.')
+            return response
+
+    spans, _ = cache_spans(
+        [CacheUsage(write=15000), CacheUsage(read=15000)],
+        retention=timedelta(hours=1),
+        capabilities=[RejectFirstResponse()],
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 15000},
+        {'pydantic_ai.cache.hit_ratio': 0.75, 'pydantic_ai.cache.established_tokens': 15000},
+    ]
 
 
 @pytest.mark.parametrize(

@@ -431,6 +431,9 @@ class Instrumentation(AbstractCapability[Any]):
                             usage_response=_usage_response(request_context),
                         )
                         track_request(prepared_request_context)
+                        # The provider served this request even if a later hook rejected the response
+                        # (e.g. `after_model_request` raising `ModelRetry`), so its cache usage counts.
+                        self._record_cache_health(request_context, captured_response)
                     raise
 
                 prepared_request_context = finish(
