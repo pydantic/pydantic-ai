@@ -32,6 +32,21 @@ class Screen:
         self.surface.paint(rows)
 
 
+def test_modified_key_reporting_is_scoped_to_editor_ownership() -> None:
+    output = io.StringIO()
+    surface = PromptSurface(output=output, size=lambda: (80, 24))
+    enable = '\x1b[>4;1m\x1b[>1u'
+    disable = '\x1b[<u\x1b[>4;0m'
+    for activation in range(1, 3):
+        surface.paint(ROWS)
+        surface.paint((*ROWS, 'EXTRA ROW'))
+        assert output.getvalue().count(enable) == activation
+        assert output.getvalue().count(disable) == activation - 1
+        surface.release()
+        surface.release()
+        assert output.getvalue().count(disable) == activation
+
+
 @pytest.mark.parametrize('tty', [False, True])
 async def test_streaming_does_not_touch_editor(tty: bool) -> None:
     class Output(io.StringIO):

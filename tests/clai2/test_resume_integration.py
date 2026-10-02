@@ -39,7 +39,7 @@ async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr('pydantic_clai2._app.reload_clai', rebuild)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('first\n/reload\nsecond\n/exit\n')
+        pipe.send_text('first\r/reload\rsecond\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='answer')),
             deps=None,
@@ -115,7 +115,7 @@ async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> 
     await prior.prompt('earlier turn')
     output = StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('followup\n/new\nother session\n/exit\n')
+        pipe.send_text('followup\r/new\rother session\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='answer')),
             deps=None,
@@ -135,7 +135,7 @@ async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> 
 async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(SessionBrowser, 'run', cancel_browser)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/exit\n')
+        pipe.send_text('/exit\r')
         await chat(
             Agent(TestModel()),
             deps=None,

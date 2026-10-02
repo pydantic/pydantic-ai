@@ -115,6 +115,94 @@ def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
         assert events == [('alt-backspace', sequence), ('paste', sequence)]
 
 
+@pytest.mark.parametrize('split', [False, True])
+@pytest.mark.parametrize('report', ['\x1b[{code};{modifier}u', '\x1b[27;{modifier};{code}~'])
+@pytest.mark.parametrize(
+    ('code', 'modifier', 'expected'),
+    [
+        (13, 1, 'enter'),
+        (13, 2, 'shift-enter'),
+        (13, 3, 'alt-enter'),
+        (13, 66, 'shift-enter'),
+        (13, 130, 'shift-enter'),
+        (9, 1, 'tab'),
+        (9, 2, 'backtab'),
+        (27, 1, 'escape'),
+        (127, 1, 'backspace'),
+        (127, 2, 'backspace'),
+        (32, 2, ' '),
+        (99, 5, 'ctrl-c'),
+        (99, 6, 'ctrl-shift-c'),
+        (100, 5, 'ctrl-d'),
+        (104, 5, 'backspace'),
+        (105, 5, 'tab'),
+        (106, 5, 'ctrl-j'),
+        (109, 5, 'enter'),
+        (114, 5, 'ctrl-r'),
+        (120, 5, 'ctrl-x'),
+        (115, 5, 'ctrl-s'),
+        (118, 3, 'alt-v'),
+        (98, 3, 'alt-b'),
+        (102, 3, 'alt-f'),
+        (57414, 1, 'enter'),
+        (57414, 2, 'shift-enter'),
+        (57417, 1, 'left'),
+        (57418, 1, 'right'),
+        (57419, 1, 'up'),
+        (57420, 1, 'down'),
+        (57421, 1, 'pageup'),
+        (57422, 1, 'pagedown'),
+        (57423, 1, 'home'),
+        (57424, 1, 'end'),
+        (57425, 1, 'insert'),
+        (57426, 1, 'delete'),
+        (57427, 1, 'begin'),
+    ],
+)
+async def test_modified_reporting_preserves_editor_keys(
+    code: int, modifier: int, expected: str, report: str, split: bool
+) -> None:
+    events: list[tuple[str, str]] = []
+    sequence = report.format(code=code, modifier=modifier)
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append((key, data)), eof=lambda: None)
+        try:
+            for chunk in sequence if split else [sequence]:
+                pipe.send_text(chunk)
+                keys.read()
+            assert events == [(expected, sequence)]
+            keys.dispatch(KeyPress(Keys.BracketedPaste, sequence))
+            assert events[-1] == ('paste', sequence)
+        finally:
+            keys.stop()
+
+
+@pytest.mark.parametrize('sequence', ['\x1b[13;0u', '\x1b[99;9u', '\x1b[999u', '\x1b[97u', '\x1b[99;5:3u'])
+async def test_unrequested_or_invalid_reports_are_not_editor_keys(sequence: str) -> None:
+    events: list[str] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append(key), eof=lambda: None)
+        try:
+            pipe.send_text(sequence)
+            keys.read()
+            keys.flush()
+            assert events == []
+        finally:
+            keys.stop()
+
+
+async def test_enter_linefeed_and_kitty_escape_stay_distinct() -> None:
+    events: list[str] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append(key), eof=lambda: None)
+        try:
+            pipe.send_text('\r\n\x1b[27u')
+            keys.read()
+            assert events == ['enter', 'ctrl-j', 'escape']
+        finally:
+            keys.stop()
+
+
 async def test_cursor_reports_are_not_draft_keys() -> None:
     events: list[tuple[str, str]] = []
     with create_pipe_input() as pipe:
