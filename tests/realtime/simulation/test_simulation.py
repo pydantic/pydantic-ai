@@ -603,6 +603,56 @@ def test_known_input_held_behind_a_lost_reply_is_not_replayed() -> None:
     reproduce('SIM-28', OpenAISimulation(), scenario)
 
 
+@known('SIM-29')
+def test_known_xai_push_to_talk_turn_spoken_over_is_lost() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.create_response()
+        sim.send_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-29',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
+
+
+@known('SIM-30')
+def test_known_xai_push_to_talk_request_deferred_behind_an_answer_is_dropped() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.send_text()
+        sim.create_response()
+        sim.settle()
+
+    reproduce(
+        'SIM-30',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
+
+
+@known('SIM-31')
+def test_known_xai_push_to_talk_turn_spoken_during_a_reply_filed_before_it() -> None:
+    """xAI push-to-talk: the user talks during the reply to a held commit; the request after it commits that turn."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.commit_audio()
+        sim.send_audio()
+        sim.create_response()
+        sim.settle()
+        sim.create_response()
+        sim.settle()
+
+    reproduce(
+        'SIM-31',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=True)),
+        scenario,
+    )
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -994,6 +1044,51 @@ def test_scenario_live_later_utterance_takes_the_place_of_earlier_audio() -> Non
         sim.user_says(deliver=False)
 
     run_tolerant(LiveSimulation(), scenario)
+
+
+_XAI_PUSH_TO_TALK: dict[str, Callable[[OpenAISimulation], object]] = {
+    'talk during a reply': lambda s: [s.send_text(), s.speak(), s.send_audio(), s.commit_audio(), s.create_response()],
+    'commit silence': lambda s: [s.send_audio(voiced=False), s.commit_audio(), s.create_response()],
+    'clear after commit': lambda s: [s.send_audio(), s.commit_audio(), s.clear_audio(), s.create_response()],
+    'type during the answer to committed audio': lambda s: [
+        s.send_text(),
+        s.send_audio(),
+        s.create_response(),
+        s.finish(),
+        s.send_text(),
+    ],
+    'ask again after the answer': lambda s: [
+        s.send_audio(),
+        s.commit_audio(),
+        s.create_response(),
+        s.speak(),
+        s.finish(),
+        s.settle(),
+        s.create_response(),
+    ],
+}
+
+
+@pytest.mark.parametrize('transcription', [True, False])
+@pytest.mark.parametrize('name', list(_XAI_PUSH_TO_TALK))
+def test_scenario_xai_push_to_talk(name: str, transcription: bool) -> None:
+    """xAI with turn detection off, as recorded (#9070): it reports speech, answers a commit of speech at once, and
+    drops a request with nothing new after answering committed audio."""
+    run_tolerant(
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=transcription)),
+        _XAI_PUSH_TO_TALK[name],
+    )
+
+
+def test_scenario_gemini_async_pair_cut_off_by_a_typed_turn() -> None:
+    """SIM-19 also covers two asynchronous calls whose turn a typed turn cut off, answered together with it."""
+    sim = GeminiSimulation(strict=False, behavior=GeminiBehavior(async_tool_calls=True))
+    with sim as s:
+        s.send_text()
+        s.call_tools(count=2)
+        s.send_text()
+        s.settle()
+        assert ('SIM-19', 'wait.hang') in s.checker.known_hits
 
 
 def test_scenario_openai_server_vad_edges() -> None:

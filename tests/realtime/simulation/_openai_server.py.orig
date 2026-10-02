@@ -91,8 +91,6 @@ class _ActiveResponse:
     message_words: list[str] = field(default_factory=list[str])
     cancel_requested: bool = False
     metadata: dict[str, str] | None = None
-    commit_reply: bool = False
-    """xAI push-to-talk: the reply xAI started on its own for a commit."""
 
 
 @dataclass
@@ -120,10 +118,6 @@ class ServerSession:
     """An xAI re-dial that resumed the conversation."""
     answers_every_turn: bool = False
     """xAI echoes `create_response: False` back but answers anyway (see `XaiRealtimeModelSettings`)."""
-    ptt_speech: str | None = None
-    """xAI push-to-talk: the user turn xAI reported speech for (`speech_started`) in the uncommitted buffer."""
-    answered_everything: bool = False
-    """xAI push-to-talk: a reply ended and nothing new arrived since, so xAI drops a `response.create`."""
     uncommitted_answers: list[str] = field(default_factory=list[str])
     """Spoken turns committed without a reply (push-to-talk, or VAD not answering): the next request answers them."""
     conversation: set[str] = field(default_factory=set[str])
@@ -347,36 +341,11 @@ class OpenAIServer:
             immediately=True,
         )
 
-    def _xai_ptt(self, session: ServerSession) -> bool:
-        return self.dialect == 'xai' and not session.server_vad
-
     def _on_audio_append(self, session: ServerSession, frame: dict[str, Any]) -> None:
-        audio = base64.b64decode(frame['audio'])
-        session.audio_ms += len(audio) // _BYTES_PER_MS
-        if not self._xai_ptt(session) or not any(audio):
-            return
-        # Recorded (`test_xai_ws/test_push_to_talk_replies_only_when_asked`, #9070): with turn detection off,
-        # xAI still reports speech it hears, and speech appended during a reply stops it with no `response.done`.
-        session.answered_everything = False
-        if session.active is not None:  # pragma: lax no cover (the session holds audio back during a reply)
-            self._end_truth(session.active.truth, 'cancelled')
-            session.active = None
-        if session.ptt_speech is None:
-            session.ptt_speech = self.truth.new_user_turn()
-            self.truth.speech_started[session.ptt_speech] = self.truth.tick()
-            self._emit(
-                session,
-                {
-                    'type': 'input_audio_buffer.speech_started',
-                    'item_id': f'item_{session.ptt_speech}',
-                    'audio_start_ms': 0,
-                },
-            )
+        session.audio_ms += len(base64.b64decode(frame['audio'])) // _BYTES_PER_MS
 
     def _on_audio_commit(self, session: ServerSession, frame: dict[str, Any]) -> None:
-        if self._xai_ptt(session):
-            self._xai_ptt_commit(session, frame.get('event_id'), answer=True)
-            return
+        del frame
         if session.audio_ms <= 0:
             self._emit(
                 session,
@@ -385,43 +354,13 @@ class OpenAIServer:
             return
         self._commit_user_turn(session)
 
-    def _xai_ptt_commit(self, session: ServerSession, event_id: str | None, *, answer: bool) -> str | None:
-        """xAI with turn detection off: a commit of speech is answered at once; one of silence does nothing."""
-        key, session.ptt_speech = session.ptt_speech, None
-        session.audio_ms = 0
-        if key is None:
-            return None
-        item_id = f'item_{key}'
-        session.answered_everything = False
-        self._emit(session, {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 1000})
-        self.truth.add_input(key, 'speech', solicits=True)
-        self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
-        self._audio_item_added(session, item_id)
-        if session.transcription:
-            session.pending_transcripts.append(key)
-        if answer:
-            # (Speech appended during a reply has stopped it, so nothing is active by the time it is committed.)
-            assert session.active is None
-            self._start_response(session, trigger='vad', answers=[key], user_turn=key)
-            assert session.active is not None
-            session.active.commit_reply = True
-        return key
-
     def _on_audio_clear(self, session: ServerSession, frame: dict[str, Any]) -> None:
         del frame
-        if self._xai_ptt(session):
-            session.answered_everything = False
-            session.ptt_speech = None
-            active = session.active
-            if active is not None and active.commit_reply and not active.truth.words:  # pragma: lax no cover
-                # (Only a clear between a commit the session sent and its reply's first word.)
-                self._finish_active(session, 'cancelled')  # A clear right after a commit cancels its reply.
         session.audio_ms = 0
         session.speaking = None
         self._emit(session, {'type': 'input_audio_buffer.cleared'})
 
     def _on_item_create(self, session: ServerSession, frame: dict[str, Any]) -> None:
-        session.answered_everything = False
         item = frame.get('item', {})
         event_id = frame.get('event_id')
         client_index = self._client_index(event_id)
@@ -473,16 +412,6 @@ class OpenAIServer:
 
     def _on_response_create(self, session: ServerSession, frame: dict[str, Any]) -> None:
         event_id = frame.get('event_id')
-        if self._xai_ptt(session):
-            if session.ptt_speech is not None:
-                # Speech still in the buffer is committed by the request, and answered by its response.
-                key = self._xai_ptt_commit(session, event_id, answer=False)
-                assert key is not None
-                session.uncommitted_answers.append(key)
-            elif (
-                session.answered_everything and not session.unanswered_tool_outputs
-            ):  # pragma: lax no cover (the session asks again only with something new)
-                return  # Recorded (#9070): after answering committed audio, with nothing new, xAI drops it.
         indexes = self._client_indexes(event_id)
         self.truth.merged_requests += max(0, len(indexes) - 1)
         requested: list[str] = []
@@ -674,15 +603,6 @@ class OpenAIServer:
             done['usage'] = usage
         self._end_truth(truth, status)
         session.active = None
-        # Recorded (#9070): xAI drops a `response.create` with nothing new only after answering committed audio.
-        # (Anything that arrived while it was answering is new.)
-        session.answered_everything = (
-            self._xai_ptt(session)
-            and any((input_ := self.truth.input(key)) is not None and input_.kind == 'speech' for key in truth.answers)
-            and not any(
-                input_.seq > truth.seq_start and input_.key not in truth.answers for input_ in self.truth.inputs
-            )
-        )
         session.ended_responses.append(done)
         if late:
             assert session.late_done is None, 'one late `response.done` at a time'

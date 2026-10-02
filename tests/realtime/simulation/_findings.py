@@ -281,10 +281,15 @@ def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool
         return True  # Server VAD heard the user start before the response ended.
 
     def before_reply(operation: Operation) -> bool:
-        return operation.name == 'send_audio' and (
-            response.content_read is None
-            or operation.issued < response.content_read
-            or (response.status == 'cancelled' and operation.issued < response.seq_end)
+        # Audio a failed send never delivered is no one's turn.
+        return (
+            operation.name == 'send_audio'
+            and operation.error is None
+            and (
+                response.content_read is None
+                or operation.issued < response.content_read
+                or (response.status == 'cancelled' and operation.issued < response.seq_end)
+            )
         )
 
     # Audio for this turn: streamed since the spoken turn before it was committed.
@@ -698,7 +703,8 @@ ASYNC_BATCH_OF_THREE = Finding(
     id='SIM-19',
     title=(
         'with asynchronous (`NON_BLOCKING`) Gemini tool calls, a `tool_call` message of three or more calls leaves '
-        'a reservation after the model answered the batch, so `wait_for_reply()` hangs (two calls are fine; no '
+        'a reservation after the model answered the batch, so `wait_for_reply()` hangs (two calls are fine, unless a '
+        'typed turn cut their turn off and the answer covers both; no '
         'recording has an async batch, so the fake answering one once may be what is wrong)'
     ),
     tracked_by='one reply per batch (#8765) also for asynchronous calls; found by this simulator',
@@ -707,7 +713,12 @@ ASYNC_BATCH_OF_THREE = Finding(
     providers=GEMINI,
     matches=lambda sim, violation: (
         _gemini_behavior(sim, 'talks_through_tool_calls')
-        and any(len(response.tool_calls) > 2 for response in sim.truth.responses.values())
+        and any(
+            len(response.tool_calls) > 2
+            # Two are fine on their own, but not answered together with a typed turn that cut their turn off.
+            or (len(response.tool_calls) == 2 and response.status == 'cancelled')
+            for response in sim.truth.responses.values()
+        )
     ),
 )
 
@@ -953,6 +964,95 @@ def _send_failed_across_reconnect(sim: Simulation, violation: InvariantViolation
     )
 
 
+def _request_commit_spoken_over(sim: Simulation) -> bool:
+    """xAI push-to-talk without transcription: the user spoke again after a request for a response committed a turn."""
+    options = getattr(sim, 'openai', None)
+    # (A send that asks for a response sends a request too.)
+    requests = [
+        operation.issued
+        for operation in sim.operations
+        if operation.name in ('create_response', 'send_text', 'send_image')
+    ]
+    audio = [operation.issued for operation in sim.operations if operation.name == 'send_audio']
+    return (
+        options is not None
+        and options.turn_detection == 'manual'
+        and not options.transcription
+        and any(request < sent for request in requests for sent in audio)
+    )
+
+
+def _request_deferred_behind_an_answer_to_speech(sim: Simulation) -> bool:
+    """xAI push-to-talk: `create_response()` was called once a reply answering a spoken turn had started."""
+    options = getattr(sim, 'openai', None)
+    # (A send that asks for a response sends a request too.)
+    requests = [
+        operation.issued
+        for operation in sim.operations
+        if operation.name in ('create_response', 'send_text', 'send_image')
+    ]
+    answering_speech = [
+        response
+        for response in sim.truth.responses.values()
+        if any((input_ := sim.truth.input(key)) is not None and input_.kind == 'speech' for key in response.answers)
+    ]
+    return (
+        options is not None
+        and options.turn_detection == 'manual'
+        and any(response.seq_start < issued for response in answering_speech for issued in requests)
+    )
+
+
+DEFERRED_REQUEST_DROPPED_AFTER_SPEECH = Finding(
+    id='SIM-30',
+    title=(
+        'on xAI push-to-talk, a `create_response()` made while the reply to a spoken turn is in flight, or after a '
+        'reply to speech a request committed (rather than `commit_audio()`), goes out without the buffer clear that '
+        'makes xAI answer it: xAI drops a request with nothing new after answering committed audio, so '
+        '`wait_for_reply()` hangs'
+    ),
+    tracked_by='the clear-then-request of #9070 also for a request deferred behind a reply; found by this simulator',
+    evidence='simulated',
+    codes=frozenset({'wait.hang'}),
+    providers=frozenset({'xai'}),
+    matches=lambda sim, violation: _request_deferred_behind_an_answer_to_speech(sim),
+)
+
+
+def _xai_push_to_talk_speech(sim: Simulation, violation: InvariantViolation) -> bool:
+    options = getattr(sim, 'openai', None)
+    input_ = sim.truth.input(violation.context.get('input', ''))
+    return options is not None and options.turn_detection == 'manual' and input_ is not None and input_.kind == 'speech'
+
+
+PUSH_TO_TALK_ORDER = Finding(
+    id='SIM-31',
+    title=(
+        "on xAI push-to-talk, a spoken turn the session held back behind a reply (#9070's held audio and commit) is "
+        'recorded on the wrong side of a reply: history does not follow the order xAI got them in'
+    ),
+    tracked_by="history in the provider's conversation order (the refactor); found gating #9070",
+    evidence='simulated',
+    codes=frozenset({'history.order'}),
+    providers=frozenset({'xai'}),
+    matches=_xai_push_to_talk_speech,
+)
+
+
+PUSH_TO_TALK_TURN_SPOKEN_OVER = Finding(
+    id='SIM-29',
+    title=(
+        'on xAI push-to-talk without input transcription, the turn a request for a response commits is never recorded '
+        'when the user speaks again during its reply (which stops the reply with no `response.done`)'
+    ),
+    tracked_by='user turns recorded from the provider committing them; found gating #9070',
+    evidence='simulated',
+    codes=frozenset({'history.turn_missing'}),
+    providers=frozenset({'xai'}),
+    matches=lambda sim, violation: _request_commit_spoken_over(sim),
+)
+
+
 NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
@@ -974,6 +1074,9 @@ KNOWN_FINDINGS.extend(
         NON_AUDIO_SEND_DURING_RECONNECT,
         TURN_LOST_AT_CLOSE,
         INPUT_HELD_BEHIND_A_LOST_REPLY,
+        PUSH_TO_TALK_TURN_SPOKEN_OVER,
+        PUSH_TO_TALK_ORDER,
+        DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         AUDIO_AFTER_A_CLEAR,
         HAND_COMMIT_UNDER_SERVER_VAD,
         BARGE_IN_WITHOUT_A_VAD_REPLY,
