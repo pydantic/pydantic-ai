@@ -2531,21 +2531,33 @@ def _search_return_discovered_names(part: ToolReturnPart) -> list[str] | None:
 def _replace_tool_search_exchanges_with_deltas(
     messages: list[ModelMessage], translated_call_ids: dict[str, list[str]]
 ) -> list[ModelMessage]:
-    """Replace selected search call/return pairs with wire-only availability deltas."""
+    """Replace selected search call/return pairs with wire-only availability deltas.
+
+    Part of the legacy-history path (see `_legacy_fabricated_tool_search_reveals`), so the pair is
+    matched by name: a call id alone could also belong to another tool.
+    """
     transformed: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):
             parts = [
                 part
                 for part in message.parts
-                if not (isinstance(part, ToolCallPart) and part.tool_call_id in translated_call_ids)
+                if not (
+                    isinstance(part, ToolCallPart)
+                    and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+                    and part.tool_call_id in translated_call_ids
+                )
             ]
         else:
             parts = [
                 ToolAvailabilityDeltaPart(
                     tools_added=translated_call_ids[part.tool_call_id], tool_call_id=part.tool_call_id
                 )
-                if isinstance(part, ToolReturnPart) and part.tool_call_id in translated_call_ids
+                if (
+                    isinstance(part, ToolReturnPart)
+                    and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+                    and part.tool_call_id in translated_call_ids
+                )
                 else part
                 for part in message.parts
             ]
