@@ -42,10 +42,14 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     _validate_args(args, parser)
+    if args.database is not None:
+        # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
+        args.database = args.database.resolve()
     try:
         from pydantic_ai.usage import UsageLimits
         from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
+        from pydantic_clai2.cli.self_update import Relaunch
         from pydantic_clai2.commands import config_command, plugins_command
         from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
@@ -109,11 +113,32 @@ def run(*, splash: Splash | None = None) -> None:
             )
         )
         offer_worktree_cleanup()
+    except Relaunch as relaunch:
+        # Replace this process with the new build; the working directory, a worktree included, carries over.
+        argv = relaunch_argv(args, executable=relaunch.executable, session_id=relaunch.session_id)
+        sys.stdout.flush()
+        os.execv(relaunch.executable, argv)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
         parser.error(str(exc))
     except KeyboardInterrupt:
         if args.prompt is not None:
             raise SystemExit(130) from None
+
+
+def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str | None) -> list[str]:
+    """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`."""
+    argv = [executable]
+    if args.agent is not None:
+        argv += ['--agent', args.agent]
+    if args.model is not None:
+        argv += ['--model', args.model]
+    if args.request_limit is not None:
+        argv += ['--request-limit', str(args.request_limit)]
+    if args.database is not None:
+        argv += ['--database', str(args.database)]
+    if session_id is not None:
+        argv += ['--resume', session_id]
+    return argv
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:

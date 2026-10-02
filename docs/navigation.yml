@@ -906,6 +906,11 @@ navigation:
             slug: "examples/streaming/stream-whales"
             aliases:
               - "examples/stream-whales"
+          - page: "Cancel and Resume"
+            path: "examples/cancellation.md"
+            slug: "examples/streaming/cancellation"
+            aliases:
+              - "examples/cancellation"
       - section: "Realtime"
         slug: ""
         contents:
