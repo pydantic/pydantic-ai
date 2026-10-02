@@ -67,9 +67,13 @@ from ._utils import (
     apply_message_metadata,
     dump_message_metadata,
     dump_provider_metadata,
+    dump_text_metadata,
+    iter_citation_source_chunks,
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
+    load_text_parts,
+    merged_text_citations,
     tool_return_output,
 )
 from .request_types import (
@@ -395,15 +399,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif msg.role == 'assistant':
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        provider_meta = load_provider_metadata(part.provider_metadata)
-                        builder.add(
-                            TextPart(
-                                content=part.text,
-                                id=provider_meta.get('id'),
-                                provider_name=provider_meta.get('provider_name'),
-                                provider_details=provider_meta.get('provider_details'),
-                            )
-                        )
+                        for text_part in load_text_parts(part.text, load_provider_metadata(part.provider_metadata)):
+                            builder.add(text_part)
                     elif isinstance(part, ReasoningUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
@@ -602,11 +599,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, DataUIPart):  # pragma: no cover
                         # Contains custom data that shouldn't be sent to the model
                         pass
-                    elif isinstance(part, SourceUrlUIPart):  # pragma: no cover
-                        # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
-                        pass
-                    elif isinstance(part, SourceDocumentUIPart):  # pragma: no cover
-                        # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
+                    elif isinstance(part, SourceUrlUIPart | SourceDocumentUIPart):
+                        # Sources are listed for display; citations load from the text part's provider metadata.
                         pass
                     elif isinstance(part, StepStartUIPart):  # pragma: no cover
                         # Nothing to do here
@@ -698,6 +692,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
+        # Consecutive text parts merge into one UI text part. Keyed by its index: the UI part and the text parts in it.
+        text_runs: dict[int, tuple[TextUIPart, list[TextPart]]] = {}
 
         # For builtin tools, returns can be in the same ModelResponse as calls
         local_builtin_returns: dict[str, NativeToolReturnPart] = {
@@ -710,14 +706,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, TextPart):
                 # Combine consecutive text parts
                 if ui_parts and isinstance(ui_parts[-1], TextUIPart):
-                    ui_parts[-1].text += part.content
+                    text_ui_part, text_parts = text_runs[len(ui_parts) - 1]
+                    text_ui_part.text += part.content
+                    text_parts.append(part)
                 else:
-                    provider_metadata = dump_provider_metadata(
-                        id=part.id,
-                        provider_name=part.provider_name,
-                        provider_details=part.provider_details,
-                    )
-                    ui_parts.append(TextUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
+                    text_ui_part = TextUIPart(text=part.content, state='done')
+                    text_runs[len(ui_parts)] = (text_ui_part, [part])
+                    ui_parts.append(text_ui_part)
             elif isinstance(part, ThinkingPart):
                 provider_metadata = dump_provider_metadata(
                     id=part.id,
@@ -859,7 +854,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             else:
                 assert_never(part)
 
-        return ui_parts
+        return _with_text_citations(ui_parts, text_runs)
 
     @staticmethod
     def _dump_tool_call_part(
@@ -1078,6 +1073,27 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 assert_never(msg)
 
         return result
+
+
+def _with_text_citations(
+    ui_parts: list[UIMessagePart], text_runs: dict[int, tuple[TextUIPart, list[TextPart]]]
+) -> list[UIMessagePart]:
+    """Set each UI text part's provider metadata, with its citations, and list its web sources after it.
+
+    Sources follow their text part as `source-url` parts, matching the event stream.
+    """
+    result: list[UIMessagePart] = []
+    source_urls: set[str] = set()
+    for index, ui_part in enumerate(ui_parts):
+        result.append(ui_part)
+        if (text_run := text_runs.get(index)) is not None:
+            text_ui_part, text_parts = text_run
+            text_ui_part.provider_metadata = dump_text_metadata(text_parts)
+            result.extend(
+                SourceUrlUIPart(source_id=chunk.source_id, url=chunk.url, title=chunk.title)
+                for chunk in iter_citation_source_chunks(merged_text_citations(text_parts), source_urls)
+            )
+    return result
 
 
 def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:

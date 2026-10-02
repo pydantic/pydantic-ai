@@ -241,6 +241,15 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 [`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
+## Citations
+
+[Citations](../citations.md) on a text part reach the frontend in two forms:
+
+- Each cited web page is sent once per message as a [`source-url`](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#source-url-part) part, so `useChat` can list the sources. Document sources aren't listed.
+- The full citations, including excerpts and provider details, are stored in the text part's `providerMetadata`, which the AI SDK sends back unchanged. When the frontend sends the messages back, the citations are restored, so they survive the round trip and are [sent back to the provider that produced them](../citations.md#citations-in-message-history). Citations that are invalid or don't fit the text are dropped, and the text is kept.
+
+Consecutive text parts in a response are shown as one text part. When they have citations, the metadata also records where each part starts, so the original parts come back with their citations on them.
+
 ## Tool Approval
 
 !!! note
