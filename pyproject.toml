@@ -31,7 +31,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -45,7 +44,7 @@ classifiers = [
     "Framework :: Pydantic",
     "Framework :: Pydantic :: 2",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
@@ -408,7 +407,7 @@ quote-style = "single"
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false

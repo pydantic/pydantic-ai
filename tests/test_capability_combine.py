@@ -240,17 +240,8 @@ COMBINE_POLICY: dict[str, Policy] = {
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
-    """Whether `obj` is a capability class, and not something that merely looks like one.
-
-    A module's namespace holds type aliases and parameterized generics beside its classes, and on
-    Python 3.10 some of those satisfy `inspect.isclass` while `issubclass` then raises on them.
-    """
-    if not isinstance(obj, type):
-        return False
-    try:
-        return issubclass(obj, AbstractCapability)
-    except TypeError:
-        return False
+    """Whether `obj` is a capability class, and not something that merely looks like one."""
+    return isinstance(obj, type) and issubclass(obj, AbstractCapability)
 
 
 def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:

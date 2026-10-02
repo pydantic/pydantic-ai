@@ -10,6 +10,7 @@ import sys
 import textwrap
 import time
 import uuid
+from builtins import BaseExceptionGroup as BaseExceptionGroup
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -55,11 +56,6 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 
@@ -360,12 +356,7 @@ def raise_if_cancelling() -> None:
     message it carried) was consumed by whatever absorbed it and cannot be recovered — the
     cancellation *state* is re-asserted, not the original exception.
 
-    On Python 3.10 `Task.cancelling()` does not exist and this is a no-op: an absorbed external
-    cancellation cannot be reliably detected there, so the cancellation guarantee is documented
-    as best-effort on 3.10.
     """
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return
     try:
         task = asyncio.current_task()
     except RuntimeError:  # pragma: no cover

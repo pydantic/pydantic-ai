@@ -952,9 +952,7 @@ async def test_external_cancellation_is_never_translated():
 
 
 async def test_task_cancel_of_run_carries_run_cancelled():
-    """On 3.11+ the attached `CancelledError` instance itself crosses `await task`; on 3.10
-    asyncio recreates it but chains the original via `__context__`, which `from_cancellation()`
-    traverses — so the state is recoverable on all supported versions."""
+    """The attached `CancelledError` instance carries run state across `await task`."""
     started = asyncio.Event()
     agent = Agent(TestModel())
 
@@ -1035,12 +1033,10 @@ async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions()
     assert cancelled.run_id is not None
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.timeout()` needs Python 3.11+')
 async def test_from_cancellation_through_asyncio_timeout():
     started = asyncio.Event()
     agent = Agent(TestModel())
-    # `Any` because `asyncio.Timeout` doesn't exist on Pyright's 3.10 target.
-    timeout_scope: list[Any] = []
+    timeout_scope: list[asyncio.Timeout] = []
 
     @agent.tool_plain
     async def slow_tool() -> str:
@@ -1052,8 +1048,7 @@ async def test_from_cancellation_through_asyncio_timeout():
         return 'slow'  # pragma: no cover
 
     with pytest.raises(TimeoutError) as exc_info:
-        # This test is version-gated, but Pyright targets the package's Python 3.10 minimum.
-        async with asyncio.timeout(READINESS_WAIT_TIMEOUT) as scope:  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT) as scope:
             timeout_scope.append(scope)
             await agent.run('go')
 
@@ -1063,7 +1058,6 @@ async def test_from_cancellation_through_asyncio_timeout():
     assert started.is_set()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.timeout()` needs Python 3.11+')
 async def test_first_party_cancel_inside_asyncio_timeout_leaves_scope_intact():
     """A first-party cancellation consumes only its own cancellation: an enclosing
     `asyncio.timeout()` neither trips into `TimeoutError` nor inherits a stray
@@ -1083,13 +1077,12 @@ async def test_first_party_cancel_inside_asyncio_timeout_leaves_scope_intact():
     baseline = _task_cancelling(task)
 
     with pytest.raises(RunCancelled):
-        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
             await agent.run('go')
 
     assert _task_cancelling(task) == baseline
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.TaskGroup` needs Python 3.11+')
 async def test_first_party_cancel_inside_task_group_is_application_error():
     """Inside a `TaskGroup`, a first-party cancellation surfaces as an ordinary application error
     (`RunCancelled` inside the group's `ExceptionGroup`), not as a cleanly-cancelled child.
@@ -1108,8 +1101,8 @@ async def test_first_party_cancel_inside_task_group_is_application_error():
         return 'never reached'  # pragma: no cover
 
     with pytest.raises(BaseExceptionGroup) as exc_info:
-        async with asyncio.TaskGroup() as tg:  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
-            tg.create_task(agent.run('go'))  # pyright: ignore[reportUnknownMemberType]
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(agent.run('go'))
 
     assert [type(exc) for exc in exc_info.value.exceptions] == [RunCancelled]
 
@@ -1781,8 +1774,51 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
         await agent.run('go')
 
 
-# Blocking *external*-cancel recovery relies on the backstop, which is a no-op on Python 3.10.
-@pytest.mark.parametrize('first_party', [True, pytest.param(False, marks=requires_task_cancelling)])
+async def test_first_party_cancel_uncancelled_by_after_run_is_typed():
+    """A first-party request remains terminal after a hook clears the task's cancellation count."""
+
+    class UncancelInAfterRun(AbstractCapability):
+        async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                assert task is not None
+                task.uncancel()
+            return result
+
+    agent = Agent(TestModel(), capabilities=[UncancelInAfterRun()])
+
+    with pytest.raises(RunCancelled):
+        await agent.run('go')
+
+
+async def test_uncancelled_request_does_not_leak_after_hook_error():
+    """A hook error after clearing cancellation leaves the caller task's counter unchanged."""
+
+    class FailAfterUncancel(AbstractCapability):
+        async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                assert task is not None
+                task.uncancel()
+            raise ValueError('hook failed')
+
+    task = asyncio.current_task()
+    assert task is not None
+    baseline = task.cancelling()
+    agent = Agent(TestModel(), capabilities=[FailAfterUncancel()])
+
+    with pytest.raises(ValueError, match='hook failed'):
+        await agent.run('go')
+    assert task.cancelling() == baseline
+
+
+@pytest.mark.parametrize('first_party', [True, False])
 async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
     """`wrap_run` and `on_run_error` may observe cancellation but cannot recover it."""
     started = asyncio.Event()
@@ -1981,28 +2017,3 @@ async def test_cancel_outside_a_run_raises_user_error():
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match='`cancel` is only available during an agent run'):
         ctx.cancel()
-
-
-@pytest.mark.skipif(sys.version_info >= (3, 11), reason='pins the documented degraded behavior on Python 3.10')
-async def test_absorbed_cancellation_completes_on_py310():  # pragma: lax no cover
-    """On Python 3.10 there is no `Task.cancelling()`, so an absorbed external cancellation
-    cannot be detected: the run completes normally. This pins the documented best-effort
-    behavior; it flips to `CancelledError` on 3.11+."""
-    in_flight = asyncio.Event()
-
-    async def handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
-        try:
-            async for _event in events:
-                in_flight.set()
-                await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            pass
-
-    agent = Agent(TestModel())
-
-    task = asyncio.create_task(agent.run('hello', event_stream_handler=handler))
-    await asyncio.wait_for(in_flight.wait(), timeout=READINESS_WAIT_TIMEOUT)
-
-    task.cancel()
-    result = await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
-    assert result.output == 'success (no tool calls)'

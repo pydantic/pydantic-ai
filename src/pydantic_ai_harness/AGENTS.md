@@ -102,7 +102,7 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 
 ## Coding standards
 
-- Python 3.10+ (target version for pyright and ruff)
+- Python 3.11+ (Pyright target; Ruff retains `py310` pending a separate style migration)
 - **pyright strict** mode -- no `Any` types, full type annotations
 - **ruff**: line-length=120, single quotes, max-complexity=15
 - CI enforces 100% branch coverage from combined matrix data.
@@ -153,29 +153,14 @@ CI runs the repository-wide typecheck, test, and combined coverage gates.
 Do not run repository-wide Pyright, pytest, or coverage locally.
 If CI reports a coverage gap, run coverage only for the flagged file or focused test.
 
-### Workspace And Python 3.10
+### Workspace and Python versions
 
 ```bash
 uv sync --locked --all-packages --all-extras --group lint
 ```
 
 Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright
-configuration. Workspace commands require Python 3.11+ because CLAI depends on
-Termflow. Harness's package metadata and Pyright target remain Python 3.10+.
-Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
-
-```bash
-uv venv /tmp/harness-py310 --python 3.10
-uv pip install --python /tmp/harness-py310/bin/python --resolution lowest-direct --group dev \
-  --editable . --requirements pyproject.toml --all-extras
-/tmp/harness-py310/bin/python -m pytest -p no:cacheprovider tests/code_mode
-```
-
-Use `uv pip` for Python 3.10 to resolve Harness without CLAI's Python requirement.
-CI retains Python 3.10 slim, all-extras, and lowest-versions jobs. The slim and
-all-extras installs use the shared lock's versions as ceilings, allowing older
-releases when a locked dependency requires Python 3.11+. Run the environment's
-Python directly so `uv run` does not select the workspace interpreter.
+configuration. Every workspace package requires Python 3.11 or newer.
 
 ## File structure
 
