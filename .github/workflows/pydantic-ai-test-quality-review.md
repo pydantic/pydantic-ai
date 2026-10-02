@@ -88,7 +88,6 @@ imports:
   - shared/provider-health.md
   - shared/pre-steps.md
   - shared/network-vendor-domains.md
-  - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
@@ -154,6 +153,8 @@ jobs:
           path: |
             .test-quality-context/
             .review-context/
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 1
           overwrite: true
   finalize-review:

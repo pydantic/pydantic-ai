@@ -133,7 +133,7 @@ def test_outcomes_keep_a_mixed_report_actionable_and_deduplicate_same_identity()
         ['tests/test_a.py', 'tests/test_b.py'],
     )
     title, _ = summarize(report)
-    payload = check_payload(
+    check = check_payload(
         head_sha='pinned-head-sha',
         title=title,
         summary='summary',
@@ -141,14 +141,6 @@ def test_outcomes_keep_a_mixed_report_actionable_and_deduplicate_same_identity()
         base_sha='base-sha',
         workflow_version='workflow-sha',
     )
-    check = {
-        **payload,
-        'status': 'completed',
-        'conclusion': 'neutral',
-        'output': {
-            'summary': '<!-- test-quality-review:v1 base=base-sha head=pinned-head-sha workflow=workflow-sha -->'
-        },
-    }
 
     assert title == 'Changes needed'
     assert check['head_sha'] == 'pinned-head-sha'
@@ -158,6 +150,78 @@ def test_outcomes_keep_a_mixed_report_actionable_and_deduplicate_same_identity()
     assert not has_completed_report(
         [check], base_sha='base-sha', head_sha='newer-head', workflow_version='workflow-sha'
     )
+
+
+@pytest.mark.parametrize(
+    'title,conclusion,status,expected',
+    [
+        ('Protection accounted for', 'neutral', 'completed', True),
+        ('Changes needed', 'neutral', 'completed', True),
+        ('Inconclusive', 'neutral', 'completed', False),
+        ('Skipped', 'neutral', 'completed', False),
+        ('No candidate changes', 'neutral', 'completed', True),
+        ('Unknown title', 'neutral', 'completed', False),
+        ('Protection accounted for', 'failure', 'completed', False),
+        ('Changes needed', 'neutral', 'in_progress', False),
+    ],
+)
+def test_deduplication_only_accepts_completed_report_or_discovery_results(
+    title: str, conclusion: str, status: str, expected: bool
+) -> None:
+    payload = check_payload(
+        head_sha='pinned-head-sha',
+        title=title,
+        summary='result',
+        details_url='https://github.com/pydantic/pydantic-ai/actions/runs/11',
+        base_sha='base-sha',
+        workflow_version='workflow-sha',
+    )
+    payload['conclusion'] = conclusion
+    payload['status'] = status
+
+    assert (
+        has_completed_report(
+            [payload], base_sha='base-sha', head_sha='pinned-head-sha', workflow_version='workflow-sha'
+        )
+        is expected
+    )
+
+
+def test_check_summary_byte_boundary_and_overflow_are_explicitly_inconclusive() -> None:
+    head_sha = 'pinned-head-sha'
+    details_url = 'https://github.com/pydantic/pydantic-ai/actions/runs/11'
+    marker = f'<!-- test-quality-review:v1 base=base-sha head={head_sha} workflow=workflow-sha -->'
+    overhead = len(f'{marker}\n\n'.encode())
+    budget = 65_535 - overhead
+    boundary_summary = 'é' * (budget // 2) + ('x' if budget % 2 else '')
+
+    boundary_payload = check_payload(
+        head_sha=head_sha,
+        title='Protection accounted for',
+        summary=boundary_summary,
+        details_url=details_url,
+        base_sha='base-sha',
+        workflow_version='workflow-sha',
+    )
+    rendered_boundary = boundary_payload['output']['summary']
+    assert len(rendered_boundary.encode('utf-8')) == 65_535
+    assert boundary_payload['output']['title'] == 'Protection accounted for'
+
+    overflow_payload = check_payload(
+        head_sha=head_sha,
+        title='Protection accounted for',
+        summary=f'{boundary_summary}💡',
+        details_url=details_url,
+        base_sha='base-sha',
+        workflow_version='workflow-sha',
+    )
+    overflow_summary = overflow_payload['output']['summary']
+    assert overflow_payload['output']['title'] == 'Inconclusive'
+    assert len(overflow_summary.encode('utf-8')) <= 65_535
+    assert marker in overflow_summary
+    assert '[review run and its artifact]' in overflow_summary
+    assert details_url in overflow_summary
+    assert overflow_payload['head_sha'] == head_sha
 
 
 def test_pinned_pull_request_recheck_rejects_head_or_base_changes() -> None:

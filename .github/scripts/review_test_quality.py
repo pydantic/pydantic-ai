@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 _API = 'https://api.github.com'
 _CHECK_NAME = 'Test Quality Review'
+_MAX_CHECK_SUMMARY_BYTES = 65_535
 _TEST_NAME = re.compile(r'(?:test_.*|.*_test)\.py\Z')
 _INVENTORY = Path('.test-quality-context/candidate-inventory.json')
 _CI_EVIDENCE = Path('.test-quality-context/ci-evidence.json')
@@ -233,13 +234,21 @@ def check_payload(
 ) -> dict[str, object]:
     """Build a neutral Check Run pinned to the trusted head SHA."""
     identity = f'<!-- test-quality-review:v1 base={base_sha} head={head_sha} workflow={workflow_version} -->'
+    rendered_summary = f'{identity}\n\n{summary}'
+    if len(rendered_summary.encode('utf-8')) > _MAX_CHECK_SUMMARY_BYTES:
+        title = 'Inconclusive'
+        rendered_summary = (
+            f'{identity}\n\n'
+            'The complete review exceeds the Check Run summary limit, so no guarantee classifications are shown here. '
+            f'The complete validated result is retained in the [review run and its artifact]({details_url}).'
+        )
     return {
         'name': _CHECK_NAME,
         'head_sha': head_sha,
         'status': 'completed',
         'conclusion': 'neutral',
         'details_url': details_url,
-        'output': {'title': title, 'summary': f'{identity}\n\n{summary}'},
+        'output': {'title': title, 'summary': rendered_summary},
     }
 
 
@@ -252,6 +261,7 @@ def has_completed_report(
         check.get('name') == _CHECK_NAME
         and check.get('status') == 'completed'
         and isinstance(check.get('output'), Mapping)
+        and check['output'].get('title') in {'Protection accounted for', 'Changes needed', 'No candidate changes'}
         and marker in str(check['output'].get('summary', ''))
         and check.get('conclusion') == 'neutral'
         for check in check_runs
