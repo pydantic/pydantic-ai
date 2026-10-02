@@ -353,25 +353,25 @@ async def test_interrupted_shell_output_reaches_next_prompt(tmp_path: Path, monk
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
-@pytest.mark.parametrize('max_output_chars', [100, 100_000])
+@pytest.mark.parametrize('max_output_chars', [100, 200_000])
 async def test_large_stdout_and_stderr_are_drained_concurrently(
     monkeypatch: pytest.MonkeyPatch, max_output_chars: int
 ) -> None:
     monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._MAX_OUTPUT_CHARS', max_output_chars)
     output = io.StringIO()
-    command = "i=0; while [ $i -lt 5000 ]; do printf 'stdout\\n'; printf 'stderr\\n' >&2; i=$((i + 1)); done"
+    command = "i=0; while [ $i -lt 20000 ]; do printf 'stdout\\n'; printf 'stderr\\n' >&2; i=$((i + 1)); done"
     with anyio.fail_after(10):
         context = await run_shell_command(command, console=Console(file=output), interrupts=Interrupts())
-    stdout = 'stdout\n' * 5000
-    stderr = 'stderr\n' * 5000
+    stdout = 'stdout\n' * 20000
+    stderr = 'stderr\n' * 20000
     if max_output_chars == 100:
         marker = '\n[Output truncated after 100 characters]\n'
         stdout = stdout[:100] + marker
         stderr = stderr[:100] + marker
     assert f'\nstdout:\n{stdout}\n\nstderr:\n{stderr}' in context
     assert '\nExit code 0\n' in context
-    assert output.getvalue().count('stdout\n') == 5000
-    assert output.getvalue().count('stderr\n') == 5000
+    assert output.getvalue().count('stdout\n') == 20000
+    assert output.getvalue().count('stderr\n') == 20000
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
