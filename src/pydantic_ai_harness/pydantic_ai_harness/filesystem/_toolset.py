@@ -375,6 +375,10 @@ def _sniff_media_type(data: bytes) -> str | None:
     images and PDFs. Audio and video are left out because some providers reject
     them in a tool result. The bytes decide, not the extension, so a misnamed
     file is not sent under the wrong media type.
+
+    The image signatures duplicate core's `image_media_type_from_bytes`
+    (`pydantic_ai/images/_media_type.py`), which is private and covers neither GIF
+    nor PDF. Change both together until core offers a public helper to use here.
     """
     if data.startswith(b'\x89PNG\r\n\x1a\n'):
         return 'image/png'
