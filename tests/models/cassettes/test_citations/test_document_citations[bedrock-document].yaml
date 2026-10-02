@@ -1,0 +1,61 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "According to the document, what is the return window? Answer
+      in one sentence and cite the document."}, {"document": {"name": "Document 1", "format": "txt", "source": {"text": "The
+      return window is thirty days from purchase."}, "citations": {"enabled": true}}}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        M2ZjZmI5ODEtMjdmNi00ODE2LWJkOTMtZTVjMzI1OTQwMDA2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '353'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '622'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1569
+      output:
+        message:
+          content:
+          - citationsContent:
+              citations:
+              - location:
+                  documentChar:
+                    documentIndex: 0
+                    end: 47
+                    start: 0
+                sourceContent:
+                - text: The return window is thirty days from purchase.
+                title: Document 1
+              content:
+              - text: The return window is thirty days from purchase.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 583
+        outputTokens: 28
+        serverToolUsage: {}
+        totalTokens: 611
+    status:
+      code: 200
+      message: OK
+version: 1

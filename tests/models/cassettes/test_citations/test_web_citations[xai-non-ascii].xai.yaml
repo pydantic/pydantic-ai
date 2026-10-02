@@ -1,0 +1,159 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: 'Run one X search for a post by @pydantic about Pydantic AI. Summarize
+            it and cite the post URL. Start your answer with exactly ''🐍 Pydantic
+            AI (café): '', cite inline, and use only ASCII punctuation.'
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - x_search:
+          allowed_x_handles:
+          - pydantic
+          enable_image_understanding: false
+          enable_video_understanding: false
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      include:
+      - INCLUDE_OPTION_INLINE_CITATIONS
+      - INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CtEBCswBCskBUnVuIG9uZSBYIHNlYXJjaCBmb3IgYSBwb3N0IGJ5IEBweWRhbnRpYyBhYm91dCBQ
+      eWRhbnRpYyBBSS4gU3VtbWFyaXplIGl0IGFuZCBjaXRlIHRoZSBwb3N0IFVSTC4gU3RhcnQgeW91
+      ciBhbnN3ZXIgd2l0aCBleGFjdGx5ICfwn5CNIFB5ZGFudGljIEFJIChjYWbDqSk6ICcsIGNpdGUg
+      aW5saW5lLCBhbmQgdXNlIG9ubHkgQVNDSUkgcHVuY3R1YXRpb24uEAESGWdyb2stNC1mYXN0LW5v
+      bi1yZWFzb25pbmeKARAiDhoIcHlkYW50aWMoADAAkgECCAHSAQIHAg==
+  response_sample:
+    json:
+      id: d92e45ca-eee0-921e-a72f-470ef836e8e0
+      outputs:
+      - message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call-28b7d60e-03b3-4b2b-ad6f-961a3f218b68-0
+            type: TOOL_CALL_TYPE_X_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: x_keyword_search
+              arguments: '{"query":"from:pydantic \"Pydantic AI\"","limit":"1","mode":"Latest"}'
+          - id: call-28b7d60e-03b3-4b2b-ad6f-961a3f218b68-1
+            type: TOOL_CALL_TYPE_X_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: x_user_search
+              arguments: '{"query":"pydantic","count":"1"}'
+      - index: 1
+        message:
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call-28b7d60e-03b3-4b2b-ad6f-961a3f218b68-0
+            type: TOOL_CALL_TYPE_X_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: x_keyword_search
+              arguments: '{"query":"from:pydantic \"Pydantic AI\"","limit":"1","mode":"Latest"}'
+          encrypted_content: n5enDTCjoIZ/DqjoC1nf5JI9+vj2EO4LugoFhVdteabAz4LTLKAMI+suCuzr05O1HN+jbey3gC/PNWzQ+gIcYauyG6EN2YmLe7Clxci1tbLk5ximjOYH5nK4Zh3wUunBjkr4+rPd/VlbbPSprJQTZJ4w6JivhM9bEhXapaLVo/gQ+OjSVNGhkKvnQou/Jx8QluC4iTRdrdrEeX+CJS5Fjs/kRjxBOnnLbKH7a6uRYoyd0fByVVKYUGCQjJntYozTBVG9jkKKtOEtIu1LhlLdt9usxVsUDrCNHLqYXMxb2zm+dnOeXfviQ8OZu1YRL5rUldX1b4aemyY9u+QdQJBNyJJHu0lawJvLBSMAh8VkUy2WFVVtGYZQCE97KEVBNHsgofXBw1iK6XyOo8KqQcOYK7leJgvLj8eHTD537jLEz+emJ8xZxihAtFGTIE9V9/hP01OEinG/0cFmlPbtAfxcWCcYp7YFdb0uuLini3RGIG+2fRfcvHQzo76OVFYRiLAupx2CBD79riqFyZEo2sZD8OKEl3UYkBUiWPmuKhNQyNNDdBZo0T9M7DlFBQrQXd8MIzjpw6yDvpSP0wwzB+Jz+Wv8mSEClqqKs8uW4vLdtHIcuf3C9d8sPnYT5Z3GAl1fjpWcIkcTwHpazk9BA9KirJFTXjGuNGgN0bPD9MuEkBOB7aammztfzw/p7OQ7czosm7TJK4GRzigtamNizzGB6dr6/JiI/7//Ddl7bVVD+0FNjSjqW4//hOjAiLVP7k0wDhfqTsq8WnI6j/22P8MCqCKYK4hm7h8YrpVQdBjoce6/yW7WECSTM/JqJvmIAIF6YQHpXr55CuWPpxo6ZFFdkvCNpYFZQcXpR8zaWRZUUq0w4wDfmN+/S3BRlupKpLTi6sG9R+q8jTl0EI+NBygUkNP87ipebLaiJ6mgHUvfjxRiJuVWIYjNnL2UDGbvf3hvCtZzLckMGODbX6vZRl5+gXhcHrsNLlnG0rSsWVWHMdAoba1InTs/ExTlx76TinFYVba7Yzp4ZkTkwB1/bTxhUbXAfS1XbEzNugkMIr1mJPKYjB4I1pfdutWUJXccsib9V1b3jCAJBflbLA
+          citations:
+          - x_citation:
+              url: https://x.com/i/status/2105281513579249831
+      - index: 2
+        message:
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call-28b7d60e-03b3-4b2b-ad6f-961a3f218b68-1
+            type: TOOL_CALL_TYPE_X_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: x_user_search
+              arguments: '{"query":"pydantic","count":"1"}'
+          encrypted_content: kG+D8aoJzTq2kpS5ao7rd6lt08ryi3JCWQR3rw
+      - finish_reason: REASON_STOP
+        index: 3
+        message:
+          content: '🐍 Pydantic AI (café): Pydantic AI tools now run commands and edit
+            files through one API, ctx.workspace, without caring where. Your machine,
+            an SSH host, a Bubblewrap sandbox, or a Modal, E2B or Fly.io Sprites sandbox:
+            swap one capability and your tools stay the same.[[1]](https://x.com/pydantic/status/2105281513579249831)'
+          role: ROLE_ASSISTANT
+          citations:
+          - id: '1'
+            start_index: 267
+            x_citation:
+              url: https://x.com/pydantic/status/2105281513579249831
+            end_index: 323
+      created: '2026-10-02T15:55:23.316510556Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 123
+        prompt_tokens: 3474
+        total_tokens: 3597
+        prompt_text_tokens: 3474
+        cached_prompt_text_tokens: 3008
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_X_SEARCH
+        - SERVER_SIDE_TOOL_X_SEARCH
+        cost_in_usd_ticks: '64916000'
+      citations:
+      - https://x.com/i/status/2105281513579249831
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - x_search:
+            allowed_x_handles:
+            - pydantic
+            enable_image_understanding: false
+            enable_video_understanding: false
+        top_p: 0.95
+        include:
+        - INCLUDE_OPTION_INLINE_CITATIONS
+        - INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CiRkOTJlNDVjYS1lZWUwLTkyMWUtYTcyZi00NzBlZjgzNmU4ZTAS/AEa+QEQAhqMAQorY2FsbC0y
+      OGI3ZDYwZS0wM2IzLTRiMmItYWQ2Zi05NjFhM2YyMThiNjgtMBADGAFSWQoQeF9rZXl3b3JkX3Nl
+      YXJjaBJFeyJxdWVyeSI6ImZyb206cHlkYW50aWMgXCJQeWRhbnRpYyBBSVwiIiwibGltaXQiOiIx
+      IiwibW9kZSI6IkxhdGVzdCJ9GmQKK2NhbGwtMjhiN2Q2MGUtMDNiMy00YjJiLWFkNmYtOTYxYTNm
+      MjE4YjY4LTEQAxgBUjEKDXhfdXNlcl9zZWFyY2gSIHsicXVlcnkiOiJweWRhbnRpYyIsImNvdW50
+      IjoiMSJ9OAESowoQARqeChAFGowBCitjYWxsLTI4YjdkNjBlLTAzYjMtNGIyYi1hZDZmLTk2MWEz
+      ZjIxOGI2OC0wEAMYAVJZChB4X2tleXdvcmRfc2VhcmNoEkV7InF1ZXJ5IjoiZnJvbTpweWRhbnRp
+      YyBcIlB5ZGFudGljIEFJXCIiLCJsaW1pdCI6IjEiLCJtb2RlIjoiTGF0ZXN0In0qzghuNWVuRFRD
+      am9JWi9EcWpvQzFuZjVKSTkrdmoyRU80THVnb0ZoVmR0ZWFiQXo0TFRMS0FNSStzdUN1enIwNU8x
+      SE4ramJleTNnQy9QTld6UStnSWNZYXV5RzZFTjJZbUxlN0NseGNpMXRiTGs1eGltak9ZSDVuSzRa
+      aDN3VXVuQmprcjQrclBkL1ZsYmJQU3BySlFUWko0dzZKaXZoTTliRWhYYXBhTFZvL2dRK09qU1ZO
+      R2hrS3ZuUW91L0p4OFFsdUM0aVRSZHJkckVlWCtDSlM1RmpzL2tSanhCT25uTGJLSDdhNnVSWW95
+      ZDBmQnlWVktZVUdDUWpKbnRZb3pUQlZHOWprS0t0T0V0SXUxTGhsTGR0OXVzeFZzVURyQ05ITHFZ
+      WE14YjJ6bStkbk9lWGZ2aVE4T1p1MVlSTDVyVWxkWDFiNGFlbXlZOXUrUWRRSkJOeUpKSHUwbGF3
+      SnZMQlNNQWg4VmtVeTJXRlZWdEdZWlFDRTk3S0VWQk5Ic2dvZlhCdzFpSzZYeU9vOEtxUWNPWUs3
+      bGVKZ3ZMajhlSFRENTM3akxFeitlbUo4eFp4aWhBdEZHVElFOVY5L2hQMDFPRWluRy8wY0ZtbFBi
+      dEFmeGNXQ2NZcDdZRmRiMHV1TGluaTNSR0lHKzJmUmZjdkhRem83Nk9WRllSaUxBdXB4MkNCRDc5
+      cmlxRnlaRW8yc1pEOE9LRWwzVVlrQlVpV1BtdUtoTlF5Tk5EZEJabzBUOU03RGxGQlFyUVhkOE1J
+      empwdzZ5RHZwU1Awd3d6QitKeitXdjhtU0VDbHFxS3M4dVc0dkxkdEhJY3VmM0M5ZDhzUG5ZVDVa
+      M0dBbDFmanBXY0lrY1R3SHBhems5QkE5S2lySkZUWGpHdU5HZ04wYlBEOU11RWtCT0I3YWFtbXp0
+      Znp3L3A3T1E3Y3pvc203VEpLNEdSemlndGFtTml6ekdCNmRyNi9KaUkvNy8vRGRsN2JWVkQrMEZO
+      alNqcVc0Ly9oT2pBaUxWUDdrMHdEaGZxVHNxOFduSTZqLzIyUDhNQ3FDS1lLNGhtN2g4WXJwVlFk
+      QmpvY2U2L3lXN1dFQ1NUTS9KcUp2bUlBSUY2WVFIcFhyNTVDdVdQcHhvNlpGRmRrdkNOcFlGWlFj
+      WHBSOHphV1JaVVVxMHc0d0RmbU4rL1MzQlJsdXBLcExUaTZzRzlSK3E4alRsMEVJK05CeWdVa05Q
+      ODdpcGViTGFpSjZtZ0hVdmZqeFJpSnVWV0lZak5uTDJVREdidmYzaHZDdFp6TGNrTUdPRGJYNnZa
+      Umw1K2dYaGNIcnNOTGxuRzByU3NXVldITWRBb2JhMUluVHMvRXhUbHg3NlRpbkZZVmJhN1l6cDRa
+      a1Rrd0IxL2JUeGhVYlhBZlMxWGJFek51Z2tNSXIxbUpQS1lqQjRJMXBmZHV0V1VKWGNjc2liOVYx
+      YjNqQ0FKQmZsYkxBMjgiLAoqaHR0cHM6Ly94LmNvbS9pL3N0YXR1cy8yMTA1MjgxNTEzNTc5MjQ5
+      ODMxOghpbnRlcm5ldDgBEpcBEAIakgEQBRpkCitjYWxsLTI4YjdkNjBlLTAzYjMtNGIyYi1hZDZm
+      LTk2MWEzZjIxOGI2OC0xEAMYAVIxCg14X3VzZXJfc2VhcmNoEiB7InF1ZXJ5IjoicHlkYW50aWMi
+      LCJjb3VudCI6IjEifSoma0crRDhhb0p6VHEya3BTNWFvN3JkNmx0MDhyeWkzSkNXUVIzcnc4ARKV
+      AwgDEAMajgMKxwLwn5CNIFB5ZGFudGljIEFJIChjYWbDqSk6IFB5ZGFudGljIEFJIHRvb2xzIG5v
+      dyBydW4gY29tbWFuZHMgYW5kIGVkaXQgZmlsZXMgdGhyb3VnaCBvbmUgQVBJLCBjdHgud29ya3Nw
+      YWNlLCB3aXRob3V0IGNhcmluZyB3aGVyZS4gWW91ciBtYWNoaW5lLCBhbiBTU0ggaG9zdCwgYSBC
+      dWJibGV3cmFwIHNhbmRib3gsIG9yIGEgTW9kYWwsIEUyQiBvciBGbHkuaW8gU3ByaXRlcyBzYW5k
+      Ym94OiBzd2FwIG9uZSBjYXBhYmlsaXR5IGFuZCB5b3VyIHRvb2xzIHN0YXkgdGhlIHNhbWUuW1sx
+      XV0oaHR0cHM6Ly94LmNvbS9weWRhbnRpYy9zdGF0dXMvMjEwNTI4MTUxMzU3OTI0OTgzMSkQAjI+
+      CgExEIsCIjMKMWh0dHBzOi8veC5jb20vcHlkYW50aWMvc3RhdHVzLzIxMDUyODE1MTM1NzkyNDk4
+      MzEwwwI4ASoMCOun/9UGENyi9pYBMghncm9rLTQuMzoTZnBfZWIzYzAwM2ZjNjZjMTRlZEohCHsQ
+      khsYjRwgkhs4wBdKAgICWKCU+h6QAeQOmAFToAEBUipodHRwczovL3guY29tL2kvc3RhdHVzLzIx
+      MDUyODE1MTM1NzkyNDk4MzFaJhABLTMzMz86AggBQhAiDhoIcHlkYW50aWMoADAATTMzcz9yAgcC
+      ggE2CipodHRwczovL3guY29tL2kvc3RhdHVzLzIxMDUyODE1MTM1NzkyNDk4MzESCGludGVybmV0

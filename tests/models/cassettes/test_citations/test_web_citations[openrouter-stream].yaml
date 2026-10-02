@@ -1,0 +1,106 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '335'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use web search to find Pydantic AI's GitHub repository and answer with its URL only.
+        role: user
+      model: deepseek/deepseek-chat
+      stream: true
+      stream_options:
+        include_usage: true
+      tools:
+      - parameters:
+          max_uses: 1
+          search_context_size: medium
+        type: openrouter:web_search
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: ": OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n:
+        OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER
+        PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n:
+        OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER
+        PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n: OPENROUTER PROCESSING\n\n:
+        OPENROUTER PROCESSING\n\ndata: {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"annotations\":[{\"type\":\"url_citation\",\"url_citation\":{\"url\":\"https://github.com/pydantic/pydantic-ai\",\"title\":\"AI
+        Agent Framework, the Pydantic way - GitHub\",\"start_index\":0,\"end_index\":0,\"content\":\"# pydantic/pydantic-ai\\n\\n...\\n\\n-
+        Stars: 19265\\n- Forks: 2514\\n- Watchers: 19265\\n- Open issues: 702\\n- License: MIT License\\n- Homepage: https://pydantic.dev/pydantic-ai\\n-
+        Default branch: main\\n- Created: 2024-06-21T15:55:04Z\\n\\n...\\n\\nAI Agent Framework, the Pydantic way\\n\\n...\\n\\n###
+        Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production
+        grade applications and workflows with Generative AI.\"}}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"annotations\":[{\"type\":\"url_citation\",\"url_citation\":{\"url\":\"https://pydantic.dev/pydantic-ai\",\"title\":\"\",\"start_index\":0,\"end_index\":0,\"content\":\"Get
+        started: https://pydantic.dev/docs/ai/overview/ · GitHub: https://github.com/pydantic/pydantic-ai\\n\\n...\\n\\nType-safe
+        Python framework for building agents and LLM applications. Model-agnostic with built-in validation, structured outputs,
+        and seamless observability. Open source under the MIT license.\\n\\n...\\n\\n```bash\\nuv add pydantic-ai\\n\\n...\\n\\nOpen
+        source (MIT license). Install with uv (or pip) and start building production-grade AI applications today.\\n\\n...\\n\\n-\\n\\n...\\n\\nuv
+        add p\\n\\n...\\n\\n-\\n\\n...\\n\\napplications with Generative AI\\n\\n...\\n\\n-\\n\\n...\\n\\n: https://github\\n\\n...\\n\\n#
+        Production\\n\\n...\\n\\n)\\n\\n...\\n\\n.\\n\\n...\\n\\n: https://p\\n\\n...\\n\\nGateway pricing\\n\\n...\\n\\n/pydantic-ai\\n\\n...\\n\\nbash\\n\\n...\\n\\n-ai\\n\\n...\\n\\n/\\n\\n...\\n\\n:
+        https://p\\n\\n...\\n\\n://pyd\\n\\n...\\n\\nfire and\\n\\n...\\n\\nfree;\\n\\n...\\n\\n.\\n\\n...\\n\\n/pyd\\n\\n...\\n\\npyd\\n\\n...\\n\\n.\\n\\n...\\n\\nantic.\\n\\n...\\n\\n/\\n\\n...\\n\\n```\"}}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"annotations\":[{\"type\":\"url_citation\",\"url_citation\":{\"url\":\"https://github.com/pydantic/pydantic-ai/releases/tag/v2.0.0\",\"title\":\"v2.0.0
+        (2026-06-23)\",\"start_index\":0,\"end_index\":0,\"content\":\"- Tag: v2.0.0\\n- Repository: pydantic/pydantic-ai\\n-
+        Published: 2026-06-23T15:38:17Z\\n- Author: dsfaccini\\n\\n...\\n\\n# v2.0.0 (2026-06-23)\\n\\n...\\n\\nAfter seven
+        betas, **Pydantic AI V2 is now stable.** V2 leans into a harness-first design with capabilities as a core primitive
+        — a single composable unit that bundles an agent's tools, hooks, instructions, and model settings, reaching every
+        layer of the agent through one concept.\\n\\n...\\n\\n# \U0001F389 Pydantic AI V2.0 is here!\\n\\n...\\n\\nuv add
+        pydantic-ai\\n\\n...\\n\\nInstall it with:\\n\\n...\\n\\n```bash\"}}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"annotations\":[{\"type\":\"url_citation\",\"url_citation\":{\"url\":\"https://pydantic.dev/docs/ai/overview/\",\"title\":\"Pydantic
+        AI | Pydantic Docs\",\"start_index\":0,\"end_index\":0,\"content\":\"# Pydantic AI\\n\\n...\\n\\nPydantic AI is a
+        Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications
+        and workflows with Generative AI.\\n\\n...\\n\\n,\\n\\n...\\n\\nydantic AI Harness is our official library of ready-made
+        capabilities -- code\\n\\n...\\n\\naccess, guardrails, sub-agent orchestration, and more -- that you pick and choose
+        to build coding agents, research assistants, and anything in between.\\n\\n...\\n\\nPydantic AI ships the agent loop,
+        a composable capabilities system\\n\\n...\\n\\nand built-in capabilities for thinking, web search, web fetch, image
+        generation, MCP, tool search, and more;\"}}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"annotations\":[{\"type\":\"url_citation\",\"url_citation\":{\"url\":\"https://github.com/pydantic/pydantic-ai/tree/refs/tags/v1.44.0\",\"title\":\"GitHub
+        - pydantic/pydantic-ai at refs/tags/v1.44.0 · GitHub\",\"start_index\":0,\"end_index\":0,\"content\":\"GitHub - pydantic/pydantic-ai
+        at refs/tags/v1.44.0 · GitHub\\n...\\n### Pydantic AI is a Python agent framework designed to help you quickly, confidently,
+        and painlessly build production grade applications and workflows with Generative AI.\"}}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"The\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"
+        URL\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"
+        for P\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"yd\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"antic
+        AI\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"'s
+        GitHub repository\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"
+        is:  \\n\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"https://github.com\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"/pyd\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"antic/pyd\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"antic-\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ai\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}]}\n\ndata:
+        {\"id\":\"gen-1786680764-gY2YTdjLLLQA6Cd1Wa6J\",\"object\":\"chat.completion.chunk\",\"created\":1786680764,\"model\":\"deepseek/deepseek-chat\",\"provider\":\"OpenAI\",\"service_tier\":null,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2317,\"completion_tokens\":53,\"total_tokens\":2370,\"cost\":0.0076509169000000005,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.0006509169,\"upstream_inference_prompt_cost\":0.0005963957999999999,\"upstream_inference_completions_cost\":0.0000545211},\"server_tool_use_details\":{\"web_search_requests\":1,\"tool_calls_requested\":1,\"tool_calls_executed\":1}}}\n\ndata:
+        [DONE]\n\n"
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
