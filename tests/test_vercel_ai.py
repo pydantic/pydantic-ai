@@ -26,8 +26,11 @@ from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
     CapabilityEvent,
+    Citation,
     CompactionPart,
+    ContentCitationAnchor,
     CustomEvent,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -66,6 +69,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import (
@@ -111,6 +115,7 @@ with try_import() as starlette_import_successful:
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
+        SourceUrlUIPart,
         SubmitMessage,
         TextUIPart,
         ToolApprovalRequested,
@@ -1490,7 +1495,78 @@ Want me to tailor\
             {
                 'type': 'text-end',
                 'id': IsStr(),
-                'providerMetadata': {'pydantic_ai': {'id': IsStr(), 'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': IsStr(),
+                        'provider_name': 'openai',
+                        'citations': [
+                            {
+                                'sources': [
+                                    {
+                                        'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                                        'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    }
+                                ],
+                                'anchor': {'start': 799, 'end': 946, 'kind': 'marker'},
+                                'provider_details': None,
+                            },
+                            {
+                                'sources': [
+                                    {
+                                        'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                                        'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    }
+                                ],
+                                'anchor': {'start': 2435, 'end': 2582, 'kind': 'marker'},
+                                'provider_details': None,
+                            },
+                            {
+                                'sources': [
+                                    {
+                                        'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                                        'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    }
+                                ],
+                                'anchor': {'start': 2749, 'end': 2896, 'kind': 'marker'},
+                                'provider_details': None,
+                            },
+                            {
+                                'sources': [
+                                    {
+                                        'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai',
+                                        'title': 'OpenTelemetry Logging Instrumentation — OpenTelemetry Python Contrib documentation',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    }
+                                ],
+                                'anchor': {'start': 3353, 'end': 3518, 'kind': 'marker'},
+                                'provider_details': None,
+                            },
+                        ],
+                    }
+                },
+            },
+            {
+                'type': 'source-url',
+                'sourceId': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
+            },
+            {
+                'type': 'source-url',
+                'sourceId': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai',
+                'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai',
+                'title': 'OpenTelemetry Logging Instrumentation — OpenTelemetry Python Contrib documentation',
             },
             {
                 'type': 'message-metadata',
@@ -1712,6 +1788,279 @@ async def test_event_stream_without_run_input():
             {'type': 'finish-step'},
             {'type': 'finish'},
         ]
+    )
+
+
+def _cited_text_parts() -> list[TextPart]:
+    """Two consecutive cited text parts, which the Vercel AI protocol merges into one UI text part."""
+    repo = WebCitationSource('https://github.com/pydantic/pydantic-ai', title='pydantic/pydantic-ai')
+    docs = WebCitationSource('https://pydantic.dev/docs/ai/', title='Pydantic AI docs')
+    notes = DocumentCitationSource(document_id='file-1', title='notes.txt')
+    return [
+        TextPart(
+            'Pydantic AI is on GitHub.',
+            provider_name='google',
+            citations=[Citation([repo], anchor=ContentCitationAnchor(start=0, end=24))],
+        ),
+        TextPart(
+            ' Its docs are online.',
+            provider_name='google',
+            citations=[
+                Citation([repo, docs], anchor=ContentCitationAnchor(start=1, end=20)),
+                Citation([notes]),
+            ],
+        ),
+    ]
+
+
+async def test_event_stream_citations():
+    """Citations of merged text parts go on the `text-end` chunk, anchored to the combined text, and each web source
+    URL is listed once as a `source-url` chunk.
+
+    Not a VCR test: no recorded provider streams two consecutive text parts that both carry anchored citations.
+    """
+    first, second = _cited_text_parts()
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=first)
+        yield PartEndEvent(index=0, part=first, next_part_kind='text')
+        yield PartStartEvent(index=1, part=second, previous_part_kind='text')
+        yield PartEndEvent(index=1, part=second)
+
+    event_stream = VercelAIEventStream()
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'text-start',
+                'id': (text_id := IsSameStr()),
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'google'}},
+            },
+            {
+                'type': 'text-delta',
+                'delta': 'Pydantic AI is on GitHub.',
+                'id': text_id,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'google'}},
+            },
+            {
+                'type': 'text-delta',
+                'delta': ' Its docs are online.',
+                'id': text_id,
+                'providerMetadata': {'pydantic_ai': {'provider_name': 'google'}},
+            },
+            {
+                'type': 'text-end',
+                'id': text_id,
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'provider_name': 'google',
+                        'citations': [
+                            {
+                                'sources': [
+                                    {
+                                        'url': 'https://github.com/pydantic/pydantic-ai',
+                                        'title': 'pydantic/pydantic-ai',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    }
+                                ],
+                                'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
+                                'provider_details': None,
+                            },
+                            {
+                                'sources': [
+                                    {
+                                        'url': 'https://github.com/pydantic/pydantic-ai',
+                                        'title': 'pydantic/pydantic-ai',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    },
+                                    {
+                                        'url': 'https://pydantic.dev/docs/ai/',
+                                        'title': 'Pydantic AI docs',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    },
+                                ],
+                                'anchor': {'start': 26, 'end': 45, 'kind': 'content'},
+                                'provider_details': None,
+                            },
+                            {
+                                'sources': [
+                                    {
+                                        'document_id': 'file-1',
+                                        'title': 'notes.txt',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'document',
+                                    }
+                                ],
+                                'anchor': None,
+                                'provider_details': None,
+                            },
+                        ],
+                    }
+                },
+            },
+            {
+                'type': 'source-url',
+                'sourceId': 'https://github.com/pydantic/pydantic-ai',
+                'url': 'https://github.com/pydantic/pydantic-ai',
+                'title': 'pydantic/pydantic-ai',
+            },
+            {
+                'type': 'source-url',
+                'sourceId': 'https://pydantic.dev/docs/ai/',
+                'url': 'https://pydantic.dev/docs/ai/',
+                'title': 'Pydantic AI docs',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+
+
+def test_dump_and_load_citations():
+    """`dump_messages` carries citations on the merged text part and lists web sources after it; `load_messages`
+    restores the citations and skips the source parts.
+
+    Not a VCR test: no recorded provider returns two consecutive text parts that both carry anchored citations.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Where is Pydantic AI?')]),
+        ModelResponse(parts=list(_cited_text_parts()), provider_name='google'),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assert ui_messages[1].parts == snapshot(
+        [
+            TextUIPart(
+                text='Pydantic AI is on GitHub. Its docs are online.',
+                state='done',
+                provider_metadata={
+                    'pydantic_ai': {
+                        'provider_name': 'google',
+                        'citations': [
+                            {
+                                'sources': [
+                                    {
+                                        'url': 'https://github.com/pydantic/pydantic-ai',
+                                        'title': 'pydantic/pydantic-ai',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    }
+                                ],
+                                'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
+                                'provider_details': None,
+                            },
+                            {
+                                'sources': [
+                                    {
+                                        'url': 'https://github.com/pydantic/pydantic-ai',
+                                        'title': 'pydantic/pydantic-ai',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    },
+                                    {
+                                        'url': 'https://pydantic.dev/docs/ai/',
+                                        'title': 'Pydantic AI docs',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'web',
+                                    },
+                                ],
+                                'anchor': {'start': 26, 'end': 45, 'kind': 'content'},
+                                'provider_details': None,
+                            },
+                            {
+                                'sources': [
+                                    {
+                                        'document_id': 'file-1',
+                                        'title': 'notes.txt',
+                                        'excerpts': [],
+                                        'provider_details': None,
+                                        'kind': 'document',
+                                    }
+                                ],
+                                'anchor': None,
+                                'provider_details': None,
+                            },
+                        ],
+                    }
+                },
+            ),
+            SourceUrlUIPart(
+                source_id='https://github.com/pydantic/pydantic-ai',
+                url='https://github.com/pydantic/pydantic-ai',
+                title='pydantic/pydantic-ai',
+            ),
+            SourceUrlUIPart(
+                source_id='https://pydantic.dev/docs/ai/', url='https://pydantic.dev/docs/ai/', title='Pydantic AI docs'
+            ),
+        ]
+    )
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert loaded[1].parts == snapshot(
+        [
+            TextPart(
+                content='Pydantic AI is on GitHub. Its docs are online.',
+                provider_name='google',
+                citations=[
+                    Citation(
+                        sources=[
+                            WebCitationSource(
+                                url='https://github.com/pydantic/pydantic-ai', title='pydantic/pydantic-ai'
+                            )
+                        ],
+                        anchor=ContentCitationAnchor(start=0, end=24),
+                    ),
+                    Citation(
+                        sources=[
+                            WebCitationSource(
+                                url='https://github.com/pydantic/pydantic-ai', title='pydantic/pydantic-ai'
+                            ),
+                            WebCitationSource(url='https://pydantic.dev/docs/ai/', title='Pydantic AI docs'),
+                        ],
+                        anchor=ContentCitationAnchor(start=26, end=45),
+                    ),
+                    Citation(sources=[DocumentCitationSource(document_id='file-1', title='notes.txt')]),
+                ],
+            )
+        ]
+    )
+
+
+def test_load_invalid_citations():
+    """Provider metadata is client-controlled, so citations that don't validate are dropped and the text still loads."""
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                TextUIPart(
+                    text='Hello',
+                    provider_metadata={'pydantic_ai': {'provider_name': 'anthropic', 'citations': [{'sources': []}]}},
+                ),
+                SourceUrlUIPart(source_id='https://example.com', url='https://example.com'),
+            ],
+        )
+    ]
+
+    assert VercelAIAdapter.load_messages(ui_messages)[0].parts == snapshot(
+        [TextPart(content='Hello', provider_name='anthropic')]
     )
 
 

@@ -241,6 +241,13 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 [`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
+## Citations
+
+[Citations](../citations.md) on a text part are sent to the frontend in two forms:
+
+- Each web source is listed once per message as a [`source-url`](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#source-url-part) part after the text, so `useChat` can render the sources. Document sources aren't listed, since Vercel AI's `source-document` part needs a media type and title that providers don't reliably return.
+- The full citations are kept in the text part's provider metadata. `load_messages` restores them from there, so citations survive a round-trip through the frontend and are [sent back to the provider that produced them](../citations.md#citations-in-message-history). Citations that don't validate are dropped, and `source-url` parts are ignored on load.
+
 ## Tool Approval
 
 !!! note

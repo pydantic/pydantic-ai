@@ -1,18 +1,21 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
+    Citation,
     ForceDownloadMode,
     ModelMessage,
     ProviderDetailsDelta,
     ToolReturnPart,
+    WebCitationSource,
     tool_return_ta,
 )
 from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY
@@ -90,7 +93,7 @@ def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[s
 
 def dump_provider_metadata(
     wrapper_key: str | None = PROVIDER_METADATA_KEY,
-    **kwargs: ProviderDetailsDelta | ForceDownloadMode | str | None,
+    **kwargs: ProviderDetailsDelta | ForceDownloadMode | list[dict[str, Any]] | str | None,
 ) -> dict[str, Any] | None:
     """Dump provider metadata from keyword arguments.
 
@@ -116,6 +119,54 @@ def dump_provider_metadata(
         return {wrapper_key: filtered} if filtered else None
     else:
         return filtered if filtered else None
+
+
+_citations_ta: TypeAdapter[list[Citation]] = TypeAdapter(list[Citation])
+
+
+def dump_citations(citations: Sequence[Citation] | None) -> list[dict[str, Any]] | None:
+    """Dump citations to JSON-compatible data for a text part's provider metadata."""
+    return _citations_ta.dump_python(list(citations), mode='json') if citations else None
+
+
+def load_citations(data: object) -> list[Citation] | None:
+    """Load citations from a text part's provider metadata.
+
+    Provider metadata is client-controlled, so citations that don't validate are dropped instead of
+    failing the request: the text itself still loads, and the model sees it without citations.
+    """
+    if data is None:
+        return None
+    try:
+        return _citations_ta.validate_python(data) or None
+    except ValidationError:
+        return None
+
+
+def offset_citations(citations: Sequence[Citation], offset: int) -> list[Citation]:
+    """Shift citation anchors by `offset` characters, for text parts merged into one UI text part."""
+    return [
+        replace(
+            citation,
+            anchor=replace(citation.anchor, start=citation.anchor.start + offset, end=citation.anchor.end + offset),
+        )
+        if citation.anchor and offset
+        else citation
+        for citation in citations
+    ]
+
+
+def iter_citation_source_chunks(citations: Iterable[Citation], seen_urls: set[str]) -> Iterator[SourceUrlChunk]:
+    """Yield a `source-url` chunk for each web source URL not in `seen_urls`, adding it.
+
+    Document sources have no chunk: Vercel AI's `source-document` requires a media type and title,
+    which provider document citations don't reliably carry. They still round-trip with the text part.
+    """
+    for citation in citations:
+        for source in citation.sources:
+            if isinstance(source, WebCitationSource) and source.url not in seen_urls:
+                seen_urls.add(source.url)
+                yield SourceUrlChunk(source_id=source.url, url=source.url, title=source.title)
 
 
 def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
