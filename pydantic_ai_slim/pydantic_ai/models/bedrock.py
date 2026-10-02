@@ -462,9 +462,7 @@ def _map_citation_source(
     excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
     details.pop('title', None)
     details.pop('sourceContent', None)
-    location = citation.get('location')
-    web = location.get('web') if isinstance(location, Mapping) else None
-    if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
+    if url := citation.get('location', {}).get('web', {}).get('url'):
         details.pop('location', None)
         return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
     if not (title or excerpts or details):
@@ -481,7 +479,7 @@ def _map_citations(
 
 def _map_citations_for_replay(
     citations: list[Citation] | None, text: str, document_texts: list[str | None]
-) -> list[ContentBlockOutputTypeDef] | None:
+) -> ContentBlockOutputTypeDef | None:
     """Rebuild the `citationsContent` block Bedrock returned for this text, or return `None` to send plain text.
 
     Only the shape Pydantic AI builds from a Bedrock cited block is rebuilt: one citation covering the whole text
@@ -518,7 +516,7 @@ def _map_citations_for_replay(
             # Bedrock names every document it cites.
             mapped_source['title'] = source.title
         mapped_sources.append(mapped_source)
-    return [{'citationsContent': {'content': [{'text': text}], 'citations': mapped_sources}}]
+    return {'citationsContent': {'content': [{'text': text}], 'citations': mapped_sources}}
 
 
 def _citation_document_texts(messages: Sequence[MessageUnionTypeDef]) -> list[str | None]:
@@ -1496,7 +1494,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        citation_blocks = (
+                        citation_block = (
                             _map_citations_for_replay(
                                 item.citations, item.content, _citation_document_texts(bedrock_messages)
                             )
@@ -1507,7 +1505,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             and (item.provider_name or message.provider_name) == self.system
                             else None
                         )
-                        content.extend(citation_blocks or [{'text': item.content}])
+                        content.append(citation_block or {'text': item.content})
                     elif isinstance(item, ThinkingPart):
                         if (
                             item.provider_name == self.system
