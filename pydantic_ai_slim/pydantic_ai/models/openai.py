@@ -735,11 +735,13 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
     openai_text_verbosity: Literal['low', 'medium', 'high']
-    """Verbosity for output text.
+    """Constrains the verbosity of the model's text response.
 
-    Supported by both the Chat Completions API and the Responses API: sent as the
-    top-level `verbosity` parameter on Chat Completions and as `text.verbosity` on
-    Responses. Parameter support can differ depending on the model.
+    Lower values will result in more concise responses, while higher values will
+    result in more verbose responses.
+
+    Supported by both the Chat Completions API (as `verbosity`) and the Responses API
+    (as `text.verbosity`). Parameter support can differ depending on the model.
     """
 
     openai_service_tier: Literal['auto', 'default', 'flex', 'priority']

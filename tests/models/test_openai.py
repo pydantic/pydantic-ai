@@ -5253,46 +5253,22 @@ async def test_openai_gateway_prefix_preserves_sampling(allow_model_requests: No
         await agent.run('hello')
 
 
-@pytest.mark.vcr(ignore_hosts=['gateway.example'])
-async def test_openai_text_verbosity_chat_completions(allow_model_requests: None):
-    """The typed setting is sent as the top-level `verbosity` parameter on Chat Completions."""
+@pytest.mark.vcr()
+async def test_openai_text_verbosity_chat_completions(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """`openai_text_verbosity` goes out as Chat Completions' top-level `verbosity`, and only when set."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('gpt-5.6-luna', provider=provider))
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        body = json.loads(request.content)
-        assert body['verbosity'] == 'low'
-        return httpx2.Response(
-            200,
-            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
-        )
+    result = await agent.run('What is 2+2?', model_settings=OpenAIChatModelSettings(openai_text_verbosity='low'))
+    assert result.output == snapshot('4')
+    await agent.run('What is 2+2?')
 
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        model = OpenAIChatModel(
-            'gpt-5',
-            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
-        )
-        agent = Agent(model, model_settings=OpenAIChatModelSettings(openai_text_verbosity='low'))
-        await agent.run('hello')
-
-
-@pytest.mark.vcr(ignore_hosts=['gateway.example'])
-async def test_openai_text_verbosity_omitted_not_sent(allow_model_requests: None):
-    """Without the setting, no `verbosity` key reaches the request body."""
-
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        body = json.loads(request.content)
-        assert 'verbosity' not in body
-        return httpx2.Response(
-            200,
-            json=completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_dump(mode='json'),
-        )
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        model = OpenAIChatModel(
-            'gpt-5',
-            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
-        )
-        agent = Agent(model)
-        await agent.run('hello')
+    assert [
+        {key: value for key, value in body.items() if key == 'verbosity'}
+        for body in request_capture.bodies('/chat/completions')
+    ] == [{'verbosity': 'low'}, {}]
 
 
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
