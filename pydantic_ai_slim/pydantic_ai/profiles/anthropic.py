@@ -126,6 +126,13 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Translated (with a deprecation warning) whenever profiles are merged.
     """
 
+    anthropic_max_output_tokens: int | None
+    """The most output tokens the model can generate in one response, thinking included. Default: `None` (unknown).
+
+    `AnthropicModel` sends it as `max_tokens` when the request doesn't set one, so responses are only cut off at the
+    model's limit, like on APIs where the output limit is optional.
+    """
+
     anthropic_rejects_max_tokens_beyond_context_window: bool
     """Whether the model rejects a request whose input plus `max_tokens` exceeds its context window. Default: `False`.
 
@@ -266,6 +273,26 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
 
+    # The `max_tokens` Anthropic's Models API reports for each model. Mythos 5 isn't reachable with our credentials;
+    # Anthropic documents Mythos 5.1 as having Fable 5.1's capabilities.
+    if model_name.startswith(
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-opus-5',
+            'claude-sonnet-4-6',
+            'claude-sonnet-5',
+        )
+    ):
+        max_output_tokens: int | None = 128_000
+    elif model_name.startswith(('claude-haiku-4-5', 'claude-opus-4-5', 'claude-sonnet-4-5')):
+        max_output_tokens = 64_000
+    else:
+        max_output_tokens = None
+
     # Before Claude Sonnet 4.5, Anthropic rejects a request whose input plus `max_tokens` exceeds the context window:
     # Bedrock's `claude-sonnet-4-20250514` answers 192K input tokens plus 16384 with a 400 (`Input is too long for
     # requested model.`) and accepts 192K plus 4096, where Haiku 4.5 accepts 192K plus 16384. Claude 3 and 3.5 also
@@ -391,6 +418,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_task_budgets=supports_task_budgets,
         supports_forced_tool_choice=supports_forced_tool_choice,
         anthropic_binds_thinking_blocks=binds_thinking_blocks,
+        anthropic_max_output_tokens=max_output_tokens,
         anthropic_rejects_max_tokens_beyond_context_window=rejects_max_tokens_beyond_context_window,
         supported_native_tools=supported_native_tools,
     )

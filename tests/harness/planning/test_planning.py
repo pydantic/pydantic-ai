@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -16,6 +19,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -86,6 +90,114 @@ async def test_plan_read_dispatches_as_durable_operation() -> None:
     bound = RecordingDurability.from_agent(agent)
     assert bound is not None
     assert 'planning__capability__planning.read_plan' in {name for name, _ in bound.calls}
+
+
+class FunctionToolsetRejectingDurability(RecordingDurability):
+    """Rejects executing function toolsets added per-run, as Temporal and Prefect do."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, unsupported_runtime_toolset_kinds=frozenset({'function'}))
+
+
+async def test_run_copy_keeps_registered_toolset() -> None:
+    planning = Planning[None]()
+    registered = planning.get_toolset()
+    run_planning = await planning.for_run(_ctx())
+    assert run_planning.get_toolset() is registered
+
+
+async def test_run_copy_shares_toolset_built_after_construction() -> None:
+    planning = Planning[None]()
+    run_planning = await planning.for_run(_ctx())
+    assert run_planning.get_toolset() is planning.get_toolset()
+
+
+def _counting_resolver(stores: list[InMemoryPlanStore]) -> Callable[[RunContext[object]], InMemoryPlanStore]:
+    def resolver(ctx: RunContext[object]) -> InMemoryPlanStore:
+        stores.append(InMemoryPlanStore())
+        return stores[-1]
+
+    return resolver
+
+
+async def test_durability_runs_registered_tools_against_run_store() -> None:
+    stores: list[InMemoryPlanStore] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('write_plan', {'items': [{'id': 'a', 'content': 'Step A'}]})])
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('read_plan', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='planning-agent',
+        capabilities=[
+            Planning[object](store_resolver=_counting_resolver(stores)),
+            FunctionToolsetRejectingDurability(),
+        ],
+    )
+    first = await agent.run('plan')
+    await agent.run('plan again')
+
+    # One resolution per run: the tools use the store the run's copy resolved in `for_run`.
+    assert len(stores) == 2
+    assert [item.content for item in await stores[0].get_items()] == ['Step A']
+    read_returns = [
+        part.content
+        for message in first.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'read_plan'
+    ]
+    assert read_returns == snapshot(
+        [
+            """\
+Current plan:
+1. [ ] [a] Step A
+
+Summary: 0 completed, 0 in progress, 1 pending\
+"""
+        ]
+    )
+
+
+async def test_durability_finds_run_copy_behind_prefix_tools() -> None:
+    stores: list[InMemoryPlanStore] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('org_read_plan', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    planning = Planning[object](store_resolver=_counting_resolver(stores))
+    agent = Agent(
+        FunctionModel(model),
+        name='planning-agent',
+        capabilities=[planning.prefix_tools('org'), FunctionToolsetRejectingDurability()],
+    )
+    await agent.run('plan')
+    await agent.run('plan again')
+
+    # Resolving through the construction-time capability instead would add a resolution.
+    assert len(stores) == 2
+
+
+async def test_worker_tree_resolves_store_without_caching_it() -> None:
+    """A durable worker's tree holds the construction-time capability, which must not keep one run's store."""
+    planning = Planning[InMemoryPlanStore](store_resolver=lambda ctx: ctx.deps)
+    toolset = cast(PlanningToolset[InMemoryPlanStore], planning.get_toolset())
+
+    def worker_ctx(store: InMemoryPlanStore) -> RunContext[InMemoryPlanStore]:
+        ctx = cast(RunContext[InMemoryPlanStore], _ctx())
+        ctx.deps = store
+        ctx.root_capability = planning
+        return ctx
+
+    first, second = InMemoryPlanStore(), InMemoryPlanStore()
+    await toolset.write_plan(worker_ctx(first), [PlanItem(content='only-first')])
+    assert await toolset.read_plan(worker_ctx(second)) == 'No plan yet. Use write_plan to create one.'
+    assert [item.content for item in await first.get_items()] == ['only-first']
 
 
 # --- Types ------------------------------------------------------------------
@@ -828,7 +940,9 @@ class TestCapability:
 
     async def test_direct_toolset_keeps_default_store(self) -> None:
         toolset = PlanningToolset[None](Planning[None]())
-        await toolset.write_plan(_ctx(), [PlanItem(content='Kept')])
+        ctx = _ctx()
+        ctx.root_capability = None
+        await toolset.write_plan(ctx, [PlanItem(content='Kept')])
         assert 'Kept' in await toolset.read_plan(_ctx())
 
     async def test_for_run_isolates_default_store(self) -> None:

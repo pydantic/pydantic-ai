@@ -8,7 +8,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ThinkingPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ThinkingPart
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.output import NativeOutput
 from pydantic_ai.settings import ModelSettings
@@ -20,6 +20,12 @@ with try_import() as imports_successful:
     from openai import omit
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_chunk import (
+        Choice as ChunkChoice,
+        ChoiceDelta,
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
+    )
     from openai.types.chat.chat_completion_message_function_tool_call import (
         ChatCompletionMessageFunctionToolCall,
         Function,
@@ -32,6 +38,8 @@ with try_import() as imports_successful:
         _snowflake_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.snowflake import SnowflakeModelProfile, SnowflakeProvider
+
+    from .mock_openai import MockOpenAI
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -202,9 +210,60 @@ async def test_snowflake_tool_calling(allow_model_requests: None, live_provider:
     assert result.output == snapshot(
         'The weather in Mexico City is currently sunny with a pleasant temperature of 25°C.'
     )
-    # The tool-call response's empty `finish_reason` is coerced based on the presence of tool calls.
+    # The tool-call response's empty `finish_reason` is coerced based on the presence of tool calls, but isn't
+    # reported as Cortex's own.
     tool_call_response = result.all_messages()[1]
-    assert tool_call_response.finish_reason == 'tool_call'  # type: ignore[union-attr]
+    assert isinstance(tool_call_response, ModelResponse)
+    assert tool_call_response.finish_reason == 'tool_call'
+    assert tool_call_response.provider_details is not None
+    assert 'finish_reason' not in tool_call_response.provider_details
+
+
+@pytest.mark.parametrize(
+    ('delta', 'finish_reason'),
+    [
+        (ChoiceDelta(role='assistant', content='4'), 'stop'),
+        (
+            ChoiceDelta(
+                role='assistant',
+                tool_calls=[
+                    ChoiceDeltaToolCall(
+                        index=0,
+                        id='call_123',
+                        type='function',
+                        function=ChoiceDeltaToolCallFunction(name='get_weather', arguments='{}'),
+                    )
+                ],
+            ),
+            'tool_call',
+        ),
+    ],
+)
+async def test_snowflake_stream_without_finish_reason(
+    allow_model_requests: None, provider: SnowflakeProvider, delta: ChoiceDelta, finish_reason: str
+):
+    """Cortex streams from Claude models have no finish reason, which is then picked as for a complete response."""
+    stream = [
+        chat.ChatCompletionChunk(
+            id='chatcmpl-123',
+            choices=[ChunkChoice(index=0, delta=delta)],
+            created=1751234567,
+            model='claude-sonnet-4-6',
+            object='chat.completion.chunk',
+        )
+    ]
+    model = SnowflakeModel(
+        'claude-sonnet-4-6', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock_stream(stream))
+    )
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('What is the weather?')], None, ModelRequestParameters()
+    ) as response:
+        async for _ in response:
+            pass
+
+    assert response.get().finish_reason == finish_reason
+    assert 'finish_reason' not in (response.get().provider_details or {})
 
 
 async def test_snowflake_native_output(allow_model_requests: None, live_provider: SnowflakeProvider):

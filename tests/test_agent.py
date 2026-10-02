@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
+import anyio
 import pytest
 from dirty_equals import IsJson
 from pydantic import BaseModel, TypeAdapter, field_validator
@@ -2514,7 +2515,14 @@ def test_output_type_union_text_fallback_invalid_data_retries():
     assert retry_parts == snapshot(
         [
             RetryPromptPart(
-                content=[{'type': 'missing', 'loc': ('color',), 'msg': 'Field required', 'input': {'length': 12.0}}],
+                content=[
+                    {
+                        'type': 'missing',
+                        'loc': ('result', 'data', 'color'),
+                        'msg': 'Field required',
+                        'input': {'length': 12.0},
+                    }
+                ],
                 tool_call_id=IsStr(),
                 timestamp=IsDatetime(),
             )
@@ -2612,6 +2620,60 @@ def test_prompted_output_union_invalid_kind_retries():
             )
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'output_type,output_mode',
+    [
+        pytest.param(NativeOutput([Apple, Banana]), 'native', id='native'),
+        pytest.param(PromptedOutput([Apple, Banana]), 'prompted', id='prompted'),
+    ],
+)
+def test_native_and_prompted_output_union_invalid_data_retries(
+    output_type: OutputSpec[Apple | Banana], output_mode: str
+):
+    """When a `NativeOutput` or `PromptedOutput` union envelope has the right `kind` but `data` that
+    doesn't match that member's schema, the re-prompt error is rooted under the envelope path
+    (`result.data`), matching the envelope-level errors for an invalid `kind`, so the failing input
+    is kept when the retry prompt is rendered for the model.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        assert info.model_request_parameters.output_mode == output_mode
+        if calls == 1:
+            # Correct `kind`, but `data` has `length` as a string where `Banana` requires a float.
+            text = '{"result": {"kind": "Banana", "data": {"length": "long"}}}'
+        else:
+            text = '{"result": {"kind": "Banana", "data": {"length": 6.0}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=output_type)
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Banana(length=6.0))
+    assert calls == 2
+
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    assert retry_parts == snapshot(
+        [
+            RetryPromptPart(
+                content=[
+                    {
+                        'type': 'float_parsing',
+                        'loc': ('result', 'data', 'length'),
+                        'msg': 'Input should be a valid number, unable to parse string as a number',
+                        'input': 'long',
+                    }
+                ],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    assert '"input": "long"' in retry_parts[0].model_response()
 
 
 def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
@@ -11282,6 +11344,107 @@ async def test_deferred_tool_results_reject_duplicate_tool_call_ids_in_history()
         )
 
 
+@pytest.mark.parametrize('tool_call_id', ['DUP', ''])
+async def test_duplicate_tool_call_id_raises_before_any_tool_executes(tool_call_id: str):
+    executed: list[tuple[str, int]] = []
+
+    def alpha(n: int) -> str:  # pragma: no cover
+        executed.append(('alpha', n))
+        return f'A{n}'
+
+    def beta(n: int) -> str:  # pragma: no cover
+        executed.append(('beta', n))
+        return f'B{n}'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='alpha', args={'n': 1}, tool_call_id=tool_call_id),
+                ToolCallPart(tool_name='beta', args={'n': 2}, tool_call_id=tool_call_id),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function))
+    agent.tool_plain(alpha)
+    agent.tool_plain(beta)
+
+    with pytest.raises(UnexpectedModelBehavior, match='duplicate `tool_call_id`s'):
+        await agent.run('go')
+
+    assert executed == []
+
+
+async def test_distinct_tool_call_ids_still_bind_correctly():
+    executed: list[tuple[str, int]] = []
+
+    def alpha(n: int) -> str:
+        executed.append(('alpha', n))
+        return f'A{n}'
+
+    def beta(n: int) -> str:
+        executed.append(('beta', n))
+        return f'B{n}'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(parts=[TextPart('finished')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='alpha', args={'n': 1}, tool_call_id='DUP1'),
+                ToolCallPart(tool_name='beta', args={'n': 2}, tool_call_id='DUP2'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function))
+    agent.tool_plain(alpha)
+    agent.tool_plain(beta)
+
+    result = await agent.run('go')
+    assert result.output == 'finished'
+
+    assert sorted(executed) == [('alpha', 1), ('beta', 2)]
+    tool_returns = {p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)}
+    assert [(p.tool_call_id, p.content) for p in tool_returns.values()] == [('DUP1', 'A1'), ('DUP2', 'B2')]
+
+
+async def test_duplicate_tool_call_id_across_graceful_batches_binds_each_call():
+    """`'graceful'` splits function calls into batches at an output call; each batch binds its own calls."""
+    executed: list[tuple[str, int]] = []
+
+    def alpha(n: int) -> str:
+        executed.append(('alpha', n))
+        return f'A{n}'
+
+    def beta(n: int) -> str:
+        executed.append(('beta', n))
+        return f'B{n}'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='alpha', args={'n': 1}, tool_call_id='DUP'),
+                ToolCallPart(tool_name='final_result', args={'response': 42}, tool_call_id='OUT'),
+                ToolCallPart(tool_name='beta', args={'n': 2}, tool_call_id='DUP'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function), output_type=int, end_strategy='graceful')
+    agent.tool_plain(alpha)
+    agent.tool_plain(beta)
+
+    result = await agent.run('go')
+    assert result.output == 42
+
+    assert executed == [('alpha', 1), ('beta', 2)]
+    function_returns = [
+        (p.tool_name, p.tool_call_id, p.content)
+        for m in result.all_messages()
+        for p in m.parts
+        if isinstance(p, ToolReturnPart) and p.tool_name != 'final_result'
+    ]
+    assert function_returns == [('alpha', 'DUP', 'A1'), ('beta', 'DUP', 'B2')]
+
+
 async def test_user_prompt_with_deferred_tool_results():
     """Test that user_prompt can be provided alongside deferred_tool_results."""
     from pydantic_ai.exceptions import ApprovalRequired
@@ -14541,8 +14704,9 @@ class _DelayFunctionModel(FunctionModel):
         return delay if isinstance(delay, float) else None
 
 
-def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When no custom sleep is registered, the continuation loop uses asyncio.sleep."""
+@pytest.mark.parametrize('delay', [0.01, -0.01])
+def test_agent_graph_sleep_default_uses_anyio(monkeypatch: pytest.MonkeyPatch, delay: float) -> None:
+    """When no custom sleep is registered, the continuation loop uses anyio.sleep."""
     call_count = 0
     slept_delays: list[float] = []
 
@@ -14551,26 +14715,26 @@ def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch)
         call_count += 1
         if call_count == 1:
             return ModelResponse(
-                parts=[TextPart('paused')], state='suspended', provider_details={'continuation_delay': 0.01}
+                parts=[TextPart('paused')], state='suspended', provider_details={'continuation_delay': delay}
             )
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(_DelayFunctionModel(model_fn))
 
-    original_sleep = asyncio.sleep
+    original_sleep = anyio.sleep
 
     async def tracking_sleep(delay: float) -> None:
         slept_delays.append(delay)
         await original_sleep(delay)
 
-    monkeypatch.setattr(asyncio, 'sleep', tracking_sleep)
+    monkeypatch.setattr(anyio, 'sleep', tracking_sleep)
     result = agent.run_sync('test')
     assert 'done' in result.output
-    assert 0.01 in slept_delays
+    assert max(delay, 0) in slept_delays
 
 
 def test_agent_graph_sleep_custom_function() -> None:
-    """A custom sleep function registered via `Agent.using_sleep` is used instead of `asyncio.sleep`."""
+    """A custom sleep function registered via `Agent.using_sleep` is used instead of `anyio.sleep`."""
     call_count = 0
     custom_delays: list[float] = []
 

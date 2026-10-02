@@ -174,6 +174,10 @@ With a durable-execution capability attached, the plan read used to build that r
 journaled capability operation. Replay reuses the recorded plan instead of reading the store again.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
+Engines that run tools and capability operations in a separate worker, like Temporal, don't
+carry the run's in-memory plan there: each call resolves its store from the run context. Pass a
+persistent `store` or a `store_resolver` (such as `SqlitePlanStore` or `PostgresPlanStore`) to keep
+the plan across steps.
 
 ## Configuration
 

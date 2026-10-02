@@ -9,7 +9,7 @@ import pytest
 from anyio.to_thread import run_sync
 from termflow.tui.completion import Completion
 
-from pydantic_clai2.prompt_completion import CompletionWorker
+from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 
 
 async def test_worker_is_daemon_preserves_context_and_can_report_errors() -> None:
