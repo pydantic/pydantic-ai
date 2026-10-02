@@ -136,11 +136,14 @@ def _remove_background_task(task: asyncio.Task[Any]) -> None:
 
 
 def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
-    # Without a running asyncio loop, AnyIO is on Trio. Not `sniffio`: this package does not depend on it,
-    # and AnyIO stopped installing it in 4.12.
+    # Outside an asyncio task, AnyIO is on Trio, even when Trio's guest mode runs on an asyncio loop.
+    # Not `sniffio`: this package does not depend on it, and AnyIO stopped installing it in 4.12.
     try:
-        loop = asyncio.get_running_loop()
+        on_asyncio = asyncio.current_task() is not None
     except RuntimeError:  # pragma: no cover
+        on_asyncio = False
+
+    if not on_asyncio:  # pragma: no cover
         import trio.lowlevel
 
         done_event = anyio.Event()
@@ -157,6 +160,7 @@ def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
 
         trio.lowlevel.spawn_system_task(_trio_task)
     else:
+        loop = asyncio.get_running_loop()
         task = loop.create_task(coro)
         with _background_lock:
             _background_tasks.add(task)

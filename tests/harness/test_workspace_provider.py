@@ -2,6 +2,7 @@ import asyncio
 
 import anyio
 import pytest
+import trio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -21,6 +22,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     command_argv,
     command_deadline,
+    running_on_asyncio,
     safe_credential_reason,
     stop_shielded,
 )
@@ -131,6 +133,26 @@ async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
     await stop_shielded(stop, grace=0.05)
     events.append('returned')
     assert events == ['stop cleanup', 'returned']
+
+
+def test_trio_guest_mode_is_not_asyncio() -> None:
+    # Trio guest mode runs Trio tasks on a thread whose asyncio loop is running.
+    results: list[bool] = []
+
+    async def guest() -> None:
+        results.append(running_on_asyncio())
+
+    async def host() -> None:
+        done = asyncio.Event()
+        trio.lowlevel.start_guest_run(
+            guest,
+            run_sync_soon_threadsafe=asyncio.get_running_loop().call_soon_threadsafe,
+            done_callback=lambda _: done.set(),
+        )
+        await done.wait()
+
+    asyncio.run(host())
+    assert results == [False]
 
 
 def test_absolute_path_passes_none_and_absolute_paths_through() -> None:

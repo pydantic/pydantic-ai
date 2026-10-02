@@ -28,15 +28,15 @@ def safe_credential_reason(error: Exception) -> str:
 
 
 def running_on_asyncio() -> bool:
-    """Whether the calling task runs on asyncio rather than Trio.
+    """Whether the calling task is an asyncio task rather than a Trio one.
 
-    Not `sniffio`: the harness does not depend on it, and AnyIO stopped installing it in 4.12.
+    A running asyncio loop is not enough: Trio guest mode and `trio-asyncio` run Trio tasks on a thread whose
+    asyncio loop is running. Not `sniffio`: the harness does not depend on it, and AnyIO stopped installing it in 4.12.
     """
     try:
-        asyncio.get_running_loop()
+        return asyncio.current_task() is not None
     except RuntimeError:
         return False
-    return True
 
 
 # asyncio holds only weak references to tasks, so a detached stop needs a strong one until it ends.
