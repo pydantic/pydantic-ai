@@ -77,6 +77,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-pull-request-review-comment:
     max: 30
     target: ${{ needs.eligibility.outputs.pr_number }}
@@ -361,6 +367,30 @@ jobs:
             details_url: $url,
             output: { title: $reason, summary: "This commit was not reviewed: \($reason)." }
           }' | gh api "repos/${REPO}/check-runs" --input -
+
+  flag_failed_review:
+    # Labels the PR when this run posted no review; a later run that does clears it.
+    needs: [agent, safe_outputs, eligibility]
+    if: (!cancelled()) && needs.agent.result != 'skipped'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
+          LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
+          SHA: ${{ needs.eligibility.outputs.head_sha }}
+          FAILED: ${{ needs.safe_outputs.result != 'success' || needs.agent.outputs.output_types == '' }}
+        run: |
+          # Runs for different heads overlap, so only the run for the current head owns the label.
+          [ "$(gh api "$PR" -q .head.sha)" = "$SHA" ] || exit 0
+          if [ "$FAILED" = true ]; then
+            gh api "$LABELS" -f 'labels[]=ci-review-failed' --silent
+          else
+            gh api -X DELETE "$LABELS/ci-review-failed" --silent || true
+          fi
 
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest

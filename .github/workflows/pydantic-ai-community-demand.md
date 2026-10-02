@@ -32,9 +32,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
-  missing-tool: false
-  missing-data: false
-  report-incomplete: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   jobs:
     record-community-verdict:
       description: "Record one demand verdict for deterministic host-side label application."
