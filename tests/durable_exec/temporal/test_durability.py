@@ -478,11 +478,16 @@ _stable_ids_agent = Agent(
 )
 
 
+_stable_ids_later_draws: list[str] = []
+
+
 @workflow.defn
 class StableIdsWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> list[str]:
         result = await _stable_ids_agent.run(prompt)
+        # What the workflow's own code draws next depends on how many draws the agent run made.
+        _stable_ids_later_draws.append(str(workflow.uuid4()))
         return [result.run_id, result.conversation_id]
 
 
@@ -512,7 +517,11 @@ async def test_durability_default_ids_survive_replay(client: Client):
 async def test_durability_replays_history_recorded_before_stable_default_ids(
     client: Client, monkeypatch: pytest.MonkeyPatch
 ):
-    """A history recorded before every run drew a default `run_id` replays without drawing one."""
+    """A history recorded before every run drew a default `run_id` replays without drawing one.
+
+    Unsandboxed, so the module-level list sees the workflow's draws in both the original run and the replay.
+    """
+    _stable_ids_later_draws.clear()
 
     # Without the patch marker, the workflow runs the way it did before: no draw from the workflow's
     # random sequence, and a random `run_id`.
@@ -525,6 +534,7 @@ async def test_durability_replays_history_recorded_before_stable_default_ids(
         task_queue=TASK_QUEUE,
         workflows=[StableIdsWorkflow],
         plugins=[AgentPlugin(_stable_ids_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
     ):
         handle = await client.start_workflow(
             StableIdsWorkflow.run, args=['Hello'], id=f'legacy-ids-{uuid.uuid4()}', task_queue=TASK_QUEUE
@@ -534,8 +544,12 @@ async def test_durability_replays_history_recorded_before_stable_default_ids(
     monkeypatch.undo()
 
     history = await handle.fetch_history()
-    replay = await Replayer(workflows=[StableIdsWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    replay = await Replayer(
+        workflows=[StableIdsWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    ).replay_workflow(history)
     assert replay.replay_failure is None
+    # The replay drew nothing for the run's ID, so the workflow's next draw matches the recorded one.
+    assert len(_stable_ids_later_draws) == 2 and _stable_ids_later_draws[0] == _stable_ids_later_draws[1]
 
 
 # --- Durability outside workflow (transparent passthrough) ---

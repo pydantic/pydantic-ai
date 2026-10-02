@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
+from weakref import WeakKeyDictionary
 
 from dbos import DBOS
 
@@ -25,7 +26,14 @@ from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOp
 from ._utils import StepConfig, guard_enqueue_in_workflow
 
 if TYPE_CHECKING:
-    pass
+    from dbos._context import DBOSContext
+
+_default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
+"""Agent runs that drew a default `run_id` at each step position, per workflow execution.
+
+Runs started concurrently (e.g. with `asyncio.gather`) resolve their IDs before either starts a step,
+so they share a position and need the count to tell them apart.
+"""
 
 
 @dataclass(init=False, kw_only=True)
@@ -214,7 +222,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         context = get_local_dbos_context()
         assert context is not None and context.workflow_id is not None
-        return f'{context.workflow_id}:{context.function_id + 1}'
+        step = context.function_id + 1
+        runs = _default_run_ids_by_step.setdefault(context, {})
+        index = runs.get(step, 0)
+        runs[step] = index + 1
+        # The first run at a position keeps the ID it had before concurrent runs were told apart.
+        return f'{context.workflow_id}:{step}' if index == 0 else f'{context.workflow_id}:{step}:{index}'
 
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is

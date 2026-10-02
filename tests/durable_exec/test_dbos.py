@@ -4776,8 +4776,10 @@ def record_ids(ctx: RunContext[object]) -> str:
 
 @DBOS.workflow()
 async def stable_ids_workflow() -> list[tuple[str, str]]:
-    results = [await stable_ids_agent.run('First.'), await stable_ids_agent.run('Second.')]
-    if len(stable_ids_seen) == 2:
+    first = await stable_ids_agent.run('First.')
+    # Concurrent runs resolve their IDs before either starts a step.
+    results = [first, *await asyncio.gather(stable_ids_agent.run('Second.'), stable_ids_agent.run('Third.'))]
+    if len(stable_ids_seen) == 3:
         raise _ProcessCrash
     return [(result.run_id, result.conversation_id) for result in results]
 
@@ -4788,12 +4790,12 @@ async def test_dbos_default_ids_survive_recovery(dbos: DBOS) -> None:
     workflow_id = f'stable-ids-{uuid.uuid4()}'
     with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
         await stable_ids_workflow()
-    first, second = stable_ids_seen
-    assert first[0] is not None and first[0].startswith(f'{workflow_id}:')
-    assert len({*first, *second}) == 4
+    seen = sorted(stable_ids_seen)
+    assert [run_id for run_id, _ in seen] == [f'{workflow_id}:1', f'{workflow_id}:3', f'{workflow_id}:3:1']
+    assert len({*seen[0], *seen[1], *seen[2]}) == 6
 
     # Recovery re-executes the workflow function: model requests replay from their recorded steps, while
     # the function tool, which runs in the workflow, runs again and sees the same IDs.
     handle = await asyncio.to_thread(DBOS._execute_workflow_id, workflow_id)  # pyright: ignore[reportPrivateUsage]
-    assert [tuple(ids) for ids in await asyncio.to_thread(handle.get_result)] == [first, second]
-    assert stable_ids_seen == [first, second, first, second]
+    assert sorted(tuple(ids) for ids in await asyncio.to_thread(handle.get_result)) == seen
+    assert sorted(stable_ids_seen[3:]) == seen
