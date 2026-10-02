@@ -267,6 +267,7 @@ Inspect cassette assertions and matching behavior; a recording alone is not a gu
 
 Reuse the supplied CI evidence.
 Name the job and selection that actually reach the claimed protection.
+For a local reusable-workflow caller, trace the callee's test selection at the pinned revisions before classifying the caller.
 Distinguish successful execution from skipped or uncollected tests.
 Never equate green CI, line coverage, or a larger replacement suite with preserved fault detection.
 Do not rerun tests, install PR dependencies, execute PR code, or perform a broad mutation campaign.

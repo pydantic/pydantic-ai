@@ -72,7 +72,7 @@ class Report(BaseModel):
 
 
 class Candidate(BaseModel):
-    """A relevant changed file from paginated pull-request metadata."""
+    """A changed file with a potential test-protection or test-selection signal."""
 
     model_config = ConfigDict(extra='forbid', strict=True)
 
@@ -145,8 +145,8 @@ def _indented_yaml_block(lines: list[str], start: int, parent_indent: int) -> tu
     return block, start
 
 
-def _workflow_selects_tests(source: str) -> bool:
-    """Inspect only workflow `run` values and indented run blocks for test commands."""
+def _workflow_may_select_tests(source: str) -> bool:
+    """Find test commands and local reusable-workflow calls that may select tests."""
     lines = source.splitlines()
     commands: list[str] = []
     index = 0
@@ -159,6 +159,13 @@ def _workflow_selects_tests(source: str) -> bool:
             continue
         if stripped.startswith('- '):
             stripped = stripped[2:]
+        is_uses = stripped.startswith('uses:') and (len(stripped) == 5 or stripped[5].isspace())
+        if is_uses:
+            value = stripped[5:].split('#', 1)[0].strip().strip('\'"')
+            if value.startswith('./.github/workflows/') and value.endswith(('.yml', '.yaml')):
+                return True
+            index += 1
+            continue
         is_run = stripped.startswith('run:') and (len(stripped) == 4 or stripped[4].isspace())
         if not is_run:
             _, separator, value = stripped.partition(':')
@@ -198,7 +205,7 @@ def build_candidates(
     pyproject_after: str | None = None,
     workflow_contents: Mapping[str, tuple[str | None, str | None]] | None = None,
 ) -> tuple[list[Candidate], bool, str]:
-    """Select candidate changes and fail closed when PR file metadata is incomplete."""
+    """Select possible test or test-selection changes, failing closed on incomplete metadata."""
     candidates: list[Candidate] = []
     seen_paths: set[str] = set()
     for file_data in files:
@@ -227,7 +234,7 @@ def build_candidates(
                 return [], False, 'pinned workflow content could not be compared'
             if contents == (None, None):
                 return [], False, 'pinned workflow content is missing from both revisions'
-            if any(content is not None and _workflow_selects_tests(content) for content in contents):
+            if any(content is not None and _workflow_may_select_tests(content) for content in contents):
                 relevant_paths.append(workflow_path)
         if path == 'pyproject.toml' or previous == 'pyproject.toml':
             if pyproject_before is None or pyproject_after is None:

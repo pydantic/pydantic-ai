@@ -92,6 +92,31 @@ def test_current_ci_test_workflows_are_candidates() -> None:
         assert [candidate.path for candidate in candidates] == [path]
 
 
+@pytest.mark.parametrize('status', ['modified', 'renamed'])
+def test_sandbox_nightly_local_caller_removal_or_rename_is_a_candidate(status: str) -> None:
+    old_path = '.github/workflows/sandbox-live-nightly.yml'
+    new_path = '.github/workflows/sandbox-live-nightly-renamed.yml'
+    call = 'uses: ./.github/workflows/sandbox-live.yml'
+    old_source = (Path(__file__).parents[2] / old_path).read_text(encoding='utf-8')
+    assert call in old_source
+    new_source = 'name: Sandbox live nightly\non: workflow_dispatch\njobs: {}\n'
+
+    if status == 'modified':
+        filename = old_path
+        files: list[Mapping[str, object]] = [{'filename': filename, 'status': status}]
+        workflow_contents = {filename: (old_source, new_source)}
+    else:
+        filename = new_path
+        files = [{'filename': filename, 'previous_filename': old_path, 'status': status}]
+        workflow_contents = {old_path: (old_source, None), new_path: (None, new_source)}
+
+    candidates, complete, reason = build_candidates(files, workflow_contents=workflow_contents)
+
+    assert complete, reason
+    assert [candidate.path for candidate in candidates] == [filename]
+    assert candidates[0].relevant_paths == [old_path]
+
+
 @pytest.mark.parametrize(
     'command',
     [
@@ -142,9 +167,11 @@ def test_changed_workflow_commands_are_detected_in_both_revisions() -> None:
 
 def test_workflow_comments_prompts_and_non_test_commands_are_not_candidates() -> None:
     source = """# run: pytest tests/commented.py
+# uses: ./.github/workflows/sandbox-live.yml
 name: Documentation only
 prompt: |
   run: pytest tests/prompt.py
+  uses: ./.github/workflows/sandbox-live.yml
   pytest tests/prompt.py
 jobs:
   docs:
