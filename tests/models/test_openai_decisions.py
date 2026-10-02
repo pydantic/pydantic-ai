@@ -417,6 +417,11 @@ MALFORMED_RESPONSES: list[bytes | dict[str, object]] = [
         'model': 'gpt-6-luna',
         'answers': [{'name': 'urgent', 'type': 'choice', 'choice': 'yes', 'confidence': 1, 'probabilities': []}],
     },
+    {
+        'model': 'gpt-6-luna',
+        'answers': [{'name': 'urgent', 'type': 'predicate', 'probability': 1}],
+        'usage': {'input_tokens': -1, 'output_tokens': 0},
+    },
 ]
 
 
@@ -460,6 +465,18 @@ async def test_malformed_response(body: bytes | dict[str, object]):
             'score': 2,
             'confidence': 1,
             'probabilities': [{'label': '0', 'probability': 1}, {'label': '1', 'probability': 0}],
+        },
+        {
+            'type': 'choice',
+            'choice': 'a',
+            'confidence': 0.5,
+            'probabilities': [{'value': 'a', 'probability': 0.5}, {'value': 'b', 'probability': 0}],
+        },
+        {
+            'type': 'score',
+            'score': 0,
+            'confidence': 1,
+            'probabilities': [{'label': '0', 'probability': 0}, {'label': '1', 'probability': 1}],
         },
     ],
 )

@@ -178,6 +178,7 @@ def _question(name: str, question: DecisionQuestion) -> dict[str, object]:
 
 
 _Probability = Annotated[float, Field(ge=0, le=1)]
+_TokenCount = Annotated[int, Field(ge=0)]
 
 
 @dataclass(kw_only=True)
@@ -219,19 +220,19 @@ class _ScoreAnswer:
 
 @dataclass(kw_only=True)
 class _InputTokensDetails:
-    cached_tokens: int = 0
-    cache_write_tokens: int = 0
+    cached_tokens: _TokenCount = 0
+    cache_write_tokens: _TokenCount = 0
 
 
 @dataclass(kw_only=True)
 class _OutputTokensDetails:
-    reasoning_tokens: int = 0
+    reasoning_tokens: _TokenCount = 0
 
 
 @dataclass(kw_only=True)
 class _Usage:
-    input_tokens: int
-    output_tokens: int
+    input_tokens: _TokenCount
+    output_tokens: _TokenCount
     input_tokens_details: _InputTokensDetails | None = None
     output_tokens_details: _OutputTokensDetails | None = None
 
@@ -246,6 +247,11 @@ class _Response:
 _response_adapter = TypeAdapter(_Response)
 
 
+def _sums_to_one(probabilities: list[float]) -> bool:
+    # Allow each probability half a unit of two-decimal rounding, as `SystemOneModel` does.
+    return abs(sum(probabilities) - 1) <= 1e-6 + len(probabilities) * 0.005
+
+
 def _answer(answer: _PredicateAnswer | _ChoiceAnswer | _ScoreAnswer, question: DecisionQuestion) -> DecisionAnswer:
     if isinstance(answer, _PredicateAnswer) and isinstance(question, NoulQuestion):
         return NoulAnswer(noul=answer.probability)
@@ -255,20 +261,18 @@ def _answer(answer: _PredicateAnswer | _ChoiceAnswer | _ScoreAnswer, question: D
             len(probabilities) != len(answer.probabilities)
             or probabilities.keys() != question.criteria.keys()
             or answer.choice not in probabilities
+            or not _sums_to_one(list(probabilities.values()))
         ):
             raise ValueError(f'invalid choice probabilities for {answer.name!r}')
         return ChoiceAnswer(choice=answer.choice, confidence=answer.confidence, probabilities=probabilities)
     if isinstance(answer, _ScoreAnswer) and isinstance(question, ScoreQuestion):
         levels = {str(index) for index in range(len(question.criteria))}
-        if (
-            len(answer.probabilities) != len(levels)
-            or {entry.label for entry in answer.probabilities} != levels
-            or answer.score > len(levels) - 1
-        ):
+        if len(answer.probabilities) != len(levels) or {entry.label for entry in answer.probabilities} != levels:
             raise ValueError(f'invalid score probabilities for {answer.name!r}')
-        return ScoreAnswer(
-            score=answer.score,
-            confidence=answer.confidence,
-            probabilities={int(entry.label): entry.probability for entry in answer.probabilities},
-        )
+        probabilities = {int(entry.label): entry.probability for entry in answer.probabilities}
+        # Whether `score` is the mean or the likeliest level, it lies between the levels that carry probability.
+        supported = [level for level, probability in probabilities.items() if probability > 0]
+        if not _sums_to_one(list(probabilities.values())) or not min(supported) <= answer.score <= max(supported):
+            raise ValueError(f'invalid score probabilities for {answer.name!r}')
+        return ScoreAnswer(score=answer.score, confidence=answer.confidence, probabilities=probabilities)
     raise ValueError(f'answer type does not match question {answer.name!r}')
