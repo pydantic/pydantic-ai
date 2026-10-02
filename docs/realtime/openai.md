@@ -436,9 +436,9 @@ secure offer-relay flow, and the sideband trust model, and the
 
 ## Feature support and limitations
 
-Neither family supports [native tools](tools.md#native-tools); configure local fallbacks for web
-capabilities. Both run [tool calls asynchronously](tools.md#concurrent-tool-execution), so the model
-keeps talking while a tool runs. See [Audio, images, and transcripts](audio.md),
+Pydantic AI doesn't route [native tools](tools.md#native-tools) to either family yet; configure local
+fallbacks for web capabilities. Both run [tool calls asynchronously](tools.md#concurrent-tool-execution),
+so the model keeps talking while a tool runs. See [Audio, images, and transcripts](audio.md),
 [Turns and interruptions](turns.md), [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for
 the provider-agnostic workflows.
 
@@ -482,6 +482,7 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 | Manual turns and interruption | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk); [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Full feature support | [Dedicated model](audio.md#input-transcription); `'auto'` by default |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
+| Native tools | Unsupported | The API offers remote MCP servers, which Pydantic AI does not expose yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)); configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Reconnection | Full feature support | The connection has no resumable server handle, so Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new session; in-flight media is lost |
 
 ## Provider-specific quirks

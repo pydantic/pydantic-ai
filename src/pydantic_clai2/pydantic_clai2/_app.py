@@ -825,7 +825,11 @@ class _Shell(Generic[DepsT, OutputT]):
                 [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
             )
             try:
-                self.status.model = self.session.model or _model_label(self.agent)
+                model = self.session.model or _model_label(self.agent)
+                if model != self.status.model:
+                    self.status.context_window = None
+                    self.status.context_alert = False
+                self.status.model = model
                 self.status.workspace = self.session.workspace
                 self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
                 if self.editor is not None:
@@ -1026,6 +1030,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
 def _reset_status(command: str, status: Status) -> None:
     if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
         status.context_tokens = None
+        status.context_window = None
         status.context_alert = False
         status.output_tokens = None
         status.cost = None

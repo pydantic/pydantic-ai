@@ -41,6 +41,8 @@ class Status:
     workspace: str = ''
     """The session's working directory; hidden while empty."""
     context_tokens: int | None = None
+    context_window: int | None = None
+    """Known context capacity for the latest request; `None` when unresolved."""
     context_alert: bool = False
     """Paint the context figure `WARNING`; set by whoever knows the window, such as the `compaction` plugin."""
     output_tokens: int | None = None
@@ -74,7 +76,7 @@ class Status:
 
     def segments(self, frame: str = '') -> tuple[str, str, str, str, str, str, str]:
         """Separate figures from labels so plain text and both painters share the same boundaries."""
-        context = '?' if self.context_tokens is None else f'{self.context_tokens:,}'
+        context = f'{_compact_tokens(self.context_tokens)}/{_compact_tokens(self.context_window)}'
         output = f'~{math.ceil(self.streamed_chars / 4):,}'
         output_label = 'streamed tokens'
         if self.output_tokens is not None:
@@ -104,7 +106,7 @@ class Status:
         return '' if not shown else ' | ' + ' | '.join(shown)
 
     def text(self, frame: str = '') -> str:
-        """Use no percentage when the model's context capacity is unknown."""
+        """Show compact used/max context, with `?` for unknown counts."""
         return ''.join(self.segments(frame))
 
     def toolbar(self) -> list[tuple[str, str]]:
@@ -229,6 +231,17 @@ class StatusLine:
             # Refresh live counts at least ten times a second, whatever the spinner's speed.
             self._draw()
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+def _compact_tokens(count: int | None) -> str:
+    """Round to whole thousands or tenths of a million without trailing `.0`."""
+    if count is None:
+        return '?'
+    if count >= 999_500:
+        return f'{count / 1_000_000:.1f}'.removesuffix('.0') + 'm'
+    if count >= 1_000:
+        return f'{count / 1_000:.0f}k'
+    return str(count)
 
 
 def _short_path(path: str, limit: int = 40) -> str:
