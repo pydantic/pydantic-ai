@@ -331,10 +331,10 @@ WEB_CASES = [
         expected=snapshot(
             [
                 ExpectedWebCitation(
-                    ['x.com'],
-                    [0],
-                    MarkerCitationAnchor(start=227, end=283),
-                    '[[1]](https://x.com/pydantic/status/1863538947059544218)',
+                    source_labels=['x.com'],
+                    excerpt_counts=[0],
+                    anchor=MarkerCitationAnchor(start=460, end=516),
+                    anchor_text='[[1]](https://x.com/pydantic/status/2105281513579249831)',
                 )
             ]
         ),
@@ -348,7 +348,7 @@ WEB_CASES = [
                 ExpectedWebCitation(
                     source_labels=['x.com'],
                     excerpt_counts=[0],
-                    anchor=MarkerCitationAnchor(start=275, end=331),
+                    anchor=MarkerCitationAnchor(start=267, end=323),
                     anchor_text='[[1]](https://x.com/pydantic/status/2105281513579249831)',
                 )
             ]
@@ -363,7 +363,7 @@ WEB_CASES = [
                 ExpectedWebCitation(
                     source_labels=['x.com'],
                     excerpt_counts=[0],
-                    anchor=MarkerCitationAnchor(start=385, end=441),
+                    anchor=MarkerCitationAnchor(start=398, end=454),
                     anchor_text='[[1]](https://x.com/pydantic/status/2105281513579249831)',
                 )
             ]
@@ -524,7 +524,8 @@ def _web_citation_agent(
         model = XaiModel('grok-4-fast-non-reasoning', provider=xai_provider)
         tool = XSearchTool(allowed_x_handles=['pydantic'], include_output=True)
         settings = ModelSettings(include_citations=True)
-        prompt = 'Use X search to find a post by @pydantic about Pydantic AI. Summarize it and cite the post URL.'
+        # A single search keeps the streamed parts in the same order as the complete response's.
+        prompt = 'Run one X search for a post by @pydantic about Pydantic AI. Summarize it and cite the post URL.'
     else:  # pragma: no cover
         assert_never(case.provider)
 
