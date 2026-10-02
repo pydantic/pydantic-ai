@@ -245,14 +245,8 @@ class ModelResponsePartsManager:
                 provider_details=provider_details,
                 citations_delta=citations,
             )
-            apply_metadata = (
-                part_delta.provider_name is not None
-                or part_delta.provider_details is not None
-                or part_delta.citations_delta is not None
-                or existing_text_part.provider_details == {}
-            )
             updated_part = self._apply_metadata_or_copy_provider_details(
-                existing_text_part, part_delta, apply_metadata=apply_metadata
+                existing_text_part, part_delta, apply_metadata=_text_delta_has_metadata(existing_text_part, part_delta)
             )
             if content:
                 self._buffer_string_delta(part_index, existing_text_part.content, content)
@@ -793,14 +787,17 @@ class ModelResponsePartsManager:
     def apply_event(self, event: ModelResponseStreamEvent) -> None:
         """Apply a replayed stream event to the managed parts, so `get_parts()` reflects it."""
         if isinstance(event, PartStartEvent):
-            self.handle_part(vendor_part_id=event.index, part=event.part)
+            # Copy the part so changes to the event's part don't reach the managed one.
+            self.handle_part(vendor_part_id=event.index, part=replace(event.part))
         elif isinstance(event, PartDeltaEvent):
             part_index = self._vendor_id_to_part_index.get(event.index)
             part = self._parts[part_index] if part_index is not None else None
             delta = event.delta
             if part_index is not None and type(part) is TextPart and type(delta) is TextPartDelta:
                 # Keep replay snapshots independent while buffering their text.
-                updated_part = self._apply_metadata_or_copy_provider_details(part, delta, apply_metadata=True)
+                updated_part = self._apply_metadata_or_copy_provider_details(
+                    part, delta, apply_metadata=_text_delta_has_metadata(part, delta)
+                )
                 self._buffer_string_delta(part_index, part.content, delta.content_delta)
                 self._parts[part_index] = updated_part
                 return
@@ -809,3 +806,13 @@ class ModelResponsePartsManager:
             assert part is not None
             assert not isinstance(part, ToolCallPartDelta)
             self.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
+
+
+def _text_delta_has_metadata(part: TextPart, delta: TextPartDelta) -> bool:
+    """Whether `delta` changes anything on `part` besides its content."""
+    return (
+        delta.provider_name is not None
+        or delta.provider_details is not None
+        or delta.citations_delta is not None
+        or part.provider_details == {}
+    )
