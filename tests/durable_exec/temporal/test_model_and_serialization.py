@@ -64,6 +64,7 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
+from pydantic_ai.models.decision import DecisionHandOff, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -416,7 +417,7 @@ async def test_logfire_plugin(client: Client):
     assert isinstance(interceptor, TracingInterceptor)
     if isinstance(interceptor.tracer, ProxyTracer):
         assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage] # pragma: lax no cover
-    elif isinstance(interceptor.tracer, _ProxyTracer):
+    elif isinstance(interceptor.tracer, _ProxyTracer):  # pragma: lax no cover
         assert interceptor.tracer.instrumenting_module_name == 'temporalio'  # pragma: lax no cover
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
@@ -2980,6 +2981,21 @@ def test_a_body_that_is_not_json_crosses_as_a_string():
     rebuilt = _crossed(ModelHTTPError(500, 'gpt-test', body=Opaque()))
     assert isinstance(rebuilt, ModelHTTPError)
     assert rebuilt.body == 'opaque body'
+
+
+def test_decision_hand_offs_cross_with_their_fields():
+    rebuilt = _crossed(DecisionHandOff('decider', 'search', 0.4, 'handed off'))
+    assert isinstance(rebuilt, DecisionHandOff)
+    assert (rebuilt.model_name, rebuilt.route, rebuilt.probability, rebuilt.message) == (
+        'decider',
+        'search',
+        0.4,
+        'handed off',
+    )
+
+    unsure = _crossed(UnsureRoute('decider', 'search', {'search': 0.4, 'reply': 0.6}, 0.5))
+    assert isinstance(unsure, UnsureRoute)
+    assert (unsure.probabilities, unsure.threshold) == ({'search': 0.4, 'reply': 0.6}, 0.5)
 
 
 def test_a_body_that_cannot_be_encoded_is_raised_unchanged():
