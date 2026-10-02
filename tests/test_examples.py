@@ -940,6 +940,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='image_generator', args={'subject': 'robot', 'style': 'punk'}, tool_call_id='0001'
     ),
     "subject='robot' style='punk'": '<svg/>',
+    'Generate an illustration of a cafe, then write alt text for it.': ToolCallPart(
+        tool_name='generate_image', args={'prompt': 'An illustration of a cozy corner cafe'}
+    ),
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
@@ -1706,6 +1709,8 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'generate_image':
+        return ModelResponse(parts=[TextPart('A cozy corner cafe with warm light spilling onto the sidewalk.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_preferred_language':
         return ModelResponse(
             parts=[

@@ -64,7 +64,7 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import InputId, LifecycleEvent
+from ._lifecycle import InputId, TaggedEvent
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
@@ -446,11 +446,19 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await super()._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
             self._audio_is_latest_input = False
         # Audio still in the buffer is committed by the request, and answered by its response.
+        sent_before: list[InputId] | None = None
         if self._audio_uncommitted:
             self._announce_commit()
+            # Whatever went out before the request joins the conversation ahead of the turn it commits.
+            sent_before = self._lifecycle.audio_commit_sent()
         self._audio_uncommitted = self._speech_detected = False
         self._sent_audio.clear()
-        await super()._create_response(input_indexes, answers)
+        try:
+            await super()._create_response(input_indexes, answers)
+        except BaseException:
+            if sent_before is not None:
+                self._lifecycle.audio_commit_failed(sent_before)
+            raise
 
     async def _attempt_reconnect(self) -> bool:
         # The new socket's buffer is empty. A held commit still covers the audio that was in it, so that
@@ -539,14 +547,14 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
                 self._speech_detected = False
         return map_event(data)
 
-    async def _all_events(self) -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
-        async for event, stale in super()._all_events():
-            yield event, stale
-            if isinstance(event, RealtimeSessionReconnectEvent):
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        async for frame in super()._tagged_frames():
+            yield frame
+            if any(isinstance(event, RealtimeSessionReconnectEvent) for event, _ in frame):
                 replayed_items = self._replayed_items[:]
                 self._replayed_items.clear()
-                for replayed_item in replayed_items:
-                    yield replayed_item, False
+                if replayed_items:
+                    yield [(replayed_item, False) for replayed_item in replayed_items]
 
 
 @dataclass(init=False)
