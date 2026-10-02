@@ -466,9 +466,12 @@ class _JsonSchemaTestData:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)
 
-    def _gen_any(self, schema: dict[str, Any]) -> Any:
+    def _gen_any(self, schema: dict[str, Any] | bool) -> Any:  # noqa: C901
         """Generate data for any JSON Schema."""
-        if 'const' in schema:
+        if isinstance(schema, bool):
+            # a boolean schema has no structure to generate from
+            return self._char()
+        elif 'const' in schema:
             return schema['const']
         elif enum := schema.get('enum'):
             return enum[self.seed % len(enum)]
@@ -636,19 +639,20 @@ class _JsonSchemaTestData:
         data: list[Any] = []
         unique_items = schema.get('uniqueItems')
         max_items = schema.get('maxItems')
-        prefix_items: list[dict[str, Any]] | None = schema.get('prefixItems')
-        items_schema: dict[str, Any] | list[dict[str, Any]] = schema.get('items', {})
+        prefix_items: list[dict[str, Any] | bool] | None = schema.get('prefixItems')
+        items_schema: dict[str, Any] | bool | list[dict[str, Any] | bool] = schema.get('items', {})
         if isinstance(items_schema, list):
             # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
-            tuple_items = [item for index, item in enumerate(items_schema) if max_items is None or max_items > index]
-            prefix_items, items_schema = prefix_items or tuple_items, {}
-        if prefix_items:
-            for item in prefix_items:
-                data.append(self._gen_any(item))
-                if unique_items:
-                    self.seed += 1
-
+            prefix_items, items_schema = prefix_items or items_schema, {}
         min_items = schema.get('minItems', 0)
+        for index, item in enumerate(prefix_items or []):
+            # stop at `maxItems`, compared as for `items` below, unless `minItems` asks for more
+            if isinstance(max_items, (int, float)) and not max_items > index and not min_items > index:
+                break
+            data.append(self._gen_any(item))
+            if unique_items:
+                self.seed += 1
+
         if min_items > len(data):
             for _ in range(min_items - len(data)):
                 data.append(self._gen_any(items_schema))

@@ -701,6 +701,44 @@ def test_list_form_items_tool_args() -> None:
     assert calls == snapshot([{'pair': ['a', 0], 'head': ['a']}])
 
 
+def test_prefix_items_max_items_tool_args() -> None:
+    """`prefixItems` longer than `maxItems` is cut to `maxItems`."""
+    calls: list[dict[str, Any]] = []
+
+    def head_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'head': {'type': 'array', 'maxItems': 1, 'prefixItems': [{'type': 'string'}, {'type': 'integer'}]}
+        },
+        'required': ['head'],
+    }
+    tool = Tool.from_schema(head_tool, name='head_tool', description='Takes a head.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'head': ['a']}])
+
+
+def test_boolean_schema_tool_args() -> None:
+    """A boolean subschema, which constrains nothing, is generated like a schema without a `type`."""
+    calls: list[dict[str, Any]] = []
+
+    def any_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {'anything': True, 'pair': {'type': 'array', 'items': [True, {'type': 'integer'}]}},
+        'required': ['anything', 'pair'],
+    }
+    tool = Tool.from_schema(any_tool, name='any_tool', description='Takes anything.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'anything': 'a', 'pair': ['a', 0]}])
+
+
 @pytest.mark.parametrize(
     'content',
     [
