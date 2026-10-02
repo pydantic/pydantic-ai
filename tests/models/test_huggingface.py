@@ -20,6 +20,7 @@ from pydantic_ai import (
     DocumentUrl,
     ImageUrl,
     ModelAPIError,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -61,7 +62,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputUsage,
     )
-    from huggingface_hub.errors import HfHubHTTPError, OverloadedError
+    from huggingface_hub.errors import GenerationError, HfHubHTTPError, OverloadedError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -662,14 +663,26 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert exc.headers == {'x-request-id': 'abc'}
 
 
+@pytest.mark.parametrize(
+    ('error_kind', 'error_class'),
+    [
+        pytest.param('overloaded', ModelOverloadedError, id='overloaded'),
+        pytest.param('generation', ModelAPIError, id='generation'),
+    ],
+)
 @pytest.mark.parametrize('first_chunk', [True, False], ids=['first-chunk', 'mid-stream'])
-async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, first_chunk: bool) -> None:
-    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces as
-    `ModelAPIError`, with no status code invented for it.
+async def test_stream_error_object_raises_model_api_error(
+    allow_model_requests: None,
+    first_chunk: bool,
+    error_kind: Literal['overloaded', 'generation'],
+    error_class: type[ModelAPIError],
+) -> None:
+    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces with
+    `in_stream` set: an overloaded server gets the 429 it answers with before a stream opens, other errors no status.
 
     https://github.com/pydantic/pydantic-ai/issues/8722
     """
-    error = OverloadedError('Model is overloaded')
+    error = (OverloadedError if error_kind == 'overloaded' else GenerationError)('Model is overloaded')
     stream: list[MockStreamEvent] = [error] if first_chunk else [text_chunk('Hello'), error]
     mock_client = MockHuggingFace.create_stream_mock(stream)
     model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
@@ -677,8 +690,15 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == 'Model is overloaded'
+    assert isinstance(exc_info.value, error_class)
+    assert exc_info.value.in_stream is True
+    if error_kind == 'overloaded':
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.body == 'Model is overloaded'
+    else:
+        assert type(exc_info.value) is ModelAPIError
+        assert exc_info.value.message == 'Model is overloaded'
     assert exc_info.value.__cause__ is error
 
 

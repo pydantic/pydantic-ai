@@ -25,7 +25,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Never, Protocol, TypedDict, assert_never
 
-from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -40,7 +40,11 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..exceptions import SuspendedResponseExpired, UserError
+from ..exceptions import (
+    ModelConnectionError,
+    SuspendedResponseExpired,
+    UserError,
+)
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
@@ -137,6 +141,7 @@ try:
         APIConnectionError,
         APIError,
         APIStatusError,
+        APITimeoutError,
         AsyncAzureOpenAI,
         AsyncOpenAI,
         AsyncStream,
@@ -228,30 +233,61 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
     try:
         yield
     except APIStatusError as e:
-        if (status_code := e.status_code) >= 400:
-            body: object | None = e.body
-            suggested_model_id = None
-            if _utils.is_str_dict(body) and body.get('code') == 'model_not_found':
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise ModelHTTPError(
-                status_code=status_code,
-                model_name=model_name,
-                body=body,
-                headers=dict(e.response.headers),
-                suggested_model_id=suggested_model_id,
-            ) from e
+        if e.status_code >= 400:
+            raise _map_status_error(e, model_name, model_id_namespace) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        raise _map_connection_error(e, model_name) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
-        # been received, so there is no status code to report.
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        # been received; it gets the status the same error has before a stream opens.
+        raise _model_errors.stream_error(model_name, e.message, e.body) from e
 
 
-def _response_error(model_name: str, code: str | None, message: str) -> ModelAPIError:
-    """Build the error for a Responses API failure reported in a 200 body or stream, which has no HTTP status."""
-    return ModelAPIError(model_name=model_name, message=f'{code}: {message}' if code else message)
+def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str = 'openai') -> ModelHTTPError:
+    body: object | None = e.body
+    suggested_model_id = None
+    if e.code == 'model_not_found':
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    return _model_errors.http_error_class(_error_category(e))(
+        status_code=e.status_code,
+        model_name=model_name,
+        body=body,
+        headers=dict(e.response.headers),
+        suggested_model_id=suggested_model_id,
+        provider_error_code=e.code,
+        provider_error_type=e.type,
+    )
+
+
+def _error_category(e: APIStatusError) -> type[ModelAPIError] | None:
+    return _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message)
+
+
+def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnectionError:
+    return _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError))
+
+
+def _response_error(model_name: str, code: str | None, message: str, *, in_stream: bool) -> ModelAPIError:
+    """Build the error for a Responses API failure reported in a 200 body or stream.
+
+    It gets the same category either way. In a stream, it also gets the status the same error has before the stream
+    opens where that's clear, like any other in-stream error. A failed response body, e.g. a background response
+    retrieved later, has no status to report.
+    """
+    if in_stream:
+        error = _model_errors.stream_error(model_name, message, {'code': code, 'message': message})
+        if isinstance(error, ModelHTTPError):
+            return error
+    category = _model_errors.openai_compatible_category(
+        _model_errors.openai_compatible_status(code, None), code, None, message
+    )
+    return (category or ModelAPIError)(
+        model_name=model_name,
+        message=f'{code}: {message}' if code else message,
+        provider_error_code=code,
+        in_stream=in_stream,
+    )
 
 
 __all__ = (
@@ -2229,16 +2265,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         except APIStatusError as e:  # pragma: lax no cover
             if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                 return model_response
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self.model_name,
-                    body=e.body,
-                    headers=dict(e.response.headers),
-                ) from e
+            if e.status_code >= 400:
+                raise _map_status_error(e, self.model_name, self._provider.model_id_namespace) from e
             raise
         except APIConnectionError as e:  # pragma: lax no cover
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+            raise _map_connection_error(e, self.model_name) from e
 
     async def request(
         self,
@@ -2411,7 +2442,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         if error := response.error:
-            raise _response_error(self.model_name, error.code, error.message)
+            raise _response_error(self.model_name, error.code, error.message, in_stream=False)
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
         tool_search_output_call_ids = _tool_search_output_call_ids(response)
@@ -2622,7 +2653,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
         if isinstance(first_chunk, responses.ResponseErrorEvent):
             # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
-            raise _response_error(self.model_name, first_chunk.code, first_chunk.message)
+            raise _response_error(self.model_name, first_chunk.code, first_chunk.message, in_stream=True)
 
         if isinstance(first_chunk, responses.ResponseCreatedEvent):
             model_name = first_chunk.response.model
@@ -4475,7 +4506,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # Record the terminal state first, so a failed background job isn't cancelled after the raise.
                     self._set_state(chunk.response.status)
                     if error := chunk.response.error:
-                        raise _response_error(self._model_name, error.code, error.message)
+                        raise _response_error(self._model_name, error.code, error.message, in_stream=True)
                     # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
                     if not self._has_refusal:
                         self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
@@ -4946,7 +4977,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # there's nothing we need to do here
 
                 elif isinstance(chunk, responses.ResponseErrorEvent):
-                    raise _response_error(self._model_name, chunk.code, chunk.message)
+                    raise _response_error(self._model_name, chunk.code, chunk.message, in_stream=True)
 
                 else:  # pragma: no cover
                     warnings.warn(

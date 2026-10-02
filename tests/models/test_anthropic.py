@@ -31,6 +31,7 @@ from pydantic_ai import (
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -3013,9 +3014,12 @@ def test_model_error_reported_in_stream(
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     with pytest.raises(expected) as exc_info:
         Agent(m).run_sync('hello')
-    assert type(exc_info.value) is expected
+    assert isinstance(exc_info.value, expected)
     if isinstance(exc_info.value, ModelHTTPError):
         assert exc_info.value.status_code == 529
+        assert isinstance(exc_info.value, ModelOverloadedError)
+    else:
+        assert type(exc_info.value) is ModelAPIError
 
 
 @pytest.mark.parametrize(

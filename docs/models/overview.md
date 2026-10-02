@@ -258,15 +258,69 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 
-## Handling HTTP Errors
+## Handling Model API Errors
 
-When a provider returns a 4xx or 5xx response, Pydantic AI raises a
-[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The exception exposes the
+When a request to a model provider fails, Pydantic AI raises a
+[`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] rather than the provider SDK's own exception, which
+remains available as `__cause__`. When the provider says what went wrong, the error is an instance of one of
+these categories, whichever provider it came from:
+
+| Exception | Raised when |
+|---|---|
+| [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] | A rate limit was reached, e.g. an HTTP 429. Exhausted quota or billing is not a rate limit. |
+| [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError] | The provider or model is temporarily overloaded or unavailable, e.g. an HTTP 503 or 529. |
+| [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
+| [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. |
+| [`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded] | The input exceeds the model's context window. |
+
+Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#http-errors), as they always were.
+Categories are assigned from the provider's error code or type where it sends one, and from the error message
+only where the provider offers nothing else. Every `ModelAPIError` also exposes the provider's
+[`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code],
+[`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and error
+[`body`][pydantic_ai.exceptions.ModelAPIError.body], when available.
+
+An error is reported the same way whether the provider sent it before a stream opened or inside an already open
+stream. For example, both an HTTP 503 from Bedrock and a `serviceUnavailableException` in a Bedrock stream raise a
+`ModelHTTPError` with status 503 that is also a `ModelOverloadedError`. The second has
+[`in_stream`][pydantic_ai.exceptions.ModelAPIError.in_stream] set, so you can still tell them apart.
+
+This lets you decide what to do about a failure without knowing which provider it came from:
+
+```python {title="handle_model_errors.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, ContextWindowExceeded, ModelRateLimitError
+
+agent = Agent('openai:gpt-5.2')
+
+try:
+    result = agent.run_sync('What is the capital of France?', message_history=history)
+except ModelRateLimitError as exc:
+    raise MyRateLimitException('AI service is rate-limited. Try again shortly.', retry_after=exc.retry_after)
+except ContextWindowExceeded:
+    result = agent.run_sync('What is the capital of France?', message_history=summarize(history))
+```
+
+[`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is the number of seconds the provider asked
+you to wait, as a `float`, or `None` if it didn't say.
+
+See [Compaction](../capabilities/compaction.md) for keeping a conversation under the context window in the
+first place, which is preferable to waiting for `ContextWindowExceeded`: model performance usually degrades well
+before the hard limit.
+
+### HTTP errors
+
+When a provider returns a 4xx or 5xx response, the error is a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], and also an instance of the error category above
+that it belongs to, if any. The exception exposes the
 [`status_code`][pydantic_ai.exceptions.ModelHTTPError.status_code], the response
-[`body`][pydantic_ai.exceptions.ModelHTTPError.body], and the provider's
+[`body`][pydantic_ai.exceptions.ModelAPIError.body], and the provider's
 **response headers** via the [`headers`][pydantic_ai.exceptions.ModelHTTPError.headers]
 attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
-surface headers, such as gRPC-based providers).
+surface headers, such as gRPC-based providers). Its
+[`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is parsed from the `retry-after-ms` or
+`Retry-After` header, handling both the integer delta-seconds and HTTP-date formats, and
+[`should_retry`][pydantic_ai.exceptions.ModelHTTPError.should_retry] from the `x-should-retry` header that OpenAI
+and Anthropic send to say whether retrying may help.
 
 When [OpenAI](openai.md), [Anthropic](anthropic.md), the [Google Gemini API](google.md),
 [Amazon Bedrock](bedrock.md), or [Groq](groq.md) reports that a requested model identifier is
@@ -276,33 +330,19 @@ suggestion is also available as
 best-effort guidance after the provider rejects a request, not local validation: unknown model
 identifiers remain valid so custom deployments and newly released models continue to work.
 
-The motivating use case is propagating the `Retry-After` header from a 429 response to a
-caller's own HTTP client.  A convenience property
-[`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses that header and
-returns the number of seconds to wait as a `float`, handling both the integer
-delta-seconds and HTTP-date formats:
-
-```python {title="handle_rate_limit.py" test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelHTTPError
-
-agent = Agent('openai:gpt-5.2')
-
-try:
-    result = agent.run_sync('What is the capital of France?')
-except ModelHTTPError as exc:
-    if exc.status_code == 429:
-        wait = exc.retry_after  # float | None
-        raise MyRateLimitException(
-            'AI service is rate-limited. Try again shortly.',
-            retry_after=wait,
-        )
-    raise
-```
-
 !!! note
-    `headers` is `None` for errors synthesised from a non-HTTP source (e.g. xAI's
-    gRPC transport, or OpenRouter errors parsed from a 200-OK response body).
+    Some `ModelHTTPError`s don't come with an HTTP status of their own, and get the status the provider uses for
+    the same error instead, so they're handled the same way:
+
+    - xAI's gRPC status codes are mapped to their HTTP equivalents, like `RESOURCE_EXHAUSTED` to 429. These have
+      `headers=None`.
+    - OpenRouter errors parsed from a 200-OK response report the error's own `code`.
+    - An error sent inside an already open stream gets the status of the same error before the stream opens, like
+      529 for Anthropic's `overloaded_error`. These have
+      [`in_stream`][pydantic_ai.exceptions.ModelAPIError.in_stream] set, and their `headers`, if any, are the
+      stream's.
+      A request can be streamed without you asking for it (e.g. when the agent has an event stream handler), which
+      is why the error doesn't otherwise depend on it.
 
 ## Fallback Model
 
@@ -312,7 +352,9 @@ raises an exception (like a 4xx/5xx API error) **or** when the response content 
 failure (like a truncated response or a failed native tool call).
 
 By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
-so you don't need to configure anything for the most common use case.
+so you don't need to configure anything for the most common use case. That includes every
+[error category](#handling-model-api-errors), such as rate limits and
+[context window overflows](#context-window-overflow).
 
 This behavior is controlled by the `fallback_on` parameter (see
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
@@ -463,6 +505,32 @@ By default, the `FallbackModel` only moves on to the next model if the current m
 [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], which includes
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. You can customize this behavior by
 passing a custom `fallback_on` argument to the `FallbackModel` constructor.
+
+### Context Window Overflow
+
+`FallbackModel` also falls back when a model raises
+[`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded], since a later model in the chain may
+have a larger context window. If the whole chain fails, the overflow is in the
+[`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup], where `except* ContextWindowExceeded`
+reaches it. If none of your models has a larger window, you can avoid sending the oversized request to each of
+them by excluding the overflow from `fallback_on`, so it propagates as is:
+
+```python {title="fallback_without_overflow.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, ContextWindowExceeded, ModelAPIError
+from pydantic_ai.models.fallback import FallbackModel
+
+
+def fallback_on(exc: Exception) -> bool:
+    return isinstance(exc, ModelAPIError) and not isinstance(exc, ContextWindowExceeded)
+
+
+agent = Agent(FallbackModel('openai:gpt-5.2', 'anthropic:claude-sonnet-4-5', fallback_on=fallback_on))
+
+try:
+    result = agent.run_sync('What is the capital of France?', message_history=history)
+except ContextWindowExceeded:
+    result = agent.run_sync('What is the capital of France?', message_history=summarize(history))
+```
 
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agent.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
