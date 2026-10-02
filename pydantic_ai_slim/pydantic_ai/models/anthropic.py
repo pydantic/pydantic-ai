@@ -219,8 +219,9 @@ def _citation_document_texts(messages: Sequence[BetaMessageParam]) -> list[str |
     def add_documents(
         blocks: str | Iterable[BetaContentBlockParam] | Iterable[beta_tool_result_block_param.Content],
     ) -> None:
-        # Only dict blocks can be documents: this skips the characters of string content and the response
-        # content block models the SDK also allows here.
+        if isinstance(blocks, str):
+            return
+        # The SDK also allows response content block models here, which are never documents.
         for block in (block for block in blocks if isinstance(block, dict)):
             if block['type'] == 'tool_result':
                 add_documents(block.get('content', ''))

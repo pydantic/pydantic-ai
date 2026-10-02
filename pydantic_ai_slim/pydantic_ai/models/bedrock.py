@@ -478,7 +478,7 @@ def _map_citations(
 
 
 def _map_citations_for_replay(
-    citations: list[Citation] | None, text: str, document_texts: list[str | None]
+    citations: list[Citation], text: str, document_texts: list[str | None]
 ) -> ContentBlockOutputTypeDef | None:
     """Rebuild the `citationsContent` block Bedrock returned for this text, or return `None` to send plain text.
 
@@ -486,7 +486,7 @@ def _map_citations_for_replay(
     part. Every source must be a character range that still selects its excerpt from a plain-text document in the
     request. `document_texts` holds the text of each document in the request's messages, or `None` if it isn't text.
     """
-    if not citations or len(citations) != 1:
+    if len(citations) != 1:
         return None
     anchor = citations[0].anchor
     if not isinstance(anchor, ContentCitationAnchor) or (anchor.start, anchor.end) != (0, len(text)):
@@ -528,8 +528,7 @@ def _citation_document_texts(messages: Sequence[MessageUnionTypeDef]) -> list[st
     for message in messages:
         for block in message['content']:
             if (document := block.get('document')) is not None:
-                text = document['source'].get('text')
-                result.append(text if isinstance(text, str) else None)
+                result.append(document['source'].get('text'))
             elif any('document' in item for item in block.get('toolResult', {}).get('content', [])):
                 return []
     return result

@@ -441,7 +441,13 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('What is the return window?')]),
-        ModelResponse(parts=[ToolCallPart('read_policy', {}, tool_call_id='call-1')], provider_name='anthropic'),
+        ModelResponse(
+            parts=[
+                ToolCallPart('read_policy', {}, tool_call_id='call-1'),
+                ToolCallPart('read_policy', {}, tool_call_id='call-2'),
+            ],
+            provider_name='anthropic',
+        ),
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -449,6 +455,8 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
                     [BinaryContent(data=b'Refunds take a week.', media_type='text/plain')],
                     tool_call_id='call-1',
                 ),
+                # Sent as string content, which holds no documents.
+                ToolReturnPart('read_policy', [], tool_call_id='call-2'),
                 UserPromptPart(
                     [BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain')]
                 ),

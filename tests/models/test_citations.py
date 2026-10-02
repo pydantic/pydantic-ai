@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Literal
 from urllib.parse import urlparse
 
 import pytest
@@ -38,8 +37,7 @@ with try_import() as bedrock_available:
 
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
-    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+    from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -58,25 +56,6 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 # The Anthropic recordings sent this explicitly; without it, requests are streamed behind the scenes.
 ANTHROPIC_SETTINGS = ModelSettings(max_tokens=4096)
-
-
-@pytest.fixture()
-async def vertex_provider(
-    request: pytest.FixtureRequest, vertex_provider_auth: None
-) -> GoogleCloudProvider | None:  # pragma: lax no cover
-    """Only construct the optional Vertex provider for Vertex matrix cases."""
-    if 'google-vertex' not in request.node.name:  # pyright: ignore[reportUnknownMemberType]
-        return None
-    if not google_available():
-        pytest.skip('google dependencies not installed')
-
-    record_mode = cast(Any, request.config).getoption('record_mode')
-    if not os.getenv('CI', False) and record_mode not in {'all', 'new_episodes', 'rewrite'}:
-        pytest.skip('Requires properly configured local google vertex config to pass')
-
-    project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
-    location = cast(GoogleCloudLocation, os.getenv('GOOGLE_LOCATION', 'global'))
-    return GoogleCloudProvider(project=project, location=location)
 
 
 @dataclass(frozen=True)
@@ -484,8 +463,8 @@ def _web_citation_agent(
     gemini_api_key: str,
     openai_api_key: str,
     openrouter_api_key: str,
-    vertex_provider: GoogleCloudProvider | None,
     xai_provider: XaiProvider | None,
+    request: pytest.FixtureRequest,
 ) -> tuple[Agent[None, str], str]:
     prompt = "Use web search to find Pydantic AI's documentation and cite it."
     settings = None
@@ -498,8 +477,7 @@ def _web_citation_agent(
         model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
         tool = WebSearchTool()
     elif case.provider == 'google-vertex':
-        assert vertex_provider is not None
-        model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+        model = GoogleModel('gemini-2.5-flash', provider=request.getfixturevalue('vertex_provider'))
         tool = WebSearchTool()
     elif case.provider == 'openai':
         model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -582,8 +560,8 @@ async def test_web_citations(
     gemini_api_key: str,
     openai_api_key: str,
     openrouter_api_key: str,
-    vertex_provider: GoogleCloudProvider | None,
     xai_provider: XaiProvider | None,
+    request: pytest.FixtureRequest,
 ) -> None:
     if not WEB_PROVIDER_AVAILABLE[case.provider]():
         pytest.skip(f'{case.provider} dependencies not installed')
@@ -594,8 +572,8 @@ async def test_web_citations(
         gemini_api_key=gemini_api_key,
         openai_api_key=openai_api_key,
         openrouter_api_key=openrouter_api_key,
-        vertex_provider=vertex_provider,
         xai_provider=xai_provider,
+        request=request,
     )
 
     if case.stream:
