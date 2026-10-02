@@ -831,7 +831,9 @@ ones waiting at startup, and `/plugins enable NAME` approves one. See
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
-same chain unconditionally. Only `ModelAPIError`, `FallbackExceptionGroup`, and
+same chain unconditionally. Its optional focus is free text, not shell arguments:
+`/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
+the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off; a declaration under the same name
@@ -2112,9 +2114,12 @@ again. Services with Dynamic Client Registration need none of this: add them as
 
 `host.conversation` is the retained history: `messages` is a snapshot,
 `await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model the next prompt will use. `host.status` is the footer's state; set
-`context_alert` to paint the context figure in the warning colour. The built-in
-`compaction` plugin uses both. A host built outside the shell gets an in-memory
+model the next prompt will use. `host.status` is the footer's state:
+`context_tokens` and `context_window` render as compact used/max, such as
+`128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
+not an assumed fallback. Set `context_alert` to paint the figure in the warning
+colour. The built-in `compaction` plugin fills these fields from Harness usage
+events, including an explicit window override, and clears the window when unloaded. A host built outside the shell gets an in-memory
 `Transcript` and a detached `Status`, so tests need no special case. The status
 row itself is CLAI's; a plugin adds to it with `get_status_segments`.
 
