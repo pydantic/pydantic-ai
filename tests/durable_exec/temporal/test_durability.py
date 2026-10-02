@@ -4956,7 +4956,7 @@ def _population_change_model_fn(messages: list[ModelMessage], info: AgentInfo) -
     return ModelResponse(parts=[TextPart('done')])
 
 
-async def _admit_later_from_step_two(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+async def _admit_later_from_step_two(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     # Workflow-side and derived from the run step, so replay resolves the same population.
     return [tool_def for tool_def in tool_defs if tool_def.name != 'later' or ctx.run_step > 1]
 
