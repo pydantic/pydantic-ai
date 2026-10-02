@@ -179,7 +179,9 @@ or `ssh` password prompts, cannot read your input. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
 CLAI. The command, stdout, stderr, and completion status are saved in the
 conversation for the model's next turn, including partial output from interrupted
-commands. Running a command does not request a model reply. This context survives
+commands. Each stream retains up to 100,000 characters, with a truncation notice
+when it exceeds that limit; all output continues streaming to the terminal.
+Running a command does not request a model reply. This context survives
 `/resume` without re-running the command; `/new` starts without it. Do not use `!`
 for output you do not want saved or shared with the model.
 

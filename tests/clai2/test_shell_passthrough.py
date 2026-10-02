@@ -250,6 +250,7 @@ class TestShellPassthrough:
         assert 'save command and output for the next prompt' in ' '.join(text.split())
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
 @pytest.mark.parametrize(
     ('command', 'status', 'stdout', 'stderr'),
     [
@@ -286,6 +287,7 @@ async def test_shell_context_reaches_next_prompt(
         assert f'{stdout}\nDone (' in text
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
 async def test_shell_context_survives_exit_and_resume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     await shell_session(
         tmp_path,
@@ -317,6 +319,7 @@ async def test_shell_context_survives_exit_and_resume(tmp_path: Path, monkeypatc
     assert (tmp_path / 'marker').read_text() == 'once'
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
 async def test_new_session_drops_shell_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[ModelRequestContext] = []
     await shell_session(
@@ -331,6 +334,7 @@ async def test_new_session_drops_shell_context(tmp_path: Path, monkeypatch: pyte
     ] == ['fresh']
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
 async def test_interrupted_shell_output_reaches_next_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[ModelRequestContext] = []
     await shell_session(
@@ -348,18 +352,29 @@ async def test_interrupted_shell_output_reaches_next_prompt(tmp_path: Path, monk
     assert '\nInterrupted\n\nstdout:\npartial\n\nstderr:\nproblem' in part.content
 
 
-async def test_large_stdout_and_stderr_are_drained_concurrently() -> None:
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
+@pytest.mark.parametrize('max_output_chars', [100, 100_000])
+async def test_large_stdout_and_stderr_are_drained_concurrently(
+    monkeypatch: pytest.MonkeyPatch, max_output_chars: int
+) -> None:
+    monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._MAX_OUTPUT_CHARS', max_output_chars)
     output = io.StringIO()
     command = "i=0; while [ $i -lt 5000 ]; do printf 'stdout\\n'; printf 'stderr\\n' >&2; i=$((i + 1)); done"
     with anyio.fail_after(10):
         context = await run_shell_command(command, console=Console(file=output), interrupts=Interrupts())
     stdout = 'stdout\n' * 5000
     stderr = 'stderr\n' * 5000
+    if max_output_chars == 100:
+        marker = '\n[Output truncated after 100 characters]\n'
+        stdout = stdout[:100] + marker
+        stderr = stderr[:100] + marker
     assert f'\nstdout:\n{stdout}\n\nstderr:\n{stderr}' in context
+    assert '\nExit code 0\n' in context
     assert output.getvalue().count('stdout\n') == 5000
     assert output.getvalue().count('stderr\n') == 5000
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
 @pytest.mark.parametrize('external_cancel', [False, True])
 async def test_output_streams_before_exit_and_readers_are_drained(external_cancel: bool) -> None:
     printed = asyncio.Event()
@@ -461,6 +476,22 @@ async def test_detached_descendant_cannot_hold_output_open(
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert asyncio.all_tasks() == tasks_before
+
+
+def test_output_limit_counts_characters_and_marks_truncation_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._MAX_OUTPUT_CHARS', 3)
+    console_output = io.StringIO()
+    output = _ShellOutput(console=Console(file=console_output))
+    output.pipe_data_received(1, 'été'.encode())
+    assert output.stdout.getvalue() == 'été'  # Exactly the limit is not truncated.
+    output.pipe_data_received(1, b'!')
+    output.pipe_data_received(1, b'more')
+    output.pipe_connection_lost(1, None)
+    output.pipe_data_received(2, b'err')
+    output.pipe_connection_lost(2, None)
+    assert output.stdout.getvalue() == 'été\n[Output truncated after 3 characters]\n'
+    assert output.stderr.getvalue() == 'err'
+    assert console_output.getvalue() == 'été!moreerr'
 
 
 def test_decodes_split_and_invalid_utf8() -> None:

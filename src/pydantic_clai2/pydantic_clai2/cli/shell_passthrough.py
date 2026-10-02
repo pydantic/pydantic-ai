@@ -22,6 +22,7 @@ HELP = '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Wind
 # Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
 _INTERRUPT_GRACE = 0.25
 _OUTPUT_DRAIN_GRACE = 0.1
+_MAX_OUTPUT_CHARS = 100_000
 
 
 class _ShellOutput(asyncio.SubprocessProtocol):
@@ -36,7 +37,12 @@ class _ShellOutput(asyncio.SubprocessProtocol):
 
     def _write(self, fd: int, data: bytes, *, final: bool = False) -> None:
         text = self._decoders[fd].decode(data, final=final)
-        (self.stdout if fd == 1 else self.stderr).write(text)
+        captured = self.stdout if fd == 1 else self.stderr
+        remaining = _MAX_OUTPUT_CHARS - captured.tell()
+        if remaining >= 0:
+            captured.write(text[:remaining])
+            if len(text) > remaining:
+                captured.write(f'\n[Output truncated after {_MAX_OUTPUT_CHARS} characters]\n')
         if text:
             self.console.print(text, end='', markup=False, highlight=False, soft_wrap=True)
             self.needs_newline = not text.endswith('\n')
