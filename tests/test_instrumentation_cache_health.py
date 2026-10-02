@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
@@ -92,7 +93,7 @@ def cache_spans(
     prompt: str | list[str | CachePoint] = 'prompt',
     sampler: Sampler | None = None,
     use_fallback: bool = False,
-    capabilities: Sequence[AbstractCapability[None]] = (),
+    capabilities: Sequence[AbstractCapability[Any]] = (),
 ) -> tuple[list[ReadableSpan], InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     tracer_provider = TracerProvider(sampler=sampler) if sampler is not None else TracerProvider()
