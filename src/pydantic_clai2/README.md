@@ -1588,8 +1588,11 @@ class Search(Plugin):
 Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
 importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove. Closing the menu returns to the prompt without printing the
-plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
+reload, and remove. Type to filter plugin names, or press `/` to start a fresh
+search. Backspace edits the filter; the arrow keys move between matches. Space
+toggles the highlighted plugin, and Shift+C/R/D configure, reload, and remove it.
+Enter, Esc, or Shift+Q close the menu without printing the plugin list. Use
+`/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has every method, event, and rule.
 

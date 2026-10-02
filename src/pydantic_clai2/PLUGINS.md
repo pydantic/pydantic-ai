@@ -14,6 +14,15 @@ CLAI groups its shell implementation into `cli/`, `config/`, `runtime/`,
 continue importing `PluginHost` from `pydantic_clai2.plugins` and `Command`
 from `pydantic_clai2.commands`.
 
+## Find and manage plugins
+
+Open `/plugins` and type a plugin name to filter the list. Matching ignores case.
+Press `/` to clear the filter and start again, including when there are no matches.
+Backspace edits the filter; Up and Down move between matches. Space turns the
+highlighted plugin on or off. Use Shift+C to configure it, Shift+R to reload it,
+and Shift+D to remove it. Lowercase letters always filter, never run these actions.
+Changes apply immediately. Enter, Esc, or Shift+Q return to the prompt.
+
 ## Startup
 
 `clai2 --help` parses arguments without loading the agent or plugins. Interactive

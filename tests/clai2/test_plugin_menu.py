@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 from termflow.tui import MenuItem
+from termflow.tui.keys import Key
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
@@ -182,8 +183,118 @@ def test_rows_details_and_keys(tmp_path: Path) -> None:
     assert menu.details(MenuItem('stray', value=None)) == ''
     assert menu.details(MenuItem('typed', value=0)) == ''
     assert len(fake.redraws) == 4
-    assert menu.close(fake, alpha).item is alpha
     assert menu.build() is not None
+
+
+def run_keys(
+    menu: PluginMenu[None], keys: Sequence[str], *, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> tuple[MenuResult, list[str]]:
+    frames: list[str] = []
+    inputs = iter(keys)
+
+    def read_key() -> str:
+        frames.append(unstyled(capsys.readouterr().out))
+        return next(inputs)
+
+    monkeypatch.setattr('pydantic_clai2.ui.menus.plugin_menu.menu_key', read_key)
+    return menu.build().run(), frames
+
+
+@pytest.mark.parametrize(
+    ('keys', 'query', 'name'),
+    [
+        (list('coder'), 'coder', 'coder'),
+        (list('/quiet'), 'quiet', 'quiet'),
+        (list('BETa'), 'BETa', 'beta'),
+        ([*'codex', Key.BACKSPACE, 'r'], 'coder', 'coder'),
+        ([*'missing', Key.ENTER, '/', *'beta'], 'beta', 'beta'),
+        ([*'coder', '/', *'quiet'], 'quiet', 'quiet'),
+        (['z', Key.BACKSPACE, Key.END], '(type to filter)', None),
+        ([*'beta', Key.BACKSPACE, Key.BACKSPACE, Key.BACKSPACE, Key.BACKSPACE], '(type to filter)', 'alpha'),
+        ([Key.END, '/', Key.DOWN], '(type to filter)', 'beta'),
+    ],
+)
+def test_search_and_navigation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    keys: list[str],
+    query: str,
+    name: str | None,
+) -> None:
+    loader = make_loader(tmp_path, 'alpha', 'beta', 'coder', 'quiet')
+    result, frames = run_keys(
+        PluginMenu(loader, apply=run_now), [*keys, Key.ENTER], monkeypatch=monkeypatch, capsys=capsys
+    )
+    assert result.item is not None
+    if name is None:
+        assert is_save_and_close(result.item)
+    else:
+        assert result.item.value == name
+    assert f'search: {query}' in frames[-1]
+    if query != '(type to filter)':
+        assert '○ alpha' not in frames[-1]
+    assert all(entry.loaded is None for entry in loader.entries()), 'typing must never run a plugin action'
+
+
+def test_filtered_actions_keep_the_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    loader = make_loader(tmp_path, 'alpha', 'directory')
+    result, frames = run_keys(
+        PluginMenu(loader, apply=run_now),
+        [*'directory', ' ', 'R', ' ', 'D', 'Q'],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+    )
+    assert result.cancelled
+    for frame in frames[-5:]:
+        assert 'search: directory' in frame and '○ alpha' not in frame
+    assert '● directory' in frames[-4] and '● directory' in frames[-3]
+    assert '○ directory' in frames[-2] and '○ directory' in frames[-1]
+    assert all(entry.loaded is None for entry in loader.entries())
+
+
+@pytest.mark.parametrize('key', [' ', 'C'])
+def test_configure_from_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], key: str
+) -> None:
+    loader = make_loader(tmp_path, 'alpha', tuned=('tuned',))
+    if key == 'C':
+        run_now(loader.enable('tuned'))
+    result, _ = run_keys(PluginMenu(loader, apply=run_now), [*'tuned', key], monkeypatch=monkeypatch, capsys=capsys)
+    assert result.item is not None and result.item.value == Configure('tuned')
+
+
+@pytest.mark.parametrize('key', [Key.ESCAPE, 'ctrl-c', 'Q'])
+@pytest.mark.parametrize('names', [(), ('alpha',)])
+def test_no_matches_and_cancel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    key: str,
+    names: tuple[str, ...],
+) -> None:
+    loader = make_loader(tmp_path, *names)
+    result, frames = run_keys(
+        PluginMenu(loader, apply=run_now), [*'/missing', Key.ENTER, key], monkeypatch=monkeypatch, capsys=capsys
+    )
+    assert result.cancelled and result.item is None
+    assert '(no matches)' in frames[-1]
+
+
+def test_removing_the_last_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    loader = make_loader(tmp_path, 'alpha')
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_plugin(PluginSettings(id='installed', factory='clai_missing.plugin', enabled=False))
+    result, frames = run_keys(
+        PluginMenu(loader, apply=run_now), [*'installed', 'D', 'Q'], monkeypatch=monkeypatch, capsys=capsys
+    )
+    assert result.cancelled
+    assert 'search: installed' in frames[-1] and '(no matches)' in frames[-1]
+    assert [entry.name for entry in loader.entries()] == ['alpha']
 
 
 def test_errors_become_a_notice(tmp_path: Path) -> None:
@@ -289,7 +400,7 @@ def test_configure_key(tmp_path: Path) -> None:
     assert menu.configure(fake, plain) is None
     assert menu.notice == 'plain has no settings menu.'
     menu.toggle(fake, tuned)
-    assert 'settings press c to configure' in unstyled(menu.details(tuned))
+    assert 'settings press C to configure' in unstyled(menu.details(tuned))
     result = menu.configure(fake, tuned)
     assert result is not None and result.item is not None and result.item.value == Configure('tuned')
 
