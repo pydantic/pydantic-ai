@@ -1477,6 +1477,21 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
     assert 'gen_ai.aggregated_usage.input_tokens' not in sess.attributes
 
 
+async def test_session_span_reports_the_usage_the_provider_reports_as_its_session_ends() -> None:
+    """GPT-Live bills its last seconds only as the session ends, after the reading stopped; the span counts them too."""
+
+    class _EndingConnection(_Connection):
+        async def _end_session(self) -> AsyncIterator[SessionUsage]:
+            yield SessionUsage(RequestUsage(input_tokens=7), response_scoped=False)
+
+    settings, exporter = _settings(use_aggregated_usage_attribute_names=False)
+    async with RealtimeSession(_EndingConnection([]), _ok_runner, instrumentation=settings, model_name='gpt-live-1'):
+        pass
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.usage.input_tokens'] == 7
+
+
 async def test_chat_span_matches_instrumented_model_shape() -> None:
     """One `chat {model}` span per assistant response, with InstrumentedModel-parity attributes.
 
