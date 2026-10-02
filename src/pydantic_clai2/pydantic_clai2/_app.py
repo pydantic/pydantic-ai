@@ -57,6 +57,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.runtime._session import Session, StockAgent
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
@@ -662,16 +663,23 @@ class _Shell(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             models=self.context.store.models,
         )
+        self.session.on_setup_error = self.capability_failed
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
-        """Capabilities bound to the next run: supplied, plugin-registered, then speculation.
+        """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
 
-        Speculation sees the others, so its sandbox mount stays within their `FileSystem`.
+        Speculation sees the others unguarded, so its sandbox mount stays within their `FileSystem`.
         """
         granted = (*self.plugins, *self.loader.capabilities())
+        bound = (*self.plugins, *self.loader.run_capabilities())
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
-        return (*granted, *self.speculation.capabilities(granted))
+            bound = (*bound, self.tasks.presentation)
+        return (*bound, *self.speculation.capabilities(granted))
+
+    def capability_failed(self, error: CapabilitySetupError) -> None:
+        """Report that a failing settings-built capability is left out of later turns."""
+        self.console.print(self.loader.suspend(error), style=theme.color(theme.WARNING), markup=False)
 
     def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
         """A separately saved session configured like the foreground one, seeded with `history`."""
@@ -688,6 +696,7 @@ class _Shell(Generic[DepsT, OutputT]):
         child.tool_retries = self.session.tool_retries
         child.resolve_model = self.session.resolve_model
         child.model_settings = self.context.model_settings(child.model or _model_label(self.agent))
+        child.on_setup_error = self.capability_failed
         return child
 
     async def tasks_command(self, args: list[str]) -> str:
@@ -816,7 +825,11 @@ class _Shell(Generic[DepsT, OutputT]):
                 [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
             )
             try:
-                self.status.model = self.session.model or _model_label(self.agent)
+                model = self.session.model or _model_label(self.agent)
+                if model != self.status.model:
+                    self.status.context_window = None
+                    self.status.context_alert = False
+                self.status.model = model
                 self.status.workspace = self.session.workspace
                 self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
                 if self.editor is not None:
@@ -1017,6 +1030,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
 def _reset_status(command: str, status: Status) -> None:
     if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
         status.context_tokens = None
+        status.context_window = None
         status.context_alert = False
         status.output_tokens = None
         status.cost = None

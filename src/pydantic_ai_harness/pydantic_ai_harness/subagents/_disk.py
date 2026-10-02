@@ -47,15 +47,14 @@ class AgentOverride:
     """Per-agent override for a disk-loaded sub-agent, keyed by the agent's name.
 
     Both fields are optional. An unset `model` inherits the parent run's model; an
-    unset `effort` runs at the capability's minimum effort floor (see
-    `clamp_effort`).
+    unset `effort` leaves the inherited model's thinking setting unchanged.
     """
 
     model: Model | KnownModelName | str | None = None
     """Model to run this disk agent with, in place of inheriting the parent's."""
 
     effort: ThinkingLevel | None = None
-    """Thinking/reasoning level for this disk agent. Raised to at least the floor."""
+    """Thinking/reasoning level for this disk agent, passed through unchanged."""
 
 
 @dataclass(frozen=True)
