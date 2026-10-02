@@ -1,6 +1,10 @@
 # Pydantic AI Harness
 
-## Repository purpose
+Rules for the `pydantic-ai-harness` package in `src/pydantic_ai_harness/`. They add to the root
+`AGENTS.md`. Test rules are in `tests/harness/AGENTS.md`. Docs page rules are in
+`docs/harness/AGENTS.md`. Paths in this file are relative to the repository root.
+
+## Package purpose
 
 `pydantic-ai-harness` is the first-party capability library for Pydantic AI.
 
@@ -24,15 +28,13 @@ change instead of reimplementing core behavior in harness.
 - **Guard**: a type of capability that validates inputs/outputs or controls tool access (e.g. `InputGuard`, `OutputGuard`)
 - **Harness**: this package -- a collection of pre-made capabilities for Pydantic AI.
 - **AICA**: AI Code Assistant -- the automated agent that implements issues, reviews plans, and handles PR feedback
-- **Ralph loop**: the state-machine-based workflow that drives AICA through phases (TRIAGE -> GOALS -> PLAN -> CODE -> VERIFY -> REVIEW -> PUBLISH)
-- **DDD+ protocol**: classification system for PR review comments (do, dismiss, discuss, waiting, done)
 
 ## AICA preflight
 
 Before implementing or reviewing a capability change:
 
-1. Read `agent_docs/index.md`.
-2. Read the linked `agent_docs/` guide for the task.
+1. Read `src/pydantic_ai_harness/agent_docs/index.md`.
+2. Read the linked `src/pydantic_ai_harness/agent_docs/` guide for the task.
 3. Read the public Pydantic AI docs for every integration point you touch:
    - capabilities: <https://pydantic.dev/docs/ai/capabilities/overview/>
    - hooks: <https://pydantic.dev/docs/ai/core-concepts/hooks/>
@@ -40,29 +42,18 @@ Before implementing or reviewing a capability change:
    - advanced tools: <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/>
    - agents: <https://pydantic.dev/docs/ai/core-concepts/agent/>
    - testing: <https://pydantic.dev/docs/ai/guides/testing/>
-4. Inspect the installed `pydantic_ai` package source for exact hook/toolset
-   signatures when needed. Do not assume a contributor's local checkout layout.
+4. Read the `pydantic_ai` source in `pydantic_ai_slim/pydantic_ai/` for exact
+   hook/toolset signatures when needed.
 5. Use `pydantic_ai_harness.code_mode` as the exemplar for capability shape,
    docs, tests, and public exports until another capability becomes a better
    example. Capabilities live in their own top-level submodule
-   `pydantic_ai_harness/<name>/` (module name = capability name; one module per
-   capability or strategy) and are re-exported lazily from the root
-   `__init__.py`, which keeps each one's optional dependencies out of the root
-   import. The `experimental` tier is
-   retired; ACP is the sole remaining experimental capability (see
-   `agent_docs/capability-authoring.md`, "Capability Submodules And Exports").
-
-## Branch context (optional)
-
-`.agents/skills/branch-context/` is opt-in per-branch state for work that spans
-sessions: an issue brief, an append-only decisions log, and session handoffs.
-The scaffolding (`SKILL.md`, scripts, `*.template.md`) is committed; the
-instances are git-ignored and created per branch.
-
-- If `.agents/skills/branch-context/issue-brief.md` exists, read it plus
-  `pr-decisions.md` and the latest handoff before making design decisions.
-- To adopt a branch, instantiate the surfaces from the templates or run
-  `/adopt-pr`. Contributors who never instantiate them can ignore this section.
+   `src/pydantic_ai_harness/pydantic_ai_harness/<name>/` (module name = capability
+   name; one module per capability or strategy) and are re-exported lazily from
+   `src/pydantic_ai_harness/pydantic_ai_harness/__init__.py`, which keeps each
+   one's optional dependencies out of the package import. The `experimental` tier
+   is retired; ACP is the sole remaining experimental capability (see
+   `src/pydantic_ai_harness/agent_docs/capability-authoring.md`, "Capability
+   Submodules And Exports").
 
 ## Capabilities API reference
 
@@ -74,12 +65,12 @@ When implementing a new capability, reference these docs:
 - <https://pydantic.dev/docs/ai/tools-toolsets/toolsets/> -- toolset abstraction, building tools for capabilities
 - <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/> -- tool hooks, prepare tools, tool validation
 - <https://pydantic.dev/docs/ai/core-concepts/agent/> -- agent configuration, instructions, model settings
-- Installed `pydantic_ai.capabilities` source -- `AbstractCapability`, hook signatures, and composition behavior
-- Installed `pydantic_ai.toolsets` source -- `AbstractToolset`, `WrapperToolset`, and `ToolsetTool`
+- `pydantic_ai_slim/pydantic_ai/capabilities/` -- `AbstractCapability`, hook signatures, and composition behavior
+- `pydantic_ai_slim/pydantic_ai/toolsets/` -- `AbstractToolset`, `WrapperToolset`, and `ToolsetTool`
 
 ## Capability naming
 
-Follow the naming convention in `agent_docs/capability-authoring.md` ("Naming
+Follow the naming convention in `src/pydantic_ai_harness/agent_docs/capability-authoring.md` ("Naming
 Capabilities"): a noun when the capability names a thing (a tool or faculty the
 model uses, a subsystem, a named strategy); an imperative verb phrase when it
 acts on the run and one verb phrase states its entire contract. Never invent a
@@ -97,7 +88,7 @@ Emitting nothing is a valid answer when core's own spans already cover the work.
 It is an answer to state in the docs, not a step to skip.
 
 The house pattern (spans on `ctx.tracer`, attribute naming, content behind
-`trace_include_content`) is in `agent_docs/capability-authoring.md`
+`trace_include_content`) is in `src/pydantic_ai_harness/agent_docs/capability-authoring.md`
 "Telemetry".
 
 ## Coding standards
@@ -135,8 +126,6 @@ Applies to docs, READMEs, docstrings, comments, commit messages, and PR text.
 ## Package management
 
 - Change dependencies only when required. Use `uv` and link an issue.
-- PRs touching `pyproject.toml` or `uv.lock` require the
-  `dependencies:approved` label; pushes clear approval.
 
 ## Local verification
 
@@ -145,37 +134,13 @@ Run Ruff across the repository. Run Pyright and pytest for the paths that you mo
 ```bash
 uv run --no-sync ruff format --check .
 uv run --no-sync ruff check .
-PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright pydantic_ai_harness/<module>.py tests/<module>.py
-uv run --no-sync pytest -p no:cacheprovider tests/<capability>
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src/pydantic_ai_harness/pydantic_ai_harness/<capability>/ tests/harness/<capability>/
+uv run --no-sync pytest -p no:cacheprovider tests/harness/<capability>
 ```
 
 CI runs the repository-wide typecheck, test, and combined coverage gates.
 Do not run repository-wide Pyright, pytest, or coverage locally.
 If CI reports a coverage gap, run coverage only for the flagged file or focused test.
-
-### Workspace And Python 3.10
-
-```bash
-uv sync --locked --all-packages --all-extras --group lint
-```
-
-Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright
-configuration. Workspace commands require Python 3.11+ because CLAI depends on
-Termflow. Harness's package metadata and Pyright target remain Python 3.10+.
-Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
-
-```bash
-uv venv /tmp/harness-py310 --python 3.10
-uv pip install --python /tmp/harness-py310/bin/python --resolution lowest-direct --group dev \
-  --editable . --requirements pyproject.toml --all-extras
-/tmp/harness-py310/bin/python -m pytest -p no:cacheprovider tests/code_mode
-```
-
-Use `uv pip` for Python 3.10 to resolve Harness without CLAI's Python requirement.
-CI retains Python 3.10 slim, all-extras, and lowest-versions jobs. The slim and
-all-extras installs use the shared lock's versions as ceilings, allowing older
-releases when a locked dependency requires Python 3.11+. Run the environment's
-Python directly so `uv run` does not select the workspace interpreter.
 
 ## File structure
 
@@ -183,64 +148,17 @@ The tree is discoverable by listing it; only the conventions that are not are
 recorded here.
 
 Each released capability is a self-contained package under
-`pydantic_ai_harness/<capability>/` (naming and exports are covered in the
-preflight above), with tests under `tests/<capability>/`. It ships **two**
-hand-maintained docs that must stay in sync: the `README.md` next to the code
-(GitHub/PyPI) and the `docs/<capability>.md` page (the docs site at
-pydantic.dev/docs/ai/harness). The `docs/` folder is flat -- there are no
-`capabilities/` or `experimental/` subdirectories. A user-facing change updates
-both; `agent_docs/review-checklist.md` "Docs" and the `docs-parity-reviewer`
-subagent enforce the parity before merge.
+`src/pydantic_ai_harness/pydantic_ai_harness/<capability>/` (naming and exports are covered in the
+preflight above), with tests under `tests/harness/<capability>/`. It ships **two**
+hand-maintained docs: the `README.md` next to the code (GitHub/PyPI) and the
+`docs/harness/<capability>.md` page (the docs site at pydantic.dev/docs/ai/harness).
+`docs/harness/AGENTS.md` covers keeping them in sync.
 
 Do not add placeholder template files for new capabilities. Start from the
 existing `CodeMode` package shape, then delete what the new capability does not
 need.
 
-## Testing patterns
-
-- Import `TestModel` from `pydantic_ai.models.test` for model behavior.
-- Keep real provider calls out of tests.
-- `ALLOW_MODEL_REQUESTS = False` is set globally in `conftest.py`
-- Tests use `pytest-anyio` for async support
-- Each capability test class follows: `TestCapabilityName` with methods `test_<scenario>`
-- Prefer tests through `Agent(..., capabilities=[...])` when that is the public
-  behavior. Use direct `Toolset`/`RunContext` tests for lower-level lifecycle,
-  schema, retry, or wrapper behavior that is hard to isolate through `Agent`.
-- Don't import private (`_`-prefixed) helpers into tests. Exercise them through
-  the capability's public surface so tests survive internal refactors: drive the
-  behavior through `Agent(..., capabilities=[...])`, or import the public class
-  re-exported from the capability package's `__init__.py` (e.g.
-  `from pydantic_ai_harness.filesystem import FileSystemToolset`, not
-  `from pydantic_ai_harness.filesystem._toolset import _content_hash`). When a
-  branch is only reachable by calling a private helper directly, mark it
-  `# pragma: no cover` rather than reaching into the helper from a test.
-- Test async behavior directly, following `agent_docs/concurrency.md`: assert
-  the cancellation, the ordering, or the cleanup itself rather than the output
-  it happens to produce; order steps with `Event`s instead of sleeps; and reach
-  the real trigger (a real outer `anyio` cancel scope, the Trio parametrization
-  where the suite has it) rather than a stand-in.
-
 ## Contributing rules for AICAs
 
 - Always link sources for any claims made during research
 - Commit messages should summarize the "why", not the "what"
-- PR titles feed the release notes verbatim -- GitHub builds "What's Changed" from them. Write an
-  imperative sentence naming the change, and wrap every code identifier (class names, keyword
-  arguments, module paths, CLI flags, env vars, file paths) in backticks. No `feat:` / `fix:` /
-  `docs:` prefix -- that belongs on the commit subject, not the title. Merged titles predating this
-  rule carry prefixes; follow the rule, not the back catalogue.
-
-## Pushing changes
-
-**A restriction is a conclusion you earn from a real failure, not a field you read.** Never report an
-operation as blocked, unavailable, or not-permitted based on a metadata flag, a config field, or a
-docs claim — attempt it and quote the actual error. (`maintainerCanModify: false` on a PR does *not*
-mean you cannot push: it governs the upstream-maintainer auto-grant, not your own access to the
-fork.) If you genuinely cannot attempt it, say "not attempted", never "we can't".
-
-**Pushing is not the end of the task.** After you push, do not go idle. The work is done when
-**CI is green and there are no unresolved comments** — see the `pushing-commits-to-the-repo` skill
-for the full loop.
-
-**Do not leave work uncommitted.** Don't end a turn with unstaged or uncommitted local changes
-unless the user's own instructions say otherwise.

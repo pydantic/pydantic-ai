@@ -12,6 +12,7 @@ from typing_extensions import assert_never
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
+from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -218,38 +219,40 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         size = resolved.size
         user = openai_settings.get('openai_user')
 
+        input_images = await self._map_input_images(images) if images else None
         try:
-            if images:
-                response = await self._client.images.edit(
-                    image=await self._map_input_images(images),
-                    prompt=prompt,
-                    model=self.model_name,
-                    n=openai_settings.get('openai_n') or OMIT,
-                    size=size if size is not None else OMIT,
-                    output_format=openai_settings.get('openai_output_format') or OMIT,
-                    quality=openai_settings.get('openai_quality') or OMIT,
-                    background=openai_settings.get('openai_background') or OMIT,
-                    input_fidelity=openai_settings.get('openai_input_fidelity') or OMIT,
-                    output_compression=output_compression if output_compression is not None else OMIT,
-                    user=user if user is not None else OMIT,
-                    extra_headers=openai_settings.get('extra_headers'),
-                    extra_body=openai_settings.get('extra_body'),
-                )
-            else:
-                response = await self._client.images.generate(
-                    prompt=prompt,
-                    model=self.model_name,
-                    n=openai_settings.get('openai_n') or OMIT,
-                    size=size if size is not None else OMIT,
-                    output_format=openai_settings.get('openai_output_format') or OMIT,
-                    quality=openai_settings.get('openai_quality') or OMIT,
-                    background=openai_settings.get('openai_background') or OMIT,
-                    moderation=openai_settings.get('openai_moderation') or OMIT,
-                    output_compression=output_compression if output_compression is not None else OMIT,
-                    user=user if user is not None else OMIT,
-                    extra_headers=openai_settings.get('extra_headers'),
-                    extra_body=openai_settings.get('extra_body'),
-                )
+            with map_decode_errors(self.model_name):
+                if input_images is not None:
+                    response = await self._client.images.edit(
+                        image=input_images,
+                        prompt=prompt,
+                        model=self.model_name,
+                        n=openai_settings.get('openai_n') or OMIT,
+                        size=size if size is not None else OMIT,
+                        output_format=openai_settings.get('openai_output_format') or OMIT,
+                        quality=openai_settings.get('openai_quality') or OMIT,
+                        background=openai_settings.get('openai_background') or OMIT,
+                        input_fidelity=openai_settings.get('openai_input_fidelity') or OMIT,
+                        output_compression=output_compression if output_compression is not None else OMIT,
+                        user=user if user is not None else OMIT,
+                        extra_headers=openai_settings.get('extra_headers'),
+                        extra_body=openai_settings.get('extra_body'),
+                    )
+                else:
+                    response = await self._client.images.generate(
+                        prompt=prompt,
+                        model=self.model_name,
+                        n=openai_settings.get('openai_n') or OMIT,
+                        size=size if size is not None else OMIT,
+                        output_format=openai_settings.get('openai_output_format') or OMIT,
+                        quality=openai_settings.get('openai_quality') or OMIT,
+                        background=openai_settings.get('openai_background') or OMIT,
+                        moderation=openai_settings.get('openai_moderation') or OMIT,
+                        output_compression=output_compression if output_compression is not None else OMIT,
+                        user=user if user is not None else OMIT,
+                        extra_headers=openai_settings.get('extra_headers'),
+                        extra_body=openai_settings.get('extra_body'),
+                    )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 match e.body:
