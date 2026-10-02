@@ -11,7 +11,7 @@ on:
     secrets:
       MINIMAX_API_KEY:
         required: true
-if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
+if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness') }}
 permissions:
   contents: read
   checks: read
@@ -137,8 +137,11 @@ imports:
   - shared/repo-context.md
   - shared/rigor.md
   - shared/engine-minimax.md
+  - shared/provider-health.md
   - shared/pre-steps.md
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 # Decide who must act next
 
