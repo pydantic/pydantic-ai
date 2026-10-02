@@ -280,16 +280,14 @@ def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool
     if (started := sim.truth.speech_started.get(input_.key)) is not None and started <= response.seq_end:
         return True  # Server VAD heard the user start before the response ended.
 
+    content_read, ended, cancelled = response.content_read, response.seq_end, response.status == 'cancelled'
+
     def before_reply(operation: Operation) -> bool:
         # Audio a failed send never delivered is no one's turn.
         return (
             operation.name == 'send_audio'
             and operation.error is None
-            and (
-                response.content_read is None
-                or operation.issued < response.content_read
-                or (response.status == 'cancelled' and operation.issued < response.seq_end)
-            )
+            and (content_read is None or operation.issued < content_read or (cancelled and operation.issued < ended))
         )
 
     # Audio for this turn: streamed since the spoken turn before it was committed.
@@ -699,12 +697,31 @@ CLEARED_BARGE_IN = Finding(
     matches=_speech_cleared_after_barge_in,
 )
 
+
+def _pair_answered_with_the_turn_that_cut_it_off(sim: Simulation) -> bool:
+    """Two calls whose turn a user turn (typed or spoken) cut off, answered by one response together with that turn."""
+    truth = sim.truth
+    for cut in truth.responses.values():
+        if len(cut.tool_calls) != 2 or cut.status != 'cancelled':
+            continue
+        # (A spoken turn is committed after it cut the response off, so only its start bounds it.)
+        turns = {
+            input_.key for input_ in truth.inputs if input_.kind in ('text', 'speech') and input_.seq > cut.seq_start
+        }
+        if any(
+            set(cut.tool_calls) <= set(answer.answers) and turns & set(answer.answers)
+            for answer in truth.responses.values()
+        ):
+            return True
+    return False
+
+
 ASYNC_BATCH_OF_THREE = Finding(
     id='SIM-19',
     title=(
         'with asynchronous (`NON_BLOCKING`) Gemini tool calls, a `tool_call` message of three or more calls leaves '
         'a reservation after the model answered the batch, so `wait_for_reply()` hangs (two calls are fine, unless a '
-        'typed turn cut their turn off and the answer covers both; no '
+        'user turn, typed or spoken, cut their turn off and one answer covers both with it; no '
         'recording has an async batch, so the fake answering one once may be what is wrong)'
     ),
     tracked_by='one reply per batch (#8765) also for asynchronous calls; found by this simulator',
@@ -713,11 +730,9 @@ ASYNC_BATCH_OF_THREE = Finding(
     providers=GEMINI,
     matches=lambda sim, violation: (
         _gemini_behavior(sim, 'talks_through_tool_calls')
-        and any(
-            len(response.tool_calls) > 2
-            # Two are fine on their own, but not answered together with a typed turn that cut their turn off.
-            or (len(response.tool_calls) == 2 and response.status == 'cancelled')
-            for response in sim.truth.responses.values()
+        and (
+            any(len(response.tool_calls) > 2 for response in sim.truth.responses.values())
+            or _pair_answered_with_the_turn_that_cut_it_off(sim)
         )
     ),
 )

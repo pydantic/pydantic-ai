@@ -1080,15 +1080,38 @@ def test_scenario_xai_push_to_talk(name: str, transcription: bool) -> None:
     )
 
 
-def test_scenario_gemini_async_pair_cut_off_by_a_typed_turn() -> None:
-    """SIM-19 also covers two asynchronous calls whose turn a typed turn cut off, answered together with it."""
+@pytest.mark.parametrize('typed', [True, False])
+def test_scenario_gemini_async_pair_cut_off_by_a_user_turn(typed: bool) -> None:
+    """SIM-19 also covers two asynchronous calls whose turn a user turn cut off, answered together with it."""
     sim = GeminiSimulation(strict=False, behavior=GeminiBehavior(async_tool_calls=True))
     with sim as s:
         s.send_text()
         s.call_tools(count=2)
-        s.send_text()
+        if typed:
+            s.send_text()
+        else:
+            s.user_speaks(finished=True)
         s.settle()
         assert ('SIM-19', 'wait.hang') in s.checker.known_hits
+
+
+def test_baseline_server_vad_answers_each_turn_heard_during_a_reply() -> None:
+    """With `interrupt_response` off, every turn VAD commits while a reply plays is answered after it, in order."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        for _ in range(2):
+            sim.send_audio()
+            sim.speech_start()
+            sim.speech_stop()
+        sim.finish()
+        sim.settle()
+        assert [response.answers for response in sim.truth.responses.values()] == [['t1'], ['u1'], ['u2']]
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect='azure', transcription=False, vad_interrupts=False)), scenario
+    )
 
 
 def test_scenario_openai_server_vad_edges() -> None:

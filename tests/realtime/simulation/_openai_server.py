@@ -109,8 +109,9 @@ class ServerSession:
     speaking: str | None = None
     """The user turn server VAD currently hears, if any."""
     pending_transcripts: list[str] = field(default_factory=list[str])
-    pending_vad_response: str | None = None
-    """A spoken turn committed while a response was active, answered once that response ends."""
+    pending_vad_responses: list[str] = field(default_factory=list[str])
+    """Spoken turns committed while a response was active, each answered in turn once the one before ends (VAD asks
+    for a response at every turn's end; no recording shows what it does with several behind one reply)."""
     unanswered_tool_outputs: list[str] = field(default_factory=list[str])
     item_audio_ms: dict[str, int] = field(default_factory=dict[str, int])
     ended_responses: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -690,8 +691,8 @@ class OpenAIServer:
             self.late_terminals.add(truth.key)
         else:
             self._emit(session, done)
-        if (pending := session.pending_vad_response) is not None:
-            session.pending_vad_response = None
+        if session.pending_vad_responses:
+            pending = session.pending_vad_responses.pop(0)
             self._start_response(session, trigger='vad', answers=[pending], user_turn=pending)
 
     def _close_message(self, session: ServerSession, active: _ActiveResponse) -> None:
@@ -889,7 +890,7 @@ class OpenAIServer:
         elif session.active is None:
             self._start_response(session, trigger='vad', answers=[key], user_turn=key)
         else:
-            session.pending_vad_response = key
+            session.pending_vad_responses.append(key)
         return key
 
     def transcribe(self, *, fail: bool = False) -> str:
