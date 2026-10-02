@@ -20,15 +20,15 @@ Every capability package must, or CI fails:
 2. Be linked from the `src/pydantic_ai_harness/README.md` capability tables.
 3. Have a `docs/harness/<slug>.md` page registered in `_CAPABILITY_PAGE_META` (source module + exact H1).
 
-Also add the page to the "Pydantic AI Harness" section of `docs/navigation.yml`. No test checks
-that entry.
+Also add the page to its category subsection under "Capabilities" in `docs/navigation.yml`. No
+test checks that entry.
 
 ## Sidebar Source Of Truth
 
-The harness sidebar renders from **`docs/navigation.yml`** (the "Pydantic AI
-Harness" section; entries carry `path: "harness/<page>.md"`). Adding, renaming,
-removing, or regrouping a harness docs page updates `docs/navigation.yml` in the
-same PR. Keep slugs `harness/<page>` and preserve existing `aliases:` when
+The harness sidebar renders from **`docs/navigation.yml`**: the category
+subsections under "Capabilities", shared with core capability pages. Harness
+entries carry `path: "harness/<page>.md"`. Adding, renaming, removing, or
+regrouping a harness docs page updates `docs/navigation.yml` in the same PR. Keep slugs `harness/<page>` and preserve existing `aliases:` when
 renaming.
 
 ## Page Conventions
@@ -82,7 +82,7 @@ workspace the agent acts in) · **Tools & native abilities** · **Web & research
 window — Code Mode lives here, not under execution: it changes *how* the agent executes, not
 *where*) · **Knowledge & memory** · **Control & safety** · **Self-extension** ·
 **Execution runtime** (durable execution, persistence, observability plumbing). The same scheme
-orders the harness sidebar in `docs/navigation.yml`. A new capability goes in the category
+orders the subsections under "Capabilities" in `docs/navigation.yml`. A new capability goes in the category
 matching its user-facing benefit; if none fits, raise it in the PR rather than inventing an
 eleventh silently. Keep every table's "Package" column and one-line description style intact.
 

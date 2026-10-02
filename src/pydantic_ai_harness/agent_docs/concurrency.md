@@ -15,8 +15,9 @@ anchor is judgment, not evidence. Check the anchor before you argue with a rule
 and before you extend one: the usual way to get this wrong is to state a true
 general mechanism more broadly than the code supports, or to describe a design
 that was proposed but never shipped. If the code has moved, update the rule.
-Anchors marked "core" are under `pydantic_ai_slim/pydantic_ai/`; other bare
-paths are under `src/pydantic_ai_harness/pydantic_ai_harness/`.
+Anchors marked "core" are under `pydantic_ai_slim/pydantic_ai/`. Paths that
+start with `agent_docs/`, `tests/`, or `pydantic_ai_slim/` are relative to the
+repository root; other bare paths are under `src/pydantic_ai_harness/pydantic_ai_harness/`.
 
 Before adding any of this, name the scope that guarantees teardown for every
 task, scope, lock, stream, subprocess, span, and connection you create. "The
@@ -183,7 +184,7 @@ before writing cleanup.
   path, not just that the tool returned a timeout string.
 - Reach the real trigger. Level-cancellation behavior needs a real outer
   `anyio` cancel scope, not a bare `CancelledError` raise; Trio behavior needs
-  a real Trio run, not a mental model of it (see the asyncio pin below).
+  the `trio` parametrization this suite already runs, not a mental model of it.
 - Know which backend a suite runs under before you trust it. Every `async def`
   test runs via anyio's pytest plugin (`anyio_mode = "auto"`), and the root
   `anyio_backend` fixture picks the backend from `--anyio-backend` (asyncio by

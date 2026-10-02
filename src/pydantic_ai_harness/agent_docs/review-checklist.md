@@ -63,12 +63,10 @@ retain the command and result as review evidence.
 ## Stale Or Pre-Merge PRs
 
 Run these checks when adopting, rebasing, or re-reviewing a PR that was opened
-well before now, or that was built against unreleased Pydantic AI changes.
+well before now, or that is stacked on another open PR.
 
-- Temporary `[tool.uv.sources]` pins to a branch or git ref are removed once the
-  upstream change they waited on has landed in a released `pydantic-ai-slim`.
-- Each upstream Pydantic AI PR or branch the change rode on has merged. Link the
-  upstream PR and its merge state.
+- Each Pydantic AI PR the change is stacked on has merged. Link it and its merge
+  state.
 - The touched surface has not drifted: re-check the capability, hook, and toolset
   signatures it depends on against current main, not against the state at fork
   time.
@@ -108,10 +106,10 @@ README, or source code.
   explicit, tested incompatibility. Mocked lifecycle tests alone do not
   establish state continuity across activity, process, or replay boundaries.
 - Relevant protocol-shaped output is snapshotted.
-- **Harness cassettes are re-recorded on composition change.** A packaged
-  harness with a recorded end-to-end integration test (e.g.
-  `tests/harness/researcher/test_researcher_integration.py`) runs it against a real task.
-  Any change to that harness's composition, defaults, or instructions
+- **Harness cassettes are re-recorded on composition change.** When a packaged
+  harness has a recorded end-to-end integration test that runs it against a real
+  task (e.g. `tests/harness/researcher/test_researcher_integration.py`), any
+  change to that harness's composition, defaults, or instructions
   re-records the cassette in the same PR
   (`uv run --env-file .env --no-sync pytest -p no:cacheprovider <test> --record-mode=rewrite`) —
   a green replay of a stale cassette proves nothing about the new definition.
@@ -126,8 +124,7 @@ with the code and with each other:
   or `src/pydantic_ai_harness/pydantic_ai_harness/experimental/<capability>/README.md` for ACP), which
   serves GitHub and PyPI, and
 - the **unified doc** on the docs site, flat under `docs/harness/<capability>.md`. The
-  sidebar is a flat list under "Pydantic AI Harness" -- no `capabilities/` or
-  `experimental/` subdirectories.
+  `docs/harness/` folder has no `capabilities/` or `experimental/` subdirectories.
 
 Checks:
 

@@ -1,8 +1,8 @@
 """Keep the README honest about what ships.
 
 Every capability package must document itself with a `README.md` and be linked
-from the top-level `README.md`. A capability cannot land without showing up in
-the docs, so the "what's available today" tables cannot silently fall behind the
+from `src/pydantic_ai_harness/README.md`. A capability cannot land without showing up in
+the docs, so the capability tables cannot silently fall behind the
 code. This is the mechanical half of docs parity; the semantic half (does the
 prose match the code as written) is a review-time concern, not a unit test.
 """
@@ -80,8 +80,8 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
     # anywhere (prose or an unrelated URL would otherwise satisfy the check).
     linked = any(t.startswith(link_target) for t in _markdown_link_targets(top_readme))
     assert linked, (
-        f'{package.relative_to(_ROOT)} is not linked from the top-level README.md. '
-        f'Add a row for it (linking `{link_target}`) to the "What\'s available today" or "Roadmap" tables '
+        f'{package.relative_to(_ROOT)} is not linked from src/pydantic_ai_harness/README.md. '
+        f'Add a row for it (linking `{link_target}`) to the matching category table under "Capabilities" '
         'so the README stays in step with the code.'
     )
 
@@ -368,8 +368,9 @@ def test_capability_readme_links_source(package: Path) -> None:
 
 
 # The Coder blown-out example is repeated on four markdown surfaces (plus, parameterized,
-# in examples/coding_agent.py). They must stay byte-identical so no page drifts from what
-# `coder_agent` actually is; see agent_docs/docs-conventions.md.
+# in src/pydantic_ai_harness/examples/coding_agent.py). They must stay byte-identical so no
+# page drifts from what `coder_agent` actually is; see
+# src/pydantic_ai_harness/agent_docs/docs-conventions.md.
 _BLOWN_OUT_MARKER = '<!-- Keep this blown-out example in sync across'
 _BLOWN_OUT_SURFACES = (
     '../../docs/harness/coder.md',

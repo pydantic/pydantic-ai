@@ -1,6 +1,8 @@
 # `docs/harness/` guidelines
 
-Rules for the Pydantic AI Harness pages. They add to [`docs/AGENTS.md`](../AGENTS.md).
+Rules for the Pydantic AI Harness pages. They add to [`docs/AGENTS.md`](../AGENTS.md). Where these rules or
+`docs-conventions.md` differ from `docs/AGENTS.md`, such as the version-promise blockquote, they apply under
+`docs/harness/`.
 
 Read [`docs-conventions.md`](../../src/pydantic_ai_harness/agent_docs/docs-conventions.md) before you add, rename, or
 edit a page.

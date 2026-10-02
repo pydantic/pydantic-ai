@@ -1,8 +1,8 @@
 # `tests/harness/` guidelines
 
 Rules for the `pydantic-ai-harness` test suite. They add to [`tests/AGENTS.md`](../AGENTS.md) and to the package
-rules in [`src/pydantic_ai_harness/AGENTS.md`](../../src/pydantic_ai_harness/AGENTS.md). Where these rules differ
-from `tests/AGENTS.md`, these rules apply under `tests/harness/`.
+rules in [`src/pydantic_ai_harness/AGENTS.md`](../../src/pydantic_ai_harness/AGENTS.md). Where these rules or the
+harness guides they link differ from `tests/AGENTS.md`, they apply under `tests/harness/`.
 
 Read [`testing-capabilities.md`](../../src/pydantic_ai_harness/agent_docs/testing-capabilities.md) before you add or
 change a capability's tests. For async behavior, follow the harness

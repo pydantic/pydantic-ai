@@ -332,7 +332,7 @@ When a capability needs machinery of that weight:
   to a CI `environment` that holds the secret, so checkout and setup steps never
   see it.
 
-The `harness-integration-changes` and `harness-localstack-integration` jobs in
+The `harness-integration-changes` and `harness-mongodb-integration` jobs in
 `.github/workflows/ci.yml` show the path scoping and the `check` wiring. Whether
 the heavy job blocks merges (listed in `check`'s `needs`) or only signals is the
 capability owner's call; state which in the PR.
