@@ -1,5 +1,5 @@
 ---
-description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, with native tools, background mode, conversations and compaction."
+description: "Use OpenAI GPT models with Pydantic AI via the Responses, Chat Completions or Decisions API, with native tools, structured decisions and conversations."
 ---
 
 # OpenAI
@@ -112,6 +112,51 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ...
 ```
+
+## Decisions API
+
+[`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] uses OpenAI's `POST /v1/decisions` endpoint to answer yes/no, pick-one and rubric questions with probabilities. Select it with `openai-decisions:gpt-6-luna`; `openai:gpt-6-luna` and `openai-responses:gpt-6-luna` still select the Responses API.
+
+!!! warning "Decisions API access required"
+    Your OpenAI account must have access to the Decisions API. An API key alone does not grant access; accounts without it can receive HTTP 403. Use the same [`openai` optional group](#install) and [`OPENAI_API_KEY`](#environment-variable) as other OpenAI models.
+
+This is a [`DecisionModel`][pydantic_ai.models.decision.DecisionModel] backend, with the same [supported output types](decision.md#supported-field-types) and [constraints](decision.md#what-decision-models-cannot-do): text input, typed decisions instead of free-form text, and no native tools. Function tools and output functions use the decision model's [route selection](decision.md#routes-which-thing-to-do). Streaming methods return the completed response, not partial results. Put the question in the agent's instructions or field descriptions, and the text to judge in the run's prompt.
+
+```python {title="openai_decisions.py" test="skip"}
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+
+
+class Ticket(BaseModel):
+    """Triage a support ticket."""
+
+    area: Literal['billing', 'bug', 'account'] = Field(
+        description='Which team owns this ticket?'
+    )
+    urgent: bool = Field(description='Does the customer need help today?')
+
+
+agent = Agent('openai-decisions:gpt-6-luna', output_type=Ticket)
+result = agent.run_sync('I was charged twice and need this reversed today.')
+print(result.output)
+```
+
+For explicit provider configuration, use the existing [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]:
+
+```python {title="openai_decisions_provider.py"}
+from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIDecisionsModel(
+    'gpt-6-luna',
+    provider=OpenAIProvider(api_key='your-api-key'),
+)
+```
+
+Use [`DecisionModelSettings`][pydantic_ai.models.decision.DecisionModelSettings] for decision thresholds and confidence handling; the Responses and Chat Completions settings are not the Decisions API's settings. See the [decision model guide](decision.md) for output schemas, confidence values and fallback behavior.
 
 ## Image generation
 

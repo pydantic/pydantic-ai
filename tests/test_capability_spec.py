@@ -1391,6 +1391,7 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:o4-mini-2025-04-16',
                         'openai-chat:o4-mini-deep-research',
                         'openai-chat:o4-mini-deep-research-2025-06-26',
+                        'openai-decisions:gpt-6-luna',
                         'openai:computer-use-preview',
                         'openai:computer-use-preview-2025-03-11',
                         'openai:gpt-3.5-turbo',

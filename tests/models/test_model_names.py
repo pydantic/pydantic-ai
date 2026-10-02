@@ -69,6 +69,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
+    'openai-decisions': Literal['gpt-6-luna'],
     'snowflake': SnowflakeModelName,
     'typesafe': TypeSafeModelName,
     'zai': ZaiModelName,

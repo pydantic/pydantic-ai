@@ -49,6 +49,7 @@ with try_import() as imports_successful:
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
+        ('openai-decisions', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
         ('azure-responses', AzureProvider, 'AZURE_OPENAI'),
         ('google', GoogleProvider, 'GOOGLE_API_KEY'),
