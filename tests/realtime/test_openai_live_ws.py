@@ -262,6 +262,40 @@ async def test_text_reaches_the_model_as_context(
     assert 'Friday' in spoken
 
 
+async def test_a_text_only_session_streams_its_own_silence(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """With `openai_live_idle_audio`, text reaches the model with no microphone at all.
+
+    Live's timeline only advances while audio arrives. The connection streams silence in the
+    microphone's place, so the text lands and the model speaks, just as it does with the silence the
+    test above streams by hand.
+    """
+    provider, _ = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    agent = Agent(_BACKEND, instructions='Relay what you are told, in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('Tell the user their package arrives on Friday.')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    spoken = ' '.join(
+        part.transcript or ''
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'Friday' in spoken
+
+
 async def test_history_seeding(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
 ) -> None:

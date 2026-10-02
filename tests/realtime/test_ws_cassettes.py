@@ -618,3 +618,46 @@ async def test_live_turn_clock_moves_as_each_frame_is_mapped_not_read() -> None:
         assert openai_live._now() == 0.5  # pyright: ignore[reportPrivateUsage]
         assert connection._map_frame(raw_second) == []  # pyright: ignore[reportPrivateUsage]
         assert openai_live._now() == 3.0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_replay_holds_other_sends_behind_recorded_idle_audio() -> None:
+    """A recorded frame of GPT-Live's idle audio is the pump's to send: another send waits for it to go out."""
+    silence = {'type': 'session.input_audio.append', 'audio': 'AAAA'}
+    context = {'type': 'session.commentary.append', 'delegation_id': None, 'content': 'hi'}
+    replay = ReplayWebSocket(
+        RealtimeCassette(
+            interactions=[
+                CassetteMessage(direction='sent', data=silence),
+                CassetteMessage(direction='received', data={'type': 'server.event'}),
+                CassetteMessage(direction='sent', data=context),
+            ]
+        )
+    )
+    replay.pumps_audio = True
+
+    send_context = asyncio.create_task(replay.send(json.dumps(context)))
+    await asyncio.sleep(0)  # the context send is waiting behind the silence
+    assert not send_context.done()
+    await replay.wait_for_pumped_audio_turn()
+    await replay.send(json.dumps(silence))
+    # A provider frame recorded after the silence is drained before the context send claims its slot.
+    assert json.loads(await replay.recv()) == {'type': 'server.event'}
+    await asyncio.wait_for(send_context, timeout=5)
+
+
+async def test_the_idle_pump_waits_for_its_recorded_turn() -> None:
+    """The pump sends nothing until the recording's next interaction is one of its frames."""
+    replay = ReplayWebSocket(
+        RealtimeCassette(
+            interactions=[
+                CassetteMessage(direction='received', data={'type': 'server.event'}),
+                CassetteMessage(direction='sent', data={'type': 'session.input_audio.append', 'audio': 'AAAA'}),
+            ]
+        )
+    )
+    turn = asyncio.create_task(replay.wait_for_pumped_audio_turn())
+    await asyncio.sleep(0)
+    assert not turn.done()
+
+    await replay.recv()
+    await asyncio.wait_for(turn, timeout=5)
