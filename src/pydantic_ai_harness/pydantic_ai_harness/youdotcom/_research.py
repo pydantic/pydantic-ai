@@ -387,6 +387,7 @@ class YouResearch(AbstractCapability[AgentDepsT]):
         output_schema: Mapping[str, object] | None = None,
         guidance: str | None = None,
         timeout_ms: int = DEFAULT_RESEARCH_TIMEOUT_MS,
+        id: str | None = 'you_research',
     ) -> YouResearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -404,4 +405,5 @@ class YouResearch(AbstractCapability[AgentDepsT]):
             output_schema=output_schema,
             guidance=guidance,
             timeout_ms=timeout_ms,
+            id=id,
         )

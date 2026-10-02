@@ -191,7 +191,6 @@ its state has to survive recovery.
 The records are named after the capability's `id`, which defaults to
 `localstack`, so durable execution needs no configuration.
 
-
 ## Configuration
 
 ```python

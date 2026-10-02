@@ -94,7 +94,6 @@ workflow code, so there the store call runs as its own step.
 The records are named after the capability's `id`, which defaults to
 `capability_creation`, so durable execution needs no configuration.
 
-
 ## Trust boundary
 
 `CapabilityCreation` imports model-written Python into the agent's own process, on this

@@ -310,11 +310,17 @@ function tools in workflow code, so there the request runs as its own step.
 `ExaAgent` records creating the Exa run and, with `execution='inline'`,
 polling it to completion.
 
+On Temporal an activity has 60 seconds by default, which `deep_search` can
+exceed. Give the tool calls longer with
+`TemporalDurability(toolset_activity_config={'exa_search': ActivityConfig(...)})`,
+as in [Temporal timeouts](durable-execution.md#temporal-timeouts). `ExaAgent` polls its run in a capability
+activity, which takes the base `activity_config`, so set its
+`start_to_close_timeout` above `timeout_ms`.
+
 The records are named after the capability's `id`, which defaults to
 `exa_search` for `ExaSearch` and `exa_agent` for `ExaAgent`, so durable
 execution needs no configuration. Changing an `id` renames the records, which
 in-flight runs then cannot find.
-
 
 ## Custom client
 

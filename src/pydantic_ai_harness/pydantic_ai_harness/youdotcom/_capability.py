@@ -196,6 +196,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
         country: str | None = None,
         guidance: str | None = None,
         timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
+        id: str | None = 'you_search',
     ) -> YouSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -213,4 +214,5 @@ class YouSearch(AbstractCapability[AgentDepsT]):
             country=country,
             guidance=guidance,
             timeout_ms=timeout_ms,
+            id=id,
         )

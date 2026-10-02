@@ -213,6 +213,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         include_domains: Sequence[str] = (),
         exclude_domains: Sequence[str] = (),
         guidance: str | None = None,
+        id: str | None = 'exa_search',
     ) -> ExaSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -227,4 +228,5 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
             include_domains=list(include_domains),
             exclude_domains=list(exclude_domains),
             guidance=guidance,
+            id=id,
         )
