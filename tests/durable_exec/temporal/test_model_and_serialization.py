@@ -47,6 +47,8 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -62,6 +64,7 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
+from pydantic_ai.models.decision import DecisionHandOff, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -86,6 +89,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
@@ -110,6 +114,10 @@ try:
     from pydantic_ai.durable_exec.temporal._model import (
         TemporalModel,
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.durable_exec.temporal._model_errors import (
+        model_errors_as_application_errors,
+        rebuilt_model_errors,
     )
     from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
@@ -406,7 +414,7 @@ async def test_logfire_plugin(client: Client):
     assert isinstance(interceptor, TracingInterceptor)
     if isinstance(interceptor.tracer, ProxyTracer):
         assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage] # pragma: lax no cover
-    elif isinstance(interceptor.tracer, _ProxyTracer):
+    elif isinstance(interceptor.tracer, _ProxyTracer):  # pragma: lax no cover
         assert interceptor.tracer.instrumenting_module_name == 'temporalio'  # pragma: lax no cover
     else:
         assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
@@ -2986,3 +2994,183 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
         ):
             # The error is raised before reaching here.
             pass  # pragma: no cover
+
+
+# --- Model errors crossing the activity boundary ---
+
+
+def _activity_error(cause: BaseException) -> ActivityError:
+    """An `ActivityError` caused by `cause`, as workflow code receives it."""
+    error = ActivityError(
+        'Activity task failed',
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity='worker',
+        activity_type='model_request',
+        activity_id='1',
+        retry_state=None,
+    )
+    error.__cause__ = cause
+    return error
+
+
+def _crossed(error: ModelAPIError) -> BaseException:
+    """The error workflow code sees after a model activity raised `error`."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    with pytest.raises(BaseException) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+    return rebuilt.value
+
+
+def test_model_http_error_crosses_with_its_fields():
+    error = ModelHTTPError(
+        503,
+        'gpt-test',
+        body={'error': 'overloaded'},
+        headers={'Retry-After': '7'},
+        suggested_model_id='gpt-better',
+    )
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert (rebuilt.status_code, rebuilt.model_name, rebuilt.body, rebuilt.headers, rebuilt.suggested_model_id) == (
+        503,
+        'gpt-test',
+        {'error': 'overloaded'},
+        {'retry-after': '7'},
+        'gpt-better',
+    )
+    assert rebuilt.retry_after == 7.0
+    assert str(rebuilt) == str(error)
+    assert isinstance(rebuilt.__cause__, ActivityError)
+
+
+def test_model_api_error_crosses_with_its_type():
+    rebuilt = _crossed(ModelAPIError('gpt-test', 'connection reset'))
+    assert type(rebuilt) is ModelAPIError
+    assert (rebuilt.model_name, rebuilt.message) == ('gpt-test', 'connection reset')
+
+
+def test_a_body_that_is_not_json_crosses_as_a_string():
+    class Opaque:
+        def __str__(self) -> str:
+            return 'opaque body'
+
+    rebuilt = _crossed(ModelHTTPError(500, 'gpt-test', body=Opaque()))
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert rebuilt.body == 'opaque body'
+
+
+def test_decision_hand_offs_cross_with_their_fields():
+    rebuilt = _crossed(DecisionHandOff('decider', 'search', 0.4, 'handed off'))
+    assert isinstance(rebuilt, DecisionHandOff)
+    assert (rebuilt.model_name, rebuilt.route, rebuilt.probability, rebuilt.message) == (
+        'decider',
+        'search',
+        0.4,
+        'handed off',
+    )
+
+    unsure = _crossed(UnsureRoute('decider', 'search', {'search': 0.4, 'reply': 0.6}, 0.5))
+    assert isinstance(unsure, UnsureRoute)
+    assert (unsure.probabilities, unsure.threshold) == ({'search': 0.4, 'reply': 0.6}, 0.5)
+
+
+def test_a_subclass_with_plain_reduce_state_crosses_with_it():
+    """State without a custom `__setstate__` is restored by `BaseException.__setstate__`, as pickle restores it."""
+
+    class StatefulModelError(ModelAPIError):
+        extra: int | None = None
+
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+            return self.__class__, (self.model_name, self.message), {'extra': self.extra}
+
+    # Only Pydantic AI's own classes cross, so present this one as one of them.
+    StatefulModelError.__module__ = 'pydantic_ai.exceptions'
+    error = StatefulModelError('gpt-test', 'boom')
+    error.extra = 5
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, StatefulModelError)
+    assert rebuilt.extra == 5
+
+
+def test_a_body_that_cannot_be_encoded_is_raised_unchanged():
+    recursive: list[object] = []
+    recursive.append(recursive)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(500, 'gpt-test', body=recursive)
+
+
+def test_the_application_error_keeps_the_type_temporal_retries_on():
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+    assert raised.value.type == 'ModelHTTPError'
+    assert not raised.value.non_retryable
+
+
+def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationModelError):
+        with model_errors_as_application_errors():
+            raise error
+
+    def reduce_to_a_name(self: ModelAPIError) -> str:
+        return 'not a reduce tuple'
+
+    monkeypatch.setattr(ModelAPIError, '__reduce__', reduce_to_a_name)
+    with pytest.raises(ModelAPIError):
+        with model_errors_as_application_errors():
+            raise ModelAPIError('gpt-test', 'boom')
+
+
+def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def reduce_to_wrong_args(self: ModelHTTPError) -> tuple[type[ModelHTTPError], tuple[str, ...]]:
+        return ModelHTTPError, ('too', 'many', 'args', 'here')
+
+    monkeypatch.setattr(ModelHTTPError, '__reduce__', reduce_to_wrong_args)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+
+
+@pytest.mark.parametrize(
+    'details',
+    [
+        pytest.param((), id='no-details'),
+        pytest.param(('text',), id='not-a-dict'),
+        pytest.param(({'other': 1},), id='no-model-error'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 'os', 'qualname': 'error'}},), id='outside-pydantic-ai'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 3, 'qualname': 'error'}},), id='malformed'),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'Missing'}},),
+            id='missing-class',
+        ),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'UserError'}},),
+            id='not-a-model-error',
+        ),
+    ],
+)
+def test_other_activity_failures_are_raised_unchanged(details: tuple[object, ...]):
+    activity_error = _activity_error(ApplicationError('failed', *details, type='Whatever'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error
+
+
+def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
+    activity_error = _activity_error(TimeoutError('timed out'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error

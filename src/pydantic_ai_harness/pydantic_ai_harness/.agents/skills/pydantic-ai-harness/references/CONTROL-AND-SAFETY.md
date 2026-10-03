@@ -354,8 +354,8 @@ Gotchas:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
   applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
-- List `SpendLimits` after other innermost capabilities such as `InputGuardrail`, or a billed
-  response they reject is not counted (`SpendCompositionWarning` flags this).
+- `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
+  capability order; cached and `SkipModelRequest` responses aren't charged.
 - Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
 
 ## AskUser
