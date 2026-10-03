@@ -14,12 +14,59 @@ from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.builtin_plugins.logfire import LogfireSettings, LogfireSource
 from pydantic_clai2.commands import config_command, plugins_command
-from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config import PluginSettings, Settings, features
+from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.model_settings import model_settings_from_json
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
+
+
+@pytest.mark.parametrize('include_email', [False, True])
+async def test_logfire_email_settings_survive_older_builds(
+    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch, include_email: bool
+) -> None:
+    loader, store = observability_loader(tmp_path)
+    previous = PluginSettings(
+        id='observability',
+        factory='pydantic_clai2.builtin_plugins.logfire',
+        settings={'send_to_logfire': False, 'include_content': False, 'service_name': 'shared-project'},
+    )
+    store.save_plugin(previous)
+    try:
+        await loader.load_all()
+        loaded = loader.entries()[0].loaded
+        assert loaded is not None
+        assert not loaded.plugin.host.settings(LogfireSettings).include_user_email
+        assert store.plugins() == [previous]  # Loading an old declaration does not rewrite it.
+        source = LogfireSource(loaded.plugin.host)
+        rows = {row.key: row for row in source.rows()}
+        if include_email:
+            source.apply(rows['include_user_email'], 'true')
+        else:
+            source.apply(rows['service_name'], 'changed-project')  # Even an unrelated edit saves the default.
+        [saved] = store.plugins()
+        assert saved.settings['include_user_email'] is include_email
+        requirements = store.plugin_requirements('observability')
+        assert requirements == {'include_user_email': ['logfire-user-email']}
+        old_view = apply_requirements(
+            saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
+        )
+        assert old_view.settings == {key: value for key, value in saved.settings.items() if key != 'include_user_email'}
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
+        await loader.reload('observability')
+        reloaded = loader.entries()[0].loaded
+        assert reloaded is not None
+        old_settings = reloaded.plugin.host.settings(LogfireSettings)
+        assert not old_settings.include_user_email
+        assert not old_settings.include_content
+        assert store.plugins() == [saved]  # An older build can read without discarding the newer preference.
+    finally:
+        await loader.close('exit')
+    assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
 
 
 @pytest.mark.parametrize(('version', 'has_model_settings'), [(0, False), (1, False), (1, True)])

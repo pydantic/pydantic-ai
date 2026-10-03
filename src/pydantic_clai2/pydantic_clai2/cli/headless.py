@@ -59,7 +59,7 @@ async def run_headless(
         async with agent:
             with shell.screen.bound(no_screen):  # pragma: no branch -- bound never suppresses exceptions.
                 try:
-                    with shell.session.defer_identity() if resume is not None else nullcontext():
+                    with shell.defer_identity() if resume is not None else nullcontext():
                         # Skip before activation, even when a saved declaration overrides the built-in.
                         for entry in shell.loader.entries():
                             if entry.declaration.enabled and entry.name != 'ask_user':

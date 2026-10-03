@@ -228,27 +228,12 @@ class Session(Generic[DepsT, OutputT]):
         self.on_stream_event = on_stream_event
         self._messages: list[ModelMessage] = list(message_history)
         self._running = False
-        self._identity_pending = False
         self._accepting_steering = False
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
         self.on_context_usage: Callable[[int], None] | None = None
         self.on_setup_error: Callable[[CapabilitySetupError], None] | None = None
         """Told when a guarded plugin capability rejected its configuration, before the failed turn's error propagates."""
-
-    @property
-    def session_id(self) -> str | None:
-        """The active saved ID, unavailable while startup is choosing a conversation to resume."""
-        return None if self._identity_pending else current_session_id() or self.summary.id
-
-    @contextmanager
-    def defer_identity(self) -> Generator[None]:
-        """Keep startup telemetry unassigned until the requested conversation is selected."""
-        self._identity_pending = True
-        try:
-            yield
-        finally:
-            self._identity_pending = False
 
     @property
     def messages(self) -> list[ModelMessage]:

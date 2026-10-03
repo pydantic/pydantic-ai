@@ -20,6 +20,7 @@ import logfire
 from anyio import CancelScope, to_thread
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from typing_extensions import Self
 
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -100,6 +101,11 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             raise
         self._session_tracing = SessionTracing(instance=self.instance, session_id=lambda: self.host.session_id)
         self._ui = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
+
+    @classmethod
+    def from_host(cls, host: PluginHost[None]) -> Self:
+        """Tag the opt-in identity setting so older builds sharing the database can ignore it."""
+        return cls(host, host.settings(LogfireSettings, requires={'include_user_email': ['logfire-user-email']}))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._session_tracing, self.instrumentation)
