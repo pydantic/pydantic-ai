@@ -948,6 +948,18 @@ class TestConnect:
         assert not fake_modal.create_kwargs
         assert not fake_modal.sandboxes
 
+    @pytest.mark.parametrize('returncode', [0, 1, 137])
+    async def test_a_cached_finished_sandbox_is_not_used_for_commands(
+        self, fake_modal: FakeModal, returncode: int
+    ) -> None:
+        backend = await started()
+        sandbox = fake_modal.sandboxes[0]
+        sandbox.poll_result = returncode
+        await sandbox.poll.aio()
+        with pytest.raises(WorkspaceUnavailableError, match="'sb-owned' is no longer running"):
+            await backend.run(['true'], timeout=1)
+        assert not sandbox.exec_calls
+
 
 class TestFilesystem:
     @pytest.mark.parametrize('method', ['read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove'])
@@ -1207,7 +1219,6 @@ class TestErrorMapping:
             ('ExecutionError', WorkspaceError),
             ('RequestSizeError', WorkspaceError),
             ('SandboxFilesystemError', WorkspaceError),
-            ('FilesystemExecutionError', WorkspaceError),
             ('ConnectionError', None),
             ('ServiceError', None),
             ('ResourceExhaustedError', None),
