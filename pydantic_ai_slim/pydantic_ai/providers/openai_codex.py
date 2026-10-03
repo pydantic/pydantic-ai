@@ -339,6 +339,8 @@ def _read_codex_cli_credentials() -> OpenAICodexCredentials:
         ) from None
     except OSError as e:
         raise UserError(f'Could not read Codex CLI credentials at `{path}`: {e}') from e
+    except UnicodeDecodeError as e:
+        raise UserError(f'Codex CLI credentials at `{path}` are not valid UTF-8: {e}') from e
     try:
         data = json.loads(text)
     except ValueError as e:

@@ -195,6 +195,13 @@ def test_from_codex_cli_malformed_json(env: TestEnv, tmp_path: Path):
         OpenAICodexProvider()
 
 
+def test_from_codex_cli_invalid_utf8(env: TestEnv, tmp_path: Path):
+    (tmp_path / 'auth.json').write_bytes(b'\xff')
+    env.set('CODEX_HOME', str(tmp_path))
+    with pytest.raises(UserError, match='not valid UTF-8'):
+        OpenAICodexProvider()
+
+
 def test_no_openai_api_key_fallback(env: TestEnv, tmp_path: Path):
     env.set('CODEX_HOME', str(tmp_path))
     env.set('OPENAI_API_KEY', 'sk-fake')
