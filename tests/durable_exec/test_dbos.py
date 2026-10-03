@@ -4833,3 +4833,44 @@ async def test_dbos_decide_span_nests_under_chat(
     lineage, attributes = decide_span_lineage(capfire.exporter.exported_spans_as_dict())
     assert lineage[:3] == snapshot(['dbos_decide__model.request', 'chat ship-it', 'invoke_agent dbos_decide'])
     assert attributes['pydantic_ai.decision.state'] == 'The migration is reviewed and the tests pass.'
+
+
+stable_ids_agent = Agent(TestModel(), name='stable_ids_agent', capabilities=[DBOSDurability()])
+stable_ids_seen: list[tuple[str | None, str | None]] = []
+
+
+class _ProcessCrash(BaseException):
+    """Stands in for the process dying: DBOS leaves the workflow `PENDING` for recovery."""
+
+
+@stable_ids_agent.tool
+def record_ids(ctx: RunContext[object]) -> str:
+    stable_ids_seen.append((ctx.run_id, ctx.conversation_id))
+    return 'ok'
+
+
+@DBOS.workflow()
+async def stable_ids_workflow() -> list[tuple[str, str]]:
+    first = await stable_ids_agent.run('First.')
+    # Concurrent runs resolve their IDs before either starts a step.
+    results = [first, *await asyncio.gather(stable_ids_agent.run('Second.'), stable_ids_agent.run('Third.'))]
+    if len(stable_ids_seen) == 3:
+        raise _ProcessCrash
+    return [(result.run_id, result.conversation_id) for result in results]
+
+
+async def test_dbos_default_ids_survive_recovery(dbos: DBOS) -> None:
+    """Without `run_id=` or `conversation_id=`, a recovered workflow keeps the IDs its steps already saw."""
+    stable_ids_seen.clear()
+    workflow_id = f'stable-ids-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await stable_ids_workflow()
+    seen = sorted(stable_ids_seen)
+    assert [run_id for run_id, _ in seen] == [f'{workflow_id}:1', f'{workflow_id}:3', f'{workflow_id}:3:1']
+    assert len({*seen[0], *seen[1], *seen[2]}) == 6
+
+    # Recovery re-executes the workflow function: model requests replay from their recorded steps, while
+    # the function tool, which runs in the workflow, runs again and sees the same IDs.
+    handle = await asyncio.to_thread(DBOS._execute_workflow_id, workflow_id)  # pyright: ignore[reportPrivateUsage]
+    assert sorted(tuple(ids) for ids in await asyncio.to_thread(handle.get_result)) == seen
+    assert sorted(stable_ids_seen[3:]) == seen

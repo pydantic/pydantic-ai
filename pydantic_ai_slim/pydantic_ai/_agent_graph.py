@@ -280,28 +280,29 @@ NEW_CONVERSATION: Literal['new'] = 'new'
 def resolve_conversation_id(
     explicit: str | None,
     message_history: Sequence[_messages.ModelMessage] | None,
+    *,
+    default: str | None = None,
 ) -> str:
     """Resolve the `conversation_id` to use for an agent run.
 
     Priority:
 
-    1. `explicit == 'new'` → fresh UUID7 (forks a conversation off the supplied history).
+    1. `explicit == 'new'` → fresh id (forks a conversation off the supplied history).
     2. Explicit string → used as-is.
     3. Most recent non-`None` `conversation_id` on `message_history` (scanned from the end).
-    4. Fresh UUID7.
+    4. Fresh id.
 
-    A fresh UUID7 is intentionally distinct from the run's `run_id`, so callers can
+    A fresh id is `default` when given (a durable engine's replay-stable id), and a UUID7
+    otherwise. Either way it is distinct from the run's `run_id`, so callers can
     treat the two identifiers as independent.
     """
-    if explicit == NEW_CONVERSATION:
-        return str(uuid7())
-    if explicit is not None:
+    if explicit is not None and explicit != NEW_CONVERSATION:
         return explicit
-    if message_history:
+    if explicit is None and message_history:
         for message in reversed(message_history):
             if (cid := message.conversation_id) is not None:
                 return cid
-    return str(uuid7())
+    return default if default is not None else str(uuid7())
 
 
 def resolve_run_id(
@@ -317,7 +318,8 @@ def resolve_run_id(
     Priority:
 
     1. Explicit string → used as-is (raises `UserError` if empty, or if that id already
-       appears on `message_history`).
+       appears on `message_history`). `Agent` passes a durable engine's replay-stable
+       default here when the caller gave none.
     2. Fresh UUID7.
     """
     if explicit is not None:
