@@ -11,7 +11,7 @@ import os
 import shutil
 import socket
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import anyio
@@ -232,16 +232,27 @@ async def test_a_home_directory_inside_the_working_dir_is_pinned(tools: FakeRemo
     assert f'--bind {resolved} {resolved} --ro-bind {resolved}/.bashrc ' in tools.bwrap_calls[0]
 
 
-async def test_a_symlinked_startup_file_inside_the_working_dir_is_unavailable(tmp_path: Path) -> None:
-    """A command could replace the link itself, which a read-only mount over its target doesn't stop."""
+@pytest.mark.parametrize(
+    ('login_path', 'link', 'reason'),
+    [
+        ('.bashrc', Path.symlink_to, r'\.bashrc is a symbolic link'),
+        ('.config/fish/config.fish', Path.symlink_to, r'config\.fish is a symbolic or hard link'),
+        ('.bashrc', Path.hardlink_to, r'\.bashrc is a symbolic or hard link'),
+    ],
+)
+async def test_a_linked_startup_file_inside_the_working_dir_is_unavailable(
+    tmp_path: Path, login_path: str, link: Callable[[Path, Path], None], reason: str
+) -> None:
+    """A read-only mount over a link doesn't stop a command from replacing it or writing its target's other name."""
     home = tmp_path / 'home'
-    home.mkdir()
-    (home / 'dotfiles').mkdir()
-    (home / 'dotfiles' / 'bashrc').write_text('')
-    (home / '.bashrc').symlink_to(home / 'dotfiles' / 'bashrc')
+    target = home / 'dotfiles' / 'startup'
+    target.parent.mkdir(parents=True)
+    target.write_text('')
+    (home / login_path).parent.mkdir(parents=True, exist_ok=True)
+    link(home / login_path, target)
     backend = LocalWorkspaceBackend(home, env={'HOME': str(home)})
 
-    with pytest.raises(WorkspaceUnavailableError, match=r'\.bashrc is a symbolic link'):
+    with pytest.raises(WorkspaceUnavailableError, match=reason):
         await BubblewrapWorkspace(Workspace(backend)).run(['true'])
 
 

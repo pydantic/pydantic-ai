@@ -108,30 +108,41 @@ for entry do
     exit 2
   fi
   case $entry in
-    d:*)
-      [ -d "$path" ] && continue
-      if [ -e "$path" ]; then
-        printf '%s is not a directory\n' "$path" >&2
-        exit 2
-      fi
-      /bin/mkdir -- "$path" || exit 1 ;;
+    [pd]:*)
+      if [ ! -d "$path" ]; then
+        if [ -e "$path" ]; then
+          printf '%s is not a directory\n' "$path" >&2
+          exit 2
+        fi
+        /bin/mkdir -- "$path" || exit 1
+      fi ;;
+    f:*.tcshrc)
+      [ -e "$path" ] || printf 'source ~/.cshrc\n' > "$path" || exit 1 ;;
     f:*)
-      [ -e "$path" ] && continue
-      case $path in
-        */.tcshrc) printf 'source ~/.cshrc\n' > "$path" || exit 1 ;;
-        *) : > "$path" || exit 1 ;;
-      esac ;;
+      [ -e "$path" ] || : > "$path" || exit 1 ;;
+  esac
+  case $entry in
+    [df]:*)
+      linked=$(/usr/bin/find "$path" '(' -type l -o '(' ! -type d -links +1 ')' ')' -print) || exit 1
+      if [ -n "$linked" ]; then
+        printf '%s is a symbolic or hard link\n' "$linked" >&2
+        exit 2
+      fi ;;
   esac
 done
 """
-"""Create the missing login paths (`d:` directories, `f:` files) in the writable directory, parents first.
+"""Create the missing login paths in the writable directory, parents first, and check what they hold.
 
-They are then mounted read-only, so a sandboxed command cannot plant one for the next connection, and
-`bwrap` cannot mount over a path that doesn't exist. A new file is empty, except `~/.tcshrc`: tcsh reads
-`~/.cshrc` only without one, so the new one sources it. A symlink is a failure, since the command could
-replace the link itself, and so is anything but a directory where one is expected. `set -C` keeps a
-symlink planted after the check from redirecting a new file.
+Each argument is `p:` for a parent directory, `d:` for a protected directory, or `f:` for a protected file.
+They are then mounted (parents writable, the rest read-only), so a sandboxed command cannot plant one for
+the next connection, and `bwrap` cannot mount over a path that doesn't exist. A new file is empty, except
+`~/.tcshrc`: tcsh reads `~/.cshrc` only without one, so the new one sources it. A symlink at any of these
+paths, or a symlink or hard-linked file inside a protected one, is a failure: a read-only mount doesn't stop
+a command from replacing the link or writing through the target's other name. So is anything but a
+directory where one is expected. `set -C` keeps a symlink planted after the check from redirecting a new
+file, and `/usr/bin/find` is absolute so a writable `PATH` entry can't supply it.
 """
+
 
 _CANONICAL_HOME = r"""case "$HOME" in
   /*) ;;
@@ -314,7 +325,8 @@ class BubblewrapWorkspace(WrapperWorkspace):
                 'login files out of the writable sandbox'
             )
         root = posixpath.normpath(working_dir)
-        # Path to kind: `p` for a parent pinned in place, `d` for a protected directory, `f` for a file.
+        # Path to kind, as `_ENSURE_LOGIN_PATHS` takes them: `p` for a parent pinned in place by binding it onto
+        # itself, `d` for a protected directory, `f` for a protected file.
         kinds: dict[str, str] = {}
         for name in _LOGIN_PATHS:
             path = posixpath.join(home, name.rstrip('/'))
@@ -328,7 +340,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
         # Sorted, a parent comes before what's inside it, both to be created and to be mounted.
         paths = sorted(kinds)
         if paths:
-            entries = [f'{"f" if kinds[path] == "f" else "d"}:{path}' for path in paths]
+            entries = [f'{kinds[path]}:{path}' for path in paths]
             created = await self.wrapped.run(
                 ['/bin/sh', '-c', _ENSURE_LOGIN_PATHS, 'sh', *entries], timeout=_PROBE_TIMEOUT
             )
