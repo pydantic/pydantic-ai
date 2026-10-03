@@ -1605,13 +1605,14 @@ class TestStopEscalation:
         assert (await job.status())[0] is False
 
     async def test_stop_signals_group_after_wrapper_exits(self, shell_dir: Path) -> None:
-        async with _shell_toolset(shell_dir) as ts:
-            ready = shell_dir / 'finished-group-ready'
-            start = await ts.start_command(
-                _ctx(shell_dir), f"trap '' TERM; echo ready > {shlex.quote(str(ready))}; while :; do sleep 1; done"
-            )
-            command_id = _parse_command_id(start)
-            job = await _job(ts, _ctx(shell_dir), command_id)
+        ts = _shell_toolset(shell_dir)
+        ready = shell_dir / 'finished-group-ready'
+        start = await ts.start_command(
+            _ctx(shell_dir), f"trap '' TERM; echo ready > {shlex.quote(str(ready))}; while :; do sleep 1; done"
+        )
+        command_id = _parse_command_id(start)
+        job = await _job(ts, _ctx(shell_dir), command_id)
+        try:
             with anyio.fail_after(10):
                 while not ready.exists() or not ready.read_text().strip():
                     await anyio.sleep(0.01)  # pragma: lax no cover
@@ -1619,6 +1620,11 @@ class TestStopEscalation:
             with patch.object(Job, 'status', return_value=(False, 0)):
                 assert '[stopped]' in await ts.stop_command(_ctx(shell_dir), command_id)
             await _wait_for_exit(job.pid)
+        finally:
+            with anyio.CancelScope(shield=True):
+                await job.kill()
+                await _wait_for_exit(job.pid)
+                await job.cleanup()
 
     async def test_stop_escalates_to_sigkill(self, shell_dir: Path) -> None:
         """A group that ignores SIGTERM is killed after the grace period, with no exit code to report."""
