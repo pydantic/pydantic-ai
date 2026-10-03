@@ -64,6 +64,35 @@ def test_command_boundaries(tmp_path: Path) -> None:
         store.reset('missing')
 
 
+def test_command_availability_is_live() -> None:
+    commands = Commands()
+    available = False
+    command = Command(
+        name='conditional',
+        description='Conditional',
+        handler=lambda _: 'ok',
+        complete=lambda _: ('value',),
+        available=lambda: available,
+        during_turn=True,
+    )
+    commands.register(command)
+    for available in (False, True, False):
+        assert list(commands) == [command]  # Ownership is retained even while a command is unavailable.
+        assert bool(commands.help([])) is available
+        assert commands.runs_during_turn('/conditional') is available
+        for text in ('/cond', '/conditional '):
+            assert bool(list(commands.get_completions(Document(text), CompleteEvent()))) is available
+        if available:
+            assert commands.execute('/conditional') == 'ok'
+        else:
+            with pytest.raises(ValueError, match='Unknown command'):
+                commands.execute('/conditional')
+    with pytest.raises(ValueError, match='duplicate'):
+        commands.register(command)
+    commands.unregister(['conditional'])
+    assert list(commands) == []
+
+
 @pytest.mark.parametrize(
     ('text', 'expected'),
     [

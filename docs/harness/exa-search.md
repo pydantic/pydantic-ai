@@ -167,6 +167,7 @@ ExaSearch(
     include_deep_search=False,  # also expose the deep_search tool
     include_domains=[],         # only search these domains (allowlist)
     exclude_domains=[],         # never search these domains (denylist)
+    native=False,               # prefer the model's native web search, Exa as fallback
     guidance=None,              # None = default instructions, '' = none, str = custom
     client=None,                # ExaClient -- None builds exa_py.AsyncExa from EXA_API_KEY
 )
@@ -322,19 +323,33 @@ ExaSearch(client=AsyncExa(api_key='...'))
 Pydantic AI core ships a provider-adaptive
 [`WebSearch`](../capabilities/overview.md#provider-adaptive-tools)
 capability: on models with a native search tool it uses the provider's own
-search, executed server-side; elsewhere it falls back to a local DuckDuckGo
-tool. Reach for it when you want search that follows the model.
+search, executed server-side. On other models it raises unless you pass a
+`local=` fallback, such as `local=True` for DuckDuckGo. Reach for it when you
+want search that follows the model.
 
-Reach for `ExaSearch` when you want the same search behavior on every model:
-one vendor, excerpts with every hit, explicit page retrieval, domain filters,
-and opt-in deep search.
+Reach for `ExaSearch` when you want the same search behavior on every model.
 
-One caveat when combining them: on Anthropic models the provider-native search
-tool is also named `web_search` on the wire, so
-`capabilities=[WebSearch(), ExaSearch()]` puts two tools with the same name in
-the request. Use one search capability per agent on native-search models, or
-force the local fallback with `WebSearch(native=False)` (its DuckDuckGo tool is
-named `duckduckgo_search`, which does not collide).
+To use the provider's search where there is one and Exa's elsewhere, either:
+
+- Set `ExaSearch(native=True)`. The capability adds the native web search tool,
+  and Exa's `web_search` is only sent to models without one. `get_page` and `deep_search` stay available on every model.
+  `include_domains` and `exclude_domains` become the native tool's
+  `allowed_domains` and `blocked_domains`.
+  Whether the native search applies them depends on the provider: Gemini's
+  native search ignores them, so on Gemini they only restrict the fallback.
+- Or pass Exa's search as the fallback of core `WebSearch`, to configure the
+  native search with `WebSearch`'s own options:
+
+  ```python
+  from pydantic_ai.capabilities import WebSearch
+  from pydantic_ai_harness.exa import ExaSearch
+
+  WebSearch(local=ExaSearch(num_results=10).web_search_tool())
+  ```
+
+Don't combine `WebSearch()` with the default `ExaSearch()` on native-search
+models: on Anthropic models the native tool is also named `web_search` on the
+wire, so the request would carry two tools with the same name.
 
 ## ExaSearch vs Exa's MCP server
 

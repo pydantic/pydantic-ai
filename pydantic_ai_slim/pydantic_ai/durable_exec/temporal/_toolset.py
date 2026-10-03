@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast, get_type_hints
 
+import anyio
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
@@ -82,7 +83,7 @@ async def heartbeating() -> AsyncGenerator[None]:
         interval = timeout.total_seconds() / 2 if timeout else 5.0
         while True:
             activity.heartbeat()
-            await asyncio.sleep(interval)
+            await anyio.sleep(interval)
 
     task = asyncio.create_task(beat())
     try:
@@ -251,7 +252,7 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
         yield
 
 
-_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid'))(
+_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
     TypedDict(
         '_ValidatedActivityConfig',
         # The functional syntax is intentionally dynamic so new Temporal keys are included.

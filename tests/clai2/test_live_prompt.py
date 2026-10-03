@@ -27,7 +27,7 @@ from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
@@ -590,3 +590,44 @@ async def test_live_resize_signal_schedules_viewport_clear_without_losing_draft(
         signal.raise_signal(signal.SIGWINCH)
         await cleared.wait()
         assert live.buffer.text == 'retained during resize signal'
+
+
+async def test_automated_wake_preserves_draft_and_prioritizes_user_input() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.replace('unfinished pirate hamster prompt')
+        live.buffer.cursor = 9
+        live.wake()
+        live.wake()
+        live.submit('user follow-up')
+        assert await live.read() == 'user follow-up'
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert live.buffer.display() == ('unfinished pirate hamster prompt', 9)
+        assert live.history.get_strings() == []
+        assert live.queued_messages == ()
+        with anyio.move_on_after(0) as waiting:
+            await live.read()
+        assert waiting.cancelled_caught
+        live.submit(EOFError())
+        with pytest.raises(EOFError):
+            await live.read()
+
+
+@pytest.mark.parametrize('wake', [False, True])
+async def test_removing_queued_prompt_does_not_discard_pending_wake(wake: bool) -> None:
+    async with editor() as (live, _, _):
+        live.feed('paste', 'remove me')
+        live.feed('enter')
+        if wake:
+            live.wake()
+        live.feed('up')
+        live.buffer.replace('')
+        live.feed('enter')
+        assert live.queued_messages == ()
+        if wake:
+            with pytest.raises(PromptWakeup):
+                await live.read()
+        else:
+            with anyio.move_on_after(0) as waiting:
+                await live.read()
+            assert waiting.cancelled_caught

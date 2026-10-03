@@ -12,6 +12,7 @@ import base64
 import json
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import timezone
 from decimal import Decimal
 from typing import Any
 
@@ -25,11 +26,19 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     BinaryImage,
+    CachePoint,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    PartEndEvent,
+    PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
@@ -39,13 +48,18 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
+    UserContent,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeError,
     RealtimeModelProfile,
     RealtimeSession,
+    RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
     WebRTCSession,
     infer_realtime_model,
@@ -69,7 +83,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import try_import
+from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
     import httpx2
@@ -109,6 +123,7 @@ def model() -> OpenAILiveModel:
 def _config(model: OpenAILiveModel, **kwargs: Any) -> dict[str, Any]:
     kwargs.setdefault('instructions', '')
     kwargs.setdefault('tools', [])
+    kwargs.setdefault('native_tools', [])
     kwargs.setdefault('messages', [])
     kwargs.setdefault('settings', OpenAILiveModelSettings())
     return model._session_config(**kwargs)  # pyright: ignore[reportPrivateUsage]
@@ -160,7 +175,8 @@ def test_profile(model: OpenAILiveModel) -> None:
         responses_are_requests=False,
         # Live reports its own context usage; the tokens it reports are the delegated backend's.
         response_usage_covers_context=False,
-        supported_native_tools=frozenset(),
+        # The delegated backend runs web search; Live refuses every other native Responses tool.
+        supported_native_tools=frozenset({WebSearchTool}),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=128_000,
@@ -687,6 +703,30 @@ async def test_a_result_for_an_abandoned_call_is_not_sent() -> None:
     assert sent == []
 
 
+async def test_a_call_abandoned_while_its_media_downloads_is_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mapping media can wait on a download, and a backend that gives up meanwhile must still be honored."""
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)  # pragma: no cover
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    map_items = live_module._tool_result_follow_up  # pyright: ignore[reportPrivateUsage]
+
+    async def downloading(result: ToolResult, *, provider_name: str) -> Any:
+        # The backend gives up while the download is in flight.
+        connection._map_response_event(_backend_terminal('response.failed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+        return await map_items(result, provider_name=provider_name)
+
+    monkeypatch.setattr(live_module, '_tool_result_follow_up', downloading)
+    image = BinaryContent(data=b'png', media_type='image/png')
+    await connection.send(ToolResult('c1', output='too late', content=[image]))
+
+    assert sent == []
+
+
 @pytest.mark.parametrize('nested_type', ['response.completed', 'response.failed'])
 def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
     """Delegated calls wait for their response's usage, so its terminal must always report some.
@@ -841,18 +881,118 @@ async def test_tool_result_text_content_reaches_the_backend() -> None:
     )
 
 
-async def test_tool_result_media_is_refused() -> None:
-    """Live carries no media, so a result that needs it fails with nothing on the wire."""
+async def test_tool_result_text_content_types_reach_the_backend_as_text() -> None:
+    """Typed text rides with plain text in the follow-up message; a cache point has no meaning here."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(
+        ToolResult('c1', output='ok', content=[TextContent(content='Returning guest.'), CachePoint()])
+    )
+
+    assert sent[1] == snapshot(
+        {
+            'type': 'response.item.create',
+            'item': {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Returning guest.'}],
+            },
+        }
+    )
+
+
+async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
+    """Files a tool returns follow its output as a user message, as they do on the Realtime API.
+
+    Each item keeps its place among the text. The per-item mapping is `OpenAIResponsesModel`'s, so a pinned
+    payload is what catches it drifting: a cassette would still match.
+    """
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object(), provider_name='openai')  # pyright: ignore[reportArgumentType]
+    content: list[UserContent] = [
+        'The photo:',
+        BinaryContent(data=b'png', media_type='image/png'),
+        TextContent(content='The invoice:'),
+        BinaryContent(data=b'pdf', media_type='application/pdf'),
+        CachePoint(),
+        ImageUrl(url='https://example.com/kiwi.jpg'),
+        DocumentUrl(url='https://example.com/terms.pdf'),
+        UploadedFile(file_id='file-abc', provider_name='openai', media_type='image/png'),
+    ]
+    await connection.send(ToolResult('c1', output='See the attachments.', content=content))
+
+    assert sent == snapshot(
+        [
+            {
+                'type': 'response.item.create',
+                'item': {'type': 'function_call_output', 'call_id': 'c1', 'output': 'See the attachments.'},
+            },
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': 'The photo:'},
+                        {'image_url': 'data:image/png;base64,cG5n', 'type': 'input_image', 'detail': 'auto'},
+                        {'type': 'input_text', 'text': 'The invoice:'},
+                        {
+                            'type': 'input_file',
+                            'file_data': 'data:application/pdf;base64,cGRm',
+                            'filename': 'filename.pdf',
+                        },
+                        {'image_url': 'https://example.com/kiwi.jpg', 'type': 'input_image', 'detail': 'auto'},
+                        {'type': 'input_file', 'file_url': 'https://example.com/terms.pdf'},
+                        {'type': 'input_image', 'file_id': 'file-abc', 'detail': 'auto'},
+                    ],
+                },
+            },
+            {'type': 'response.create'},
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'item,match',
+    [
+        (AudioUrl(url='https://example.com/clip'), 'cannot send `AudioUrl` content'),
+        (VideoUrl(url='https://example.com/clip'), 'cannot send `VideoUrl` content'),
+        (BinaryContent(data=b'x', media_type='audio/wav'), 'cannot send `audio/wav` content'),
+        (BinaryContent(data=b'x', media_type='video/mp4'), 'cannot send `video/mp4` content'),
+        (DocumentUrl(url='https://example.com/clip.mp3'), 'cannot send a `audio/mpeg` `DocumentUrl`'),
+        (
+            DocumentUrl(url='https://example.com/clip', media_type='video/mp4'),
+            'cannot send a `video/mp4` `DocumentUrl`',
+        ),
+        (UploadedFile(file_id='f', provider_name='openai', media_type='audio/wav'), 'uploaded `audio/wav` file'),
+        (UploadedFile(file_id='f', provider_name='openai', media_type='video/mp4'), 'uploaded `video/mp4` file'),
+        (UploadedFile(file_id='f', provider_name='anthropic'), "provider_name='anthropic'"),
+    ],
+)
+async def test_tool_result_media_the_backend_cannot_read_is_refused(item: UserContent, match: str) -> None:
+    """The backend takes text, images, and documents only, so anything else fails with nothing sent."""
     sent: list[dict[str, Any]] = []
 
     class _Recorder(OpenAILiveConnection):
         async def _send_event(self, event: dict[str, Any]) -> None:
             sent.append(event)  # pragma: no cover
 
-    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    result = ToolResult('c1', output='see this', content=[BinaryContent(data=b'x', media_type='image/png')])
+    connection = _Recorder(object(), provider_name='openai')  # pyright: ignore[reportArgumentType]
+    result = ToolResult(
+        'c1', output='see this', content=['Here:', BinaryContent(data=b'x', media_type='image/png'), item]
+    )
 
-    with pytest.raises(UserError, match='does not support media in tool results'):
+    with pytest.raises(UserError, match=match):
         await connection.send(result)
 
     assert sent == []
@@ -1148,6 +1288,153 @@ def test_strict_tools_reach_the_backend(model: OpenAILiveModel) -> None:
     assert 'tool_choice' not in responses
     # With no agent instructions there is no backend prompt to send.
     assert 'instructions' not in responses
+
+
+def test_web_search_reaches_the_backend(model: OpenAILiveModel) -> None:
+    """`WebSearchTool` is advertised to the backend next to the function tools, with every option.
+
+    Live accepts any `web_search` shape at session start and hands it to the backend unchecked (an
+    unknown key only fails the first delegation), so the options are pinned here, where a drift would
+    otherwise go unseen until a search behaved differently.
+    """
+    tool = ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'})
+    web_search = WebSearchTool(
+        search_context_size='high',
+        user_location={'city': 'Amsterdam', 'country': 'NL'},
+        allowed_domains=['wikipedia.org'],
+        blocked_domains=['example.com'],
+        external_web_access=False,
+    )
+    responses = _config(model, tools=[tool], native_tools=[web_search])['delegation']['responses']
+
+    assert responses['tools'] == snapshot(
+        [
+            {'type': 'function', 'name': 'lookup', 'parameters': {'type': 'object'}},
+            {
+                'type': 'web_search',
+                'search_context_size': 'high',
+                'user_location': {'type': 'approximate', 'city': 'Amsterdam', 'country': 'NL'},
+                'filters': {'allowed_domains': ['wikipedia.org'], 'blocked_domains': ['example.com']},
+                'external_web_access': False,
+            },
+        ]
+    )
+    # With no function tools, web search is the backend's only tool.
+    assert _config(model, native_tools=[WebSearchTool()])['delegation']['responses']['tools'] == snapshot(
+        [{'type': 'web_search', 'search_context_size': 'medium'}]
+    )
+
+
+def test_a_backend_web_search_is_recorded_as_native_tool_parts() -> None:
+    """A finished `web_search_call` becomes the call and return parts a standard Responses run records."""
+    connection = _connection()
+    search = {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': 'd1',
+        'event': {
+            'type': 'response.output_item.done',
+            'sequence_number': 3,
+            'output_index': 1,
+            'item': {
+                'id': 'ws_1',
+                'type': 'web_search_call',
+                'status': 'completed',
+                'action': {'type': 'search', 'query': 'Amsterdam population', 'queries': ['Amsterdam population']},
+            },
+        },
+    }
+    connection._map_event(_event(_delegation_created('d1')))  # pyright: ignore[reportPrivateUsage]
+
+    first = connection._map_event(_event(search))  # pyright: ignore[reportPrivateUsage]
+    call = NativeToolCallPart(
+        tool_name='web_search',
+        args={'type': 'search', 'query': 'Amsterdam population', 'queries': ['Amsterdam population']},
+        tool_call_id='ws_1',
+        id='ws_1',
+        provider_name='openai',
+    )
+    result = NativeToolReturnPart(
+        tool_name='web_search',
+        content={'status': 'completed'},
+        tool_call_id='ws_1',
+        timestamp=IsNow(tz=timezone.utc),
+        provider_name='openai',
+    )
+    assert first == [
+        PartStartEvent(index=0, part=call),
+        PartEndEvent(index=0, part=call),
+        PartStartEvent(index=1, part=result),
+        PartEndEvent(index=1, part=result),
+    ]
+    # A second search is numbered after the first, so its parts never replace the first's.
+    second = connection._map_event(_event(search))  # pyright: ignore[reportPrivateUsage]
+    assert [event.index for event in second if isinstance(event, PartStartEvent)] == [2, 3]
+
+
+def _output_item_done(item: dict[str, Any], *, delegation_id: str = 'd1') -> dict[str, Any]:
+    return {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': delegation_id,
+        'event': {'type': 'response.output_item.done', 'sequence_number': 1, 'output_index': 0, 'item': item},
+    }
+
+
+def _reasoning(item_id: str) -> dict[str, Any]:
+    return {'id': item_id, 'type': 'reasoning', 'summary': [], 'encrypted_content': f'enc-{item_id}'}
+
+
+_SEARCH_ITEM = {'id': 'ws_1', 'type': 'web_search_call', 'status': 'completed', 'action': {'type': 'search'}}
+
+
+def test_a_search_is_recorded_with_the_reasoning_that_led_to_it() -> None:
+    """OpenAI replays a search only with its reasoning item, so that is recorded with it, as a Responses run does.
+
+    Reasoning that leads to anything else (a function call, the answer) isn't recorded: nothing needs it.
+    """
+    connection = _connection()
+    connection._map_event(_event(_delegation_created('d1')))  # pyright: ignore[reportPrivateUsage]
+    connection._map_event(_event(_delegation_created('d2')))  # pyright: ignore[reportPrivateUsage]
+
+    def parts(frame: dict[str, Any]) -> list[str]:
+        events = connection._map_event(_event(frame))  # pyright: ignore[reportPrivateUsage]
+        return [
+            f'{type(e.part).__name__}:{getattr(e.part, "id", None)}' for e in events if isinstance(e, PartStartEvent)
+        ]
+
+    # Reasoning waits for what it leads to.
+    assert parts(_output_item_done(_reasoning('rs_1'))) == []
+    # Another delegation's reasoning is its own.
+    assert parts(_output_item_done(_reasoning('rs_other'), delegation_id='d2')) == []
+    assert parts(_output_item_done(_SEARCH_ITEM)) == [
+        'ThinkingPart:rs_1',
+        'NativeToolCallPart:ws_1',
+        'NativeToolReturnPart:None',
+    ]
+    # Reasoning before a function call or the answer is dropped when that arrives.
+    parts(_output_item_done(_reasoning('rs_2')))
+    call: dict[str, Any] = {'id': 'fc_1', 'type': 'function_call', 'call_id': 'c1', 'name': 'lookup', 'arguments': '{}'}
+    connection._map_event(_event(_output_item_done(call)))  # pyright: ignore[reportPrivateUsage]
+    assert parts(_output_item_done(_SEARCH_ITEM)) == ['NativeToolCallPart:ws_1', 'NativeToolReturnPart:None']
+    parts(_output_item_done(_reasoning('rs_2b')))
+    message: dict[str, Any] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'status': 'completed',
+        'content': [],
+    }
+    assert parts(_output_item_done(message)) == []
+    assert parts(_output_item_done(_SEARCH_ITEM)) == ['NativeToolCallPart:ws_1', 'NativeToolReturnPart:None']
+    # And so is reasoning a response ends with.
+    parts(_output_item_done(_reasoning('rs_3')))
+    connection._map_response_event(_backend_terminal('response.completed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    assert parts(_output_item_done(_SEARCH_ITEM, delegation_id='d2')) == [
+        'ThinkingPart:rs_other',
+        'NativeToolCallPart:ws_1',
+        'NativeToolReturnPart:None',
+    ]
 
 
 def _backend(model: OpenAILiveModel, **settings: Any) -> str:
@@ -2254,3 +2541,327 @@ async def test_a_sideband_cannot_seed_history(model: OpenAILiveModel) -> None:
             model_request_parameters=ModelRequestParameters(),
         ):
             pass  # pragma: no cover
+
+
+# --- reconnecting -----------------------------------------------------------------------------------
+
+
+class _DroppingWebSocket(_FakeWebSocket):
+    """A socket that delivers its frames, then drops the way a lost connection does."""
+
+    async def recv(self) -> str:
+        if self._frames:
+            return self._frames.pop(0)
+        raise websockets.ConnectionClosedError(None, None)
+
+
+def _started(session_id: str, **session: Any) -> str:
+    return json.dumps(
+        {
+            'type': 'session.started',
+            'event_id': 'e',
+            'session': {'id': session_id, 'expires_at': 0, 'model': 'gpt-live-1', 'status': 'active', **session},
+        }
+    )
+
+
+@contextmanager
+def _patched_dials(*sockets: _FakeWebSocket) -> Any:
+    """Stand in for `websockets.connect`, answering each dial with the next socket and noting its URL."""
+    urls: list[str] = []
+    queue = list(sockets)
+
+    class _Opening:
+        def __init__(self, ws: _FakeWebSocket) -> None:
+            self.ws = ws
+
+        async def __aenter__(self) -> _FakeWebSocket:
+            return self.ws
+
+        async def __aexit__(self, *args: Any) -> None:
+            self.ws.closed = True
+
+    original = live_module.websockets.connect
+
+    def _connect(url: str, **kwargs: Any) -> _Opening:
+        urls.append(url)
+        return _Opening(queue.pop(0))
+
+    live_module.websockets.connect = _connect
+    try:
+        yield urls
+    finally:
+        live_module.websockets.connect = original
+
+
+_RECONNECT = OpenAILiveModelSettings(reconnect={'base_delay': 0.0, 'jitter': False, 'max_attempts': 2})
+_STORED_RECONNECT = OpenAILiveModelSettings(_RECONNECT, openai_live_store=True)
+
+
+async def _first_events(connection: OpenAILiveConnection, count: int) -> list[Any]:
+    events: list[Any] = []
+    with anyio.fail_after(5):
+        async for event in connection:  # pragma: no branch
+            events.append(event)
+            if len(events) == count:
+                break
+    return events
+
+
+async def test_a_drop_without_a_reconnect_policy_still_ends_the_session(model: OpenAILiveModel) -> None:
+    with _patched_dials(_DroppingWebSocket([_started('s1')])):
+        async with model.connect(
+            messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+            with pytest.raises(websockets.ConnectionClosedError):
+                await _first_events(connection, 1)
+
+
+async def test_a_session_with_no_history_reconnects_to_an_unseeded_session(model: OpenAILiveModel) -> None:
+    """Nothing to replay is not a reason to fail: the replacement just starts empty."""
+    first, second = _DroppingWebSocket([_started('s1')]), _FakeWebSocket([_started('s2')])
+    with _patched_dials(first, second) as urls:
+        async with model.connect(
+            messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+    assert urls == ['wss://api.openai.com/v1/live/sessions'] * 2
+    assert first.closed
+    replacement = json.loads(second.sent[0])['session']
+    assert 'input' not in replacement and replacement['model'] == 'gpt-live-1'
+
+
+async def test_a_replacement_session_is_seeded_with_the_history_so_far(model: OpenAILiveModel) -> None:
+    first, second = _DroppingWebSocket([_started('s1')]), _FakeWebSocket([_started('s2')])
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=['Look at this:', BinaryImage(data=b'x', media_type='image/png')])])
+    ]
+    with _patched_dials(first, second):
+        async with model.connect(
+            messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            connection.set_message_history(lambda: history)
+            # Like gpt-realtime's replay, a replay of the offered history restores the call.
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
+    # A replay has nothing to refuse: the image is left out rather than raising.
+    assert json.loads(second.sent[0])['session']['input'] == [
+        {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Look at this:'}]}
+    ]
+
+
+async def test_a_stored_session_is_forked_from_the_latest_session(model: OpenAILiveModel) -> None:
+    """Each fork is a new session, so the next drop forks that one."""
+    sockets = (
+        _DroppingWebSocket([_started('s1')]),
+        _DroppingWebSocket([_started('s2')]),
+        _FakeWebSocket([_started('s3')]),
+    )
+    settings = _STORED_RECONNECT
+    with _patched_dials(*sockets) as urls:
+        async with model.connect(
+            messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert await _first_events(connection, 2) == [RealtimeSessionReconnectEvent(state_restored=True)] * 2
+    assert urls == snapshot(
+        [
+            'wss://api.openai.com/v1/live/sessions',
+            'wss://api.openai.com/v1/live/sessions/s1/fork',
+            'wss://api.openai.com/v1/live/sessions/s2/fork',
+        ]
+    )
+    assert [json.loads(ws.sent[0])['session'] for ws in sockets[1:]] == [{}, {}]
+
+
+async def test_a_reconnect_that_keeps_failing_ends_the_session(model: OpenAILiveModel) -> None:
+    """A refused start counts as a failed attempt; once they're spent, the session ends with a reason."""
+    refused = json.dumps(
+        {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'The stored session was not found.'}}
+    )
+    sockets = (_DroppingWebSocket([_started('s1')]), _FakeWebSocket([refused]), _FakeWebSocket([refused]))
+    settings = _RECONNECT
+    with _patched_dials(*sockets):
+        async with model.connect(
+            messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            with anyio.fail_after(5):
+                # The stream ends after the error, rather than trying again.
+                [error] = [event async for event in connection]
+            assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
+            assert 'reconnect failed' in error.message
+            assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_call_the_lost_session_asked_for_is_not_answered_on_the_new_one() -> None:
+    """The new session has no record of the call (checked live), and its turn and usage start over."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)  # pragma: no cover
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return object(), 's2'
+
+    connection = _Sink(object(), dial=dial, reconnect={'base_delay': 0.0, 'jitter': False}, forks=True, session_id='s1')  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    connection._reported_seconds = 30.0  # pyright: ignore[reportPrivateUsage]
+
+    assert await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+    assert connection._session_id == 's2'  # pyright: ignore[reportPrivateUsage]
+    assert not connection._delegations and not connection._response_open  # pyright: ignore[reportPrivateUsage]
+    assert connection._silence_timeout() is None  # pyright: ignore[reportPrivateUsage]
+    assert connection._reported_seconds == 0.0  # pyright: ignore[reportPrivateUsage]
+    await connection.send(ToolResult('c1', output='too late'))
+    assert sent == []
+
+
+async def test_a_reconnect_budget_that_is_spent_is_not_retried() -> None:
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        raise AssertionError('no dial expected')  # pragma: no cover
+
+    connection = OpenAILiveConnection(object(), dial=dial, reconnect={'max_reconnects': 0})  # pyright: ignore[reportArgumentType]
+    assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+    assert not await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_replay_keeps_the_most_recent_history_within_lives_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live refuses more than 128 items or 8,192 tokens at the start, so a long call replays its recent end."""
+    many = [ModelRequest(parts=[UserPromptPart(content=f'message {i}')]) for i in range(200)]
+    items = await live_module.replay_input_items(many, provider_name='openai')
+    assert len(items) == 128
+    assert items[-1]['content'][0]['text'] == 'message 199'
+
+    long = [ModelRequest(parts=[UserPromptPart(content=' '.join(['word'] * 1000) + f' {i}')]) for i in range(20)]
+    items = await live_module.replay_input_items(long, provider_name='openai')
+    assert [item['content'][0]['text'].rsplit(' ', 1)[-1] for item in items] == [
+        '12',
+        '13',
+        '14',
+        '15',
+        '16',
+        '17',
+        '18',
+        '19',
+    ]
+
+
+class _ClosingWebSocket(_FakeWebSocket):
+    """A socket that delivers its frames, then closes cleanly, as Live does after `session.closed`."""
+
+    async def recv(self) -> str:
+        if self._frames:
+            return self._frames.pop(0)
+        raise websockets.ConnectionClosedOK(None, None)
+
+
+@pytest.mark.parametrize('reason', ['expired', 'connection_lost'])
+async def test_a_session_live_ends_itself_reconnects(model: OpenAILiveModel, reason: str) -> None:
+    """Live announces a duration limit or a lost connection before its clean close; the policy re-opens it."""
+    audio = json.dumps({'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='})
+    first = _ClosingWebSocket([_started('s1'), audio, json.dumps(_session_closed(reason))])
+    second = _FakeWebSocket([_started('s2')])
+    with _patched_dials(first, second) as urls:
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            events = await _first_events(connection, 3)
+    assert events == [
+        AudioDelta(data=b'\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f'),
+        ResponseDone(interrupted=True),
+        RealtimeSessionReconnectEvent(state_restored=True),
+    ]
+    assert urls[-1] == 'wss://api.openai.com/v1/live/sessions/s1/fork'
+
+
+async def test_a_session_the_safety_filter_ended_stays_ended(model: OpenAILiveModel) -> None:
+    first = _ClosingWebSocket([_started('s1'), json.dumps(_session_closed('content'))])
+    with _patched_dials(first):
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            with anyio.fail_after(5):
+                events = [event async for event in connection]
+    assert events[-1] == RealtimeSessionErrorEvent(
+        message='The OpenAI GPT-Live session ended: content.', code='live_session_content', recoverable=False
+    )
+
+
+async def test_a_session_live_refuses_to_fork_is_replayed_instead(model: OpenAILiveModel) -> None:
+    refused = json.dumps(
+        {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'The stored session was not found.'}}
+    )
+    sockets = (_DroppingWebSocket([_started('s1')]), _FakeWebSocket([refused]), _FakeWebSocket([_started('s2')]))
+    history = [ModelRequest(parts=[UserPromptPart(content='Hi')])]
+    with _patched_dials(*sockets) as urls:
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            connection.set_message_history(lambda: history)
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
+    assert urls[1:] == ['wss://api.openai.com/v1/live/sessions/s1/fork', 'wss://api.openai.com/v1/live/sessions']
+    replacement = json.loads(sockets[2].sent[0])['session']
+    assert replacement['store'] is True
+    assert replacement['input'] == [{'role': 'user', 'content': [{'type': 'input_text', 'text': 'Hi'}]}]
+
+
+async def test_a_stored_session_without_an_id_is_replayed() -> None:
+    """With no session to fork, a fork would start blank; replaying at least carries the history."""
+    dials: list[str | None] = []
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        dials.append(fork_from)
+        return _FakeWebSocket([]), 's2'
+
+    connection = OpenAILiveConnection(object(), dial=dial, reconnect={'base_delay': 0.0}, forks=True)  # pyright: ignore[reportArgumentType]
+    assert await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+    assert dials == [None]
+    assert not connection._restored  # pyright: ignore[reportPrivateUsage]
+
+
+class _SendDroppingWebSocket(_FakeWebSocket):
+    async def send(self, data: str) -> None:
+        raise websockets.ConnectionClosedError(None, None)
+
+
+async def test_a_drop_while_continuing_a_delegation_reconnects() -> None:
+    """The continuation goes out from the receive loop, so a drop there takes the same reconnect path."""
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return _FakeWebSocket([]), 's2'
+
+    ws = _SendDroppingWebSocket([_transcript_frame('Checking.')])
+    connection = OpenAILiveConnection(ws, dial=dial, reconnect={'base_delay': 0.0}, session_id='s1')  # pyright: ignore[reportArgumentType]
+    connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
+    events = await _first_events(connection, 2)
+    assert events[-1] == RealtimeSessionReconnectEvent(state_restored=False)
+    assert connection._session_id == 's2'  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_drop_while_continuing_without_a_policy_raises() -> None:
+    ws = _SendDroppingWebSocket([_transcript_frame('Checking.')])
+    connection = OpenAILiveConnection(ws)  # pyright: ignore[reportArgumentType]
+    connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(websockets.ConnectionClosedError):
+        await _first_events(connection, 2)
+
+
+async def test_a_message_too_long_to_replay_alone_is_skipped() -> None:
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='earlier')]),
+        ModelRequest(parts=[UserPromptPart(content=' '.join(['word'] * 9000))]),
+    ]
+    items = await live_module.replay_input_items(messages, provider_name='openai')
+    assert [item['content'][0]['text'] for item in items] == ['earlier']
+
+    # A skipped message doesn't take up one of the 128 places.
+    many = [ModelRequest(parts=[UserPromptPart(content=f'message {i}')]) for i in range(130)]
+    items = await live_module.replay_input_items([*many, *messages[1:]], provider_name='openai')
+    assert len(items) == 128
+    assert items[0]['content'][0]['text'] == 'message 2'
+
+
+def test_a_document_url_of_unknown_type_is_left_to_the_mapper() -> None:
+    """Whether it can be sent is the Responses mapping's call, as on `OpenAIResponsesModel`."""
+    assert not live_module._is_audio_or_video_url(DocumentUrl(url='https://example.com/noext'))  # pyright: ignore[reportPrivateUsage]

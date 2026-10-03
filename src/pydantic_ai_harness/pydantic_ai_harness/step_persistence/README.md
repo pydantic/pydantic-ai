@@ -10,15 +10,21 @@
 >
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-`StepPersistence` records what an agent did at each boundary, separate from
-whether the run can be safely resumed. It is the persistence substrate for
-orchestrators that delegate to sub-agents (e.g. an AICA orchestrator spawning
-a `code_librarian` to investigate one symbol, then continuing that delegate's
-investigation with a follow-up question).
+`StepPersistence` saves a snapshot of an agent run at every settled step and
+when the run fails, so you can resume the run, or fork it from an earlier step,
+in the same process or another one, from memory, files, SQLite, MongoDB, or your
+own store. Alongside the snapshots it keeps an append-only trail of step events
+and a ledger of tool side effects, so after a crash you can tell which tool
+calls completed and which may or may not have run. It is also the persistence
+layer for orchestrators that delegate to sub-agents, for example continuing a
+delegate's investigation with a follow-up question.
 
-It is not a full graph-state checkpoint. Capability-state restore, workspace
-snapshots, and graph-node resume are out of scope and tracked separately
-(see `pydantic-ai-harness` issues #149 and #196).
+A snapshot holds the run's message history, not everything around it:
+capability state outside the messages, workspace files, and resuming from the
+middle of a step are tracked separately (see `pydantic-ai-harness` issues #149
+and #196). For recovery inside a step, run the agent on
+[durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/),
+which `StepPersistence` works alongside.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
@@ -192,12 +198,15 @@ when captured. Snapshots are written at these boundaries:
   produces a `complete` snapshot; a crash mid-tool-cycle produces an
   `interrupted` one carrying every completed cycle.
 
-An `interrupted` snapshot is sendable on resume -- pydantic-ai (>= 2.10)
-repairs broken tool-call/result pairing before every model request -- but
-not necessarily *safe*: a pending tool call may be re-executed (resuming
-without a new prompt) or closed out with a synthesized `interrupted`
-return, and neither says whether the original side effect happened. That
-is the tool-effect ledger's job. So the default read path skips
+An `interrupted` snapshot is sendable, but not necessarily *safe*: a
+pending tool call may be re-executed or closed out with a synthesized
+`interrupted` return, and neither says whether the original side effect
+happened. That is the tool-effect ledger's job. Which one happens depends on
+how you continue. Resuming without a new prompt executes the pending calls.
+With a new prompt, calls are closed out if some of their batch already
+returned; if none did, the run raises `UserError` rather than abandon calls
+that could still be answered, so call `pydantic_ai.messages.repair_messages`
+on the history first to close them out yourself. So the default read path skips
 `interrupted` snapshots; pass `include_interrupted=True` to
 `continue_run` / `fork_run` / `latest_snapshot` after checking
 `list_unresolved_tool_effects`. If no matching snapshot exists,
@@ -716,7 +725,14 @@ between hosts. PID reuse is conservatively treated as busy.
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
 
-`pydantic_ai_harness.step_persistence.naming` provides a tool-free naming agent
+`pydantic_ai_harness.step_persistence.naming` is deprecated and emits a
+`HarnessDeprecationWarning` on import. Its naming prompt, queue bounds, and
+failure policy are CLAI's resume-browser policy rather than a Harness primitive,
+so CLAI now owns its own copy. Copy the helpers you use into your application;
+the module will be removed in a future release. The conversation store above is
+unaffected.
+
+Until then, the module provides a tool-free naming agent
 and `SessionNamer`, a worker owned by the application's task group. `submit(id)`
 coalesces jobs in a queue bounded to ten sessions. `run()` processes one job at a
 time until its owner cancels it. `backfill(entries)` considers up to ten newest
@@ -764,8 +780,8 @@ in-memory checkpoint through shared references.
 
 `SnapshotSaved` is a typed capability event emitted after a checkpoint write
 completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
-`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)` or CLAI's
-`host.on(SnapshotSaved)`. Store writes are the source of truth; notifications may
+`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)`, which a CLAI plugin
+returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
 
 ### Core boundary for stronger interrupted-step recovery

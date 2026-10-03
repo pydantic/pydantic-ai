@@ -63,7 +63,12 @@ def test_launches_in_new_worktree(repository: Path, args: list[str]) -> None:
     plugins = nested / 'plugins'
     plugins.mkdir()
     (plugins / 'workspace.py').write_text(
-        'from pathlib import Path\ndef activate(host):\n    Path("plugin-workspace.txt").write_text(str(Path.cwd()))\n'
+        'from pathlib import Path\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Workspace(Plugin):\n'
+        '    def get_capabilities(self):\n'
+        '        Path("plugin-workspace.txt").write_text(str(Path.cwd()))\n'
+        '        return []\n'
     )
 
     result = launch(nested, *args, prompt='/set run.request_limit\n/exit\n')

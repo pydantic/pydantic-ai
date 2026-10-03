@@ -322,6 +322,23 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
     )
 
 
+async def test_response_without_id_created_or_finish_reason(allow_model_requests: None):
+    """OpenAI-compatible providers may send an empty `id`, a zero `created`, and no `finish_reason`.
+
+    These build the same response as a stream without them does: none of them is reported as a provider value.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    c.id = ''
+    c.created = 0
+    c.choices[0].finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+
+    response = await direct_model_request(model, [ModelRequest.user_text_prompt('hello')])
+    assert response.provider_response_id is None
+    assert response.provider_details is None
+    assert response.finish_reason == 'stop'
+
+
 async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='done', role='assistant'),
