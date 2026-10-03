@@ -17,12 +17,4 @@ A Pydantic AI [agent](agent.md) is plain Python with no interface baked in: the 
 | **Voice** | The same agent, tools, and observability over a live audio session; voice is just another frontend | [Realtime](realtime/overview.md) |
 | **GitHub** | Run an agent on issues, pull requests or a schedule, sandboxed on a runner, writing back through safe outputs; the one surface with nobody at the other end | [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 
-!!! warning "CLAI2 environment files"
-
-    The separate [CLAI2 client](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/README.md#environment-variables)
-    automatically loads the nearest `.env` from the launch directory or its parents.
-    Those directories must be trusted: values can redirect provider endpoints using
-    exported API keys and affect tool subprocesses. Set `PYTHON_DOTENV_DISABLED=1`
-    before launching CLAI2 in an untrusted directory.
-
 Because interfaces are separate from the agent, features work across all of them: [deferred tools and approval](deferred-tools.md#human-in-the-loop-tool-approval) surface wherever the agent runs (approval prompts in the CLI, approval UI events in your frontend), the same deployed agent can serve the web UI for your team and the AG-UI stream for your product at once, and a [realtime session](realtime/overview.md) can hand its history to a text run and back. Complete agents work everywhere too: `clai -a pydantic_ai_harness.coder:coder_agent` runs the [Harness](https://pydantic.dev/docs/ai/harness/)'s [Coder](https://pydantic.dev/docs/ai/harness/coder/) in your terminal.

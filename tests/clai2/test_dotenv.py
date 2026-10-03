@@ -60,6 +60,9 @@ def test_startup_loads_nearest_dotenv(
         ('disabled', None),
         ('invalid_encoding', "'utf-8' codec can't decode byte 0xff"),
         ('unreadable', 'Cannot read dotenv file'),
+        pytest.param(
+            'fifo', None, marks=pytest.mark.skipif(sys.platform == 'win32', reason='Named pipes require POSIX')
+        ),
     ],
 )
 def test_startup_without_dotenv_values(
@@ -83,6 +86,13 @@ def test_startup_without_dotenv_values(
             raise PermissionError('Cannot read dotenv file')
 
         monkeypatch.setattr('pydantic_clai2.__main__.load_dotenv', unreadable)
+    elif state == 'fifo':
+        os.mkfifo(tmp_path / '.env')
+
+        def unexpected_load(dotenv_path: str) -> bool:
+            pytest.fail('A `.env` FIFO must not be passed to `load_dotenv`')
+
+        monkeypatch.setattr('pydantic_clai2.__main__.load_dotenv', unexpected_load)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('PYTHON_DOTENV_DISABLED', '1' if state == 'disabled' else '0')
     monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
@@ -126,19 +136,3 @@ main()
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == 'loaded before import'
-
-
-@pytest.mark.skipif(sys.platform == 'win32', reason='Named pipes require POSIX')
-def test_startup_skips_dotenv_fifo(tmp_path: Path) -> None:
-    os.mkfifo(tmp_path / '.env')
-    result = subprocess.run(
-        [sys.executable, '-m', 'pydantic_clai2', '--help'],
-        cwd=tmp_path,
-        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=15,
-    )
-    assert result.returncode == 0, result.stderr
-    assert 'usage:' in result.stdout
