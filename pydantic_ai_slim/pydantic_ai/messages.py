@@ -3513,7 +3513,7 @@ def _is_turn_scoped(part: ModelRequestPart) -> bool:
     return isinstance(part, SystemPromptPart) and part.scope == 'turn'
 
 
-def _current_turn_start(messages: Sequence[ModelMessage]) -> int:
+def _current_turn_start(messages: Sequence[ModelMessage]) -> int:  # pyright: ignore[reportUnusedFunction]
     """The index of the first message of the history's current turn.
 
     The current turn is the trailing run of `ModelRequest`s no response has answered yet, together with
@@ -3530,7 +3530,7 @@ def _current_turn_start(messages: Sequence[ModelMessage]) -> int:
     return index
 
 
-def _drop_unanswered_turn_scoped_prompts(messages: list[ModelMessage]) -> None:
+def _drop_unanswered_turn_scoped_prompts(messages: list[ModelMessage]) -> None:  # pyright: ignore[reportUnusedFunction]
     """Remove the turn-scoped `SystemPromptPart`s that no response will answer, in place.
 
     Called once a step has given up on getting a response: the run raised or was cancelled, or a

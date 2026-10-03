@@ -2925,6 +2925,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         If the chosen block already has `cache_control` (e.g. from an explicit `CachePoint`),
         it is left unchanged to preserve the user's chosen TTL.
         """
+        nothing_to_cache: list[BetaContentBlockParam] = []
         lasting_blocks = next(
             (
                 blocks
@@ -2932,7 +2933,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if message.get('clear_at') != 'next_user_message'
                 and (blocks := _blocks_before_turn_scoped_text(message, turn_scoped_texts))
             ),
-            [],
+            nothing_to_cache,
         )
         self._add_cache_control_to_last_cacheable_param(lasting_blocks, ttl)
 
