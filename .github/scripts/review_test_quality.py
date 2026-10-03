@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Literal
 
 import tomllib
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
 _API = 'https://api.github.com'
 _CHECK_NAME = 'Test Quality Review'
@@ -67,6 +67,12 @@ class ReportEntry(BaseModel):
         if not value.strip():
             raise ValueError('must not be empty')
         return value
+
+    @model_validator(mode='after')
+    def require_corrective_action(self) -> ReportEntry:
+        if self.outcome == 'changes_needed' and self.action.strip().casefold() == 'no change':
+            raise ValueError('changes_needed entries require a corrective action')
+        return self
 
 
 class Report(BaseModel):

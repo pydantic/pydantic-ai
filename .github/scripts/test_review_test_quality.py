@@ -35,7 +35,7 @@ def _entry(path: str, outcome: str = 'preserved_or_strengthened') -> dict[str, s
         'guarantee': 'rejects an observable failure',
         'outcome': outcome,
         'evidence': 'pinned assertion and active CI selection',
-        'action': 'No change',
+        'action': 'Add a focused assertion for the reported gap.' if outcome == 'changes_needed' else 'No change',
     }
 
 
@@ -532,6 +532,18 @@ def test_report_must_cover_every_candidate_and_no_others() -> None:
     assert title == 'Inconclusive'
     assert 'tests/test_a.py' in summary
     assert 'report is missing' in summary
+
+
+def test_changes_needed_requires_corrective_action_at_report_boundary() -> None:
+    invalid_entry = _entry('tests/test_a.py', 'changes_needed')
+    invalid_entry['action'] = '  NO CHANGE  '
+    with pytest.raises(ValidationError, match='changes_needed entries require a corrective action'):
+        validate_report(json.dumps({'entries': [invalid_entry]}), ['tests/test_a.py'])
+
+    report = validate_report(
+        json.dumps({'entries': [_entry('tests/test_a.py', 'changes_needed')]}), ['tests/test_a.py']
+    )
+    assert report.entries[0].action == 'Add a focused assertion for the reported gap.'
 
 
 def test_outcomes_keep_a_mixed_report_actionable_and_deduplicate_same_identity() -> None:
