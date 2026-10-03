@@ -92,11 +92,33 @@ async def install_git_plugin(
         raise
 
 
+def git_executable(*, windows: bool = os.name == 'nt') -> str:
+    """Resolve Windows' native `git.exe` from absolute PATH directories outside the working directory.
+
+    Bare executable names, and `shutil.which` before Python 3.12, search the working directory first.
+    Keep POSIX's existing PATH lookup unchanged.
+    """
+    if not windows:
+        return 'git'
+    current = Path.cwd().resolve()
+    for directory in os.get_exec_path():
+        path = Path(directory)
+        if not path.is_absolute() or not path.is_dir():
+            continue
+        path = path.resolve()
+        if path == current:
+            continue
+        executable = path / 'git.exe'
+        if executable.is_file():
+            return str(executable)
+    raise FileNotFoundError('git.exe was not found in an absolute PATH directory outside the working directory.')
+
+
 async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
     """Own Git's process group until cloning finishes or cancellation cleanup completes."""
     spawn = asyncio.create_task(
         asyncio.create_subprocess_exec(
-            'git',
+            git_executable(),
             '-c',
             'credential.interactive=false',
             'clone',

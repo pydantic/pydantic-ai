@@ -665,7 +665,9 @@ Three ways to install one:
    /plugins add git@github.com:your-org/my-plugin.git
    ```
 
-   Git must be installed. The repository must have an `__init__.py` or `plugin.py`
+   Git must be installed and available on `PATH`. On Windows, CLAI resolves
+   `git.exe` only from absolute `PATH` directories outside the working directory.
+   The repository must have an `__init__.py` or `plugin.py`
    at its root that defines one public `Plugin` subclass. If both exist,
    `__init__.py` is used. Relative imports can load other files from the checkout.
    Install the plugin's dependencies in CLAI's Python environment first; this
@@ -1501,18 +1503,19 @@ failed. A plugin that is installed but fails to import one of its dependencies
 is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
 
-With arguments `/plugins` is a plain command, and `clai2 plugins ...` outside
-CLAI does the same thing:
+With arguments `/plugins` is a plain command. The standalone `clai2 plugins ...`
+commands edit saved declarations without loading plugin code. Git installation,
+configuration menus, and live reloading are available only inside a CLAI session:
 
 | Command | Does |
 |---|---|
 | `/plugins list` | show every plugin and whether it is on |
 | `/plugins add NAME module[:Class] [JSON]` | save it and load it now |
-| `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
+| `/plugins add GIT_URL` | clone a trusted repository and load its plugin (in a CLAI session only); see [where plugins live](#where-plugins-live) |
+| `/plugins remove NAME` | forget an installed declaration, keeping any Git checkout on disk; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
-| `/plugins configure NAME` | open a loaded plugin's settings menu (in a CLAI session only) |
-| `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
-| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure`; `enable` and `add` open it too |
+| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure` (in a CLAI session only); `enable` and `add` open it too |
+| `/plugins reload NAME` | re-import the file and load it again (in a CLAI session only; does not fetch Git updates) |
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,

@@ -15,6 +15,7 @@ from tempfile import TemporaryDirectory
 import anyio
 import pytest
 
+from pydantic_clai2.commands import plugins_command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.plugin_requirements import Requirements
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -180,6 +181,14 @@ async def test_remove_does_not_claim_a_foreign_git_directory(tmp_path: Path) -> 
     harness.store.save_plugin(declaration)
     assert (await harness.loader.command(['remove', 'demo_plugin'])).startswith('Disabled demo_plugin.')
     assert harness.store.plugins() == [declaration]
+
+
+def test_shell_git_install_directs_user_to_a_clai_session(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    with pytest.raises(ValueError, match=r'only inside a CLAI session: /plugins add GIT_URL'):
+        plugins_command(harness.store, ['add', 'https://example.com/plugin.git'])
+    assert harness.store.plugins() == []
+    assert not (harness.store.plugins_dir / '_git').exists()
 
 
 @pytest.mark.parametrize(
