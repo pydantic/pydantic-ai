@@ -78,6 +78,14 @@ def test_configured_token_limit_warns_when_usage_is_unavailable() -> None:
         limits.check_tokens(usage)
 
 
+def test_configured_cost_limit_warns_when_usage_is_unavailable() -> None:
+    limits = UsageLimits(cost_limit=Decimal('0.01'))
+    usage = RunUsage(unmeasured_requests=1)
+
+    with pytest.warns(UsageLimitUnavailableWarning, match='known token and cost totals are lower bounds'):
+        limits.check_cost(usage)
+
+
 def test_unavailable_usage_warning_requires_token_or_cost_limit() -> None:
     usage = RunUsage(unmeasured_requests=1)
     limits_without_token_or_cost = [UsageLimits(), UsageLimits(request_limit=2), UsageLimits(tool_calls_limit=2)]

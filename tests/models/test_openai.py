@@ -9,7 +9,7 @@ import sys
 import textwrap
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
@@ -50,7 +50,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import NativeTool, Thinking, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -63,7 +63,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     VideoUrl,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
@@ -72,7 +72,7 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import Tool, ToolDefinition
+from pydantic_ai.tools import RunContext, Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
@@ -749,10 +749,25 @@ async def test_usage_unavailable_warning_can_be_promoted_to_error(allow_model_re
     completion = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=None)
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
 
+    @dataclass
+    class RecoveringCapability(AbstractCapability[None]):
+        recovery_called: bool = field(default=False, init=False)
+
+        async def on_model_request_error(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            self.recovery_called = True
+            return ModelResponse(parts=[TextPart(content='recovered')])
+
+    capability = RecoveringCapability()
     with warnings.catch_warnings():
         warnings.simplefilter('error', UsageLimitUnavailableWarning)
         with pytest.raises(UsageLimitUnavailableWarning, match='response\\(s\\) omitted usage information'):
-            await Agent(model).run('hello', usage_limits=UsageLimits(input_tokens_limit=100))
+            await Agent[None, str](model, capabilities=[capability], deps_type=type(None)).run(
+                'hello', usage_limits=UsageLimits(input_tokens_limit=100)
+            )
+
+    assert capability.recovery_called is False
 
 
 async def test_healthy_stream_does_not_mark_missing_intermediate_usage(allow_model_requests: None):
