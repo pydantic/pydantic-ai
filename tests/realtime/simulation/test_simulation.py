@@ -1214,6 +1214,21 @@ def test_scenario_late_cancel_drops_a_tool_call_and_ends_the_wait() -> None:
         assert ('SIM-10', 'wait.early') in s.checker.known_hits
 
 
+def test_scenario_wait_after_a_drop_cut_into_a_tool_round() -> None:
+    """A wait begun after a drop cut into a tool round owes nothing for it: the reconnect settles the round."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.call_tool()
+        sim.fail_next_send()
+        sim.finish()
+        sim.clear_audio()
+        sim.wait_for_reply()
+        sim.advance_time(0.1)
+
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
+
+
 def test_scenario_openai_server_vad_edges() -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()

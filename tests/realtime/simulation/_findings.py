@@ -926,11 +926,12 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
     title=(
         'on xAI push-to-talk, audio sent after a `response.done` the server repeated is held behind a reply that '
         'already ended: the current session loses the turn, and the new core (in shadow) leaves `wait_for_reply()` '
-        'hanging (a repeated terminal is a robustness fault no provider was recorded sending, see 8801)'
+        'hanging, or holds back the reply after it (a repeated terminal is a robustness fault no provider was '
+        'recorded sending, see 8801)'
     ),
     tracked_by="#9070's held audio released by the response that ended, not by the next terminal; found by this simulator",
     evidence='simulated',
-    codes=frozenset({'history.turn_missing', 'wait.hang'}),
+    codes=frozenset({'history.turn_missing', 'wait.hang', 'response.missing', 'usage.requests'}),
     providers=frozenset({'xai'}),
     matches=lambda sim, violation: _push_to_talk_audio_after_a_repeated_terminal(sim),
 )

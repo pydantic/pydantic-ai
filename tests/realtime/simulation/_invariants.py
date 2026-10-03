@@ -482,6 +482,11 @@ class Checker:
         ]
         # ...or a response it could see was under way when the wait began (unless the client cut it off).
         interrupted = [operation.issued for operation in sim.operations if operation.name.startswith('interrupt_')]
+        # Where a reconnect doesn't restore what was in flight, it settles the exchanges the drop cut into: nothing
+        # more is owed for them, even before the reconnect has run.
+        session = sim.session
+        assert session is not None
+        settled_by_drop = not session._connection.reconnect_restores_in_flight_state  # pyright: ignore[reportPrivateUsage]
         violations += [
             (
                 f'wait_for_reply() #{waiter.index} returned while {response.key} '
@@ -492,6 +497,7 @@ class Checker:
             if response.started_read is not None
             and response.started_read < waiter.started
             and not any(issued > response.seq_start for issued in interrupted)
+            and not (settled_by_drop and any(loss > response.seq_start for loss in truth.connection_losses))
             and not self._exchange_resolved(response, waiter.started, set())
             and not self._exchange_resolved(response, returned, set())
         ]
