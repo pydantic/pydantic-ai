@@ -6,7 +6,8 @@ import asyncio
 import gc
 import io
 import wave
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+from collections import OrderedDict
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from threading import Event as ThreadEvent
@@ -84,6 +85,7 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
 )
+from pydantic_ai.realtime._retained_audio import RetainedAudioBudget
 from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
     _AUDIO_TAP_SECONDS,  # pyright: ignore[reportPrivateUsage]
@@ -5237,6 +5239,430 @@ async def test_image_history_cap_must_be_non_negative() -> None:
         RealtimeSession(FakeRealtimeConnection([]), _noop_runner, retain_images_max=-1)
 
 
+def _tenths_of_a_second(value: int) -> bytes:
+    """A tenth of a second of PCM16 at 24 kHz, every byte `value`, so each turn's audio is recognizable."""
+    return bytes([value]) * 4800
+
+
+async def test_audio_retention_budget_keeps_the_latest_audio_of_a_turn_without_boundaries() -> None:
+    """A turn that never reaches a boundary keeps only its most recent audio, measured at the input rate."""
+    profile = _profile()
+    profile['audio_input_sample_rate'] = 16000
+    conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=False, cumulative=True), ResponseDone()])
+    # 10 ms at 16 kHz is 320 bytes: two of the five chunks.
+    session = RealtimeSession(conn, audio_retention='input_audio', retain_audio_max_seconds=0.01, profile=profile)
+    chunks = [bytes([index]) * 160 for index in range(5)]
+
+    for chunk in chunks:
+        await session.send_audio(chunk)
+    _ = await collect_events(session)
+
+    # Every chunk still reached the provider; only the local copy is bounded.
+    assert conn.sent == [BinaryAudio(data=chunk, media_type='audio/pcm') for chunk in chunks]
+    assert session.all_messages() == [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', transcript='hello', audio=_wav_content(chunks[3] + chunks[4], 16000))],
+            timestamp=IsDatetime(),
+        )
+    ]
+
+
+async def test_audio_retention_budget_keeps_the_latest_output_audio() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            *(AudioDelta(data=bytes([index]) * 480) for index in range(5)),
+            OutputTranscript(text='A long answer.', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    # 20 ms at 24 kHz is 960 bytes: two of the five deltas.
+    session = RealtimeSession(conn, model_name='m', audio_retention='output_audio', retain_audio_max_seconds=0.02)
+    _ = await collect_events(session)
+
+    response = session.all_messages()[0]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [
+        SpeechPart(
+            speaker='assistant', transcript='A long answer.', audio=_wav_content(bytes([3]) * 480 + bytes([4]) * 480)
+        )
+    ]
+
+
+def _speak(pcm: bytes) -> _UserAction:
+    async def speak(session: _RealtimeSession) -> None:
+        await session.send_audio(pcm)
+
+    return _UserAction(speak)
+
+
+async def test_audio_retention_budget_evicts_the_oldest_turns_and_keeps_their_transcripts() -> None:
+    """Short turns past the budget evict the oldest audio, keeping transcripts and history valid for a handoff."""
+    snapshots: list[list[ModelMessage]] = []
+
+    async def take_snapshot(session: _RealtimeSession) -> None:
+        snapshots.append(session.all_messages())
+
+    script: list[RealtimeCodecEvent | _UserAction] = []
+    for turn in range(3):
+        script += [
+            _speak(_tenths_of_a_second(turn)),
+            RealtimeInputSpeechEndEvent(item_id=f'user-{turn}'),
+            InputTranscript(text=f'Question {turn}.', is_final=True, item_id=f'user-{turn}'),
+            AudioDelta(data=_tenths_of_a_second(100 + turn)),
+            OutputTranscript(text=f'Answer {turn}.', is_final=True),
+            ResponseDone(),
+            _UserAction(take_snapshot),
+        ]
+    conn = _ContinuousMicrophoneConnection(script)
+    session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.3)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    def turn_messages(turn: int, *, user_audio: bool, assistant_audio: bool) -> list[ModelMessage]:
+        return [
+            ModelRequest(
+                parts=[
+                    SpeechPart(
+                        speaker='user',
+                        transcript=f'Question {turn}.',
+                        audio=_wav_content(_tenths_of_a_second(turn)) if user_audio else None,
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelResponse(
+                parts=[
+                    SpeechPart(
+                        speaker='assistant',
+                        transcript=f'Answer {turn}.',
+                        audio=_wav_content(_tenths_of_a_second(100 + turn)) if assistant_audio else None,
+                    )
+                ],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            ),
+        ]
+
+    # Three tenths of a second fit: the latest three, whichever side spoke them.
+    assert session.all_messages() == [
+        *turn_messages(0, user_audio=False, assistant_audio=False),
+        *turn_messages(1, user_audio=False, assistant_audio=True),
+        *turn_messages(2, user_audio=True, assistant_audio=True),
+    ]
+    # Every chunk still reached the provider.
+    assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [
+        _tenths_of_a_second(turn) for turn in range(3)
+    ]
+    # A snapshot taken before an eviction doesn't change.
+    assert snapshots[0] == turn_messages(0, user_audio=True, assistant_audio=True)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=f'seen {len(messages)} messages')])
+
+    result = await Agent(FunctionModel(respond)).run('continue', message_history=session.all_messages())
+    assert result.output == 'seen 7 messages'
+
+
+def _send_context(text: str) -> _UserAction:
+    async def send_context(session: _RealtimeSession) -> None:
+        await session.send(text, respond=False)
+
+    return _UserAction(send_context)
+
+
+def _answered_turn(turn: int, *, item_id: str | None = None) -> list[RealtimeCodecEvent | _UserAction]:
+    """A spoken question, transcribed at once, and its spoken answer: a tenth of a second of audio each."""
+    return [
+        _speak(_tenths_of_a_second(turn)),
+        *([RealtimeInputSpeechEndEvent(item_id=item_id)] if item_id is not None else []),
+        InputTranscript(text=f'Question {turn}.', is_final=True, item_id=item_id),
+        AudioDelta(data=_tenths_of_a_second(100 + turn)),
+        OutputTranscript(text=f'Answer {turn}.', is_final=True),
+        ResponseDone(),
+    ]
+
+
+def _transcripts(session: _RealtimeSession) -> list[tuple[str, str | None, bool]]:
+    """Each recorded part as what was said, and whether its audio is still retained."""
+    return [
+        (part.speaker, part.transcript, part.audio is not None)
+        if isinstance(part, SpeechPart)
+        else ('user', str(part.content), False)
+        for message in session.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart | UserPromptPart)
+    ]
+
+
+@pytest.mark.parametrize('speech_start', [False, True], ids=['audio-opens-turn', 'speech-start-opens-turn'])
+async def test_audio_retention_budget_evicting_the_message_a_turn_started_after_keeps_its_place(
+    speech_start: bool,
+) -> None:
+    """The message a user turn is anchored to can lose its audio before the turn is recorded; the turn keeps its place.
+
+    The context sent after the turn started goes after it, so recording the turn at the end would misplace it.
+    The second turn is two tenths of a second, so starting it evicts the first turn's question and answer.
+    """
+    item_id = 'user-1' if speech_start else None
+    conn = _ContinuousMicrophoneConnection(
+        [
+            *_answered_turn(0, item_id='user-0' if speech_start else None),
+            *([RealtimeInputSpeechStartEvent(item_id=item_id)] if speech_start else []),
+            _speak(_tenths_of_a_second(1) * 2),
+            _send_context('Context.'),
+            *([RealtimeInputSpeechEndEvent(item_id=item_id)] if speech_start else []),
+            InputTranscript(text='Question 1.', is_final=True, item_id=item_id),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.2)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert _transcripts(session) == [
+        ('user', 'Question 0.', False),
+        ('assistant', 'Answer 0.', False),
+        ('user', 'Question 1.', True),
+        ('user', 'Context.', False),
+    ]
+
+
+async def test_audio_retention_budget_evicting_the_message_a_late_transcript_waits_on_keeps_its_place() -> None:
+    """A turn whose transcript arrives after its answer stays ahead of that answer when its anchor loses its audio.
+
+    The second answer is two tenths of a second, so it evicts the first turn's question and answer.
+    """
+    conn = _ContinuousMicrophoneConnection(
+        [
+            *_answered_turn(0, item_id='user-0'),
+            _speak(_tenths_of_a_second(1)),
+            RealtimeInputSpeechEndEvent(item_id='user-1'),
+            AudioDelta(data=_tenths_of_a_second(101) * 2),
+            OutputTranscript(text='Answer 1.', is_final=True),
+            ResponseDone(),
+            InputTranscript(text='Question 1.', is_final=True, item_id='user-1'),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.3)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert _transcripts(session) == [
+        ('user', 'Question 0.', False),
+        ('assistant', 'Answer 0.', False),
+        ('user', 'Question 1.', True),
+        ('assistant', 'Answer 1.', True),
+    ]
+
+
+async def test_audio_retention_budget_turn_longer_than_the_budget_keeps_only_its_latest_audio() -> None:
+    """A turn longer than the whole budget evicts every earlier turn's audio, then keeps its own most recent audio."""
+    conn = _ContinuousMicrophoneConnection(
+        [
+            *_answered_turn(0, item_id='user-0'),
+            _speak(_tenths_of_a_second(1) + _tenths_of_a_second(2) + _tenths_of_a_second(3)),
+            RealtimeInputSpeechEndEvent(item_id='user-1'),
+            InputTranscript(text='Question 1.', is_final=True, item_id='user-1'),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.2)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert [part for message in session.all_messages() for part in message.parts] == [
+        SpeechPart(speaker='user', transcript='Question 0.'),
+        SpeechPart(speaker='assistant', transcript='Answer 0.'),
+        SpeechPart(
+            speaker='user',
+            transcript='Question 1.',
+            audio=_wav_content(_tenths_of_a_second(2) + _tenths_of_a_second(3)),
+        ),
+    ]
+
+
+class _CountingSegments(OrderedDict[str, bytes]):
+    """Counts every walk over the waiting segments, which checking the budget on each chunk must not need."""
+
+    walks = 0
+
+    def __iter__(self) -> Iterator[str]:
+        type(self).walks += 1
+        return super().__iter__()
+
+    def values(self) -> Any:
+        type(self).walks += 1
+        return super().values()
+
+    def items(self) -> Any:
+        type(self).walks += 1
+        return super().items()
+
+
+async def test_audio_retention_budget_check_does_not_walk_waiting_segments() -> None:
+    """Each chunk checks the budget without walking the segments waiting for a transcript, and evicted ones are let go.
+
+    A unit test of the bookkeeping: a slower check returns the same history, so only counting can catch it.
+    """
+
+    async def count_walks(session: _RealtimeSession) -> None:
+        segments = session._input_segments  # pyright: ignore[reportPrivateUsage]
+        segments._segments = _CountingSegments()  # pyright: ignore[reportPrivateUsage]
+
+    async def stream_chunks(session: _RealtimeSession) -> None:
+        for index in range(10):
+            await session.send_audio(bytes([index]) * 480)
+        # The oldest waiting segment made room for those 0.1 s, and is let go rather than kept empty.
+        assert len(session._input_segments._segments) == 9  # pyright: ignore[reportPrivateUsage]
+
+    turns = range(20)
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _UserAction(count_walks),
+            *(
+                event
+                for turn in turns
+                for event in (_speak(_tenths_of_a_second(turn)), RealtimeInputSpeechEndEvent(item_id=f'user-{turn}'))
+            ),
+            _UserAction(stream_chunks),
+            *(InputTranscript(text=f'Question {turn}.', is_final=True, item_id=f'user-{turn}') for turn in turns),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='input_audio', retain_audio_max_seconds=1)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert _CountingSegments.walks == 0
+    counting = session._input_segments._segments  # pyright: ignore[reportPrivateUsage]
+    _ = (list(counting), list(counting.values()), list(counting.items()))
+    assert _CountingSegments.walks == 3, 'the counter sees a walk'
+    # A second holds the last nine waiting segments beside the 0.1 s streamed after them.
+    assert [
+        (part.transcript, part.audio is not None)
+        for message in session.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ] == [(f'Question {turn}.', turn >= 11) for turn in turns]
+
+
+async def test_audio_retention_budget_skips_history_while_nothing_there_can_be_evicted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """While the audio over budget is all in a response still in flight, history isn't searched again on every chunk."""
+    strips = 0
+    strip = RetainedAudioBudget.strip
+
+    def counting_strip(self: RetainedAudioBudget, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+        nonlocal strips
+        strips += 1
+        return strip(self, message, excess)
+
+    async def count_strips(session: _RealtimeSession) -> None:
+        monkeypatch.setattr(RetainedAudioBudget, 'strip', counting_strip)
+
+    async def stream_chunks(session: _RealtimeSession) -> None:
+        for _ in range(30):
+            await session.send_audio(bytes(480))
+
+    conn = _ContinuousMicrophoneConnection(
+        [
+            *(event for turn in range(3) for event in _answered_turn(turn, item_id=f'user-{turn}')),
+            _UserAction(count_strips),
+            AudioDelta(data=_tenths_of_a_second(103) * 2, item_id='answer-3a'),
+            AudioDelta(data=b'\x01\x00', item_id='answer-3b'),
+            _UserAction(stream_chunks),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.2)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    # The answer's first part evicts what history holds; one more search finds nothing left, and the
+    # chunks after it skip history.
+    assert strips == snapshot(12)
+
+
+async def test_audio_retention_budget_counts_segments_waiting_for_their_transcript() -> None:
+    """A segment cut at a speech end counts until its transcript records it, and is evicted oldest first."""
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _speak(_tenths_of_a_second(0)),
+            RealtimeInputSpeechEndEvent(item_id='user-0'),
+            _speak(_tenths_of_a_second(1)),
+            RealtimeInputSpeechEndEvent(item_id='user-1'),
+            # A repeated boundary (a `committed` after the speech end, say) cuts nothing new: not over the
+            # first turn's evicted segment, nor over the second turn's.
+            _speak(bytes(960)),
+            RealtimeInputSpeechEndEvent(item_id='user-0'),
+            _speak(bytes(960)),
+            RealtimeInputSpeechEndEvent(item_id='user-1'),
+            InputTranscript(text='First.', is_final=True, item_id='user-0'),
+            InputTranscript(text='Second.', is_final=True, item_id='user-1'),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='input_audio', retain_audio_max_seconds=0.15)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert session.all_messages() == [
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='First.')], timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', transcript='Second.', audio=_wav_content(_tenths_of_a_second(1)))],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+
+async def test_audio_retention_budget_none_keeps_all_audio() -> None:
+    conn = FakeRealtimeConnection([InputTranscript(text='hello', is_final=True)])
+    session = RealtimeSession(conn, audio_retention='input_audio', retain_audio_max_seconds=None)
+    chunks = [_tenths_of_a_second(index) for index in range(5)]
+
+    for chunk in chunks:
+        await session.send_audio(chunk)
+    _ = await collect_events(session)
+
+    assert session.all_messages() == [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', transcript='hello', audio=_wav_content(b''.join(chunks)))],
+            timestamp=IsDatetime(),
+        )
+    ]
+
+
+async def test_audio_retention_budget_zero_retains_nothing() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', is_final=True),
+            AudioDelta(data=b'\x01\x00'),
+            OutputTranscript(text='hi', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, model_name='m', audio_retention='all', retain_audio_max_seconds=0)
+
+    await session.send_audio(b'\x02\x00')
+    _ = await collect_events(session)
+
+    assert conn.sent == [BinaryAudio(data=b'\x02\x00', media_type='audio/pcm')]
+    assert [part for message in session.all_messages() for part in message.parts] == [
+        SpeechPart(speaker='user', transcript='hello'),
+        SpeechPart(speaker='assistant', transcript='hi'),
+    ]
+
+
+@pytest.mark.parametrize('max_seconds', [-1, float('nan'), float('inf')])
+async def test_audio_retention_budget_must_be_finite_and_non_negative(max_seconds: float) -> None:
+    with pytest.raises(UserError, match='`retain_audio_max_seconds` must be a finite number of at least 0'):
+        RealtimeSession(FakeRealtimeConnection([]), retain_audio_max_seconds=max_seconds)
+
+
 async def test_send_rejects_unsupported_binary_content() -> None:
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
@@ -7285,6 +7711,19 @@ async def test_agent_realtime_session_audio_retention_forwarded() -> None:
     assert isinstance(response, ModelResponse)
     assert isinstance(response.parts[0], SpeechPart)
     assert response.parts[0].audio == _wav_content(b'\x07')
+
+
+async def test_agent_realtime_session_audio_retention_budget_forwarded() -> None:
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection(
+        [AudioDelta(data=b'\x07\x00'), OutputTranscript(text='hi', is_final=True), ResponseDone()]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session(audio_retention='output_audio', retain_audio_max_seconds=0) as session:
+        _ = [e async for e in session]
+    assert [part for message in session.all_messages() for part in message.parts] == [
+        SpeechPart(speaker='assistant', transcript='hi')
+    ]
 
 
 async def test_agent_realtime_session_image_retention_forwarded() -> None:
