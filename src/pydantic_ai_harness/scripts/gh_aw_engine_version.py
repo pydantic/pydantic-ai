@@ -16,7 +16,7 @@ nothing downstream re-checks it. `--published` is therefore part of the pull req
 rather than a release step: it asks PyPI the one question the file cannot answer about
 itself.
 
-The lint job and the release reminder job both call this, which is why the checks live here
+The lint job and the release run both call this, which is why the checks live here
 rather than inlined as shell twice.
 
 Inline dependency metadata, so `uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py` works

@@ -1628,61 +1628,121 @@ jobs:
   # `src/pydantic_ai_harness/gh-aw/pydantic.md` pins the `pydantic-ai-harness` release a generated
   # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
   # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
-  # nothing: it only notices that the harness release just cut is not the release the definition
-  # names, and asks for that pull request.
+  # nothing: when the harness release just cut is not the release the definition names, it opens
+  # that pull request for a maintainer to merge.
   #
-  # An issue rather than a pull request, because a pull request opened with GITHUB_TOKEN triggers no
-  # workflow runs: it would arrive with none of this repository's required checks.
-  gh-aw-engine-pin-reminder:
-    name: gh-aw engine / pin reminder
+  # The writes use a `pydantic-docs` App installation token, not GITHUB_TOKEN: GitHub starts no
+  # workflow runs for a pull request opened with GITHUB_TOKEN, so the pull request would arrive
+  # without this repository's required checks, including the `--published` lint that confirms
+  # PyPI serves the new pin.
+  gh-aw-engine-pin-bump:
+    name: gh-aw engine / pin bump
     needs: [release-build, gh-aw-engine-pin]
     if: ${{ !cancelled() && needs.gh-aw-engine-pin.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      issues: write
+    permissions: {}
+    env:
+      PINNED: ${{ needs.gh-aw-engine-pin.outputs.version }}
+      # The harness releases as `0.<minor>.<patch>` with every tag, so the tag name is not
+      # the version the engine installs.
+      RELEASED: ${{ needs.release-build.outputs.harness-version }}
     steps:
-      - name: Ask for a pin bump when the release moved past the definition
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PINNED: ${{ needs.gh-aw-engine-pin.outputs.version }}
-          # The harness releases as `0.<minor>.<patch>` with every tag, so the tag name is not
-          # the version the engine installs.
-          RELEASED: ${{ needs.release-build.outputs.harness-version }}
+      - name: Check whether the release moved past the definition
+        id: guard
         run: |
-          pinned="$PINNED"
-          released="$RELEASED"
           # The harness version carries no pre-release stage, so the tag is what tells a final
           # release apart, and a pre-release is not a pin consumers should move to.
           if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "${GITHUB_REF_NAME} is not a final release."
             exit 0
           fi
-          if [ "$pinned" = "$released" ]; then
-            echo "The gh-aw engine definition already pins ${released}."
+          if [ "$PINNED" = "$RELEASED" ]; then
+            echo "The gh-aw engine definition already pins ${RELEASED}."
+            exit 0
+          fi
+          echo "bump=true" >> "$GITHUB_OUTPUT"
+
+      - name: Generate app token
+        if: steps.guard.outputs.bump == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.DOCS_CLIENT_ID }}
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
+          owner: pydantic
+          repositories: pydantic-ai
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open the pin bump pull request
+        if: steps.guard.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          definition=src/pydantic_ai_harness/gh-aw/pydantic.md
+          branch="gh-aw-engine-pin-${RELEASED}"
+          title="Bump the gh-aw engine pin to \`${RELEASED}\`"
+
+          # `--search` matches words rather than the phrase, so it narrows the
+          # listing and the exact title is compared here.
+          existing_titles=$(gh pr list --state open --search "gh-aw engine pin ${RELEASED} in:title" \
+            --json title --jq '.[].title')
+          if grep -qxF "${title}" <<< "$existing_titles"; then
+            echo "An open pull request already bumps the pin: ${title}"
+            exit 0
+          fi
+          base_sha=$(gh api "repos/${GH_REPO}/git/ref/heads/${DEFAULT_BRANCH}" --jq .object.sha)
+          current="${RUNNER_TEMP}/pydantic.md"
+          bumped="${RUNNER_TEMP}/pydantic.bumped.md"
+          gh api "repos/${GH_REPO}/contents/${definition}?ref=${base_sha}" \
+            -H 'Accept: application/vnd.github.raw' > "$current"
+
+          # Only the frontmatter's `engine.version`: `runtimes.python.version` is another
+          # `version:` key, and the body's usage example opens a second `engine:` block.
+          if ! awk -v released="$RELEASED" '
+            NR == 1 { frontmatter = ($0 == "---") }
+            NR > 1 && frontmatter && $0 == "---" { frontmatter = 0 }
+            frontmatter && /^[^ #]/ { engine = ($0 == "engine:") }
+            frontmatter && engine && /^  version:/ { $0 = "  version: \"" released "\""; found = 1 }
+            { print }
+            END { exit !found }
+          ' "$current" > "$bumped"; then
+            echo "::error::${definition} on ${DEFAULT_BRANCH} has no engine.version line in its frontmatter."
+            exit 1
+          fi
+          if cmp -s "$current" "$bumped"; then
+            echo "${definition} on ${DEFAULT_BRANCH} already pins ${RELEASED}."
             exit 0
           fi
 
-          title="Bump the gh-aw engine pin to ${released}"
-          # `--search` matches words rather than the phrase, so it narrows the
-          # listing and the exact title is compared here.
-          existing_titles=$(gh issue list --state open --search "${title} in:title" \
-            --json title --jq '.[].title')
-          if grep -qxF "${title}" <<< "$existing_titles"; then
-            echo "An open issue already asks for this: ${title}"
-            exit 0
+          # A rerun after a failure further down finds the branch an earlier attempt created,
+          # and finishes the pull request from it instead of stopping.
+          if ! gh api "repos/${GH_REPO}/git/ref/heads/${branch}" --silent 2>/dev/null; then
+            gh api "repos/${GH_REPO}/git/refs" -f ref="refs/heads/${branch}" -f sha="${base_sha}" --silent
+          fi
+          on_branch="${RUNNER_TEMP}/pydantic.branch.md"
+          gh api "repos/${GH_REPO}/contents/${definition}?ref=${branch}" \
+            -H 'Accept: application/vnd.github.raw' > "$on_branch"
+          if ! cmp -s "$on_branch" "$bumped"; then
+            file_sha=$(gh api "repos/${GH_REPO}/contents/${definition}?ref=${branch}" --jq .sha)
+            gh api -X PUT "repos/${GH_REPO}/contents/${definition}" \
+              -f branch="${branch}" \
+              -f sha="${file_sha}" \
+              -f message="chore: bump the gh-aw engine pin to ${RELEASED}" \
+              -f content="$(base64 -w0 "$bumped")" \
+              --silent
           fi
 
           # A heredoc rather than an inline `--body`: the body is Markdown with
-          # blank lines and backticks, and only `$pinned` and `$released` are
-          # meant to expand.
-          cat > "${RUNNER_TEMP}/pin-reminder.md" <<EOF
-          \`src/pydantic_ai_harness/gh-aw/pydantic.md\` on the default branch still pins \`engine.version: ${pinned}\`, and pydantic-ai-harness ${released} is now released.
+          # blank lines and backticks, and only the variables are meant to expand.
+          cat > "${RUNNER_TEMP}/pin-bump.md" <<EOF
+          \`engine.version\` in \`${definition}\` is the \`pydantic-ai-harness\` release that generated gh-aw workflows install. This bumps it from \`${PINNED}\` to \`${RELEASED}\`, which the [\`${GITHUB_REF_NAME}\` release run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) that opened this pull request just published.
 
-          gh-aw compiles that file from the default branch, so a pull request bumping \`engine.version\` to ${released} is what ships the new pin: consumers pick it up on their next recompile.
-
-          Lint refuses a pin PyPI does not serve, so that pull request goes green once ${released} is on PyPI.
+          Consumers compile the definition from the default branch, so merging this ships the new pin on their next recompile. CI's \`gh_aw_engine_version.py --published\` check confirms PyPI serves \`${RELEASED}\`.
           EOF
 
-          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/pin-reminder.md"
+          gh pr create --head "${branch}" --base "${DEFAULT_BRANCH}" --title "${title}" \
+            --label chore --label pkg:harness --body-file "${RUNNER_TEMP}/pin-bump.md"
