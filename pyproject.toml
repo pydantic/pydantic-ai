@@ -340,6 +340,7 @@ include = [
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
     ".github/scripts/test_ci_content_classifier.py",
+    "scripts/generate_docs_map.py",
 ]
 
 [tool.ruff.lint]
@@ -427,6 +428,7 @@ include = [
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/generate_docs_map.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
 # `.github/scripts` is its own project: `.github/scripts/pyrightconfig.json` extends this one, and
@@ -614,7 +616,7 @@ snap = ["create"]
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.git*,*.svg,*.lock,*.css,*.yaml,tests/harness/absurd/fixtures/absurd.sql'
+skip = '.git*,*.svg,*.lock,*.css,*.yaml,tests/harness/absurd/fixtures/absurd.sql,scripts/docs_map/d3.min.js'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
