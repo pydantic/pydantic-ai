@@ -121,9 +121,10 @@ class NativeToolSearchCallPart(NativeToolCallPart, _core=True):
     The local-fallback path uses
     [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] instead.
 
-    To detect a tool-search part regardless of execution path (native server-side
-    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
-    across both call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Shadows `args` with a narrower type. The `str` variant covers the
     streaming / partial-args case before parsing completes; once parsed,
@@ -192,9 +193,10 @@ class NativeToolSearchReturnPart(NativeToolReturnPart, _core=True):
     The local-fallback path uses
     [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] instead.
 
-    To detect a tool-search part regardless of execution path (native server-side
-    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
-    across both call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Shadows `content` with a narrower
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]
@@ -243,9 +245,10 @@ class ToolSearchCallPart(ToolCallPart, _core=True):
     [`NativeToolSearchCallPart`][pydantic_ai.messages.NativeToolSearchCallPart]
     instead.
 
-    To detect a tool-search part regardless of execution path (native server-side
-    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
-    across both call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Shadows `args` with the canonical typed shape. The `str` variant covers the
     streaming / partial-args case before parsing completes; once parsed,
@@ -315,9 +318,10 @@ class ToolSearchReturnPart(ToolReturnPart, _core=True):
     [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
     instead.
 
-    To detect a tool-search part regardless of execution path (native server-side
-    vs. local fallback), check `part.tool_kind == 'tool-search'` — this works
-    across both call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its
+    outcome and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed
+    or denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Shadows `content` with a narrower
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]

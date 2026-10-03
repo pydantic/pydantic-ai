@@ -710,9 +710,10 @@ class ToolDefinition:
     unregistered kind raises `UserError`, while a stored definition with one still loads. Leave as
     `None` for tools that have no typed parts.
 
-    To detect a tool-search part regardless of execution path (native server-side vs.
-    local fallback), check `part.tool_kind == 'tool-search'` — this works across both
-    call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its outcome
+    and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed or
+    denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Distinct from [`kind`][pydantic_ai.tools.ToolDefinition.kind], which is about invocation
     semantics (`'function'` / `'output'` / `'external'` / `'unapproved'`).
