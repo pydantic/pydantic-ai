@@ -227,12 +227,14 @@ Key fields: `llm=None`, `allowed_domains=None`, `block_ip_addresses=True`, `head
 `max_steps=50`, `use_vision=True` (`'auto'`/`False`), `output_schema=None`, `sensitive_data=None`,
 `extend_system_message=None` (steers the sub-agent), `guidance=None` (steers the host),
 `session_scope='call'` or `'agent'`, `cdp_url=None`, `browser_profile=None`, `browser_agent=None`
-(factory, for tests or custom setup).
+(factory, for tests or custom setup), `browser_use_telemetry=False`.
 
 Gotchas:
 
-- Always pass `llm`. With `llm=None` browser-use falls back to its hosted `ChatBrowserUse` model, a
-  separate account billed via `BROWSER_USE_API_KEY`, outside your observability.
+- `llm=None` runs the sub-agent on the host run's model (`RunContext.model`) and inherits its
+  instrumentation settings, including content redaction. browser-use's hosted `ChatBrowserUse`
+  model is opt-in via `llm=ChatBrowserUse()`: a separate account billed via
+  `BROWSER_USE_API_KEY`, outside your observability. Pass `llm` for a cheaper sub-agent model.
 - Costs: `use_vision=True` sends a screenshot every step; a judge call runs per task unless
   `BrowserAgentSettings(use_judge=False)`.
 - Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected); prefer
@@ -242,7 +244,9 @@ Gotchas:
   `UserError` with either scope (its toolset has no stable id).
 - Default `'call'` scope launches one Chromium per concurrent call.
 - `file://`, `read_file`, and `upload_file` are disabled by the default factory.
-- Set `ANONYMIZED_TELEMETRY=false` to disable browser-use telemetry.
+- browser-use's per-run telemetry event (task, visited URLs, result) is off for the capability's
+  agents; `browser_use_telemetry=True` sends it. Set `ANONYMIZED_TELEMETRY=false` to also stop
+  browser-use's process-wide PostHog client (which captures uncaught exceptions).
 
 ## PlaywrightBrowser
 

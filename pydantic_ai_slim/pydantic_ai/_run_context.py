@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .durable_exec._base import BaseDurabilityCapability
     from .durable_exec._toolset import RunHeldToolset
     from .models import AbstractModel
+    from .models.instrumented import InstrumentationSettings
     from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
     from .tool_manager import ToolManager
@@ -210,6 +211,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether to include the content of the messages in the trace."""
     instrumentation_version: int = DEFAULT_INSTRUMENTATION_VERSION
     """Instrumentation settings version, if instrumentation is enabled."""
+    instrumentation_settings: InstrumentationSettings | None = field(default=None, repr=False)
+    """The run's effective instrumentation settings, or `None` when instrumentation is disabled.
+
+    Includes the tracer provider and content-redaction policy, after run-level overrides and
+    capability resolution. Treat this shared settings object as read-only.
+    Not available inside Temporal activities, where live SDK providers cannot be serialized.
+    """
     retries: dict[str, int] = field(default_factory=dict[str, int])
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None

@@ -1050,6 +1050,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'model',  # live Model instance, not serializable
         '_model_id',  # carried separately by operations that rebuild ctx.model worker-side
         'tracer',  # live tracer, not serializable
+        'instrumentation_settings',  # contains live SDK providers, not serializable
         'tool_manager',  # live ToolManager, not serializable (documented on the field)
         'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
         'root_capability',  # live capability chain, not serializable; reattached from the bound agent by deserialize_run_context

@@ -26,13 +26,18 @@ from browser_use.browser.session import ResilientEventBus
 from browser_use.browser.watchdogs.security_watchdog import SecurityWatchdog
 from browser_use.llm.messages import BaseMessage
 from browser_use.llm.views import ChatInvokeCompletion
+from browser_use.telemetry.service import ProductTelemetry
+from browser_use.telemetry.views import BaseTelemetryEvent
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.browser_use import (
     BrowserAgent,
     BrowserAgentHistory,
@@ -165,18 +170,46 @@ def _success_factory(result: str = 'done') -> _FakeFactory:
     return _FakeFactory(_FakeBrowserAgent(_FakeHistory(result=result, success=True)))
 
 
+class _TelemetryEvent(BaseTelemetryEvent):
+    """A minimal browser-use telemetry event."""
+
+    @property
+    def name(self) -> str:
+        return 'test_event'
+
+
+class _RealtimeLikeModel(AbstractModel):
+    """A model identity that is not a request-response `Model`, like a realtime model."""
+
+    @property
+    def model_name(self) -> str:
+        return 'voice'
+
+    @property
+    def system(self) -> str:
+        return 'realtime'
+
+
+def _ctx(model: AbstractModel | None = None) -> RunContext[None]:
+    """A run context for calling `browse_web` directly, on `model` (a `TestModel` by default)."""
+    return RunContext[None](
+        deps=None, model=model or TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=1
+    )
+
+
 class TestBrowserUseToolset:
     async def test_returns_final_result(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory('The Pro plan costs $20.')
         toolset = BrowserUse[None](browser_agent=factory).get_toolset()
         assert isinstance(toolset, BrowserUseToolset)
 
-        result = await toolset.browse_web('find the price of the Pro plan')
+        result = await toolset.browse_web(_ctx(), 'find the price of the Pro plan')
 
         assert result == 'The Pro plan costs $20.'
         [request] = factory.requests
         assert request.task == 'find the price of the Pro plan'
-        assert request.llm is None
+        assert isinstance(request.llm, PydanticAIChatModel)
+        assert request.llm.name == 'test'
         assert request.use_vision is True
         assert request.output_schema is None
         assert request.sensitive_data is None
@@ -200,7 +233,7 @@ class TestBrowserUseToolset:
             browser_agent=factory,
         )
 
-        await capability.get_toolset().browse_web('task')
+        await capability.get_toolset().browse_web(_ctx(), 'task')
 
         [request] = factory.requests
         assert request.llm is llm
@@ -221,7 +254,7 @@ class TestBrowserUseToolset:
     async def test_defaults_to_headless_without_profile(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory()
 
-        await BrowserUse[None](browser_agent=factory).get_toolset().browse_web('task')
+        await BrowserUse[None](browser_agent=factory).get_toolset().browse_web(_ctx(), 'task')
 
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.headless is True
@@ -235,7 +268,7 @@ class TestBrowserUseToolset:
         profile = BrowserProfile(headless=False, allowed_domains=['docs.example.com'], user_agent='harness-test')
         factory = _success_factory()
 
-        await BrowserUse[None](browser_profile=profile, browser_agent=factory).get_toolset().browse_web('task')
+        await BrowserUse[None](browser_profile=profile, browser_agent=factory).get_toolset().browse_web(_ctx(), 'task')
 
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.headless is False
@@ -255,7 +288,7 @@ class TestBrowserUseToolset:
                 sensitive_data={'https://example.com': {'x_password': 'hunter2'}},
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
 
         assert factory.requests[0].browser_session.browser_profile.cross_origin_iframes is False
@@ -272,7 +305,7 @@ class TestBrowserUseToolset:
                 sensitive_data={'https://example.com': {'x_password': 'hunter2'}},
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
 
         assert factory.requests[0].browser_session.browser_profile.cross_origin_iframes is False
@@ -287,7 +320,7 @@ class TestBrowserUseToolset:
             browser_agent=factory,
         )
 
-        await capability.get_toolset().browse_web('task')
+        await capability.get_toolset().browse_web(_ctx(), 'task')
 
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.headless is True
@@ -330,7 +363,7 @@ class TestBrowserUseToolset:
                 browser_agent=factory,
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
 
         session_profile = factory.requests[0].browser_session.browser_profile
@@ -350,7 +383,7 @@ class TestBrowserUseToolset:
         capability: BrowserUse[None],
     ) -> None:
         with pytest.raises(ValueError, match='block_ip_addresses=False'):
-            await capability.get_toolset().browse_web('task')
+            await capability.get_toolset().browse_web(_ctx(), 'task')
 
     async def test_bare_scheme_domain_has_a_path_boundary(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory()
@@ -361,7 +394,7 @@ class TestBrowserUseToolset:
                 browser_agent=factory,
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
 
         assert factory.requests[0].browser_session.browser_profile.allowed_domains == ['https://trusted.example/*']
@@ -375,7 +408,7 @@ class TestBrowserUseToolset:
                 browser_agent=factory,
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
 
         assert factory.requests[0].browser_session.browser_profile.allowed_domains == ['https://trusted.example/*']
@@ -389,7 +422,7 @@ class TestBrowserUseToolset:
                 browser_agent=factory,
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
 
         session_profile = factory.requests[0].browser_session.browser_profile
@@ -406,7 +439,7 @@ class TestBrowserUseToolset:
                 browser_agent=factory,
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
 
         assert factory.requests[0].browser_session.browser_profile.block_ip_addresses is False
@@ -423,7 +456,7 @@ class TestBrowserUseToolset:
                 browser_agent=factory,
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
 
         assert factory.requests[0].browser_session.browser_profile.prohibited_domains == [
@@ -434,7 +467,7 @@ class TestBrowserUseToolset:
     async def test_session_killed_after_success(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory()
 
-        await BrowserUse[None](browser_agent=factory).get_toolset().browse_web('task')
+        await BrowserUse[None](browser_agent=factory).get_toolset().browse_web(_ctx(), 'task')
 
         [killed] = kill_calls
         assert killed is factory.requests[0].browser_session
@@ -443,7 +476,7 @@ class TestBrowserUseToolset:
         factory = _FakeFactory(_FakeBrowserAgent(_FakeHistory(), error=RuntimeError('browser crashed')))
 
         with pytest.raises(RuntimeError, match='browser crashed'):
-            await BrowserUse[None](browser_agent=factory).get_toolset().browse_web('task')
+            await BrowserUse[None](browser_agent=factory).get_toolset().browse_web(_ctx(), 'task')
 
         [killed] = kill_calls
         assert killed is factory.requests[0].browser_session
@@ -488,7 +521,7 @@ class TestBrowserUseToolset:
         ).get_toolset()
 
         async with anyio.create_task_group() as task_group:
-            task_group.start_soon(toolset.browse_web, 'task')
+            task_group.start_soon(toolset.browse_web, _ctx(), 'task')
             await running.wait()
             task_group.cancel_scope.cancel()
 
@@ -500,7 +533,7 @@ class TestBrowserUseToolset:
         history = _FakeHistory(step_errors=[None, 'timeout on step 2', 'element not found'])
         factory = _FakeFactory(_FakeBrowserAgent(history))
 
-        result = await BrowserUse[None](browser_agent=factory).get_toolset().browse_web('task')
+        result = await BrowserUse[None](browser_agent=factory).get_toolset().browse_web(_ctx(), 'task')
 
         assert result == (
             'The browser agent stopped without producing a result (timeout on step 2; element not found).'
@@ -509,7 +542,7 @@ class TestBrowserUseToolset:
     async def test_no_result_without_errors(self, kill_calls: list[BrowserSession]) -> None:
         factory = _FakeFactory(_FakeBrowserAgent(_FakeHistory()))
 
-        result = await BrowserUse[None](browser_agent=factory).get_toolset().browse_web('task')
+        result = await BrowserUse[None](browser_agent=factory).get_toolset().browse_web(_ctx(), 'task')
 
         assert result == 'The browser agent stopped without producing a result (no further details).'
 
@@ -517,7 +550,7 @@ class TestBrowserUseToolset:
         history = _FakeHistory(result='I could not log in.', success=False)
         factory = _FakeFactory(_FakeBrowserAgent(history))
 
-        result = await BrowserUse[None](browser_agent=factory).get_toolset().browse_web('task')
+        result = await BrowserUse[None](browser_agent=factory).get_toolset().browse_web(_ctx(), 'task')
 
         assert result == ('The browser agent could not fully complete the task. Its final result: I could not log in.')
 
@@ -533,7 +566,7 @@ class TestBrowserUseToolset:
         factory = _FakeFactory(_FakeBrowserAgent(history))
         capability = BrowserUse[None](output_schema=_Facts, browser_agent=factory)
 
-        result = await capability.get_toolset().browse_web('task')
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert result == (
             'The browser agent could not fully complete the task. Its final result: {"name":"Pro","price_usd":0}'
@@ -545,7 +578,7 @@ class TestBrowserUseToolset:
         factory = _FakeFactory(_FakeBrowserAgent(history))
         capability = BrowserUse[None](output_schema=_Facts, browser_agent=factory)
 
-        result = await capability.get_toolset().browse_web('task')
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert json.loads(result) == {'name': 'Pro', 'price_usd': 20}
         assert factory.requests[0].output_schema is _Facts
@@ -556,7 +589,7 @@ class TestBrowserUseToolset:
         capability = BrowserUse[None](output_schema=_Facts, browser_agent=factory)
 
         with pytest.raises(ModelRetry, match='did not match the configured output schema'):
-            await capability.get_toolset().browse_web('task')
+            await capability.get_toolset().browse_web(_ctx(), 'task')
 
         [killed] = kill_calls
         assert killed is factory.requests[0].browser_session
@@ -566,7 +599,7 @@ class TestBrowserUseToolset:
         factory = _FakeFactory(_FakeBrowserAgent(history))
         capability = BrowserUse[None](output_schema=_Facts, browser_agent=factory)
 
-        result = await capability.get_toolset().browse_web('task')
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert result == 'prose result'
 
@@ -593,7 +626,7 @@ class TestBrowserUseToolset:
             agent_settings=BrowserAgentSettings(use_judge=False, flash_mode=True, judge_llm='test'),
         ).get_toolset()
 
-        result = await toolset.browse_web('check example.com')
+        result = await toolset.browse_web(_ctx(), 'check example.com')
 
         assert result == 'browsed'
         agent = seen['agent']
@@ -607,10 +640,58 @@ class TestBrowserUseToolset:
         assert seen['max_steps'] == 3
         assert len(kill_calls) == 1
 
+    @pytest.mark.parametrize('browser_use_telemetry', [False, True])
+    async def test_browser_use_telemetry_is_opt_in(
+        self, browser_use_telemetry: bool, monkeypatch: pytest.MonkeyPatch, kill_calls: list[BrowserSession]
+    ) -> None:
+        """The agent's run event reaches browser-use's telemetry client only when opted in."""
+        monkeypatch.setenv('ANONYMIZED_TELEMETRY', 'false')
+        seen: dict[str, object] = {}
+
+        async def record_run(self: object, max_steps: int = 500, **kwargs: object) -> _FakeHistory:
+            seen['agent'] = self
+            return _FakeHistory(result='browsed', success=True)
+
+        monkeypatch.setattr(BrowserUseAgent, 'run', record_run)
+        sent: list[object] = []
+        process_telemetry = ProductTelemetry()
+        monkeypatch.setattr(process_telemetry, 'capture', sent.append)
+        monkeypatch.setattr(process_telemetry, 'flush', lambda: sent.append('flush'))
+        toolset = BrowserUse[None](browser_use_telemetry=browser_use_telemetry).get_toolset()
+
+        await toolset.browse_web(_ctx(), 'task')
+
+        agent = seen['agent']
+        assert isinstance(agent, BrowserUseAgent)
+        event = _TelemetryEvent()
+        agent.telemetry.capture(event)
+        agent.telemetry.flush()
+        assert sent == ([event, 'flush'] if browser_use_telemetry else [])
+
+    async def test_without_llm_each_run_uses_its_own_model(self, kill_calls: list[BrowserSession]) -> None:
+        """`llm=None` follows the host run's model on every call instead of a browser-use default."""
+        factory = _success_factory()
+        agent = Agent(TestModel(model_name='host'), capabilities=[BrowserUse(browser_agent=factory)])
+
+        await agent.run('Browse.')
+        with agent.override(model=TestModel(model_name='override')):
+            await agent.run('Browse again.')
+
+        assert [request.llm.name for request in factory.requests] == ['host', 'override']
+
+    async def test_without_llm_a_non_request_response_run_model_is_rejected(self) -> None:
+        factory = _success_factory()
+        toolset = BrowserUse[None](browser_agent=factory).get_toolset()
+
+        with pytest.raises(UserError, match=r"'realtime:voice' is not a request-response model"):
+            await toolset.browse_web(_ctx(_RealtimeLikeModel()), 'task')
+
+        assert factory.requests == []
+
     async def test_pydantic_ai_model_string_is_wrapped(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory()
 
-        await BrowserUse[None](llm='test', browser_agent=factory).get_toolset().browse_web('task')
+        await BrowserUse[None](llm='test', browser_agent=factory).get_toolset().browse_web(_ctx(), 'task')
 
         assert isinstance(factory.requests[0].llm, PydanticAIChatModel)
 
@@ -621,7 +702,7 @@ class TestBrowserUseToolset:
             browser_agent=factory,
         )
 
-        await capability.get_toolset().browse_web('task')
+        await capability.get_toolset().browse_web(_ctx(), 'task')
 
         assert isinstance(factory.requests[0].settings.judge_llm, PydanticAIChatModel)
 
@@ -664,7 +745,7 @@ class TestBrowserAgentSettings:
         default_browser_agent(
             BrowserTask(
                 task='task',
-                llm=None,
+                llm=_FakeChatModel(),
                 browser_session=BrowserSession(),
                 use_vision=True,
                 output_schema=None,
@@ -695,7 +776,7 @@ class TestBrowserAgentSettings:
         default_browser_agent(
             BrowserTask(
                 task='task',
-                llm=None,
+                llm=_FakeChatModel(),
                 browser_session=BrowserSession(),
                 use_vision=True,
                 output_schema=None,
@@ -722,7 +803,7 @@ class TestBrowserAgentSettings:
         default_browser_agent(
             BrowserTask(
                 task='task',
-                llm=None,
+                llm=_FakeChatModel(),
                 browser_session=BrowserSession(),
                 use_vision=True,
                 output_schema=None,
@@ -774,7 +855,7 @@ class TestTeardownFailure:
         toolset = BrowserUse[None](browser_agent=_success_factory('the answer'), session_scope=scope).get_toolset()
         assert isinstance(toolset, BrowserUseToolset)
 
-        assert await toolset.browse_web('go') == 'the answer'
+        assert await toolset.browse_web(_ctx(), 'go') == 'the answer'
 
         await toolset.aclose()
 
@@ -792,7 +873,7 @@ class TestTeardownFailure:
         assert isinstance(toolset, BrowserUseToolset)
 
         with pytest.raises(RuntimeError, match='the browser agent itself failed'):
-            await toolset.browse_web('go')
+            await toolset.browse_web(_ctx(), 'go')
 
         await toolset.aclose()
 
@@ -809,7 +890,7 @@ class TestTeardownFailure:
         toolset = BrowserUse[None](browser_agent=_success_factory()).get_toolset()
 
         with caplog.at_level(logging.WARNING):
-            assert await toolset.browse_web('go') == 'done'
+            assert await toolset.browse_web(_ctx(), 'go') == 'done'
 
         assert 'browser-use session teardown timed out after 0 seconds' in caplog.text
 
@@ -828,8 +909,8 @@ class TestTeardownFailure:
         factory = _success_factory()
         toolset = BrowserUse[None](browser_agent=factory).get_toolset()
 
-        assert await toolset.browse_web('first') == 'done'
-        assert await toolset.browse_web('second') == 'done'
+        assert await toolset.browse_web(_ctx(), 'first') == 'done'
+        assert await toolset.browse_web(_ctx(), 'second') == 'done'
 
         assert attempts == [
             factory.requests[0].browser_session,
@@ -845,7 +926,7 @@ class TestTeardownFailure:
         toolset = BrowserUse[None]().get_toolset()
 
         with pytest.raises(RuntimeError, match='could not be created'):
-            await toolset.browse_web('task')
+            await toolset.browse_web(_ctx(), 'task')
 
         await toolset.aclose()
 
@@ -879,7 +960,7 @@ class TestTeardownFailure:
         toolset = BrowserUse[None](browser_agent=lambda request: _BlockingAgent()).get_toolset()
 
         async with anyio.create_task_group() as task_group:
-            task_group.start_soon(toolset.browse_web, 'task')
+            task_group.start_soon(toolset.browse_web, _ctx(), 'task')
             await retry_started.wait()
             task_group.start_soon(toolset.aclose)
             with anyio.move_on_after(0.1):
@@ -928,7 +1009,7 @@ class TestTeardownFailure:
         toolset = BrowserUse[None](browser_agent=factory, session_scope=scope).get_toolset()
 
         async with anyio.create_task_group() as task_group:
-            task_group.start_soon(toolset.browse_web, 'go')
+            task_group.start_soon(toolset.browse_web, _ctx(), 'go')
             await running.wait()
             task_group.start_soon(close, toolset)
             await closing.wait()
@@ -972,7 +1053,7 @@ class TestCredentialsStayOutOfRepr:
     def test_a_task_does_not_print_its_secrets(self) -> None:
         task = BrowserTask(
             task='t',
-            llm=None,
+            llm=_FakeChatModel(),
             browser_session=BrowserSession(),
             use_vision=True,
             output_schema=None,
@@ -1076,7 +1157,7 @@ class TestSensitiveDataSafety:
         capability.allowed_domains.clear()
         secrets['x_token'] = 'abc123'
 
-        await toolset.browse_web('task')
+        await toolset.browse_web(_ctx(), 'task')
 
         request = factory.requests[0]
         assert request.browser_session.browser_profile.allowed_domains == [
@@ -1099,7 +1180,7 @@ class TestSensitiveDataSafety:
         assert profile.allowed_domains is not None
         profile.allowed_domains.clear()
 
-        await toolset.browse_web('task')
+        await toolset.browse_web(_ctx(), 'task')
 
         assert factory.requests[0].browser_session.browser_profile.allowed_domains == [
             'http*://safe.example',
@@ -1121,8 +1202,8 @@ class TestSessionScope:
         capability = BrowserUse[None](session_scope='agent', browser_agent=factory)
         toolset = capability.get_toolset()
 
-        await toolset.browse_web('first task')
-        await toolset.browse_web('second task')
+        await toolset.browse_web(_ctx(), 'first task')
+        await toolset.browse_web(_ctx(), 'second task')
 
         first, second = factory.requests
         assert first.browser_session is second.browser_session
@@ -1142,11 +1223,11 @@ class TestSessionScope:
         toolset = BrowserUse[None](session_scope='agent', browser_agent=factory).get_toolset()
 
         with pytest.raises(RuntimeError, match='crash'):
-            await toolset.browse_web('first task')
+            await toolset.browse_web(_ctx(), 'first task')
         assert kill_calls == [factory.requests[0].browser_session]
 
         agent.error = None
-        await toolset.browse_web('second task')
+        await toolset.browse_web(_ctx(), 'second task')
         assert factory.requests[1].browser_session is not factory.requests[0].browser_session
 
     async def test_agent_scope_schema_retry_keeps_session(self, kill_calls: list[BrowserSession]) -> None:
@@ -1156,21 +1237,21 @@ class TestSessionScope:
         toolset = capability.get_toolset()
 
         with pytest.raises(ModelRetry):
-            await toolset.browse_web('first task')
+            await toolset.browse_web(_ctx(), 'first task')
         # The run itself finished; only the result was rejected, so the shared
         # browser survives for the follow-up call.
         assert kill_calls == []
 
         agent.history = _FakeHistory(result='{"name": "Pro", "price_usd": 20}', success=True)
         agent.history.structured = _Facts(name='Pro', price_usd=20)
-        await toolset.browse_web('second task')
+        await toolset.browse_web(_ctx(), 'second task')
         assert factory.requests[1].browser_session is factory.requests[0].browser_session
         await capability.aclose()
 
     async def test_capability_as_async_context_manager(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory()
         async with BrowserUse[None](session_scope='agent', browser_agent=factory) as capability:
-            await capability.get_toolset().browse_web('task')
+            await capability.get_toolset().browse_web(_ctx(), 'task')
             assert kill_calls == []
         assert kill_calls == [factory.requests[0].browser_session]
 
@@ -1189,11 +1270,11 @@ class TestSessionScope:
         capability = BrowserUse[None](session_scope='agent', browser_agent=factory)
         toolset = capability.get_toolset()
 
-        await toolset.browse_web('first task')
+        await toolset.browse_web(_ctx(), 'first task')
         await capability.aclose()
 
         with pytest.raises(RuntimeError, match='closed'):
-            await toolset.browse_web('second task')
+            await toolset.browse_web(_ctx(), 'second task')
 
         assert len(factory.requests) == 1
         assert kill_calls == [factory.requests[0].browser_session]
@@ -1225,11 +1306,11 @@ class TestSessionScope:
 
         async def queued_call() -> None:
             with pytest.raises(RuntimeError, match='closed') as caught:
-                await toolset.browse_web('second task')
+                await toolset.browse_web(_ctx(), 'second task')
             queued_error.append(caught.value)
 
         async with anyio.create_task_group() as task_group:
-            task_group.start_soon(toolset.browse_web, 'first task')
+            task_group.start_soon(toolset.browse_web, _ctx(), 'first task')
             await running.wait()
             # Both queue on the session lock the in-flight call holds, `aclose` first.
             task_group.start_soon(capability.aclose)
@@ -1293,6 +1374,7 @@ class TestAgentSpec:
             session_scope='agent',
             cdp_url='http://localhost:9222',
             guidance='Delegate.',
+            browser_use_telemetry=True,
         )
         assert capability.allowed_domains == ['http*://example.com', 'http*://www.example.com']
         assert capability.block_ip_addresses is False
@@ -1304,6 +1386,7 @@ class TestAgentSpec:
         assert capability.session_scope == 'agent'
         assert capability.cdp_url == 'http://localhost:9222'
         assert capability.guidance == 'Delegate.'
+        assert capability.browser_use_telemetry is True
         assert capability.llm is None
         assert capability.browser_profile is None
         assert capability.output_schema is None
@@ -1359,7 +1442,7 @@ class TestLocalFileNavigation:
                 browser_agent=factory,
             )
             .get_toolset()
-            .browse_web('task')
+            .browse_web(_ctx(), 'task')
         )
         return factory.requests[0].browser_session
 
@@ -1456,7 +1539,7 @@ class TestLocalFileNavigation:
             session_scope='call',
             cdp_url=None,
         )
-        await toolset.browse_web('task')
+        await toolset.browse_web(_ctx(), 'task')
         session = factory.requests[0].browser_session
         assert await self._navigation_allowed(session, url) is False
 

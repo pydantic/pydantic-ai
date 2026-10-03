@@ -2492,6 +2492,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'pending_messages',  # live run queue, not hashable run state
         'trace_include_content',  # tracing config, fixed for the agent rather than varying per run
         'instrumentation_version',  # tracing config, fixed for the agent rather than varying per run
+        'instrumentation_settings',  # live tracing policy and SDK providers, not cached task results
         'partial_output',  # only set for output validators, which run in flow code, never inside a task
         'run_id',  # per-run id; deliberately excluded so an identical run replays instead of re-executing
         'conversation_id',  # per-conversation id; same rationale as run_id
