@@ -2725,11 +2725,12 @@ class NativeToolCallPart(BaseToolCallPart):
         return _narrow_call(part, tool_kind)
 
 
-_CallPartT = TypeVar('_CallPartT', bound='BaseToolCallPart')
-_ReturnPartT = TypeVar('_ReturnPartT', bound='BaseToolReturnPart')
+_CallPartT = TypeVar('_CallPartT', bound='ToolCallPart | NativeToolCallPart')
+_ReturnPartT = TypeVar('_ReturnPartT', bound='ToolReturnPart | NativeToolReturnPart')
+_ToolPartT = TypeVar('_ToolPartT', bound='ToolCallPart | NativeToolCallPart | ToolReturnPart | NativeToolReturnPart')
 
 
-def _unsubstantiated(part: _CallPartT | _ReturnPartT, kind: str) -> Any:
+def _unsubstantiated(part: _ToolPartT, kind: str) -> _ToolPartT:
     """A part whose data doesn't fit its kind's typed subclass, left a base part.
 
     Core's own kinds are routed straight to their subclass on deserialization (`_TYPED_PART_TAGS`),

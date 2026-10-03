@@ -43,7 +43,7 @@ class LookupCallPart(ToolCallPart):
 class LookupReturnPart(ToolReturnPart):
     _: KW_ONLY
 
-    content: LookupResult  # pyright: ignore[reportIncompatibleVariableOverride]
+    content: LookupResult
     tool_kind: Literal['test-lookup'] = 'test-lookup'  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
@@ -126,7 +126,7 @@ def test_a_kind_registered_twice_is_an_error() -> None:
     with pytest.raises(UserError, match="Tool kind 'test-lookup' is already registered for ToolCallPart"):
 
         @dataclass(repr=False)
-        class OtherLookupCallPart(ToolCallPart):  # pyright: ignore[reportUnusedClass]
+        class OtherLookupCallPart(ToolCallPart):
             _: KW_ONLY
 
             tool_kind: Literal['test-lookup'] = 'test-lookup'  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -150,7 +150,7 @@ def test_redefining_the_same_class_replaces_its_registration() -> None:
 
 def test_a_typed_part_may_not_add_fields() -> None:
     @dataclass(repr=False)
-    class WithExtraField(ToolReturnPart):  # pyright: ignore[reportUnusedClass]
+    class WithExtraField(ToolReturnPart):
         _: KW_ONLY
 
         extra: int = 0
@@ -183,7 +183,7 @@ def test_a_payload_type_defined_in_a_function_is_reported() -> None:
         name: str
 
     @dataclass(repr=False)
-    class LocalCallPart(ToolCallPart):  # pyright: ignore[reportUnusedClass]
+    class LocalCallPart(ToolCallPart):
         _: KW_ONLY
 
         args: str | LocalArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]

@@ -1078,8 +1078,9 @@ class LookupCallPart(ToolCallPart):
 
 response = ModelResponse(parts=[ToolCallPart('lookup_v2', {'sku': 'A-1'}, tool_kind='inventory-lookup')])
 part = response.parts[0]
-print(type(part).__name__, part.args)
-#> LookupCallPart {'sku': 'A-1'}
+assert isinstance(part, LookupCallPart)
+print(part.args)
+#> {'sku': 'A-1'}
 
 stored = ModelMessagesTypeAdapter.dump_json([response])
 print(type(ModelMessagesTypeAdapter.validate_json(stored)[0].parts[0]).__name__)
