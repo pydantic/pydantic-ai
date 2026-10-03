@@ -1,5 +1,7 @@
 # `pydantic_ai.durable_exec`
 
+::: pydantic_ai.durable_exec.DurableRunCancellation
+
 ::: pydantic_ai.durable_exec.temporal
 
 ::: pydantic_ai.durable_exec.dbos

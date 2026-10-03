@@ -83,6 +83,7 @@ def test_public_engine_builder_exports() -> None:
         'DurabilityCodec',
         'DurabilityEngineSpec',
         'DurableOperationBackend',
+        'DurableRunCancellation',
         'DurableOperationId',
         'DurableOperationNamer',
         'EventStreamHandlerId',

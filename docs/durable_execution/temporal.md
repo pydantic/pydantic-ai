@@ -260,7 +260,7 @@ secrets as workflow-side arguments; use a [payload codec](#large-payloads) to pr
 
 Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.
 
-Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or durable operations. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a workflow, please share your use case there. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or durable operations. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction, as is [`DurableRunCancellation`][pydantic_ai.durable_exec.DurableRunCancellation], which contributes none of those either and only cancels the run when triggered from outside. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a workflow, please share your use case there. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
 
 ### Large Payloads
 
@@ -528,14 +528,51 @@ Emitting events via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from a too
 
 Capability listeners registered with [`@on_event`][pydantic_ai.capabilities.on_event] run in workflow code rather than in a durable unit, so they re-run on every workflow replay and must be deterministic. Keep I/O in a durability `event_stream_handler=`, which runs in its own activity.
 
+### Cancellation
+
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 
 Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) follows the same split, with Temporal-specific consequences:
 
 - Calling [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] from workflow code raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] as an ordinary application outcome: a workflow that catches it completes normally rather than ending as *Cancelled*, and the run remains replay-deterministic. An uncaught `RunCancelled` fails the workflow as a typed application error, and the run state does not cross the failure boundary -- catch it inside the workflow if you need [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
 - [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] requires being in the same process as the run, so calling it from a tool running inside an activity raises a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of hanging.
-- [`CancellationToken`][pydantic_ai.CancellationToken] is also same-process state and cannot be passed to a Temporal durable run; cancel the Temporal workflow instead.
+- [`CancellationToken`][pydantic_ai.CancellationToken] is also same-process state and cannot be passed to a Temporal durable run; use [`DurableRunCancellation`][pydantic_ai.durable_exec.DurableRunCancellation] (below) or cancel the Temporal workflow instead.
 - Cancelling the Temporal workflow itself remains an external cancellation: `CancelledError` keeps propagating and the workflow still ends as *Cancelled*.
+
+To let an **external** actor (a user hitting "stop") cancel a durable run first-party without tearing down the whole workflow, pass a [`DurableRunCancellation`][pydantic_ai.durable_exec.DurableRunCancellation] capability to the run and trigger it from a [`@workflow.signal`](https://docs.temporal.io/develop/python/message-passing#signals) handler. A signal runs on the workflow event loop and is recorded in history, so the resulting cancellation is deterministic on replay:
+
+```python {title="temporal_signal_cancellation.py" test="skip" requires="temporal_durability.py"}
+from temporalio import workflow
+
+from pydantic_ai import RunCancelled
+from pydantic_ai.durable_exec import DurableRunCancellation
+
+with workflow.unsafe.imports_passed_through():
+    from temporal_durability import agent
+
+
+@workflow.defn
+class MyAgentWorkflow:
+    def __init__(self) -> None:
+        # A fresh handle per workflow execution; it binds to this run's cancellation only.
+        self.cancellation = DurableRunCancellation()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            result = await agent.run(prompt, capabilities=[self.cancellation])
+            return result.output
+        except RunCancelled:
+            return 'The run was cancelled.'
+
+    @workflow.signal
+    def cancel(self) -> None:
+        self.cancellation.cancel()
+```
+
+An external actor then cancels the run by signalling the workflow: `await handle.signal(MyAgentWorkflow.cancel)`. As the example shows, catch [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] inside the workflow to complete normally; as with [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] above, an uncaught `RunCancelled` fails the workflow as a typed application error, without the run state.
+
+A `DurableRunCancellation` binds to a single run, and binding it to another raises a [`UserError`][pydantic_ai.exceptions.UserError]. A workflow that runs the agent once per turn should assign a fresh one before each run, so a signal that arrives between turns can't cancel the next one.
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `TemporalAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
