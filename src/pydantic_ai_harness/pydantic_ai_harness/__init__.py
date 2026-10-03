@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     )
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
+    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -89,6 +90,8 @@ __all__ = [
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
     'DeduplicateFileReads',
+    'DockerSandbox',
+    'DockerSandboxBackend',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -163,6 +166,7 @@ _CAPABILITY_EXPORTS = {
     'Coder': 'coder',
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
+    'DockerSandbox': 'docker_sandbox',
     'DeduplicateFileReads': 'compaction',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
@@ -210,6 +214,7 @@ _CAPABILITY_EXPORTS = {
 _CONSTANT_EXPORTS = {
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'DockerSandboxBackend': 'docker_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',

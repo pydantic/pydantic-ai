@@ -83,7 +83,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
-`E2BSandbox` and `SpritesSandbox` work the same way. See
+`E2BSandbox`, `SpritesSandbox`, and `DockerSandbox('python:3.13-slim')` (a local Docker or Podman container, no extra) work the same way. See
 [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) for credentials, lifetimes, and sharing a
 workspace between runs.
 
@@ -239,7 +239,7 @@ dependencies. Supporting types such as stores and policies are only in the submo
 
 - **Check whether core is enough first.** Web search, web fetch, MCP, thinking, tool search, and workspaces are core capabilities in `pydantic_ai.capabilities`, and provider-native compaction is core too (`OpenAICompaction`, `AnthropicCompaction`), as is `ProcessHistory(processor)` for hand-rolled history trimming. Reach for the harness when the agent should edit files, run commands or code, delegate, remember, or run long.
 - **Attach a workspace for workspace capabilities.** `Coder`, `FileSystem`, `Shell`, `RepoContext`, and `Macroscope` act in the run's workspace, and none picks one for you. Add `LocalWorkspace(...)` from `pydantic_ai.capabilities` or a sandbox capability, or the run fails at its start with a message naming what to attach.
-- **Use a sandbox for untrusted work.** `LocalWorkspace` isolates nothing, and `Coder`'s shell is unrestricted. Use `ModalSandbox`, `E2BSandbox`, or `SpritesSandbox` when the agent's commands must not reach the host.
+- **Use a sandbox for untrusted work.** `LocalWorkspace` isolates nothing, and `Coder`'s shell is unrestricted. Use `DockerSandbox`, `ModalSandbox`, `E2BSandbox`, or `SpritesSandbox` when the agent's commands must not reach the host.
 - **Read the reference before writing code.** Each capability has its own parameters, extras, and limits; load the matching reference from the routing table first.
 - **Combine instead of rebuilding.** `Coder` and `Researcher` are combined capabilities; start from one and add capabilities next to it, or rebuild it from its parts when a setting must change.
 - **Plan for long runs.** For multi-hour agents pair a workspace stack with context management (`ClearToolResults`, `SummarizingCompaction`, `ToolOutputLimits`) and, where runs must survive restarts, durable execution or `StepPersistence`.
@@ -265,7 +265,7 @@ any:
 
 | Reference | Capabilities |
 |---|---|
-| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
+| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `SSHWorkspace` (`.ssh_workspace`); `DockerSandbox` (`.docker_sandbox`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
 | [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`) |
 | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
 | [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction`, `FallbackCompaction`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |
