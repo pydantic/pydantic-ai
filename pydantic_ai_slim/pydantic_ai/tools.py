@@ -26,7 +26,7 @@ from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
-from .messages import ToolPartKind, parse_tool_kind
+from .messages import ToolPartKind
 from .native_tools import AbstractNativeTool
 
 __all__ = (
@@ -706,8 +706,9 @@ class ToolDefinition:
     and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]), so code can
     recognize the tool with `isinstance` even when it has been renamed or prefixed. The kind
     must be registered by a typed tool part (see
-    [Typed tool parts](../tools-advanced.md#typed-tool-parts)); setting an unregistered kind
-    raises `UserError`. Leave as `None` for tools that have no typed parts.
+    [Typed tool parts](../tools-advanced.md#typed-tool-parts)); a run whose tools include an
+    unregistered kind raises `UserError`, while a stored definition with one still loads. Leave as
+    `None` for tools that have no typed parts.
 
     To detect a tool-search part regardless of execution path (native server-side vs.
     local fallback), check `part.tool_kind == 'tool-search'` — this works across both
@@ -749,14 +750,6 @@ class ToolDefinition:
     deferred capability it gates visibility: the tool is revealed once that capability's id appears
     in [`RunContext.loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
     """
-
-    def __post_init__(self) -> None:
-        if self.tool_kind is not None and parse_tool_kind(self.tool_kind) is None:
-            raise UserError(
-                f'Tool {self.name!r} declares `tool_kind={self.tool_kind!r}`, which no typed tool part has registered. '
-                'Define a typed `ToolCallPart` / `ToolReturnPart` subclass with this kind, and import its module '
-                'before building the tool.'
-            )
 
     @cached_property
     def function_signature(self) -> FunctionSignature:

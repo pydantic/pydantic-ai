@@ -187,6 +187,38 @@ For tool-call retries, use `ModelRetry` and tool `retries=...`.
 
 For HTTP request retries at the transport layer, use the library's retry configuration separately. Do not assume `ModelRetry` alone solves provider transport failures.
 
+## Recognize Tools by Kind, Not Name
+
+Tool names can be renamed or prefixed, so never recognize a tool by `tool_name`. Match framework tools with `isinstance` on their typed parts (`ToolSearchCallPart`, `LoadCapabilityReturnPart`, ...).
+
+To make your own tool recognizable, register a kind by defining typed parts with `namespace` and `tool_kind` class arguments. The kind becomes `'{namespace}.{tool_kind}'`:
+
+```python
+from dataclasses import KW_ONLY, dataclass
+
+from typing_extensions import TypedDict
+
+from pydantic_ai.messages import ToolCallPart
+
+
+class LookupArgs(TypedDict):
+    sku: str
+
+
+@dataclass(repr=False)
+class LookupCallPart(ToolCallPart, namespace='inventory', tool_kind='lookup'):
+    _: KW_ONLY
+
+    args: str | LookupArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+```
+
+- A typed part may only narrow `args` (call) or `content` (return) and add properties. Any other field raises `UserError` when the class is defined.
+- The tool declares the kind on its `ToolDefinition` (`replace(tool_def, tool_kind='inventory.lookup')` in a `prepare` function or the toolset's `get_tools`). A run with an unregistered kind raises `UserError`.
+- Its call and return parts are then promoted to the typed classes, so hooks and history processors can use `isinstance(part, LookupCallPart)`.
+- A history whose kind isn't registered still loads, as base parts that keep their `tool_kind`.
+
+See [Typed tool parts](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts).
+
 ## Tool Search and Tool-Level Deferred Loading
 
 Use tool-level deferred loading when the agent has many tools and the model should discover individual tools on demand via `search_tools`.

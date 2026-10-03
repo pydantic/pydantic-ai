@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -30,7 +30,7 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+from .messages import RetryPromptPart, ToolCallPart, ToolReturn, parse_tool_kind
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
@@ -54,6 +54,22 @@ InlineDeferredResultHandler = Callable[[DeferredToolRequests, DeferredToolResult
 
 ToolValidationHandler = Callable[[bool], Awaitable[None]]
 """Internal callback for observing a tool call's argument-validation result."""
+
+
+def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
+    """Refuse a tool whose `tool_kind` no typed tool part has registered, so kinds are declared up front.
+
+    Checked when a run collects its tools rather than on `ToolDefinition` itself, so a definition
+    stored by durable execution still loads after the module registering its kind is gone.
+    """
+    for tool in tools.values():
+        kind = tool.tool_def.tool_kind
+        if kind is not None and parse_tool_kind(kind) is None:
+            raise UserError(
+                f'Tool {tool.tool_def.name!r} declares `tool_kind={kind!r}`, which no typed tool part has registered. '
+                'Define a typed `ToolCallPart` / `ToolReturnPart` subclass with this kind, and import its module '
+                'before running the agent.'
+            )
 
 
 @dataclass
@@ -246,11 +262,13 @@ class ToolManager(Generic[AgentDepsT]):
         # only re-run `get_tools`, which is what re-runs `prepare_tools`.
         toolset = self.toolset if same_step else await self.toolset.for_run_step(ctx)
 
+        tools = await toolset.get_tools(ctx)
+        _check_tool_kinds(tools)
         new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
             ctx=ctx,
-            tools=await toolset.get_tools(ctx),
+            tools=tools,
             default_max_retries=self.default_max_retries,
             availability_refused=self.availability_refused,
             resolved_capability_ids=resolved_capability_ids,

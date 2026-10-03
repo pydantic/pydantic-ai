@@ -7,6 +7,7 @@ from dataclasses import KW_ONLY, dataclass, replace
 from typing import ClassVar, Literal
 
 import pytest
+from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool
@@ -28,6 +29,7 @@ from pydantic_ai.messages import (
     parse_tool_kind,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -246,12 +248,24 @@ def test_a_payload_type_defined_in_a_function_is_reported() -> None:
         ModelResponse(parts=[ToolCallPart('t', {'name': 'x'}, tool_kind='test.local-args')])
 
 
-def test_tool_definitions_only_accept_registered_kinds() -> None:
-    assert ToolDefinition(name='lookup_v2', tool_kind='test.lookup').tool_kind == 'test.lookup'
+def test_a_stored_tool_definition_with_an_unregistered_kind_loads() -> None:
+    adapter = TypeAdapter(ToolDefinition)
+    stored = adapter.dump_python(ToolDefinition(name='lookup', tool_kind='test.unknown'))
+    assert adapter.validate_python(stored).tool_kind == 'test.unknown'
+
+
+async def test_a_run_refuses_a_tool_with_an_unregistered_kind() -> None:
+    async def mark_kind(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+        return replace(tool_def, tool_kind='test.unknown')
+
+    def lookup(sku: str) -> str:
+        return sku  # pragma: no cover
+
+    agent = Agent(TestModel(), tools=[Tool(lookup, prepare=mark_kind)])
     with pytest.raises(
         UserError, match=r"declares `tool_kind='test\.unknown'`, which no typed tool part has registered"
     ):
-        ToolDefinition(name='lookup', tool_kind='test.unknown')
+        await agent.run('go')
 
 
 def test_parse_tool_kind_accepts_registered_kinds_only() -> None:
