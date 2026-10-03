@@ -2,7 +2,7 @@ name: Agent Provider Health
 
 on:
   # zizmor: ignore[dangerous-triggers] -- workflow_run only handles allowlisted agent artifacts;
-  # it checks out the default-branch controller, parses artifacts as data, and receives no MiniMax key.
+  # it checks out the default-branch controller, parses artifacts as data, and receives no Z.AI key.
   workflow_run:
     workflows:
       - Pydantic AI Attention Triage
@@ -102,15 +102,13 @@ jobs:
         if: github.event_name == 'schedule'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scheduled quota recovery only; workflow_run receives no MiniMax key.
-          MINIMAX_QUOTA_RESOURCE: ${{ vars.MINIMAX_QUOTA_RESOURCE }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scheduled recovery only; workflow_run receives no Z.AI key.
         run: python3 .github/scripts/agent_provider_health.py monitor --repository "$GITHUB_REPOSITORY"
       - name: Verify requested incident recovery
         if: github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }} # zizmor: ignore[secrets-outside-env] -- requested recovery only; workflow_run receives no MiniMax key.
-          MINIMAX_QUOTA_RESOURCE: ${{ vars.MINIMAX_QUOTA_RESOURCE }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- requested recovery only; workflow_run receives no Z.AI key.
           ISSUE_NUMBER: ${{ inputs.recover_issue }}
         run: >-
           python3 .github/scripts/agent_provider_health.py monitor

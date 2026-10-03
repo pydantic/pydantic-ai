@@ -78,7 +78,8 @@ from other conversations in the store.
 
 SCOPE_DEFAULT_CHANGE_IMPACT = (
     "Searches are now limited to the calling run's conversation instead of every run in the store, "
-    'so a caller relying on the old default silently stops seeing other conversations rather than erroring.'
+    'so a caller relying on the old default silently stops seeing other conversations rather than erroring. '
+    'This transitional warning will be removed in the next breaking release; the conversation-scoped default will remain.'
 )
 """Why the `scope` default change matters, for the deprecation warning both public entry points emit."""
 

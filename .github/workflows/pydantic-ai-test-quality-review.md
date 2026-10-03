@@ -22,7 +22,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 network:
-  allowed: [defaults, python, api.minimax.io]
+  allowed: [defaults, python, api.z.ai]
 tools:
   bash: ["git show", "git diff"]
   cli-proxy: false
@@ -84,7 +84,7 @@ timeout-minutes: 30
 env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
 imports:
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
   - shared/provider-health.md
   - shared/pre-steps.md
   - shared/network-vendor-domains.md

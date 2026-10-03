@@ -20,9 +20,9 @@ _DEFAULT_GUIDANCE = (
     'You can author new pydantic-ai capabilities at runtime with `author_capability(name, code)`. '
     'A capability is a subclass of `pydantic_ai.capabilities.AbstractCapability` that constructs with '
     'no arguments and overrides one or more lifecycle hooks (a single overridden hook is a valid '
-    'capability). Authored capabilities are validated immediately but become active on the next agent '
-    'run, not the current one. Use `list_authored_capabilities` and `disable_authored_capability` to '
-    'manage them.'
+    'capability). Authored capabilities are validated and saved immediately, but they do not take effect '
+    'in this run; whether a later run loads them depends on how this agent is set up. Use '
+    '`list_authored_capabilities` and `disable_authored_capability` to manage them.'
 )
 
 
