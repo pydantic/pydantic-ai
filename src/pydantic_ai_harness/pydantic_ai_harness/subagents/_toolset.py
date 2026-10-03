@@ -16,7 +16,7 @@ from typing_extensions import TypeIs
 
 from pydantic_ai import AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AgentCapability, HookTimeoutError
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -627,12 +627,28 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """
         timeout = sub_agent.timeout_seconds
         try:
-            result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
+            if timeout is None:
+                result = await run
+            else:
+                started = False
+
+                async def run_child() -> AgentRunResult[Any] | asyncio.TimeoutError:
+                    nonlocal started
+                    started = True
+                    try:
+                        return await run
+                    except asyncio.TimeoutError as exc:
+                        # Carry child errors through wait_for so only its own deadline raises here.
+                        return exc
+
+                try:
+                    result = await asyncio.wait_for(run_child(), timeout)
+                finally:
+                    if not started:
+                        # An expired budget can cancel the wrapper before it awaits the child.
+                        run.close()
         except asyncio.TimeoutError as exc:
-            if timeout is None or isinstance(exc, HookTimeoutError):
-                # The child itself timed out: a hook overran its own budget, or no
-                # delegation budget is set at all. That is a child crash, so the
-                # crash handlers decide what the parent sees.
+            if timeout is None:
                 return self._crash_outcome(agent_name, sub_agent, exc)
             return _Ended(
                 outcome='timeout',
@@ -663,6 +679,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise
         except Exception as exc:
             return self._crash_outcome(agent_name, sub_agent, exc)
+        if isinstance(result, asyncio.TimeoutError):
+            return self._crash_outcome(agent_name, sub_agent, result)
         return _Ended(outcome='ok', output=str(result.output))
 
     def _crash_outcome(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], exc: Exception) -> _Ended:

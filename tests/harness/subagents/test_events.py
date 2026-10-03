@@ -227,6 +227,47 @@ class TestDelegationEvents:
 
 
 class TestOutcomes:
+    @pytest.mark.parametrize('timeout', [None, 60])
+    @pytest.mark.parametrize('contain_errors', [False, True])
+    async def test_child_tool_timeout_is_not_the_delegation_timeout(
+        self, timeout: float | None, contain_errors: bool
+    ) -> None:
+        def call_backend(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[ToolCallPart('read_backend', {}, tool_call_id='backend-1')])
+
+        worker = Agent(FunctionModel(call_backend), name='worker')
+        error = asyncio.TimeoutError('backend operation timed out')
+
+        @worker.tool_plain
+        async def read_backend() -> str:
+            raise error
+
+        listener = Listener()
+        parent = Agent(
+            _delegate_once(),
+            capabilities=[
+                SubAgents(
+                    agents=[SubAgent(worker, timeout_seconds=timeout, contain_errors=contain_errors)],
+                    agent_folders=None,
+                ),
+                listener,
+            ],
+        )
+        if not contain_errors:
+            with pytest.raises(asyncio.TimeoutError, match='backend operation timed out') as exc_info:
+                await parent.run('go')
+            assert exc_info.value is error
+            assert [type(event) for event in listener.events] == [DelegationStartEvent]
+        else:
+            result = await parent.run('go')
+            _, end = _pair(listener)
+            assert end.outcome == 'contained'
+            assert 'backend operation timed out' in end.output
+            retries = [
+                part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+            ]
+            assert [retry.content for retry in retries] == [end.output]
+
     async def test_timeout(self) -> None:
         # The timeout may fire before the child reaches its model, so no line here is a sure hit.
         async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
@@ -239,6 +280,17 @@ class TestOutcomes:
         _, end = _pair(listener)
         assert end.outcome == 'timeout'
         assert "Sub-agent 'worker' exceeded its 0.01s time budget" in end.output
+
+    @pytest.mark.parametrize('timeout', [0, -1])
+    async def test_expired_budget_does_not_start_child(self, timeout: float, recwarn: pytest.WarningsRecorder) -> None:
+        model = TestModel(custom_output_text='unused')
+        worker = Agent(model, name='worker')
+        listener, _ = await _run(_delegate_once(), SubAgents(agents=[SubAgent(worker, timeout_seconds=timeout)]))
+
+        _, end = _pair(listener)
+        assert end.outcome == 'timeout'
+        assert model.last_model_request_parameters is None
+        assert not recwarn
 
     async def test_child_hook_timeout_is_not_the_delegation_timeout(self) -> None:
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -351,7 +403,8 @@ class TestOutcomes:
 
         assert [type(event) for event in listener.events] == [DelegationStartEvent]
 
-    async def test_cancellation_ends_without_an_end_event(self) -> None:
+    @pytest.mark.parametrize('timeout', [None, 60])
+    async def test_cancellation_ends_without_an_end_event(self, timeout: float | None) -> None:
         child_requesting = asyncio.Event()
 
         async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -361,7 +414,9 @@ class TestOutcomes:
 
         worker = Agent(FunctionModel(slow), name='worker')
         listener = Listener()
-        parent = Agent(_delegate_once(), capabilities=[SubAgents(agents=[SubAgent(worker)]), listener])
+        parent = Agent(
+            _delegate_once(), capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=timeout)]), listener]
+        )
         run = asyncio.ensure_future(parent.run('go'))
         await child_requesting.wait()
         run.cancel()
