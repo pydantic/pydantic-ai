@@ -44,6 +44,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     InstructionId,
     InstructionPart,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -52,6 +53,7 @@ from pydantic_ai.messages import (
     ToolsetInstructionSource,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, Tool, ToolDefinition
@@ -1921,6 +1923,77 @@ async def test_wrapper_toolsets_delegate_instructions():
     assert await MockToolsetWithInstructions().prefixed('test').get_instructions(ctx) is None
 
 
+async def call_first_available_tool(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
+    return ModelResponse(parts=[TextPart('No tools left.')])
+
+
+@pytest.mark.parametrize('prefixes', [(), ('demo',), ('inner', 'outer')], ids=['plain', 'prefixed', 'nested'])
+async def test_prefixed_toolset_prepare_retry(prefixes: tuple[str, ...]):
+    """Prefixing preserves the retry count used to disable a tool during preparation.
+
+    FunctionModel drives the retry deterministically; this checks preparation before the model request.
+    """
+    prepare_retries: list[int] = []
+    calls: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    async def prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        prepare_retries.append(ctx.retry)
+        return None if ctx.retry else tool_def
+
+    @toolset.tool(prepare=prepare)
+    async def fail(ctx: RunContext[None]) -> str:
+        calls.append(ctx.retry)
+        raise ModelRetry('Choose another approach.')
+
+    wrapped: AbstractToolset[None] = toolset
+    for prefix in prefixes:
+        wrapped = wrapped.prefixed(prefix)
+
+    result = await Agent(FunctionModel(call_first_available_tool), deps_type=type(None), toolsets=[wrapped]).run(
+        'Try the tool.'
+    )
+
+    assert result.output == 'No tools left.'
+    assert prepare_retries == [0, 1]
+    assert calls == [0]
+
+
+async def test_prefixed_toolset_prepare_retry_isolated_from_same_named_tool():
+    """A failure of an unprefixed tool must not disable a different tool with the same original name."""
+    plain = FunctionToolset[None]()
+    prefixed = FunctionToolset[None]()
+    calls: list[str] = []
+    prepare_retries: list[int] = []
+
+    async def prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        return None if ctx.retry else tool_def
+
+    async def prepare_prefixed(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        prepare_retries.append(ctx.retry)
+        return await prepare(ctx, tool_def)
+
+    @plain.tool_plain(prepare=prepare)
+    async def fail() -> str:
+        calls.append('plain')
+        raise ModelRetry('Choose another approach.')
+
+    @prefixed.tool_plain(name='fail', prepare=prepare_prefixed)
+    async def another_fail() -> str:
+        calls.append('prefixed')
+        raise ModelRetry('Choose another approach.')
+
+    result = await Agent(
+        FunctionModel(call_first_available_tool), deps_type=type(None), toolsets=[plain, prefixed.prefixed('demo')]
+    ).run('Try the tools.')
+
+    assert result.output == 'No tools left.'
+    assert calls == ['plain', 'prefixed']
+    assert prepare_retries == [0, 0, 1]
+
+
 async def test_renamed_toolset_name_collision():
     """Renaming a tool onto a name another tool already occupies must raise, not silently drop one.
 
@@ -2850,10 +2923,6 @@ async def test_dynamic_toolset_per_run_step_false_for_run_evaluates():
 async def test_concurrent_runs_dont_share_state():
     """Multiple concurrent runs don't share state on stateful toolsets."""
     import asyncio
-
-    from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     call_counts: list[int] = []
 
