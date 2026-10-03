@@ -396,6 +396,7 @@ class OpenAIServer:
         session.answered_everything = False
         self._emit(session, {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 1000})
         self.truth.add_input(key, 'speech', solicits=True)
+        self.truth.speech_committed.add(key)
         self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
         self._audio_item_added(session, item_id)
         if session.transcription:
@@ -725,6 +726,7 @@ class OpenAIServer:
         item_id = f'item_{key}'
         session.audio_ms = 0
         self.truth.add_input(key, 'speech').committed_by_client = True
+        self.truth.speech_committed.add(key)
         self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
         self._audio_item_added(session, item_id)
         if session.transcription:
@@ -864,7 +866,8 @@ class OpenAIServer:
         )
         if self.dialect == 'xai':
             # xAI adds the spoken turn's item as soon as it hears speech, not when it commits it (recorded:
-            # `test_xai_ws/test_audio_in_server_vad_turn`).
+            # `test_xai_ws/test_audio_in_server_vad_turn`): that is where the turn sits in its conversation.
+            self.truth.add_input(key, 'speech', solicits=True)
             self._audio_item_added(session, f'item_{key}')
         if session.active is not None and session.interrupt_response:
             self._finish_active(session, 'cancelled', reason='turn_detected', late=late)
@@ -878,7 +881,9 @@ class OpenAIServer:
         item_id = f'item_{key}'
         self._emit(session, {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 1000})
         session.audio_ms = 0
-        self.truth.add_input(key, 'speech', solicits=session.create_response)
+        self.truth.speech_committed.add(key)
+        if self.dialect != 'xai':
+            self.truth.add_input(key, 'speech', solicits=session.create_response)
         self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
         if self.dialect != 'xai':
             self._audio_item_added(session, item_id)

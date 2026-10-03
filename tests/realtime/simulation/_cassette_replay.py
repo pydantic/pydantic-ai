@@ -197,7 +197,14 @@ async def replay_codec_events(path: Path) -> list[list[RealtimeCodecEvent]]:
     events: list[list[RealtimeCodecEvent]] = []
     for frames, close, _ in _segments(RealtimeCassette.load(path)):
         connection = _connection(protocol, frames, close)
-        events.append([event async for event in connection])
+        socket_events: list[RealtimeCodecEvent] = []
+        try:
+            async for event in connection:
+                socket_events.append(event)
+        except ConnectionClosedError:
+            # GPT-Live, with no reconnect policy, raises an abnormal close for the session to handle.
+            pass
+        events.append(socket_events)
         if isinstance(connection, OpenAILiveConnection):
             await connection.aclose()
     return events

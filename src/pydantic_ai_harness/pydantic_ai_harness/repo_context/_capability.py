@@ -28,7 +28,7 @@ from pydantic_ai_harness.repo_context._toolset import RepoContextToolset
 
 _INVENTORY_HINT = (
     'Call `{tool_name}` to map where this repo keeps its coding-assistant setup '
-    '(instruction dirs, skills, sub-agents, and hooks) so you can read and translate it.'
+    '(instruction dirs, skills, sub-agents, and hooks) so you can inspect it.'
 )
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
@@ -55,7 +55,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        and injected as **static system instructions** via `get_instructions`, so
        they stay in the cached prefix and never re-read per turn.
 
-    2. Asset inventory (`expose_inventory_tool`, on by default): a tool that
+    2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
        reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
        `.grok` and their `skills/`, `agents/`, `settings.json`). It locates
        assets; it does not parse them.
@@ -104,7 +104,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     autoload_instructions: bool = True
     """Strategy 1: load instruction files into the system prompt."""
 
-    expose_inventory_tool: bool = True
+    expose_inventory_tool: bool = False
     """Strategy 2: expose the asset-inventory tool."""
 
     inventory_tool_name: str = 'inventory_agent_context'

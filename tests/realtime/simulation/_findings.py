@@ -109,7 +109,9 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
     ),
     tracked_by='per-response-id state: a cancel targets a response id, and is a no-op once that response is done; found by this simulator',
     evidence='simulated',
-    codes=frozenset({'response.truncated', 'response.missing', 'usage.attribution', 'wait.hang', 'history.order'}),
+    codes=frozenset(
+        {'response.truncated', 'response.missing', 'usage.attribution', 'wait.hang', 'wait.early', 'history.order'}
+    ),
     providers=OPENAI_PROTOCOL,
     matches=_late_cancel,
 )
@@ -521,7 +523,7 @@ ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT = Finding(
 
 
 ASYNC_RESULT_CUT_IN_ENDS_THE_WAIT = Finding(
-    id='SIM-24',
+    id='SIM-33',
     title=(
         "with asynchronous Gemini tool calls, the `interrupted` + `turn_complete` the batch's result cuts in with "
         'ends `wait_for_reply()` before the model has answered the result'
@@ -678,7 +680,7 @@ PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
 
 def _speech_cleared_after_barge_in(sim: Simulation, violation: InvariantViolation) -> bool:
     started = sim.truth.speech_started
-    return any(key not in {input_.key for input_ in sim.truth.inputs} for key in started) and any(
+    return any(key not in sim.truth.speech_committed for key in started) and any(
         operation.name == 'clear_audio' for operation in sim.operations
     )
 
@@ -855,7 +857,7 @@ def _barged_in_without_a_vad_reply(sim: Simulation) -> bool:
 
 
 BARGE_IN_WITHOUT_A_VAD_REPLY = Finding(
-    id='SIM-23',
+    id='SIM-32',
     title=(
         "with server VAD's `create_response` off, a request deferred behind a response the user barged in on (or the "
         "reply to that response's tool results) is dropped as if VAD would answer the turn, but nothing does, so "
@@ -877,6 +879,91 @@ def _turn_without_its_transcript(sim: Simulation) -> bool:
         and getattr(getattr(sim, 'openai', None), 'transcription', False)
         and any(input_.kind == 'speech' and input_.transcript_read is None for input_ in sim.truth.inputs)
     )
+
+
+def _hand_commit_unanswered_at_the_end(sim: Simulation) -> bool:
+    """A turn `commit_audio()` committed whose reply the client hadn't read the end of when the connection dropped or
+    the session ended."""
+    truth = sim.truth
+    ended = bool(truth.connection_losses) or sim.close_requested is not None or sim.receive_ended
+    return ended and any(
+        input_.kind == 'speech'
+        and input_.committed_by_client
+        and (input_.answered_by is None or truth.responses[input_.answered_by].terminal_read is None)
+        for input_ in truth.inputs
+    )
+
+
+def _clear_after_an_unread_vad_commit(sim: Simulation) -> bool:
+    """Without transcription, the app cleared the buffer after server VAD committed a turn, before reading that it had."""
+    options = getattr(sim, 'openai', None)
+    if options is None or options.transcription:
+        return False
+    clears = [operation.issued for operation in sim.operations if operation.name == 'clear_audio']
+    for key, started in sim.truth.speech_started.items():
+        input_ = sim.truth.input(key)
+        if input_ is None or key not in sim.truth.speech_committed or input_.committed_by_client:
+            continue
+        read = input_.committed_read
+        if any(started < issued and (read is None or issued < read) for issued in clears):
+            return True
+    return False
+
+
+def _push_to_talk_audio_after_a_repeated_terminal(sim: Simulation) -> bool:
+    options = getattr(sim, 'openai', None)
+    return (
+        options is not None
+        and options.dialect == 'xai'
+        and options.turn_detection == 'manual'
+        and bool(sim.truth.repeated_terminals)
+        and any(operation.name == 'send_audio' for operation in sim.operations)
+    )
+
+
+PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
+    id='SIM-36',
+    title=(
+        'on xAI push-to-talk, audio sent after a `response.done` the server repeated is held behind a reply that '
+        'already ended: the current session loses the turn, and the new core (in shadow) leaves `wait_for_reply()` '
+        'hanging (a repeated terminal is a robustness fault no provider was recorded sending, see 8801)'
+    ),
+    tracked_by="#9070's held audio released by the response that ended, not by the next terminal; found by this simulator",
+    evidence='simulated',
+    codes=frozenset({'history.turn_missing', 'wait.hang'}),
+    providers=frozenset({'xai'}),
+    matches=lambda sim, violation: _push_to_talk_audio_after_a_repeated_terminal(sim),
+)
+
+
+CLEAR_AFTER_AN_UNREAD_VAD_COMMIT = Finding(
+    id='SIM-35',
+    title=(
+        "without input transcription, a `clear_audio()` made after server VAD committed the user's turn, but before "
+        'the session read that it had, drops the turn: the provider keeps it, and answers it, but history never '
+        'records it'
+    ),
+    tracked_by='user turns recorded from the provider committing them; found by this simulator',
+    evidence='simulated',
+    codes=frozenset({'history.turn_missing'}),
+    providers=OPENAI_PROTOCOL,
+    matches=lambda sim, violation: _clear_after_an_unread_vad_commit(sim),
+)
+
+
+HAND_COMMIT_UNANSWERED_AT_THE_END = Finding(
+    id='SIM-34',
+    title=(
+        'a spoken turn `commit_audio()` committed is lost when the connection drops, or the session closes or ends (on '
+        'a failed send, an exceeded limit), before its reply is over: always in the new session core (in shadow), '
+        'and in the current session on xAI, whose held commit goes out with the request'
+    ),
+    tracked_by='user turns recorded from the provider committing them; found by this simulator on #9422',
+    evidence='simulated',
+    codes=frozenset({'history.turn_missing'}),
+    providers=OPENAI_PROTOCOL,
+    matches=lambda sim, violation: _hand_commit_unanswered_at_the_end(sim),
+)
 
 
 def _audio_after_a_clear(sim: Simulation) -> bool:
@@ -905,19 +992,28 @@ AUDIO_AFTER_A_CLEAR = Finding(
 )
 
 
+def _hand_commit_under_server_vad(sim: Simulation, violation: InvariantViolation) -> bool:
+    if not sim.truth.speech_started or not any(operation.name == 'commit_audio' for operation in sim.operations):
+        return False
+    if violation.code != 'history.order':
+        return True
+    input_ = sim.truth.input(violation.context.get('input', ''))
+    return input_ is not None and input_.committed_by_client
+
+
 HAND_COMMIT_UNDER_SERVER_VAD = Finding(
     id='SIM-27',
     title=(
         'a `commit_audio()` while server VAD is hearing the user commits what was buffered as a turn of its own, and '
-        'VAD commits another when the user stops, but the session records only one of the two'
+        'VAD commits another when the user stops, but the session records only one of the two; on xAI, which adds '
+        'the VAD turn when it hears speech start, the hand-committed one is recorded where its audio began, before '
+        'a reply that ended before it was committed'
     ),
     tracked_by='user turns recorded from the provider committing them (the rest of OR9); found by this simulator',
     evidence='simulated',
-    codes=frozenset({'history.turn_missing'}),
+    codes=frozenset({'history.turn_missing', 'history.order'}),
     providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: (
-        bool(sim.truth.speech_started) and any(operation.name == 'commit_audio' for operation in sim.operations)
-    ),
+    matches=lambda sim, violation: _hand_commit_under_server_vad(sim, violation),
 )
 
 
@@ -926,11 +1022,12 @@ TURN_LOST_AT_CLOSE = Finding(
     title=(
         'a spoken turn committed with input transcription on, whose transcript never arrives (the session closes or '
         'ends on an error, or the connection drops, first), is never recorded: it waits for a transcript that never comes (surfaced by '
-        'Macroscope for closing after `commit_audio()`)'
+        'Macroscope for closing after `commit_audio()`). The new session core (in shadow) also holds back the replies '
+        'after it, so a reply after a reconnect is missing too (and is counted as a request it does not record)'
     ),
     tracked_by='user turns recorded from the provider committing them, not from their transcript; found reviewing #9070',
     evidence='recorded',
-    codes=frozenset({'history.turn_missing'}),
+    codes=frozenset({'history.turn_missing', 'response.missing', 'usage.requests'}),
     providers=OPENAI_PROTOCOL,
     matches=lambda sim, violation: _turn_without_its_transcript(sim),
 )
@@ -1084,12 +1181,69 @@ NON_AUDIO_SEND_DURING_RECONNECT = Finding(
 )
 
 
+FRAME_CUT_OFF_BY_CLOSE = Finding(
+    id='SIM-23',
+    title=(
+        'closing the session while the connection is handling a `response.done` that sends a deferred '
+        "`response.create` cancels it mid-frame: the whole frame is dropped, so that response's usage and "
+        'terminal never reach the session, though it was billed'
+    ),
+    tracked_by='an ordered outbox, so the receive loop never awaits a send; found by exploration on the refactor branch',
+    evidence='simulated',
+    codes=frozenset({'usage.total', 'usage.attribution', 'response.missing', 'response.truncated', 'usage.requests'}),
+    providers=OPENAI_PROTOCOL,
+    matches=lambda sim, violation: sim.close_requested is not None and getattr(sim, 'requests_cut_off', 0) > 0,
+)
+
+
+def _provider_reply_before_any_echo(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A response the provider started on its own was read after the input went out, before any of ours was."""
+    key = violation.context.get('input')
+    if not isinstance(key, str) or (input_ := sim.truth.input(key)) is None:
+        return False
+    issued = min((operation.issued for operation in sim.operations if operation.key == key), default=input_.seq)
+    responses = sim.truth.responses.values()
+    first_echo = min(
+        (r.started_read for r in responses if r.trigger == 'create' and r.started_read is not None), default=None
+    )
+    return any(
+        response.trigger != 'create'
+        and response.started_read is not None
+        and response.started_read > issued
+        and (first_echo is None or response.started_read < first_echo)
+        for response in responses
+    )
+
+
+PROVIDER_REPLY_BEFORE_ANY_ECHO = Finding(
+    id='SIM-24',
+    title=(
+        'until the server has echoed the metadata of one of our `response.create`s, the connection takes a response '
+        'it started on its own (server VAD) for the one we asked for, if ours is outstanding: it answers our input, '
+        "so the input is recorded before it and a wait for the input's reply ends with it"
+    ),
+    tracked_by=(
+        "the OpenAI-protocol lifecycle tracker's documented inference: whether a server echoes request metadata is "
+        'learned from its first echo, not assumed per provider'
+    ),
+    evidence='simulated',
+    codes=frozenset({'history.order', 'wait.early'}),
+    providers=OPENAI_PROTOCOL,
+    matches=_provider_reply_before_any_echo,
+    accepted=True,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
+        FRAME_CUT_OFF_BY_CLOSE,
         NON_AUDIO_SEND_DURING_RECONNECT,
         TURN_LOST_AT_CLOSE,
         INPUT_HELD_BEHIND_A_LOST_REPLY,
         PUSH_TO_TALK_TURN_SPOKEN_OVER,
+        CLEAR_AFTER_AN_UNREAD_VAD_COMMIT,
+        PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
+        HAND_COMMIT_UNANSWERED_AT_THE_END,
         PUSH_TO_TALK_ORDER,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         AUDIO_AFTER_A_CLEAR,
@@ -1114,6 +1268,7 @@ KNOWN_FINDINGS.extend(
         CUT_OFF_TURN_COMPLETE,
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,
+        PROVIDER_REPLY_BEFORE_ANY_ECHO,
     ]
 )
 

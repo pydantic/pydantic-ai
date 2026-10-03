@@ -601,7 +601,7 @@ class TestYouSearchCapability:
         kwargs = you_cls.call_args.kwargs
         assert kwargs['app_name'] == 'pydantic-ai-harness'
         assert kwargs['app_title'] == 'Pydantic AI Harness'
-        assert kwargs['app_url'] == 'https://github.com/pydantic/pydantic-ai-harness'
+        assert kwargs['app_url'] == 'https://github.com/pydantic/pydantic-ai'
         assert isinstance(kwargs['app_version'], str) and kwargs['app_version']
         assert kwargs['api_key_auth'] is None
         assert kwargs['timeout_ms'] == 60_000

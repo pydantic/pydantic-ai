@@ -83,8 +83,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime import RealtimeError, RealtimeSession
+from pydantic_ai.realtime._core import Owed, SessionCore
 from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
+from pydantic_ai.usage import RunUsage
 
 from ._conformance import ConformanceIssue, LifecycleChecker
 from ._truth import TruthInput, TruthResponse, response_numbers
@@ -105,14 +107,6 @@ _EXPECTED_CLIENT_ERRORS = (RealtimeError, UserError, UsageLimitExceeded, Simulat
 call, or iteration) the tool failure that ended the session."""
 
 _SEND_FAILED = 'Realtime connection failed while sending'
-
-
-def _misattributed(recorded: tuple[int, int], billed: tuple[int, int], *, closing: bool) -> bool:
-    # Once the app hangs up, a terminal read but not yet handled is dropped with the session: a response may then
-    # be recorded with less than it was billed (as `usage.total` allows), but never more.
-    if closing:
-        return any(count > limit for count, limit in zip(recorded, billed))
-    return recorded != billed
 
 
 def _expected_error(error: BaseException) -> bool:
@@ -210,9 +204,13 @@ class Checker:
         self._judged_truncations = 0
         self._consumer_error_judged = False
         self._codec_issues: list[ConformanceIssue] = []
+        self.shadow: ShadowChecker | None = None
+        """The same invariants on the new session core running in shadow of this one, when it runs one."""
 
     def attach(self, session: RealtimeSession) -> None:
         """Observe the codec events the connection yields, on their way into the session."""
+        if (core := session._core) is not None:  # pyright: ignore[reportPrivateUsage]
+            self.shadow = ShadowChecker(self.sim, core)
         handle = session._handle_pump_event  # pyright: ignore[reportPrivateUsage]
 
         async def observed(event: RealtimeCodecEvent) -> bool:
@@ -251,6 +249,22 @@ class Checker:
 
     # --- every step -------------------------------------------------------------------------------
 
+    def messages(self) -> list[ModelMessage]:
+        """The history the invariants judge."""
+        session = self.sim.session
+        assert session is not None
+        return session.all_messages()
+
+    def new_messages(self) -> list[ModelMessage]:
+        session = self.sim.session
+        assert session is not None
+        return session.new_messages()
+
+    def usage(self) -> RunUsage:
+        session = self.sim.session
+        assert session is not None
+        return session.usage
+
     def check_step(self) -> None:
         session = self.sim.session
         assert session is not None
@@ -262,12 +276,17 @@ class Checker:
             )
         self._check_errors()
         self._check_simulator_frames()
-        messages = session.all_messages()
-        self._check_history_stability(messages)
-        self._check_response_identity(messages)
+        self._check_history()
         waiters = [w for w in self.sim.waiters if w.returned is not None and w.index not in self._judged_waiters]
         self._judged_waiters.update(waiter.index for waiter in waiters)
         self.report('wait.early', [violation for waiter in waiters for violation in self._early_return(waiter)])
+        if self.shadow is not None:
+            self.shadow.check_step()
+
+    def _check_history(self) -> None:
+        messages = self.messages()
+        self._check_history_stability(messages)
+        self._check_response_identity(messages)
 
     def _check_simulator_frames(self) -> None:
         """The simulated server must only send frames the real connection can parse; anything else is a harness bug."""
@@ -485,7 +504,18 @@ class Checker:
         self.check_step()
         session = sim.session
         assert session is not None
-        messages = session.all_messages()
+        self._check_history_at_rest()
+        self._check_playback(self.messages())
+        self._check_wire()
+        if not session.closed:
+            # Also once the event stream has ended: `wait_for_reply()` must never outlive the session's ability to reply.
+            self._check_sends_survived()
+            self._check_wait_liveness()
+        if self.shadow is not None:
+            self.shadow.check_at_rest()
+
+    def _check_history_at_rest(self) -> None:
+        messages = self.messages()
         self._check_tool_pairing(messages)
         self._check_tool_round_order(messages)
         self._check_order(messages)
@@ -493,17 +523,11 @@ class Checker:
         self._check_spoken_turns(messages)
         self._check_restored(messages)
         self._check_usage(messages)
-        self._check_playback(messages)
         roundtrip = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
         self.report(
             'history.roundtrip',
             [('history did not survive a serialization round trip', {})] if roundtrip != messages else [],
         )
-        self._check_wire()
-        if not session.closed:
-            # Also once the event stream has ended: `wait_for_reply()` must never outlive the session's ability to reply.
-            self._check_sends_survived()
-            self._check_wait_liveness()
 
     def _check_tool_round_order(self, messages: list[ModelMessage]) -> None:
         truth = self.sim.truth
@@ -655,7 +679,13 @@ class Checker:
         settled: set[str] = set()
         for response in sim.truth.responses.values():
             if response.lost:
-                settled |= {f'assistant:{" ".join(response.words[:n])}' for n in range(1, len(response.words) + 1)}
+                # (Each message item it spoke: a tool call ends one and starts the next, so any run of its words.)
+                words = response.words
+                settled |= {
+                    f'assistant:{" ".join(words[start:end])}'
+                    for start in range(len(words))
+                    for end in range(start + 1, len(words) + 1)
+                }
                 settled |= {
                     f'{kind}:{call}'
                     for call in response.tool_calls
@@ -716,8 +746,6 @@ class Checker:
 
     def _check_usage(self, messages: list[ModelMessage]) -> None:
         sim = self.sim
-        session = sim.session
-        assert session is not None
         if sim.receive_ended and sim.close_requested is None:
             # The session ended on its own (an exceeded usage limit, a lost connection): whatever it read
             # after that point was never going to be accounted.
@@ -727,7 +755,7 @@ class Checker:
             sum(tokens[0] for tokens in truth.usage_read.values()),
             sum(tokens[1] for tokens in truth.usage_read.values()),
         )
-        usage = session.usage
+        usage = self.usage()
         recorded = (usage.input_tokens, usage.output_tokens)
         # Closing stops the session mid-frame: a report the connection had read ahead may go unaccounted, but
         # nothing may ever be counted twice.
@@ -750,17 +778,14 @@ class Checker:
                 for message in messages
                 if isinstance(message, ModelResponse)
                 and message.provider_response_id in truth.usage_read
-                and _misattributed(
-                    (message.usage.input_tokens, message.usage.output_tokens),
-                    truth.usage_read[message.provider_response_id],
-                    closing=sim.close_requested is not None,
-                )
+                and (message.usage.input_tokens, message.usage.output_tokens)
+                != truth.usage_read[message.provider_response_id]
             ],
         )
         # A model that reports its requests with usage (GPT-Live's delegated backend) counts those instead.
         expected = sim.expected_requests()
         if expected is None:
-            expected = sum(isinstance(message, ModelResponse) for message in session.new_messages())
+            expected = sum(isinstance(message, ModelResponse) for message in self.new_messages())
         self.report(
             'usage.requests',
             [(f'usage.requests is {usage.requests}, but {expected} were made', {})]
@@ -872,3 +897,124 @@ class Checker:
             if stuck
             else [],
         )
+
+
+SHADOW_PENDING: frozenset[str] = frozenset(
+    {
+        'SIM-1',
+        'SIM-4',
+        'SIM-10',
+        'SIM-15',
+        'SIM-22',
+        'SIM-23',
+        'SIM-24',
+        'SIM-25',
+        'SIM-27',
+        'SIM-28',
+        'SIM-30',
+        'SIM-34',
+        'SIM-35',
+        'SIM-36',
+        '8763c #3',
+    }
+)
+"""Known findings the new session core does not fix yet, which the shadow checks tolerate like the others.
+
+They are the session's and the connection's to fix, not the core's, since the core only sees what the
+connection reports:
+
+- `SIM-1`: a reply lost with a dropped connection is not asked for again by the reconnect;
+- `SIM-4`, `SIM-23`: the connection drops a whole frame when a request it sends from its receive loop fails,
+  or is cancelled by a close, so the core never sees that response's usage or terminal either;
+- `SIM-10`: the connection drops what a response said after a cancel that reached the server too late;
+- `SIM-15`: a tool that raises leaves the session unable to get the replies still owed after it: the
+  connection holds a later request behind the calling response, which the provider never ends;
+- `SIM-22`: a terminal read as the connection drops is discarded with it;
+- `SIM-24` (accepted): until the server echoes request metadata, the connection infers which response answers
+  a request, and can take one server VAD started for it.
+- `SIM-25`: a spoken turn committed with transcription on is recorded only once its transcript comes, so one
+  whose transcript never does (the session closes, ends, or drops first) is lost; the core records it the same way;
+- `SIM-28`: a reconnect replays history as it stands at the re-dial, without an input still held back behind
+  the reply the drop cut off;
+- `SIM-30`: on xAI push-to-talk, the connection sends a deferred request without the clear xAI needs to answer it;
+- `SIM-27`: a hand commit under server VAD splits the user's turn in two, and only one is recorded;
+- `SIM-34`: unlike the rest, mostly the core's own: it loses a turn `commit_audio()` committed when the connection
+  drops, or the session closes or ends, before its reply is over (the current session records it, except on xAI);
+- `SIM-35`: without transcription, a clear made after server VAD committed a turn, before the session read the
+  commit, drops that turn;
+- `SIM-36`: on xAI push-to-talk, audio sent after a repeated `response.done` is held behind a reply that ended;
+- `8763c #3`: a response already under way takes a turn's reservation; the core still does this where server VAD
+  is set not to answer (`create_response: False`).
+"""
+
+
+class ShadowChecker(Checker):
+    """The session invariants, judged on the new core running in shadow of the session.
+
+    History, usage, and waits come from the core instead of the session, so every check says what the core
+    would get right or wrong in its place. Its violations are reported as `shadow.<code>`, and only the
+    findings in `SHADOW_PENDING` are tolerated: whatever else the session gets wrong, the core must not.
+    Its waits mirror the session's: each `wait_for_reply()` the trace starts takes what the core owed at that
+    moment, and returns once the core says all of it came.
+    """
+
+    def __init__(self, sim: Simulation, core: SessionCore) -> None:
+        super().__init__(sim, strict=sim.strict, enforce=sim.enforce)
+        self.core = core
+        self.waits: dict[int, tuple[Waiter, frozenset[Owed]]] = {}
+
+    def messages(self) -> list[ModelMessage]:
+        return self.core.all_messages()
+
+    def new_messages(self) -> list[ModelMessage]:
+        return self.core.new_messages()
+
+    def usage(self) -> RunUsage:
+        return self.core.usage
+
+    def report(self, code: str, violations: Iterable[Violation]) -> None:
+        from ._findings import matching_findings
+        from ._simulation import FindingReproduced, InvariantViolation
+
+        for detail, context in violations:
+            violation = InvariantViolation(f'shadow.{code}', detail, self.sim.trace, context)
+            findings = [f.id for f in matching_findings(self.sim, InvariantViolation(code, detail, [], context))]
+            violation.findings = findings
+            if self.enforce.intersection(findings):
+                # A pinned scenario for a finding the core has (and the current session may not).
+                raise FindingReproduced(f'shadow.{code}', detail, self.sim.trace, context, findings=findings)
+            pending = [finding for finding in findings if finding in SHADOW_PENDING]
+            if self.strict or not pending:  # pragma: no cover (only when the core breaks an invariant)
+                raise violation
+            self.known_hits.append((pending[0], f'shadow.{code}'))
+
+    def waiter_started(self, waiter: Waiter) -> None:
+        from ._simulation import Waiter
+
+        mirror = Waiter(index=waiter.index, started=waiter.started, snapshot=waiter.snapshot)
+        self.waits[waiter.index] = (mirror, self.core.wait_tokens())
+
+    def check_step(self) -> None:
+        self._check_history()
+        judged: list[Waiter] = []
+        for mirror, tokens in self.waits.values():
+            if mirror.returned is None and not self.core.still_owed(tokens):
+                mirror.returned = self.sim.truth.tick()
+                judged.append(mirror)
+        self.report('wait.early', [violation for waiter in judged for violation in self._early_return(waiter)])
+
+    def check_at_rest(self) -> None:
+        self.check_step()
+        self._check_history_at_rest()
+        session = self.sim.session
+        assert session is not None
+        if not session.closed:
+            stuck = [mirror.index for mirror, _ in self.waits.values() if mirror.returned is None]
+            if self.core.reply_outstanding():
+                stuck.append(len(self.sim.waiters))
+            self.report(
+                'wait.hang',
+                [(f'wait_for_reply() {stuck} still waiting with nothing left to wait for', {'waiters': stuck})]
+                if stuck
+                else [],
+            )

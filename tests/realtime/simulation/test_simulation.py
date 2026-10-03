@@ -467,6 +467,22 @@ def test_known_request_whose_refusal_is_lost_keeps_its_reservation() -> None:
     reproduce('SIM-21', OpenAISimulation(), scenario)
 
 
+@known('SIM-23')
+def test_known_close_cuts_off_a_terminal_mid_frame() -> None:
+    """The reply's `response.done` sends the deferred request, and the close lands while that send is in flight."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak(deliver=False)
+        sim.create_response()
+        sim.finish(ticks=0)
+        sim.close()
+        sim.settle()
+
+    # Seeded, since each send draws a latency, which is what holds the deferred request's send open.
+    reproduce('SIM-23', OpenAISimulation(seed=5, options=SessionOptions(latency=True)), scenario)
+
+
 @known('SIM-22')
 def test_known_terminal_read_as_the_connection_drops_loses_its_usage() -> None:
     """The cancelled reply's `response.done` is read right before the drop (found by exploration on the refactor)."""
@@ -502,7 +518,7 @@ def test_known_failed_deferred_create_after_a_refusal_keeps_its_reservation() ->
     reproduce('SIM-4', OpenAISimulation(), scenario)
 
 
-@known('SIM-23')
+@known('SIM-32')
 def test_known_barge_in_drops_a_request_vad_will_not_answer() -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.create_response()
@@ -511,7 +527,7 @@ def test_known_barge_in_drops_a_request_vad_will_not_answer() -> None:
         sim.speech_start(deliver=False)
         sim.settle()
 
-    reproduce('SIM-23', OpenAISimulation(openai=OpenAIOptions(vad_responds=False, transcription=False)), scenario)
+    reproduce('SIM-32', OpenAISimulation(openai=OpenAIOptions(vad_responds=False, transcription=False)), scenario)
 
 
 @known('SIM-11')
@@ -530,7 +546,7 @@ def test_known_turn_spoken_while_a_cancelled_reply_ends_filed_before_it() -> Non
     reproduce('SIM-11', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='azure')), scenario)
 
 
-@known('SIM-24')
+@known('SIM-33')
 def test_known_gemini_async_result_cut_in_ends_the_wait_early() -> None:
     """The model finishes speaking after an async call; the result then cuts in, before the model answers it."""
 
@@ -541,7 +557,7 @@ def test_known_gemini_async_result_cut_in_ends_the_wait_early() -> None:
         sim.finish(deliver=False)
         sim.settle()
 
-    reproduce('SIM-24', async_gemini(), scenario)
+    reproduce('SIM-33', async_gemini(), scenario)
 
 
 @known('SIM-25')
@@ -601,6 +617,48 @@ def test_known_input_held_behind_a_lost_reply_is_not_replayed() -> None:
         sim.settle()
 
     reproduce('SIM-28', OpenAISimulation(), scenario)
+
+
+@known('SIM-34')
+def test_known_core_loses_a_hand_commit_unanswered_at_a_drop() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.commit_audio()
+        sim.drop()
+        sim.settle()
+
+    reproduce('SIM-34', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
+
+
+@known('SIM-35')
+def test_known_clear_after_an_unread_vad_commit_drops_the_turn() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop(deliver=False)
+        sim.clear_audio()
+        sim.settle()
+
+    reproduce('SIM-35', OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
+@known('SIM-36')
+def test_known_xai_push_to_talk_audio_after_a_repeated_terminal_is_held() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.create_response()
+        sim.send_audio()
+        sim.speak(deliver=False)
+        sim.finish(deliver=False)
+        sim.repeat_done()
+        sim.send_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-36',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=True)),
+        scenario,
+    )
 
 
 @known('SIM-29')
@@ -1114,6 +1172,48 @@ def test_baseline_server_vad_answers_each_turn_heard_during_a_reply() -> None:
     )
 
 
+def test_scenario_xai_hand_commit_while_vad_hears_the_user_is_misplaced() -> None:
+    """SIM-27 on xAI: the hand-committed turn is recorded where its audio began, before a reply that ended first."""
+    with OpenAISimulation(strict=False, openai=OpenAIOptions(dialect='xai', transcription=True)) as s:
+        s.create_response()
+        s.send_audio()
+        s.settle()
+        s.speech_start(deliver=False)
+        s.commit_audio()
+        s.settle()
+        assert ('SIM-27', 'history.order') in s.checker.known_hits
+
+
+def test_scenario_core_holds_a_reply_behind_a_turn_without_its_transcript() -> None:
+    """SIM-25 in the new core: the reply after a reconnect waits behind the untranscribed turn, so it goes missing."""
+    with OpenAISimulation(strict=False, openai=OpenAIOptions(dialect='xai', transcription=True)) as s:
+        s.create_response()
+        s.send_audio()
+        s.commit_audio()
+        s.speak(deliver=False)
+        s.finish(deliver=False)
+        s.deliver()
+        s.drop()
+        s.settle()
+        s.create_response()
+        s.settle()
+        assert s.checker.shadow is not None
+        assert ('SIM-25', 'shadow.response.missing') in s.checker.shadow.known_hits
+
+
+def test_scenario_late_cancel_drops_a_tool_call_and_ends_the_wait() -> None:
+    """SIM-10 also drops a tool call the finished response made, so the wait ends without the round's answer."""
+    with OpenAISimulation(strict=False, openai=OpenAIOptions(turn_detection='manual', transcription=False)) as s:
+        s.send_text()
+        s.wait_for_reply()
+        s.call_tool(deliver=False)
+        s.speak(deliver=False)
+        s.finish(deliver=False)
+        s.interrupt(mode='cancel')
+        s.settle()
+        assert ('SIM-10', 'wait.early') in s.checker.known_hits
+
+
 def test_scenario_openai_server_vad_edges() -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
@@ -1424,7 +1524,7 @@ def test_scenario_gemini_async_speech_in_flight_at_the_result_is_accepted() -> N
 
 
 def test_scenario_tool_result_awaiting_its_reply_when_barged_in_on_without_a_vad_reply() -> None:
-    """SIM-23 also drops the reply a cancelled response's tool results were waiting for."""
+    """SIM-32 also drops the reply a cancelled response's tool results were waiting for."""
     sim = OpenAISimulation(
         strict=False,
         openai=OpenAIOptions(dialect='azure', transcription=False, vad_interrupts=True, vad_responds=False),
@@ -1436,7 +1536,7 @@ def test_scenario_tool_result_awaiting_its_reply_when_barged_in_on_without_a_vad
         s.tick(ticks=0)
         s.speech_start(deliver=False)
         s.settle()
-        assert ('SIM-23', 'wait.hang') in s.checker.known_hits
+        assert ('SIM-32', 'wait.hang') in s.checker.known_hits
 
 
 def test_scenario_gemini_tool_result_sent_on_a_dropped_connection() -> None:
@@ -1465,6 +1565,88 @@ def test_scenario_live_delegation_ends_the_wait_on_a_tool_round() -> None:
         s.delegate(deliver=False)
         s.settle()
         assert ('8763c #3', 'wait.early') in s.checker.known_hits
+
+
+def test_scenario_a_provider_reply_before_any_metadata_echo_is_accepted() -> None:
+    """Before the server has echoed any request metadata, a server VAD reply read while our request is outstanding
+    is taken for its answer: an accepted limitation of the lifecycle tracker's inference."""
+    sim = OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect='xai'))
+    sim.strict = False
+    with sim as s:
+        s.send_audio()
+        s.speech_start(deliver=False)
+        s.speech_stop(deliver=False)
+        s.finish(deliver=False)
+        s.send_text(respond=True)
+        s.settle()
+        assert s.checker.shadow is not None
+        assert ('SIM-24', 'shadow.history.order') in s.checker.shadow.known_hits
+
+
+def test_scenario_a_call_the_session_refuses_over_a_limit_is_left_out() -> None:
+    """The session refuses a call it counts over `request_limit` (here, after a repeated terminal): no core keeps it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.send_image(respond=True)
+        sim.settle()
+        sim.create_response()
+        sim.call_tool(deliver=False)
+        sim.repeat_done(deliver=False)
+        sim.call_tool(deliver=False)
+
+    run_tolerant(
+        OpenAISimulation(options=SessionOptions(request_limit=3), openai=OpenAIOptions(transcription=False)), scenario
+    )
+
+
+def test_scenario_results_of_an_abandoned_tool_batch_owe_no_reply() -> None:
+    """A tool round over `request_limit` abandons the batch: the results still sent after that ask for nothing."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.settle()
+        sim.create_response()
+        sim.call_tool(deliver=False)
+        sim.call_tool(deliver=False)
+
+    run_tolerant(
+        OpenAISimulation(options=SessionOptions(request_limit=2), openai=OpenAIOptions(transcription=False)), scenario
+    )
+
+
+def test_scenario_a_request_orphaned_by_a_stray_terminal_is_lost_with_the_connection() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_image(respond=True)
+        sim.reject_next(kind='content')
+        sim.play(chunks=1)
+        sim.send_image(respond=False)
+        sim.send_image(respond=False)
+        sim.send_image(respond=False)
+        sim.finish(deliver=False, ticks=0)
+        sim.reject_next(kind='content')
+        sim.send_image(respond=True)
+        sim.reject_next(kind='response', ticks=0)
+        sim.repeat_done(deliver=True)
+        sim.drop(refuse_dials=0)
+
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
+def test_scenario_a_spoken_turn_whose_transcript_is_never_read() -> None:
+    """xAI adds the turn at speech start; the session stops reading before its transcript comes."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio(chunks=1)
+        sim.speech_start(deliver=False)
+        sim.create_response()
+
+    run_tolerant(
+        OpenAISimulation(
+            options=SessionOptions(request_limit=1), openai=OpenAIOptions(transcription=True, dialect='xai')
+        ),
+        scenario,
+    )
 
 
 def test_every_finding_is_pinned() -> None:
@@ -1576,8 +1758,8 @@ def test_baseline_server_vad_without_interrupting_or_responding() -> None:
     )
 
 
-def test_scenario_terminal_dropped_by_hanging_up_is_not_misattributed() -> None:
-    """A `response.done` read as the app hangs up is dropped with the session: its usage may go uncounted."""
+def test_scenario_terminal_cut_off_by_hanging_up() -> None:
+    """A `response.done` whose deferred request a close cuts off loses its usage: SIM-23."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_image(respond=True)
@@ -1607,3 +1789,15 @@ def test_xai_server_vad_answers_every_turn() -> None:
     vad: dict[str, Any] = {'type': 'server_vad', 'create_response': False}
     assert not ServerSession(index=0, socket=socket, turn_detection=vad).create_response
     assert ServerSession(index=0, socket=socket, turn_detection=vad, answers_every_turn=True).create_response
+
+
+def _run_to_the_end(finding_id: str, sim: Simulation, scenario: Callable[[Any], object]) -> None:
+    """Run a pinned scenario with its finding tolerated, so the shadow core is judged to the end of it."""
+    run_tolerant(sim, scenario)
+
+
+@pytest.mark.parametrize('scenario', sorted(name for name in dict(globals()) if name.startswith('test_known_')))
+def test_the_core_gets_the_known_findings_right(scenario: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every pinned scenario again, run to its end: the shadow core breaks no invariant outside `SHADOW_PENDING`."""
+    monkeypatch.setitem(globals(), 'reproduce', _run_to_the_end)
+    globals()[scenario]()
