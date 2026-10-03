@@ -7,12 +7,12 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeVar, Union
 
 import anyio
 import pytest
 from dirty_equals import IsJson
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import AfterValidator, BaseModel, TypeAdapter, field_validator
 from pydantic_core import ErrorDetails, to_json
 from typing_extensions import Self
 
@@ -305,6 +305,51 @@ def test_result_list_of_models_with_stringified_response():
         [
             Person(name='John Doe'),
             Person(name='Jane Smith'),
+        ]
+    )
+
+
+def test_result_validation_error_without_json_string_fallback_error():
+    """https://github.com/pydantic/pydantic-ai/issues/9476"""
+
+    def check_name(name: str) -> str:
+        if len(name.split()) < 2:
+            raise ValueError('name must be at least 2 words long')
+        return name
+
+    responses = iter([123, 'word', '"word"', 'John Doe'])
+
+    def return_name(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = json.dumps({'response': next(responses)})
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_name), output_type=Annotated[str, AfterValidator(check_name)], retries=3)
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('John Doe')
+    retry_prompts = [
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert retry_prompts == snapshot(
+        [
+            [{'type': 'string_type', 'loc': ('response',), 'msg': 'Input should be a valid string', 'input': 123}],
+            [
+                {
+                    'type': 'value_error',
+                    'loc': ('response',),
+                    'msg': 'Value error, name must be at least 2 words long',
+                    'input': 'word',
+                }
+            ],
+            [
+                {
+                    'type': 'value_error',
+                    'loc': ('response',),
+                    'msg': 'Value error, name must be at least 2 words long',
+                    'input': 'word',
+                }
+            ],
         ]
     )
 
