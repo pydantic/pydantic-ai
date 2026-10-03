@@ -8,6 +8,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
 import anyio.to_thread
+from opentelemetry.util.types import AttributeValue
 from pydantic_core import to_jsonable_python
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
@@ -35,6 +36,9 @@ _METADATA_KEY = 'prompt_injection'
 
 _ESCALATED_RISKS = ('high', 'critical')
 """Risk levels that indicate the defender escalated beyond its `'medium'` starting level."""
+
+_SPAN_NAME = 'prompt injection detected'
+"""Static, low-cardinality name of the zero-duration span recorded for every flagged verdict."""
 
 
 OnDetection = Callable[[RunContext[AgentDepsT], ToolCallPart, DefenseResult], None | Awaitable[None]]
@@ -71,6 +75,28 @@ def _diagnostics(verdict: DefenseResult) -> dict[str, object]:
     }
 
 
+def _trace_detection(ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
+    """Record a zero-duration span marking a flagged verdict.
+
+    Tool content (`sanitized`, `max_sentence`) is never recorded. Sanitized field paths are built from
+    the result's own mapping keys, which can be data (`customers.alice@example.com.body`), so they are
+    attached only when `ctx.trace_include_content` is set. `ctx.tracer` is a no-op on runs without
+    instrumentation.
+    """
+    attributes: dict[str, AttributeValue] = {
+        'gen_ai.tool.name': call.tool_name,
+        'gen_ai.tool.call.id': call.tool_call_id,
+        'prompt_injection.blocked': not verdict.allowed,
+        'prompt_injection.risk_level': verdict.risk_level,
+        'prompt_injection.detections': list(verdict.detections),
+    }
+    if verdict.tier2_score is not None:
+        attributes['prompt_injection.tier2_score'] = verdict.tier2_score
+    if ctx.trace_include_content:
+        attributes['prompt_injection.fields_sanitized'] = list(verdict.fields_sanitized)
+    ctx.tracer.start_span(_SPAN_NAME, attributes=attributes).end()
+
+
 def _payload(value: object) -> object:
     """Put a bare string under Defender's standard `content` field."""
     return {'content': value} if isinstance(value, str) else to_jsonable_python(value, fallback=str)
@@ -86,7 +112,8 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     `stackone-defender` after the tool returns. A result passes through unchanged unless
     the defense rejects it. With `block_high_risk=True`, the built-in defense rejects
     detected high or critical risk results, which are replaced with `blocked_message` so
-    their content never reaches the model. Every flagged verdict is reported through
+    their content never reaches the model. Every flagged verdict is recorded as a
+    `prompt injection detected` span on instrumented runs and reported through
     `on_detection`, and a withheld result carries a diagnostics summary on
     `ToolReturn.metadata` (not visible to the model).
 
@@ -137,7 +164,10 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     """Which tools this capability classifies. Non-matching tools always pass through."""
 
     on_detection: OnDetection[AgentDepsT] | None = None
-    """Called for each verdict with detections, sanitization, rejection, or escalated risk."""
+    """Called for each verdict with detections, sanitization, rejection, or escalated risk.
+
+    A `prompt injection detected` span is recorded for every flagged verdict whether or not this is set.
+    """
 
     blocked_message: str = _DEFAULT_BLOCKED_MESSAGE
     """Replacement text the model sees for a withheld result.
@@ -233,6 +263,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         return unchanged if blocked is None else blocked
 
     async def _notify(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
+        _trace_detection(ctx, call, verdict)
         if self.on_detection is None:
             return
         outcome = self.on_detection(ctx, call, verdict)

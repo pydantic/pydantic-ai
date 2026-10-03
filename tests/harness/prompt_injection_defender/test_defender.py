@@ -6,11 +6,17 @@ import importlib.util
 from typing import Any
 
 import pytest
+from dirty_equals import IsStr
+from inline_snapshot import snapshot
+from logfire.testing import CaptureLogfire
+from opentelemetry.trace import StatusCode
 from stackone_defender import DefenseResult, PromptDefense
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CachePoint, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -256,7 +262,8 @@ async def test_blocks_injection_past_large_array_threshold() -> None:
 # --- Through the public Agent surface -------------------------------------
 
 
-async def test_agent_blocks_injected_tool_result() -> None:
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_agent_blocks_injected_tool_result(capfire: CaptureLogfire) -> None:
     agent: Agent[None, str] = Agent(
         TestModel(call_tools=['fetch']), capabilities=[PromptInjectionDefender(block_high_risk=True)]
     )
@@ -270,6 +277,9 @@ async def test_agent_blocks_injected_tool_result() -> None:
     assert len(returns) == 1
     assert isinstance(returns[0].content, str)
     assert 'withheld' in returns[0].content
+    spans = _detection_spans(capfire)
+    assert len(spans) == 1
+    assert spans[0]['attributes']['prompt_injection.blocked'] is True
 
 
 async def test_agent_passes_clean_result_through() -> None:
@@ -284,3 +294,119 @@ async def test_agent_passes_clean_result_through() -> None:
     result = await agent.run('go')
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'body': 'quarterly numbers'}
+
+
+# --- Telemetry --------------------------------------------------------------
+
+
+def _detection_spans(capfire: CaptureLogfire) -> list[dict[str, Any]]:
+    return [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'prompt injection detected']
+
+
+def _fetch_agent(body: str, *capabilities: AbstractCapability[object]) -> Agent[object, str]:
+    """A bare `PromptInjectionDefender()` on an agent whose tool returns `body`."""
+    agent = Agent(TestModel(call_tools=['fetch']), capabilities=[PromptInjectionDefender(), *capabilities])
+
+    @agent.tool_plain
+    def fetch() -> dict[str, str]:
+        return {'body': body}
+
+    return agent
+
+
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_default_defender_records_detection_span(capfire: CaptureLogfire) -> None:
+    await _fetch_agent(INJECTION).run('go')
+    spans = _detection_spans(capfire)
+    assert len(spans) == 1
+    attributes = spans[0]['attributes']
+    assert {
+        key: value for key, value in attributes.items() if key.startswith(('gen_ai.tool.', 'prompt_injection.'))
+    } == snapshot(
+        {
+            'gen_ai.tool.name': 'fetch',
+            'gen_ai.tool.call.id': IsStr(),
+            'prompt_injection.blocked': False,
+            'prompt_injection.risk_level': 'high',
+            'prompt_injection.detections': ('ignore_previous',),
+            'prompt_injection.fields_sanitized': ('body',),
+        }
+    )
+    # The flagged tool content itself is never recorded.
+    assert INJECTION not in str(attributes)
+
+
+async def test_detection_span_omits_field_paths_without_content(capfire: CaptureLogfire) -> None:
+    # Field paths come from the result's own mapping keys, which can be data.
+    instrumentation = Instrumentation(settings=InstrumentationSettings(include_content=False))
+    await _fetch_agent(INJECTION, instrumentation).run('go')
+    spans = _detection_spans(capfire)
+    assert len(spans) == 1
+    assert 'prompt_injection.fields_sanitized' not in spans[0]['attributes']
+    assert spans[0]['attributes']['prompt_injection.detections'] == ('ignore_previous',)
+
+
+@pytest.mark.parametrize('async_callback', [False, True], ids=['sync', 'async'])
+async def test_detection_span_omits_callback_exception_without_content(
+    capfire: CaptureLogfire, async_callback: bool
+) -> None:
+    def on_detection(ctx: RunContext[object], call: ToolCallPart, verdict: DefenseResult) -> None:
+        raise RuntimeError(INJECTION)
+
+    async def on_detection_async(ctx: RunContext[object], call: ToolCallPart, verdict: DefenseResult) -> None:
+        on_detection(ctx, call, verdict)
+
+    agent = Agent(
+        TestModel(call_tools=['fetch']),
+        capabilities=[
+            PromptInjectionDefender(on_detection=on_detection_async if async_callback else on_detection),
+            Instrumentation(settings=InstrumentationSettings(include_content=False)),
+        ],
+    )
+
+    @agent.tool_plain
+    def fetch() -> dict[str, str]:
+        return {'body': INJECTION}
+
+    with pytest.raises(RuntimeError, match='Ignore all previous instructions'):
+        await agent.run('go')
+
+    # The dict exporter omits OTel status, so inspect completed raw spans.
+    spans = [
+        span
+        for span in capfire.exporter.exported_spans
+        if span.name == 'prompt injection detected'
+        and (span.attributes or {}).get('logfire.span_type') != 'pending_span'
+    ]
+    assert len(spans) == 1
+    span = spans[0]
+    assert not span.events
+    assert span.status.status_code == StatusCode.UNSET
+    assert span.status.description is None
+    assert INJECTION not in str(span.attributes)
+
+
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_clean_result_records_no_detection_span(capfire: CaptureLogfire) -> None:
+    await _fetch_agent('quarterly numbers').run('go')
+    assert _detection_spans(capfire) == []
+
+
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_detection_span_records_tier2_score(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def semantic_verdict(self: PromptDefense, value: object, tool_name: str) -> DefenseResult:
+        return DefenseResult(
+            allowed=True,
+            risk_level='high',
+            sanitized=value,
+            detections=[],
+            fields_sanitized=[],
+            patterns_by_field={},
+            tier2_score=0.93,
+        )
+
+    monkeypatch.setattr(PromptDefense, 'defend_tool_result_async', semantic_verdict)
+    await _fetch_agent('quarterly numbers').run('go')
+    spans = _detection_spans(capfire)
+    assert len(spans) == 1
+    assert spans[0]['attributes']['prompt_injection.tier2_score'] == 0.93
