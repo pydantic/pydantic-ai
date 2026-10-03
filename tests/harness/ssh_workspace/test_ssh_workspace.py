@@ -260,6 +260,15 @@ async def test_invalid_configuration_fails_at_construction(tools: FakeRemoteTool
         SSHWorkspace('')
 
 
+def test_defer_loading_is_refused() -> None:
+    with pytest.raises(
+        UserError,
+        match=r'^`SSHWorkspace` does not support `defer_loading=True`: '
+        r'the workspace is selected before deferred capabilities load\.$',
+    ):
+        SSHWorkspace('box', defer_loading=True)
+
+
 async def test_capability_gives_tools_the_remote_workspace(tools: FakeRemoteTools, tmp_path: Path) -> None:
     agent = Agent(TestModel(call_tools=['probe']), capabilities=[SSHWorkspace('box', working_dir=str(tmp_path))])
 

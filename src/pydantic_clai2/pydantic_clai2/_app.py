@@ -816,7 +816,8 @@ class _Shell(Generic[DepsT, OutputT]):
 
     async def _run_mid_turn(self, text: str) -> None:
         if self.plugins_busy(text):
-            return
+            # `/plugins` is not a `during_turn` command, so `run_now` never hands it over.
+            return  # pragma: no cover
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()

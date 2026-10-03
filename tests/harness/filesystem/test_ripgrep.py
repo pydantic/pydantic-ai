@@ -281,6 +281,39 @@ class TestGrep:
     async def test_retries(self, workspace: Path, arguments: dict[str, object], message: str) -> None:
         assert message in await call(workspace, 'grep', arguments)
 
+    @pytest.mark.parametrize(
+        'resolution,message',
+        [
+            (
+                CommandResult(exit_code=2, stdout='', stderr='realpath: Permission denied\n'),
+                'Could not resolve search paths: realpath: Permission denied',
+            ),
+            # Not one path per candidate, as from a backend that drops NUL bytes from command output.
+            (CommandResult(exit_code=0, stdout='/elsewhere/src/app.py', stderr=''), 'Could not resolve search paths.'),
+        ],
+    )
+    async def test_unresolved_matches_are_retried(
+        self, workspace: Path, resolution: CommandResult, message: str
+    ) -> None:
+        class Resolving(LocalWorkspaceBackend):
+            """A local workspace whose batched check of the matched paths answers with `resolution`."""
+
+            async def run(
+                self,
+                command: WorkspaceCommand,
+                *,
+                shell: bool = False,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+            ) -> CommandResult:
+                if isinstance(command, str) and 'realpath --' in command:
+                    return resolution
+                return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+        with pytest.raises(ModelRetry) as error:
+            await toolset(workspace).grep('import os', workspace=Resolving(workspace))
+        assert str(error.value) == message
+
     @pytest.mark.skipif(os.name == 'nt' or os.geteuid() == 0, reason='root reads a mode-000 file')
     async def test_unreadable_paths_leave_a_partial_result(self, workspace: Path) -> None:
         locked, locked_dir = workspace / 'locked.py', workspace / 'locked'

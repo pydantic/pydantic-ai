@@ -371,7 +371,7 @@ class LivePrompt:
         elif len(self._completions) == 1 and accept_single:
             self._selection = 0
             self.accept_completion()
-        elif self._completions:
+        else:
             self._selection = (
                 len(self._completions) - 1
                 if backwards and self._selection < 0
