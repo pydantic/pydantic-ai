@@ -20,12 +20,13 @@ Long multi-turn runs suffer instruction fade: after many tool-use turns the mode
 
 ## The solution
 
-`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Reminders are appended to the **tail** of the request as an ephemeral `UserPromptPart` behind a `CachePoint`:
+`SystemReminders` injects reminders on each model request, either statically (`Reminder`, on a cadence) or dynamically (a callable that reads the run context). Each firing adds a [turn-scoped system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#turn-scoped-system-prompts) at the **tail** of the request: the model sees it for that request only, and it's recorded in the message history like any other part.
 
-- The injection happens in `wrap_model_request`, which runs *after* the durable history is persisted, so the reminder reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- A `CachePoint` is placed immediately *before* the reminder, so the cached prefix (tools + system + real conversation) stays byte-identical turn over turn. Only the small reminder falls outside the cache.
+- On Anthropic models that take mid-conversation system messages, it's sent as a turn-scoped system message (`clear_at`): every copy stays on the wire, the API stops rendering each one once the next request arrives, and a cleared one costs no tokens. Leaving earlier reminders in place is what keeps the cached prefix and the model's earlier reasoning valid; deleting one would invalidate every thinking block after it on models with preserved thinking.
+- Everywhere else, it's sent with its own request only, at the end, and left out of later ones.
+- The cache breakpoints your model's caching settings place (such as `anthropic_cache`) go *before* the reminder, so the cached prefix (tools + system + real conversation) is reused turn over turn and only the small reminder falls outside it.
 
-Injecting into the system prompt (or any persisted part) instead would sit at the front of the request, so every reminder would bust the cached prefix and stale reminders would pile up in history. This capability avoids both.
+Injecting into the system prompt or instructions instead would sit at the front of the request, so every reminder would bust the cached prefix. This capability avoids that.
 
 ```python
 from pydantic_ai import Agent
@@ -154,7 +155,6 @@ from pydantic_ai_harness.system_reminders import Reminder
 SystemReminders(
     reminders=[Reminder('...', interval=5)],
     dynamic_reminders=[],       # callables evaluated every request
-    cache_ttl='5m',             # TTL for the cache breakpoint before the reminder ('5m' | '1h')
 )
 ```
 
@@ -162,16 +162,16 @@ Per-run state (the request counter and per-reminder fire counts) is isolated via
 
 ## Caching guarantee
 
-Reminders are never injected into the system prompt or instructions. They ride the ephemeral tail behind a `CachePoint`, so across turns the durable history grows append-only and stays eligible for a cache hit (subject to the provider's cache TTL -- a gap longer than `cache_ttl` expires the entry even under an unchanged prefix), while the reminder and its `CachePoint` live only in the per-request copy. The only added cost is re-reading the reminder each turn.
+Reminders never go into the leading system prompt or instructions. They're turn-scoped system prompts at the tail of the request, so across turns the history grows append-only and stays eligible for a cache hit, and the only added cost is reading each reminder once.
 
-`CachePoint` is supported on Anthropic, Amazon Bedrock (Converse API), and OpenRouter (Anthropic and Gemini models); on providers without prompt caching it is ignored (nothing to bust). The reminder leads with its `CachePoint` only when the request already carries user content for the breakpoint to attach to -- on a turn whose only tail content is the reminder (for example an `instructions`-only run's first request), the reminder is injected without a breakpoint, since there is no prefix to protect.
+`SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder. `cache_ttl` is deprecated and has no effect.
 
 ## Composition
 
-- **`Planning`** uses the same ephemeral-tail mechanism to surface the plan. Both compose in one agent: each appends its own tail part behind its own `CachePoint`, and neither is persisted. Each ephemeral-tail capability adds a cache breakpoint; Anthropic allows 4 (3 with automatic caching) and core trims the excess oldest-first, so stacking several tail-injecting capabilities alongside `anthropic_cache_instructions` / `anthropic_cache_tool_definitions` can evict an older breakpoint. Two capabilities plus the defaults stay within budget.
-- **Loop detection** (detect-and-interrupt with a durable nudge) is a separate concern. `SystemReminders` is cadence/condition steering that stays ephemeral; a dynamic reminder can read loop state from your deps if you want to steer on it.
+- **`Planning`** surfaces the plan in a request-only reminder of its own; both compose in one agent. Planning anchors its cache breakpoint on the last user content in the request, which `SystemReminders` doesn't add, so neither displaces the other.
+- **Loop detection** (detect-and-interrupt with a durable nudge) is a separate concern. `SystemReminders` is cadence/condition steering for the current request; a dynamic reminder can read loop state from your deps if you want to steer on it.
 
-The tail reminder is only appended when the last message in the request is a `ModelRequest` and at least one reminder fires, so a turn where nothing fires adds nothing to the request. Provider-resume turns (where the request tail is a suspended `ModelResponse` that is echoed back verbatim) are skipped and do not consume a cadence slot.
+The reminder is only added when the last message in the request is a `ModelRequest` and at least one reminder fires, so a turn where nothing fires adds nothing to the request. Provider-resume turns (where the request tail is a suspended `ModelResponse` that is echoed back verbatim) are skipped and do not consume a cadence slot.
 
 ## Not spec-serializable
 
@@ -180,5 +180,5 @@ The tail reminder is only appended when the last message in the request is a `Mo
 ## Further reading
 
 - [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
-- [Hooks](https://ai.pydantic.dev/hooks/) -- `wrap_model_request` is the ephemeral injection point used here
+- [Turn-scoped system prompts](https://pydantic.dev/docs/ai/core-concepts/message-history/#turn-scoped-system-prompts) -- the core primitive the reminders are built on
 - [Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)

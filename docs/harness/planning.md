@@ -37,7 +37,7 @@ The model owns the plan through the `planning` toolset. The current plan is surf
 
 As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control, and with no durable user content to anchor on the reminder is sent without a breakpoint.
 
-Note that the anchor lands on the last `UserPromptPart` present in the request. A capability listed before `Planning` that appends user content each request (for example `SystemReminders`) displaces the anchor onto that part, so the prefix stays cache-stable only while that content is stable across turns.
+Note that the anchor lands on the last `UserPromptPart` present in the request. A capability listed before `Planning` that appends user content each request displaces the anchor onto that part, so the prefix stays cache-stable only while that content is stable across turns.
 
 ## Usage
 

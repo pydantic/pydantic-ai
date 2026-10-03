@@ -6,31 +6,26 @@ import logging
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Generic, Literal, TypeGuard
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
-    CachePoint,
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    RetryPromptPart,
+    SystemPromptPart,
     TextContent,
     TextPart,
-    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
 
 if TYPE_CHECKING:
-    from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
     from pydantic_ai.models import ModelRequestContext
 
 logger = logging.getLogger(__name__)
@@ -94,13 +89,12 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     guidance mid-run, either on a fixed cadence (`Reminder`) or reactively from a callable
     (`dynamic_reminders`).
 
-    Cache safety is the design constraint. Reminders are appended to the *tail* of each
-    request as an ephemeral `UserPromptPart` behind a `CachePoint`, inside `wrap_model_request`
-    (which runs after core persists the durable history). So reminders reach the model but
-    never enter `message_history`: no stale reminders accumulate, and the cached prefix stays
-    byte-identical across turns -- only the small reminder falls outside the cache. Injecting
-    into the system prompt or a persisted part instead would bust the cache prefix on every
-    fire and let reminders pile up.
+    Each firing adds a [turn-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt at
+    the end of the request: the model sees it for that request only, and it stays in the message
+    history, so the cached prefix and the model's earlier reasoning stay valid. On Anthropic models
+    that support it, it's sent as a `clear_at` system message that costs nothing once its turn is
+    over; elsewhere it's sent with its own request only. The cache breakpoints the model's caching
+    settings place go before it.
 
     ```python
     from pydantic_ai import Agent
@@ -123,8 +117,13 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     dynamic_reminders: Sequence[DynamicReminder[AgentDepsT] | AsyncDynamicReminder[AgentDepsT]] = ()
     """Callables evaluated every model request; return text to inject or `None` to skip."""
 
-    cache_ttl: Literal['5m', '1h'] = '5m'
-    """TTL for the cache breakpoint placed before the tail reminder."""
+    cache_ttl: Literal['5m', '1h'] | None = None
+    """Deprecated, and has no effect.
+
+    Reminders used to bring a cache breakpoint of their own. They're turn-scoped system prompts now,
+    and the breakpoints the model's caching settings place (such as `anthropic_cache`) land before
+    them, so configure caching on the model instead.
+    """
 
     on_fire: Callable[[str], None] | None = None
     """Deprecated callback invoked with each rendered reminder. Subscribe to `ReminderFiredEvent` instead."""
@@ -147,6 +146,13 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # Dynamic configuration is a sequence, not a live queue. Freeze caller-owned lists so
         # callbacks cannot change the operation index used to recover an LLM reminder.
         self.dynamic_reminders = tuple(self.dynamic_reminders)
+        if self.cache_ttl is not None:
+            warn_argument_ignored(
+                'SystemReminders',
+                'cache_ttl',
+                'configure caching on the model instead (such as `anthropic_cache`); its breakpoint lands before '
+                'the reminder.',
+            )
         if self.on_fire is not None:
             warnings.warn(
                 '`SystemReminders.on_fire` is deprecated; subscribe to `ReminderFiredEvent` with `@agent.on_event` '
@@ -167,43 +173,35 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         clone._dynamic_snapshot = tuple(clone.dynamic_reminders)
         return clone
 
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        """Append fired reminders to the request tail behind a cache breakpoint, then call the model.
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Add the reminders that fire on this request as a turn-scoped system prompt at its end.
 
-        Runs after core persists the durable history; the per-request message list mutated
-        here is never written back, so the reminder and its `CachePoint` reach the model but
-        never enter `ctx.state.message_history`.
+        The reminder goes into the run's history through `ctx.messages` and into this request through
+        a new `request_context.messages` list, as a `ModelRequest` of its own that's sent merged into
+        the request it follows.
         """
         messages = request_context.messages
         # A provider-resume turn (`_prepare_resume_request`) hands back a message list whose
         # tail is a suspended `ModelResponse`, and that exact history is echoed to the provider
-        # verbatim to continue the turn -- injecting into it would corrupt the continuation. So
+        # verbatim to continue the turn -- adding to it would corrupt the continuation. So
         # only a real `ModelRequest` tail carries a reminder, and only such a turn spends a
         # cadence slot (the counter advances inside the guard, not before it).
-        if messages and isinstance(last := messages[-1], ModelRequest):
+        if messages and isinstance(messages[-1], ModelRequest):
             self._request_count += 1
             # Select which reminders fire before mutating any state: `_eligible_static` is
             # pure, and `_collect_dynamic` can raise (a user callback, a model call). Fire
-            # state and `on_fire` are committed only once the reminder is actually appended, so
+            # state and `on_fire` are committed only once the reminder is actually added, so
             # a raising dynamic reminder never leaves a static reminder's `max_fires` budget
             # spent or reports a fire that never reached the model.
             fired = self._eligible_static(ctx)
             dynamic_texts = await self._collect_dynamic(ctx)
             texts = [text for _, text in fired] + dynamic_texts
             if texts:
-                content: list[CachePoint | str] = []
-                # A leading `CachePoint` is only valid when the request already carries a
-                # user-content block for it to attach to; Anthropic and Bedrock raise otherwise.
-                if _has_user_content(last.parts):
-                    content.append(CachePoint(ttl=self.cache_ttl))
-                content.append('\n\n'.join(texts))
-                messages[-1] = replace(last, parts=[*last.parts, UserPromptPart(content=content)])
+                reminder = ModelRequest(parts=[SystemPromptPart('\n\n'.join(texts), scope='turn')])
+                ctx.messages.append(reminder)
+                request_context.messages = [*messages, reminder]
                 for key, _text in fired:
                     self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
                 for text in texts:
@@ -211,7 +209,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 if self.on_fire is not None:
                     for text in texts:
                         self.on_fire(text)
-        return await handler(request_context)
+        return request_context
 
     def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, str]]:
         """Static reminders whose cadence, trigger, and `max_fires` allow firing this request.
@@ -419,37 +417,6 @@ def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     if reminder.tag is not None:
         return f'<{reminder.tag}>\n{reminder.content}\n</{reminder.tag}>'
     return reminder.content
-
-
-def _has_user_content(parts: Sequence[ModelRequestPart]) -> bool:
-    """Whether these request parts already carry a block a `CachePoint` can attach to.
-
-    Anthropic and Bedrock reject a `CachePoint` that is the first content of a user message,
-    so the tail reminder leads with one only when the request already contributes user-mappable
-    content: a non-empty user prompt, a tool return, or a retry prompt. `SystemPromptPart` maps
-    to the system field, not user content, so it does not count.
-    """
-    for part in parts:
-        if isinstance(part, (ToolReturnPart, RetryPromptPart)):
-            return True
-        if isinstance(part, UserPromptPart):
-            content = part.content
-            if isinstance(content, str):
-                if content:
-                    return True
-            elif any(_is_user_content_item(item) for item in content):
-                return True
-    return False
-
-
-def _is_user_content_item(item: object) -> bool:
-    if isinstance(item, CachePoint):
-        return False
-    if isinstance(item, str):
-        return bool(item)
-    if isinstance(item, TextContent):
-        return bool(item.content)
-    return True
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:
