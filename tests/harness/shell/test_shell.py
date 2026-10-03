@@ -547,6 +547,24 @@ class TestDurableJob:
                 await anyio.sleep(0.05)  # pragma: lax no cover
         assert (shell_dir / 'side-effects.txt').read_text().splitlines() == ['one']
 
+    async def test_retry_of_a_launch_without_a_handle_is_not_launched_again(self, shell_dir: Path) -> None:
+        toolset = _shell_toolset(shell_dir)
+        ctx = _ctx(shell_dir)
+        ctx.run_id = 'durable-run'
+        ctx.tool_call_id = 'launch-1'
+        command = 'echo one >> side-effects.txt'
+        job = await _job(toolset, ctx, _parse_command_id(await toolset.start_command(ctx, command)))
+        with anyio.fail_after(10):
+            while (await job.status())[0]:
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        # A claimed job directory without a handle is a launch still in flight, or one that ended before recording it.
+        (Path(job.directory) / 'handle').unlink()
+        with pytest.raises(
+            ModelRetry, match=r'^Background command launch is pending; retry with the same tool call ID\.$'
+        ):
+            await toolset.start_command(ctx, command)
+        assert (shell_dir / 'side-effects.txt').read_text().splitlines() == ['one']
+
 
 class TestDurableCwd:
     async def test_run_cwd_rehydrates_from_workspace_without_leaking(
@@ -590,6 +608,15 @@ class TestDurableCwd:
         with pytest.raises(ModelRetry, match=f'The previous directory was removed; now in {shell_dir}'):
             await fresh.run_command(ctx, 'pwd')
         assert str(shell_dir) in await fresh.run_command(ctx, 'pwd')
+
+    async def test_clearing_the_run_cwd_outside_a_run_keeps_the_directory(
+        self, persist_toolset: ShellToolset[None], shell_dir: Path
+    ) -> None:
+        # Without a run ID the directory is kept by the toolset, not saved per run in the workspace.
+        ctx = _ctx(shell_dir)
+        await persist_toolset.run_command(ctx, 'cd subdir')
+        await persist_toolset.clear_run_cwd(ctx)
+        assert str(shell_dir / 'subdir') in await persist_toolset.run_command(ctx, 'pwd')
 
 
 class TestCancelledRunCwd:
@@ -781,6 +808,22 @@ class TestSpawnFailures:
         monkeypatch.setattr(anyio, 'open_process', _raise_oserror(errno.ENOMEM, 'Cannot allocate memory'))
         with pytest.raises(OSError, match='Cannot allocate memory'):
             await toolset.run_command(_ctx(tmp_path), 'echo hello')
+
+    @pytest.mark.parametrize(
+        ('code', 'reason'),
+        [
+            (errno.ENOENT, 'The working directory no longer exists.'),
+            (errno.ENOTDIR, 'The working directory is no longer a directory.'),
+        ],
+    )
+    async def test_spawn_refused_for_the_working_directory_is_recoverable(
+        self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: int, reason: str
+    ) -> None:
+        # A shell is always there to run the command string, so these errnos name the working directory.
+        monkeypatch.setattr(anyio, 'open_process', _raise_oserror(code, f'{tmp_path}: unusable'))
+        with pytest.raises(ModelRetry) as exc_info:
+            await toolset.run_command(_ctx(tmp_path), 'echo hello')
+        assert str(exc_info.value) == reason
 
 
 class TestRunCommand:
@@ -1714,6 +1757,43 @@ class TestSignalling:
         assert status == (False, 143)
         assert Path(job.output_path).read_text(encoding='utf-8') == ''
         await job.cleanup()
+
+    async def test_stop_outside_its_own_group_signals_only_the_wrapper(self, shell_dir: Path) -> None:
+        backend = _RecordingKill(shell_dir)
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(backend))
+        ready = shell_dir / 'ready'
+        command_id = _parse_command_id(await ts.start_command(ctx, f'echo $$ > {ready}; exec sleep 300'))
+        job = await _job(ts, ctx, command_id)
+        group = job.pgid
+        assert group is not None
+        with anyio.fail_after(10):
+            while not ready.exists() or not ready.read_text().strip():
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        # A job whose group was not its own to signal records `-`, so only its wrapper's PID may be signalled.
+        (Path(job.directory) / 'handle').write_text(f'{job.pid} -\n')
+        try:
+            # The wrapper traps `SIGTERM` and waits on the command, which the signal never reached: no exit code yet.
+            assert await ts.stop_command(ctx, command_id) == '(no output)\n[stopped]'
+            signals = [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]]
+            stop_file = posixpath.join(job.directory, 'stop')
+            assert signals == [['sh', '-c', _KILL_SCRIPT, 'kill', 'TERM', str(job.pid), stop_file]]
+        finally:
+            os.killpg(group, signal.SIGKILL)
+        await _wait_for_exit(job.pid)
+
+    async def test_stop_of_a_finished_job_outside_its_own_group_sends_no_signal(self, shell_dir: Path) -> None:
+        backend = _RecordingKill(shell_dir)
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(backend))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'echo done'))
+        job = await _job(ts, ctx, command_id)
+        with anyio.fail_after(10):
+            while (await job.status())[0]:
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        (Path(job.directory) / 'handle').write_text(f'{job.pid} -\n')
+        assert await ts.stop_command(ctx, command_id) == '[stdout]\ndone\n\n[stopped]\n[exit code: 0]'
+        assert [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]] == []
 
     async def test_failed_signal_is_not_reported_as_stopped(self, shell_dir: Path) -> None:
         backend = _RecordingKill(

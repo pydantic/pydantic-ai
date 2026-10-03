@@ -23,6 +23,7 @@ from genai_prices import calc_price
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -30,19 +31,24 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     SpeechPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteMessage, RealtimeCassette
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
 
 pytestmark = [
@@ -326,6 +332,85 @@ async def test_an_image_is_described_by_the_backend(
     assert 'kiwi' in spoken.lower()
 
 
+@pytest.mark.vcr
+async def test_the_backend_searches_the_web(
+    openai_live_ws_and_http_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+    allow_model_requests: None,
+) -> None:
+    """`WebSearchTool` runs on the delegated backend, and its searches land in history as native parts.
+
+    The backend searches while Live keeps the conversation going, then Live speaks the answer; the
+    searches are recorded on the spoken reply they informed, ahead of the speech, as a standard run
+    records them ahead of its text. The history carries on in a standard run on a Responses model (the
+    HTTP cassette), which OpenAI accepts only because each search is recorded with the reasoning that led
+    to it.
+    """
+    provider, cassette = openai_live_ws_and_http_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    agent = Agent(
+        _BACKEND,
+        instructions='Always search the web before answering, and answer in one short sentence.',
+        capabilities=[WebSearch(native=WebSearchTool(search_context_size='low', allowed_domains=['wikipedia.org']))],
+    )
+
+    pcm = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    reply = messages[1]
+    assert isinstance(reply, ModelResponse)
+    calls = [part for part in reply.parts if isinstance(part, NativeToolCallPart)]
+    returns = [part for part in reply.parts if isinstance(part, NativeToolReturnPart)]
+    assert {part.tool_name for part in [*calls, *returns]} == {'web_search'}
+    assert [part.tool_call_id for part in calls] == [part.tool_call_id for part in returns]
+    assert all(part.provider_name == 'openai' for part in calls)
+    # Each search records what the backend searched for, as on a direct Responses call.
+    assert [part.args for part in calls] == snapshot(
+        [
+            {
+                'type': 'search',
+                'queries': ['site:en.wikipedia.org/wiki/Amsterdam Amsterdam population 2026'],
+                'query': 'site:en.wikipedia.org/wiki/Amsterdam Amsterdam population 2026',
+            },
+            {'type': 'search', 'queries': ['Amsterdam population'], 'query': 'Amsterdam population'},
+        ]
+    )
+    assert [part.content for part in returns] == snapshot([{'status': 'completed'}, {'status': 'completed'}])
+    # The searches come first, then what Live said with their results.
+    speech = reply.parts[-1]
+    assert isinstance(speech, SpeechPart) and speech.speaker == 'assistant'
+    assert all(not isinstance(part, SpeechPart) for part in reply.parts[:-1])
+    assert 'thirty-six thousand' in (speech.transcript or '')
+    # Each search follows the backend reasoning that led to it, as a direct Responses run records it.
+    assert [type(part).__name__ for part in reply.parts] == snapshot(
+        [
+            'ThinkingPart',
+            'NativeToolCallPart',
+            'NativeToolReturnPart',
+            'ThinkingPart',
+            'NativeToolCallPart',
+            'NativeToolReturnPart',
+            'SpeechPart',
+        ]
+    )
+    thinking = [part for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking and all(part.id and part.signature and part.provider_name == 'openai' for part in thinking)
+
+    # A text agent on the backend's model picks the conversation up where the call left it.
+    follow_up = await Agent(OpenAIResponsesModel('gpt-5.6-sol', provider=provider)).run(
+        'What number did you just give me? Answer with digits only.', message_history=messages
+    )
+    assert '936' in follow_up.output
+
+
 async def test_an_image_a_tool_returns_reaches_the_backend(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
     assets_path: Path,
@@ -524,3 +609,94 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
     # The browser plays the audio, so the sideband records the reply without its bytes.
     assert answer_part.audio is None
     assert session.usage.input_tokens > 0
+
+
+_FAVORITE_COLOR = [
+    ModelRequest(parts=[UserPromptPart(content='My favorite color is turquoise.')]),
+    ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Got it, turquoise.')]),
+]
+
+
+async def _ask_after_a_drop(
+    model: OpenAILiveModel, cassette: RealtimeCassette, pcm: bytes, *, paced: bool
+) -> tuple[list[Any], str]:
+    """Drop the connection as soon as the session is up, then ask about the history from before the drop."""
+    agent = Agent(_BACKEND, instructions='Answer in a few words.')
+    events: list[Any] = []
+    async with agent.realtime(model, message_history=_FAVORITE_COLOR).session() as session:
+        await cassette.disconnect()
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                # The drop is the first thing that happens, so the reconnect is the first event.
+                if isinstance(event, RealtimeSessionReconnectEvent):  # pragma: no branch
+                    break
+        await _stream(session, pcm, cassette, paced=paced)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse)
+    return events, ' '.join(part.transcript or '' for part in reply.parts if isinstance(part, SpeechPart))
+
+
+def _session_starts(cassette: RealtimeCassette) -> list[dict[str, Any]]:
+    return [
+        interaction.data['session']
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage)
+        and interaction.direction == 'sent'
+        and interaction.data.get('type') == 'session.start'
+    ]
+
+
+async def test_a_stored_session_reconnects_by_forking(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """With `openai_live_store`, a dropped session is forked: the new one has the conversation, server-side."""
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_store=True, openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    pcm = assets_path.joinpath('favorite_color_question_24khz.pcm').read_bytes()
+
+    events, answer = await _ask_after_a_drop(model, cassette, pcm, paced=realtime_recording)
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    # The fork starts with no configuration of its own: it inherits the stored session's, history included.
+    first, fork = _session_starts(cassette)
+    assert first['store'] is True and len(first['input']) == 2
+    assert fork == {}
+    assert 'turquoise' in answer.lower()
+
+
+async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """Without storage, the replacement session is seeded with the history so far, and nothing is stored."""
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    pcm = assets_path.joinpath('favorite_color_question_24khz.pcm').read_bytes()
+
+    events, answer = await _ask_after_a_drop(model, cassette, pcm, paced=realtime_recording)
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    first, replacement = _session_starts(cassette)
+    assert 'store' not in first and 'store' not in replacement
+    assert replacement['input'] == first['input']
+    assert replacement['delegation'] == first['delegation']
+    assert 'turquoise' in answer.lower()
