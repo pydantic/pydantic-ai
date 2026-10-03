@@ -145,6 +145,8 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
+For [Sign in with ChatGPT](https://pydantic.dev/docs/ai/models/openai-chatgpt/), install the opt-in `openai-chatgpt` extra. Use `OpenAIChatGPTOAuthFlow` for PKCE sign-in and pass an explicitly configured `OpenAIChatGPTProvider` to `OpenAIChatGPTModel`, then pass the model to `Agent`. This is separate from `openai-codex` and API-key auth: it never discovers their credentials. Persist the stable host ID and issued client ID with the verified account's complete grant. Durable sources implement `load()` and `rotate(expected, refresh)` with registration-wide exclusion and atomic publication; do not retry possibly spent rotating tokens. Use a slug from the account-specific model catalog. Both run modes use SSE with `store=false`; generic `max_tokens`, `temperature`, and `top_p` are dropped, and no Codex headers are injected. Provisioned HTTPS client configuration does not itself grant hosted inference permission.
+
 ## Run Methods and Streaming
 
 Pick a run method based on the interaction pattern:

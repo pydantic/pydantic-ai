@@ -85,6 +85,7 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
         address = (parsed.hostname or 'localhost', parsed.port or 80)
         callback_path = parsed.path
         expected_state = self.state
+        redirect_uri = self.redirect_uri
         result: dict[str, str] = {}
 
         class CallbackHandler(BaseHTTPRequestHandler):
@@ -106,6 +107,7 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
                 if url.path == callback_path and params.get('state') == expected_state:
                     if code := params.get('code'):
                         result['code'] = code
+                        result['callback_url'] = f'{redirect_uri}?{url.query}'
                     else:
                         result['error'] = params.get('error', 'unknown')
                 self.send_response(200)
@@ -129,4 +131,9 @@ class OAuthFlow(ABC, Generic[CredentialsT]):
             cancelled.set()
         if error := result.get('error'):
             raise UserError(f'Authorization failed: {error}')
-        return await self.exchange_code(result['code'])
+        return await self._exchange_callback_url(result['callback_url'])
+
+    async def _exchange_callback_url(self, callback_url: str) -> CredentialsT:
+        """Provider hook for callbacks carrying registration data in addition to a code."""
+        code = parse_qs(urlparse(callback_url).query)['code'][0]
+        return await self.exchange_code(code)

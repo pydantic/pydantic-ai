@@ -153,6 +153,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openai import OpenAIProvider
 
         return OpenAIProvider
+    elif provider == 'openai-chatgpt':
+        from .openai_chatgpt import OpenAIChatGPTProvider
+
+        return OpenAIChatGPTProvider
     elif provider == 'openai-codex':
         from .openai_codex import OpenAICodexProvider
 
