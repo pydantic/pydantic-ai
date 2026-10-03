@@ -2367,21 +2367,34 @@ def test_main_emits_structured_error_on_argparse_rejection(monkeypatch: pytest.M
     not os.environ.get('GH_AW_SHIM_LIVE_API_KEY'),
     reason='set GH_AW_SHIM_LIVE_API_KEY/_BASE_URL/_MODEL to run the live test',
 )
-def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch):
-    """End-to-end against a real Anthropic-shape endpoint (api.anthropic.com,
-    MiniMax's /anthropic, etc.). Verifies the shim+endpoint integration —
-    not the model's instruction-following.
-    """
+def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Verify streamed tool execution and a local safe-output sink against a live Anthropic-shape endpoint."""
     monkeypatch.setenv('ANTHROPIC_API_KEY', os.environ['GH_AW_SHIM_LIVE_API_KEY'])
     monkeypatch.setenv(
         'ANTHROPIC_BASE_URL',
         os.environ.get('GH_AW_SHIM_LIVE_BASE_URL', 'https://api.anthropic.com'),
     )
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+
+    def build_safe_output_toolsets(_args: shim.Args) -> list[AbstractToolset[object]]:
+        return [PrefixedToolset(_safe_outputs_toolset(sink), prefix='mcp__safeoutputs_')]
+
+    monkeypatch.setattr(
+        shim,
+        'build_mcp_servers',
+        build_safe_output_toolsets,
+    )
     model = os.environ.get('GH_AW_SHIM_LIVE_MODEL', 'claude-sonnet-4-6')
     argv = list(GHAW_ARGV)
     i = argv.index('--mcp-config')
     del argv[i : i + 2]  # no MCP gateway outside a gh-aw run
-    argv += ['--model', model, 'Say hi.']
+    argv += [
+        '--model',
+        model,
+        'Call `mcp__safeoutputs__noop` exactly once with the message '
+        '`live Anthropic-compatible runner tool call verified`, then finish.',
+    ]
     monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', *argv])
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -2391,6 +2404,25 @@ def test_live_anthropic_compatible_endpoint(monkeypatch: pytest.MonkeyPatch):
     result = next(x for x in lines if x['type'] == 'result')
     assert result['is_error'] is False
     assert result['result']
+    assert sink.exists()
+    assert [json.loads(line) for line in sink.read_text(encoding='utf-8').splitlines()] == [
+        {'type': 'noop', 'message': 'live Anthropic-compatible runner tool call verified'}
+    ]
+    tool_events: list[dict[str, object]] = [
+        event
+        for line in lines
+        if line.get('type') == 'assistant'
+        and isinstance(line.get('message'), dict)
+        and isinstance(line['message'].get('content'), list)
+        for event in line['message']['content']
+        if event.get('type') == 'tool_use'
+    ]
+    assert len(tool_events) == 1
+    assert tool_events[0]['name'] == 'mcp__safeoutputs__noop'
+    assert any(
+        line.get('type') == 'user' and any(event.get('type') == 'tool_result' for event in line['message']['content'])
+        for line in lines
+    )
     # `input_tokens > 0` proves the prompt round-tripped; `output_tokens > 0`
     # proves the model actually responded.
     assert result['usage']['input_tokens'] > 0

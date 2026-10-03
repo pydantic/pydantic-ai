@@ -122,112 +122,39 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      issues: read
     steps:
       - name: Check out the trusted repository revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Inspect quota fields
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: lint
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+      - name: Check quota and active incidents
+        id: health
         env:
-          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scoped to the quota probe step only.
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_WORKFLOW: ${{ github.workflow }}
+          PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.ref_name }}:${{ github.sha }}:${{ github.run_id }}
+          PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+          PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scoped to the read-only health check step only.
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          import sys
-          from urllib.error import HTTPError
-          from urllib.request import Request, urlopen
-
-          api_key = os.environ.get('ZAI_API_KEY', '')
-          if not api_key:
-              print('request_error=missing_api_key')
-              sys.exit(1)
-
-          request = Request(
-              'https://api.z.ai/api/monitor/usage/quota/limit',
-              headers={'Authorization': api_key},
-              method='GET',
-          )
-          try:
-              with urlopen(request, timeout=30) as response:
-                  status = response.status
-                  body = response.read()
-          except HTTPError as error:
-              status = error.code
-              body = error.read()
-          except Exception as error:
-              print(f'request_error={type(error).__name__}')
-              sys.exit(1)
-
-          print(f'http_status={status}')
-          try:
-              payload = json.loads(body)
-          except (UnicodeDecodeError, json.JSONDecodeError):
-              print('json_parse=failed')
-              sys.exit(1)
-
-          def safe_value(value: object) -> object:
-              if isinstance(value, str):
-                  return value.replace(api_key, '[REDACTED]')[:100]
-              if isinstance(value, (int, float, bool)) or value is None:
-                  return value
-              return None
-
-          if not isinstance(payload, dict):
-              print(f'envelope_type={type(payload).__name__}')
-              sys.exit(1)
-
-          print(f'top_level_fields={sorted(payload)}')
-          for field in ('code', 'success'):
-              if field in payload:
-                  print(f'envelope_{field}={safe_value(payload[field])!r}')
-
-          data = payload.get('data')
-          if isinstance(data, dict):
-              print(f'data_fields={sorted(data)}')
-          elif isinstance(data, list):
-              data_fields = sorted({key for row in data if isinstance(row, dict) for key in row})
-              print(f'data_fields={data_fields}')
-          else:
-              print(f'data_type={type(data).__name__}')
-
-          safe_names = {
-              'type', 'unit', 'number', 'percentage', 'usage', 'currentvalue',
-              'total', 'used', 'remaining', 'limit',
-          }
-
-          def is_safe_field(name: str) -> bool:
-              normalized = re.sub(r'[^a-z0-9]', '', name.lower())
-              return normalized in safe_names or any(
-                  part in normalized for part in ('reset', 'timestamp', 'period', 'interval', 'window')
-              )
-
-          rows: list[dict[str, object]] = []
-
-          def collect_rows(value: object, depth: int = 0) -> None:
-              if depth > 5:
-                  return
-              if isinstance(value, dict):
-                  if any(is_safe_field(key) for key in value):
-                      rows.append(value)
-                  for child in value.values():
-                      collect_rows(child, depth + 1)
-              elif isinstance(value, list):
-                  for child in value[:20]:
-                      collect_rows(child, depth + 1)
-
-          collect_rows(data)
-          print(f'quota_row_count={len(rows)}')
-          for index, row in enumerate(rows[:20], start=1):
-              fields = sorted(row)
-              safe_values = {
-                  key: safe_value(value)
-                  for key, value in row.items()
-                  if is_safe_field(key) and isinstance(value, (str, int, float, bool))
-              }
-              print(f'quota_row={index} fields={fields} safe_values={safe_values}')
-
-          if not 200 <= status < 300:
-              sys.exit(1)
-          PY
+          mkdir -p provider-health
+          python3 .github/scripts/agent_provider_health.py check --output provider-health/provider-health.json
+          python3 -c "import json; from pathlib import Path; health = json.loads(Path('provider-health/provider-health.json').read_text()); assert health['ready'] is True, health.get('reason', 'provider is not ready')"
+      - name: Verify the live GLM runner
+        env:
+          GH_AW_SHIM_LIVE_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scoped to this live endpoint test only.
+          GH_AW_SHIM_LIVE_BASE_URL: https://api.z.ai/api/anthropic
+          GH_AW_SHIM_LIVE_MODEL: glm-5.3-flash
+          UV_NO_SYNC: "1"
+        run: |
+          test -n "$GH_AW_SHIM_LIVE_API_KEY"
+          uv run pytest .github/scripts/test_pydantic_ai_runner.py::test_live_anthropic_compatible_endpoint
