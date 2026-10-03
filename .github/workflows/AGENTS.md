@@ -166,6 +166,7 @@ Correlate overlapping workflow and Pydanty requests when investigating rate-limi
 Include delegates and SDK retries in the request timeline.
 
 Record the endpoint, model, HTTP status, provider `error.code`, and any `Retry-After` or quota reset time.
+For abnormal streaming termination without an error code, record `finish_reason`.
 Use [Z.AI's error codes](https://docs.z.ai/api-reference/api-code) to distinguish
 `1302` request rate limits, `1305` temporary overload, and quota exhaustion such as `1308` or `1310`.
 HTTP 429 alone does not identify the failure.
