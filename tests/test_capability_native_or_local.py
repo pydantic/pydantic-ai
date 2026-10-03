@@ -11,7 +11,9 @@ from datetime import datetime
 from importlib.util import find_spec
 from types import ModuleType, NoneType
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -23,6 +25,8 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
+    ImageGeneration,
+    NativeOrLocalTool,
     PrepareTools,
     ResolveModelId,
     SelectModel,
@@ -39,6 +43,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
+from pydantic_ai.images import ImageGenerator, TestImageGenerationModel
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -63,6 +68,8 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
+    ImageGenerationTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
@@ -72,6 +79,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -110,7 +118,6 @@ class TestWebSearchCapability:
 
     def test_websearch_local_string_strategy(self, allow_model_requests: None):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
-        from unittest.mock import patch
 
         pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
         from pydantic_ai.common_tools.duckduckgo import DDGS
@@ -179,15 +186,17 @@ class TestWebSearchCapability:
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             WebSearch(native=False, local='duckduckgo', allowed_domains=['example.com'])
 
-    def test_websearch_local_callable(self):
-        """WebSearch(local=some_function) → bare callable wrapped in Tool."""
-        from pydantic_ai.tools import Tool
+    async def test_websearch_local_callable(self):
+        """WebSearch(local=some_function) → the callable stays on `local` and runs as a tool."""
 
         def my_search(query: str) -> str:
             return f'results for {query}'  # pragma: no cover
 
         cap = WebSearch(local=my_search)
-        assert isinstance(cap.local, Tool)
+        assert cap.local is my_search
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        assert list(await toolset.get_tools(_build_run_context())) == ['my_search']
 
 
 class TestXSearchCapability:
@@ -328,7 +337,7 @@ class TestXSearchCapability:
     def test_xsearch_callable_native_with_fallback(self):
         """Callable native with fallback_subagent_model still provides the subagent tool.
 
-        The tool is derived when the toolset is requested, so `local` keeps what was declared.
+        The tool is derived from the declaration, so `local` keeps what was declared.
         """
         cap = XSearch(
             native=lambda ctx: XSearchTool(enable_image_understanding=True),
@@ -502,9 +511,6 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_true_fallback(self, allow_model_requests: None):
         """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
-        from unittest.mock import AsyncMock, patch
-
-        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -573,9 +579,6 @@ class TestWebFetchCapability:
 
     def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
         """WebFetch(allowed_domains=..., local=True) with non-supporting model → falls back to local with domain filtering."""
-        from unittest.mock import AsyncMock, patch
-
-        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -621,15 +624,17 @@ class TestWebFetchCapability:
         with pytest.raises(UserError, match='constraint fields require the native tool'):
             WebFetch(native=False, local=True, max_uses=5)
 
-    def test_webfetch_local_callable(self):
-        """WebFetch(local=some_function) → bare callable wrapped in Tool."""
-        from pydantic_ai.tools import Tool
+    async def test_webfetch_local_callable(self):
+        """WebFetch(local=some_function) → the callable stays on `local` and runs as a tool."""
 
         def my_fetch(url: str) -> str:
             return f'fetched {url}'  # pragma: no cover
 
         cap = WebFetch(local=my_fetch)
-        assert isinstance(cap.local, Tool)
+        assert cap.local is my_fetch
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        assert list(await toolset.get_tools(_build_run_context())) == ['my_fetch']
 
 
 has_mcp = find_spec('mcp') is not None
@@ -708,7 +713,8 @@ class TestMCPCapability:
             (MCP[object](local=FastMCP('test-server')), None),
         ]
         for cap, expected_id in cases:
-            local = cap.local
+            toolset = cap.get_toolset()
+            local = toolset.wrapped if isinstance(toolset, PreparedToolset) else toolset
             assert isinstance(local, MCPToolset)
             assert local.id == expected_id
 
@@ -764,9 +770,10 @@ class TestMCPCapability:
 
         from pydantic_ai.mcp import MCPToolset
 
-        cap = MCP(url='https://mcp.example.com/sse', native=True)
-        assert isinstance(cap.local, MCPToolset)
-        assert isinstance(cap.local.client.transport, SSETransport)  # pyright: ignore[reportUnknownMemberType]
+        toolset = MCP(url='https://mcp.example.com/sse', native=True).get_toolset()
+        assert isinstance(toolset, PreparedToolset)
+        assert isinstance(toolset.wrapped, MCPToolset)
+        assert isinstance(toolset.wrapped.client.transport, SSETransport)
 
     def test_mcp_streamable_transport(self):
         """MCP with non-/sse URL routes to an MCPToolset using FastMCP's Streamable HTTP transport."""
@@ -774,9 +781,10 @@ class TestMCPCapability:
 
         from pydantic_ai.mcp import MCPToolset
 
-        cap = MCP(url='https://mcp.example.com/api', native=True)
-        assert isinstance(cap.local, MCPToolset)
-        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
+        toolset = MCP(url='https://mcp.example.com/api', native=True).get_toolset()
+        assert isinstance(toolset, PreparedToolset)
+        assert isinstance(toolset.wrapped, MCPToolset)
+        assert isinstance(toolset.wrapped.client.transport, StreamableHttpTransport)
 
     def test_mcp_authorization_token_in_local_headers(self):
         """MCP passes authorization_token as Authorization header through to the transport."""
@@ -784,9 +792,10 @@ class TestMCPCapability:
 
         from pydantic_ai.mcp import MCPToolset
 
-        cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz', native=True)
-        assert isinstance(cap.local, MCPToolset)
-        transport = cap.local.client.transport  # pyright: ignore[reportUnknownMemberType]
+        toolset = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz', native=True).get_toolset()
+        assert isinstance(toolset, PreparedToolset)
+        assert isinstance(toolset.wrapped, MCPToolset)
+        transport = toolset.wrapped.client.transport
         assert isinstance(transport, StreamableHttpTransport)
         assert transport.headers == {'Authorization': 'Bearer xyz'}
 
@@ -815,6 +824,260 @@ class TestMCPCapability:
 
         cap = MCP(url='https://mcp.example.com/api', native=True, local=FastMCP(name='in_process'))
         assert isinstance(cap.local, MCPToolset)
+
+
+_ALL_NATIVE_TOOLS = frozenset({WebFetchTool, WebSearchTool, XSearchTool, ImageGenerationTool, MCPServerTool})
+
+
+def _sent_native_tools(
+    capabilities: Sequence[AbstractCapability[object]], *, name: str | None = None
+) -> list[AbstractNativeTool]:
+    """The native tools one request to a model that supports every one of them receives."""
+    sent: list[AbstractNativeTool] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.extend(info.model_request_parameters.native_tools)
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=_ALL_NATIVE_TOOLS))
+    Agent(model, name=name, capabilities=capabilities).run_sync('hi')
+    return sent
+
+
+@dataclass(init=False)
+class _PerAgentWebFetch(WebFetch[object]):
+    def for_agent(self, agent: AbstractAgent[object, Any]) -> _PerAgentWebFetch:
+        return replace(self, allowed_domains=[f'{agent.name}.example'])
+
+
+@dataclass(init=False)
+class _PerRunWebFetch(WebFetch[object]):
+    async def for_run(self, ctx: RunContext[object]) -> _PerRunWebFetch:
+        return replace(self, allowed_domains=['run.example'])
+
+
+def _user_fetch(url: str) -> str:
+    """A fetch tool of the user's own, which enforces no domain filter."""
+    return f'fetched {url}'  # pragma: no cover
+
+
+class TestDeclaredNativeAndLocal:
+    """`native` and `local` keep what was passed, so a copy or a merge resolves from its own configuration."""
+
+    @pytest.mark.parametrize(
+        ('capability', 'changes', 'expected'),
+        [
+            pytest.param(
+                WebFetch[object](allowed_domains=['a.com']),
+                {'allowed_domains': ['b.com']},
+                [WebFetchTool(allowed_domains=['b.com'])],
+                id='web_fetch',
+            ),
+            pytest.param(
+                WebSearch[object](search_context_size='low'),
+                {'search_context_size': 'high'},
+                [WebSearchTool(search_context_size='high')],
+                id='web_search',
+            ),
+            pytest.param(
+                XSearch[object](include_output=True),
+                {'include_output': False},
+                [XSearchTool(include_output=False)],
+                id='x_search',
+            ),
+            pytest.param(
+                ImageGeneration[object](quality='low'),
+                {'quality': 'high'},
+                [ImageGenerationTool(quality='high')],
+                id='image_generation',
+            ),
+            pytest.param(
+                MCP[object]('https://mcp.example.com/api', native=True, local=False, allowed_tools=['x']),
+                {'allowed_tools': ['y']},
+                [MCPServerTool(id='mcp.example.com-api', url='https://mcp.example.com/api', allowed_tools=['y'])],
+                id='mcp',
+            ),
+        ],
+    )
+    def test_replace_sends_the_replaced_configuration(
+        self,
+        allow_model_requests: None,
+        capability: AbstractCapability[object],
+        changes: dict[str, object],
+        expected: list[AbstractNativeTool],
+    ):
+        assert _sent_native_tools([replace(capability, **changes)]) == expected
+
+    def test_replace_rebuilds_the_bundled_local_fetcher(self, allow_model_requests: None):
+        """The bundled fetcher enforces the copy's domains, not the ones it was copied from."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='web_fetch', args={'url': 'https://b.com/page'})])
+
+        capability = replace(WebFetch[object](local=True, allowed_domains=['a.com']), allowed_domains=['b.com'])
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        response = httpx.Response(
+            200,
+            text='<html><body><p>Hello</p></body></html>',
+            headers={'content-type': 'text/html'},
+            request=httpx.Request('GET', 'https://b.com/page'),
+        )
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=response
+        ) as safe_download:
+            Agent(model, capabilities=[capability]).run_sync('fetch')
+
+        assert safe_download.call_args.kwargs['allowed_domains'] == ['b.com']
+
+    def test_combine_after_replace_sends_the_merged_configuration(self, allow_model_requests: None):
+        replaced = replace(WebFetch[object](allowed_domains=['a.com']), allowed_domains=['b.com'])
+
+        sent = _sent_native_tools([WebFetch[object](allowed_domains=['c.com']), replaced])
+
+        assert sent == [WebFetchTool(allowed_domains=['c.com', 'b.com'])]
+
+    def test_for_agent_replace_sends_the_per_agent_configuration(self, allow_model_requests: None):
+        sent = _sent_native_tools([_PerAgentWebFetch(allowed_domains=['default.example'])], name='support')
+
+        assert sent == [WebFetchTool(allowed_domains=['support.example'])]
+
+    def test_for_run_replace_sends_the_per_run_configuration(self, allow_model_requests: None):
+        sent = _sent_native_tools([_PerRunWebFetch(allowed_domains=['default.example'])])
+
+        assert sent == [WebFetchTool(allowed_domains=['run.example'])]
+
+    @pytest.mark.parametrize(
+        ('capability', 'native'),
+        [
+            pytest.param(WebFetch[object](), WebFetchTool(max_uses=3), id='web_fetch'),
+            pytest.param(WebSearch[object](), WebSearchTool(max_uses=3), id='web_search'),
+            pytest.param(XSearch[object](), XSearchTool(include_output=True), id='x_search'),
+            pytest.param(ImageGeneration[object](), ImageGenerationTool(quality='high'), id='image_generation'),
+            pytest.param(
+                MCP[object]('https://mcp.example.com/api', native=True, local=False),
+                MCPServerTool(id='other', url='https://other.example.com/api'),
+                id='mcp',
+            ),
+        ],
+    )
+    def test_assigning_native_sends_the_assigned_tool(
+        self, allow_model_requests: None, capability: NativeOrLocalTool[object], native: AbstractNativeTool
+    ):
+        capability.native = native
+
+        assert capability.get_native_tools() == [native]
+        assert _sent_native_tools([capability]) == [native]
+
+    def test_assigning_local_runs_the_assigned_tool(self, allow_model_requests: None):
+        def old_search(query: str) -> str:
+            return 'old results'  # pragma: no cover
+
+        def new_search(query: str) -> str:
+            return 'new results'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name=info.function_tools[0].name, args={'query': 'q'})])
+
+        capability = WebSearch[object](native=False, local=old_search)
+        capability.local = new_search
+
+        result = Agent(FunctionModel(model_fn), capabilities=[capability]).run_sync('search')
+
+        returns = iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        assert [(part.tool_name, part.content) for part in returns] == [('new_search', 'new results')]
+
+    def test_assigning_an_image_generator_generates_through_it(self, allow_model_requests: None):
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        old_model = TestImageGenerationModel()
+        new_model = TestImageGenerationModel()
+        capability = ImageGeneration[object](native=False, local=ImageGenerator(old_model))
+        capability.local = ImageGenerator(new_model)
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        Agent(model, capabilities=[capability]).run_sync('draw')
+
+        assert old_model.last_settings is None
+        assert new_model.last_settings == {}
+
+    @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
+    def test_unchanged_declaration_keeps_the_resolved_toolset(self):
+        """The `MCPToolset` holds the connection an entered agent reuses, so reading it again must not rebuild it."""
+        capability = MCP[object]('https://mcp.example.com/api')
+
+        assert capability.get_toolset() is capability.get_toolset()
+
+    def test_native_and_local_return_the_declaration(self):
+        assert WebFetch[object]().native is True
+        assert WebFetch[object](local=True).local is True
+        assert WebFetch[object](local=_user_fetch).local is _user_fetch
+        assert ImageGeneration[object]().native is True
+        assert MCP[object]('https://mcp.example.com/api', native=True, local=False).native is True
+
+    def test_equality_and_repr_follow_the_declaration(self):
+        assert WebFetch[object](local=True) == WebFetch[object](local=True)
+        assert WebFetch[object](allowed_domains=['a.com']) != WebFetch[object](
+            native=WebFetchTool(allowed_domains=['a.com']), allowed_domains=['a.com']
+        )
+        assert repr(WebFetch[object](local=True)) == snapshot(
+            "WebFetch(id='web_fetch', description=None, defer_loading=False, native=True, local=True, allowed_domains=None, blocked_domains=None, max_uses=None, enable_citations=None, max_content_tokens=None)"
+        )
+
+    def test_webfetch_user_local_beside_domain_filters_fails_closed_without_native(self):
+        """Only the native tool and the bundled `local=True` fetcher enforce the domain filters."""
+        with pytest.raises(UserError, match='not by a `local` tool you supply'):
+            WebFetch[object](native=False, local=_user_fetch, allowed_domains=['example.com'])
+        with pytest.raises(UserError, match='not by a `local` tool you supply'):
+            WebFetch[object](native=False, local=_user_fetch, blocked_domains=['evil.com'])
+
+    def test_webfetch_user_local_beside_domain_filters_never_runs(self, allow_model_requests: None):
+        """With native enabled the user's tool is dropped, so a model without native web fetch raises."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise AssertionError('the request must not reach the model')  # pragma: no cover
+
+        with pytest.warns(UserWarning, match='the `local` tool you supplied never runs'):
+            capability = WebFetch[object](local=_user_fetch, allowed_domains=['example.com'])
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+
+        assert capability.get_toolset() is None
+        with pytest.raises(UserError, match='not supported'):
+            Agent(model, capabilities=[capability]).run_sync('fetch')
+
+    def test_xsearch_native_false_user_local_warns_for_date_filters(self):
+        def my_x_search(query: str) -> str:
+            return 'posts'  # pragma: no cover
+
+        with pytest.warns(UserWarning, match=r'`XSearch` ignored setting\(s\): `from_date`, `to_date`'):
+            XSearch[object](
+                native=False, local=my_x_search, from_date=datetime(2026, 1, 1), to_date=datetime(2026, 2, 1)
+            )
+
+    @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
+    def test_mcp_replace_rebuilds_the_local_toolset(self):
+        from pydantic_ai.mcp import MCPToolset
+
+        capability = replace(MCP[object]('https://mcp.example.com/api', headers={'X': 'old'}), headers={'X': 'new'})
+
+        toolset = capability.get_toolset()
+        assert isinstance(toolset, MCPToolset)
+        assert toolset.client.transport.headers == {'X': 'new'}
+        assert capability.local is None
+        assert MCP[object]('https://mcp.example.com/api') == MCP[object]('https://mcp.example.com/api')
+
+    @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
+    def test_mcp_native_false_user_toolset_warns_for_headers(self):
+        from pydantic_ai.mcp import MCPToolset
+
+        with pytest.warns(UserWarning, match=r'`MCP` ignored setting\(s\): `authorization_token`, `headers`'):
+            MCP[object](local=MCPToolset('https://mcp.example.com/api'), headers={'X': 'a'}, authorization_token='t')
 
 
 class TestNamedSpecDictRoundTrip:
@@ -2078,8 +2341,6 @@ class TestGetModelHook:
         assert calls == ['user', 'registry']
 
     async def test_async_model_id_resolver_and_deferred_resolver(self):
-        from unittest.mock import AsyncMock
-
         calls: list[str] = []
         target = _text_model('resolved')
 

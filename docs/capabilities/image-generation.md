@@ -119,6 +119,10 @@ inheritance yields that way: setting both `dimensions` and `aspect_ratio` on the
 [`UserError`][pydantic_ai.exceptions.UserError] at construction, once a direct generator is configured to apply
 them.
 
+The direct generator reads the rest of a static instance with the same precedence: a request that routes to it warns
+about the instance's `model` and the native-only settings it set away from their defaults, and raises for its
+`action='edit'`, just as it does for the capability's own fields.
+
 Instrumentation is per generator, not per agent: the agent-level
 [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability does not reach the direct generator,
 so a run records no `image_generation` span unless the generator carries its own. Pass `instrument=` when you construct

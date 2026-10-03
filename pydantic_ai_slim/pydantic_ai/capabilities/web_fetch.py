@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -26,10 +27,20 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     """
 
     allowed_domains: list[str] | None
-    """Only fetch from these domains. Enforced locally when native is unavailable."""
+    """Only fetch from these domains.
+
+    Enforced by the native tool built from these fields and by the bundled `local=True` fetcher. A
+    `native=WebFetchTool(...)` instance carries its own; a `local` tool you supply doesn't enforce
+    it, so beside one it requires native support.
+    """
 
     blocked_domains: list[str] | None
-    """Never fetch from these domains. Enforced locally when native is unavailable."""
+    """Never fetch from these domains.
+
+    Enforced by the native tool built from these fields and by the bundled `local=True` fetcher. A
+    `native=WebFetchTool(...)` instance carries its own; a `local` tool you supply doesn't enforce
+    it, so beside one it requires native support.
+    """
 
     max_uses: int | None
     """Maximum number of fetches per run. Requires native support."""
@@ -75,6 +86,35 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         self.max_content_tokens = max_content_tokens
         self.__post_init__()
 
+    def __post_init__(self) -> None:
+        # Checked before the base, whose `native=False` error names neither field nor the fix.
+        if self._domain_filters_need_native and self.native is False:
+            raise UserError(
+                'WebFetch: `allowed_domains` and `blocked_domains` are enforced by the native tool and by the '
+                'bundled `local=True` fetcher, not by a `local` tool you supply. Use `local=True`, or enforce '
+                'the domains in your own tool and leave them off the capability.'
+            )
+        super().__post_init__()
+        if self._domain_filters_need_native:
+            # user → `__init__` → here → `warn`.
+            warnings.warn(
+                'WebFetch: the `local` tool you supplied never runs beside `allowed_domains` or `blocked_domains`, '
+                'which only the native tool built from them and the bundled `local=True` fetcher enforce, so a model '
+                'without native web fetch raises `UserError`. Use `local=True`, or enforce the domains in your own tool '
+                'and leave them off the capability.',
+                UserWarning,
+                stacklevel=3,
+            )
+
+    @property
+    def _domain_filters_need_native(self) -> bool:
+        """Whether domain filters are set beside a `local` tool the user supplied, which doesn't enforce them."""
+        return (
+            (self.allowed_domains is not None or self.blocked_domains is not None)
+            and self.local is not None
+            and not isinstance(self.local, bool)
+        )
+
     def _default_native(self) -> WebFetchTool:
         kwargs: dict[str, Any] = {}
         if self.allowed_domains is not None:
@@ -111,4 +151,4 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _requires_native(self) -> bool:
-        return self.max_uses is not None
+        return self.max_uses is not None or self._domain_filters_need_native
