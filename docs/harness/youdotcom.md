@@ -156,6 +156,7 @@ YouSearch(
     boost_domains=[],            # re-rank these domains higher without excluding others
     freshness=None,              # 'day' | 'week' | 'month' | 'year' | 'YYYY-MM-DDtoYYYY-MM-DD'
     country=None,                # two-letter country code to focus results
+    native=False,                # prefer the model's native web search, You.com as fallback
     guidance=None,               # None = default instructions, '' = none, str = custom
     timeout_ms=60_000,           # per-request timeout for the default client
     client=None,                 # YouClient -- None builds youdotcom.You from YDC_API_KEY
@@ -237,21 +238,42 @@ YouSearch(client=You(api_key_auth='...'))
 
 Core ships a [`WebSearch`](../capabilities/overview.md#provider-adaptive-tools)
 capability that adapts to the model: it uses the provider's own search where
-the model has one, and a local DuckDuckGo tool everywhere else. Use it when you
-want search that follows whichever model you run. Use `YouSearch` when you want
-the same search on every model: one vendor, excerpts with every result, page
-reads you ask for, domain filters, and freshness controls.
+the model has one, and on other models raises unless you pass a `local=`
+fallback, such as `local=True` for DuckDuckGo. Use it when you want search that
+follows whichever model you run. Use `YouSearch` when you want the same search
+on every model: one vendor, excerpts with every result, page reads you ask for,
+domain filters, and freshness controls.
 
-Give an agent one web search capability: core `WebSearch`, harness
+To use the provider's search where there is one and You.com's elsewhere, either:
+
+- Set `YouSearch(native=True)`. The capability adds the native web search
+  tool, and You.com's `web_search` is only sent to models without one.
+  `get_page` stays available on every model. `include_domains` and
+  `exclude_domains` become the native tool's `allowed_domains` and
+  `blocked_domains`.
+  Whether the native search applies them depends on the provider: Gemini's
+  native search ignores them, so on Gemini they only restrict the fallback.
+- Or pass You.com's search as the fallback of core `WebSearch`, to configure the
+  native search with `WebSearch`'s own options:
+
+  ```python
+  from pydantic_ai.capabilities import WebSearch
+  from pydantic_ai_harness.youdotcom import YouSearch
+
+  WebSearch(local=YouSearch(num_results=10).web_search_tool())
+  ```
+
+Otherwise, give an agent one web search capability: core `WebSearch`, harness
 `ExaSearch`, or `YouSearch`. They all name their tools the same way --
 `web_search`, plus `get_page` for the two harness ones -- and an agent cannot
 have two tools with the same name, so it fails when you create it. If you want
 two of them anyway, wrap one in `PrefixTools` to rename its tools, as shown in
 [Multiple instances](#multiple-instances). There is one extra case: on
 Anthropic models the built-in search is also called `web_search`, so
-`WebSearch` clashes there even though the search runs on Anthropic's side. Pass
-`WebSearch(native=False)` to switch it to the DuckDuckGo tool, which is called
-`duckduckgo_search` and does not clash.
+`WebSearch` clashes with the default `YouSearch()` there even though the search
+runs on Anthropic's side. Use `YouSearch(native=True)` instead, or pass
+`WebSearch(native=False, local=True)` to switch core's search to the DuckDuckGo
+tool, which is called `duckduckgo_search` and does not clash.
 
 ## Agent spec (YAML/JSON)
 

@@ -8,7 +8,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
-from pydantic_clai2.prompt_keys import PromptKeys
+from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
 
 
 async def test_decoding_meta_paste_arrows_and_lone_escape() -> None:
