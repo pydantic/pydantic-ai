@@ -494,13 +494,6 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def run(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Run the configured strategy, then apply retry-wins and resolve deferred calls."""
-        # Check tool-call usage limits up front for the full count of function-kind calls.
-        if self.ctx.deps.usage_limits.tool_calls_limit is not None and self.function_indices:
-            projected_usage = deepcopy(self.ctx.state.usage)
-            # usage-attribution: a deepcopy, projected forward to check a limit before the calls run
-            projected_usage.tool_calls += len(self.function_indices)
-            self.ctx.deps.usage_limits.check_before_tool_call(projected_usage)
-
         async for event in self._run_strategy():
             yield event
 
@@ -512,6 +505,36 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Execute this strategy's tool calls, building up `final_result` and `output_parts`."""
         raise NotImplementedError
+
+    def _check_tool_calls_limit(
+        self,
+        calls: Sequence[_messages.ToolCallPart],
+        *,
+        results: dict[str, DeferredToolResult] | None = None,
+    ) -> None:
+        """Raise `UsageLimitExceeded` if executing `calls` would exceed `tool_calls_limit`.
+
+        Called before `calls` start, so a batch that would exceed the limit runs none of them. Calls to
+        unknown tools aren't counted, as they can only produce a retry prompt, and neither are calls whose
+        supplied result in `results` (default: `calls_to_run_results`) stands in for executing the tool,
+        e.g. `ToolDenied`. Approved calls are counted.
+        """
+        if self.ctx.deps.usage_limits.tool_calls_limit is None:
+            return
+        if results is None:
+            results = self.calls_to_run_results
+        count = 0
+        for call in calls:
+            deferred_result = results.get(call.tool_call_id)
+            if self.tool_manager.get_tool_def(call.tool_name) is not None and (
+                deferred_result is None or isinstance(deferred_result, ToolApproved)
+            ):
+                count += 1
+        if count:
+            projected_usage = deepcopy(self.ctx.state.usage)
+            # usage-attribution: a deepcopy, projected forward to check a limit before the calls run
+            projected_usage.tool_calls += count
+            self.ctx.deps.usage_limits.check_before_tool_call(projected_usage)
 
     # --- Output tool helpers ------------------------------------------------
 
@@ -1075,6 +1098,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 
+            # Approved calls whose args validated execute below, so they count against the limit; approved
+            # calls with invalid `override_args` only produce a retry prompt.
+            self._check_tool_calls_limit(
+                [validated.call for validated in handler_validated_calls.values() if validated.args_valid],
+                results=handler_tool_call_results,
+            )
+
             new_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(
                 list
             )
@@ -1135,6 +1165,8 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 )
         else:
             # Every output failed; run function tools so the model can correct next round.
+            # Only now is it known that they execute, so the limit is checked here rather than up front.
+            self._check_tool_calls_limit(function_calls)
             async for event in self._run_function_calls(function_calls):  # pragma: no branch
                 yield event
 
@@ -1144,6 +1176,8 @@ class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'graceful'`: walk in emission order, running pending function-tool batches before each output tool."""
 
     async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:
+        # Every function call executes, across however many batches, so check the full count up front.
+        self._check_tool_calls_limit([self.tool_calls[i] for i in self.function_indices])
         pending_functions: list[_messages.ToolCallPart] = []
 
         async def flush_pending() -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -1181,6 +1215,9 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
 
     async def _run_strategy(self) -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
         externally_won_id = self.final_result.tool_call_id if self.final_result is not None else None
+
+        # Every function call executes, so check the full count before any of them start.
+        self._check_tool_calls_limit([self.tool_calls[i] for i in self.function_indices])
 
         # Upfront-validate function calls in emission order, emitting their call events.
         validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
