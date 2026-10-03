@@ -18,6 +18,9 @@ from __future__ import annotations
 import math
 import time
 import warnings
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 
 from pydantic_ai.capabilities import AbstractCapability
@@ -35,10 +38,42 @@ _now = time.monotonic
 
 _SILENCE_HINT = (
     '    import warnings\n'
-    '    from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning\n'
-    "    warnings.filterwarnings('ignore', category=CacheBustWarning)  # silence\n"
-    "    warnings.filterwarnings('error', category=CacheBustWarning)   # escalate in dev/CI"
+    '    from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning, ignore_cache_busts\n'
+    "    warnings.filterwarnings('ignore', category=CacheBustWarning)  # silence process-wide\n"
+    "    warnings.filterwarnings('error', category=CacheBustWarning)   # escalate in dev/CI\n"
+    '    with ignore_cache_busts(): ...  # silence one intentional bust, concurrency-safe'
 )
+
+# Task- and thread-local suppression set by `ignore_cache_busts()`. Unlike `warnings` filters on
+# runtimes without context-aware warnings, this does not change the warning policy for unrelated
+# concurrent runs.
+_ignoring: ContextVar[bool] = ContextVar('pydantic_ai_harness.warn_on_cache_busts.ignoring', default=False)
+
+
+@contextmanager
+def ignore_cache_busts() -> Generator[None]:
+    """Silence `CacheBustWarning` for the model requests made inside this block, in this context only.
+
+    Use it around a run that busts the cache on purpose -- a step that switches models, adds a
+    file, or rewrites history -- without muting the monitor for anything else:
+
+        from pydantic_ai_harness.warn_on_cache_busts import ignore_cache_busts
+
+        with ignore_cache_busts():
+            result = await agent.run('...', message_history=rewritten_history)
+
+    On runtimes without context-aware warnings, `warnings.catch_warnings()` changes process-global
+    warning filters. This helper holds its suppression in a `ContextVar` instead: concurrent runs
+    in other asyncio tasks or threads keep warning as usual. It covers the requests whose hooks run in
+    this context (including tasks started from it, which copy the context), so wrap the whole
+    `agent.run`/`agent.iter` call. The monitor still records the marks while silenced, so the
+    suppressed collapse is not reported again once the block exits.
+    """
+    token = _ignoring.set(True)
+    try:
+        yield
+    finally:
+        _ignoring.reset(token)
 
 
 @dataclass
@@ -90,22 +125,25 @@ class CacheBustWarning(UserWarning):
     a provider-side cache expiry under an unchanged prefix (a gap between requests longer than
     the cache TTL). The monitor observes the collapse; it does not attribute the cause.
 
-    Silence it, or escalate it to an error in dev/CI, with the stdlib `warnings` machinery
-    (no bespoke API):
+    Silence it process-wide, or escalate it to an error in dev/CI, with the stdlib `warnings`
+    machinery; silence one intentional bust with `ignore_cache_busts()`:
 
         import warnings
-        from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning
+        from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning, ignore_cache_busts
 
         # Silence the whole category:
         warnings.filterwarnings('ignore', category=CacheBustWarning)
 
         # Silence one intentional bust, scoped to the operation that causes it:
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', CacheBustWarning)
+        with ignore_cache_busts():
             result = agent.run_sync('...')  # e.g. a step that switches models or adds a file
 
         # Treat every bust as an error (dev/CI enforcement):
         warnings.filterwarnings('error', category=CacheBustWarning)
+
+    Prefer `ignore_cache_busts()` over a `warnings.catch_warnings()` block for scoped silencing:
+    on runtimes without context-aware warnings, `catch_warnings()` changes process-global filters
+    and can also silence unrelated concurrent runs.
 
     In tests, assert an intentional bust with `pytest.warns(CacheBustWarning)`, or silence
     a legitimately-busting test with
@@ -161,8 +199,9 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     ```
 
     The monitor is silent when caching is off or unreported (`cache_read_tokens` stays 0), so
-    it never fires spuriously in tests that don't exercise caching. Silencing and dev/CI
-    escalation both go through the stdlib `warnings` filters -- see `CacheBustWarning`.
+    it never fires spuriously in tests that don't exercise caching. Process-wide silencing and
+    dev/CI escalation go through the stdlib `warnings` filters; `ignore_cache_busts()` silences
+    one run without touching them -- see `CacheBustWarning`.
     """
 
     collapse_ratio: float = 0.5
@@ -270,7 +309,7 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
         # Warn on the transition into a collapse only; the latch keeps a sustained collapse -- and a
         # provider that keeps writing an unread cache (read stays low, write stays high) -- to one
         # warning, and re-arms once a healthy read-back clears it.
-        if is_collapse and not collapsed:
+        if is_collapse and not collapsed and not _ignoring.get():
             wasted = established - read
             gap = now - prev_seen
             origin = 'a prior request' if prev_run == ctx.run_id else 'an earlier run of this conversation'

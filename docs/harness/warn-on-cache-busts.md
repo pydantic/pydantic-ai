@@ -49,23 +49,24 @@ A conversation idle for longer than `cache_ttl_seconds` is forgotten: the provid
 
 ## Silencing and escalation
 
-There is no bespoke suppression API. Use the stdlib `warnings` machinery, exactly as you would manage any other `UserWarning`:
+Process-wide silencing and escalation use the stdlib `warnings` machinery, exactly as you would manage any other `UserWarning`. To silence one intentional bust, wrap the run that causes it in `ignore_cache_busts()`:
 
 ```python
 import warnings
-from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning
+from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning, ignore_cache_busts
 
 # Silence the whole category:
 warnings.filterwarnings('ignore', category=CacheBustWarning)
 
 # Silence one intentional bust, scoped to the operation that causes it:
-with warnings.catch_warnings():
-    warnings.simplefilter('ignore', CacheBustWarning)
+with ignore_cache_busts():
     result = agent.run_sync('...')  # e.g. a step that switches models or adds a file
 
 # Treat every bust as an error (dev/CI enforcement):
 warnings.filterwarnings('error', category=CacheBustWarning)
 ```
+
+Use `ignore_cache_busts()` rather than a `warnings.catch_warnings()` block for scoped silencing across supported Python runtimes. Without context-aware warnings, `catch_warnings()` changes process-global filters and can also silence unrelated concurrent runs. Python 3.14 can keep warning filters context-local when `sys.flags.context_aware_warnings` is enabled. `ignore_cache_busts()` holds its suppression in a `ContextVar` instead, so it applies only to the runs made inside the block, in that task or thread (and tasks started from it); concurrent runs keep warning, and a process-wide `'error'` filter still escalates them. The monitor keeps recording marks while silenced, so the suppressed collapse is not reported again after the block exits.
 
 In tests, assert an intentional bust with `pytest.warns(CacheBustWarning)`, or silence a legitimately-busting test with `@pytest.mark.filterwarnings('ignore::pydantic_ai_harness.warn_on_cache_busts.CacheBustWarning')`.
 
@@ -99,8 +100,10 @@ The monitor's signal is the `CacheBustWarning`; routing it through `logging` is 
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Pydantic AI hooks](../hooks.md)
 
-The public module exports `WarnOnCacheBusts` and `CacheBustWarning`. Import them from `pydantic_ai_harness.warn_on_cache_busts`.
+The public module exports `WarnOnCacheBusts`, `CacheBustWarning`, and `ignore_cache_busts`. Import them from `pydantic_ai_harness.warn_on_cache_busts`.
 
 ::: pydantic_ai_harness.warn_on_cache_busts.WarnOnCacheBusts
 
 ::: pydantic_ai_harness.warn_on_cache_busts.CacheBustWarning
+
+::: pydantic_ai_harness.warn_on_cache_busts.ignore_cache_busts
