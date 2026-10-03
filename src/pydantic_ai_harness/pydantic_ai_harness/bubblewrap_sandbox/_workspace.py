@@ -352,24 +352,19 @@ class BubblewrapWorkspace(WrapperWorkspace):
         # Path to kind, as `_ENSURE_LOGIN_PATHS` takes them: `p` for a parent pinned in place by binding it onto
         # itself, `d` for a protected directory, `f` for a protected file.
         kinds: dict[str, str] = {}
-        for name in _LOGIN_PATHS:
-            path = posixpath.join(home, name.rstrip('/'))
+        protected = [
+            (posixpath.join(home, name.rstrip('/')), 'd' if name.endswith('/') else 'f') for name in _LOGIN_PATHS
+        ]
+        if zdotdir and zdotdir != home:
+            protected.append((posixpath.join(zdotdir, '.zshenv'), 'f'))
+        for path, kind in protected:
             if not _contains(root, path):
                 continue
-            kinds[path] = 'd' if name.endswith('/') else 'f'
+            kinds[path] = kind
             parent = posixpath.dirname(path)
             while parent != root and _contains(root, parent):
                 kinds.setdefault(parent, 'p')
                 parent = posixpath.dirname(parent)
-        # Protect ZDOTDIR/.zshenv if ZDOTDIR is set and inside the working directory.
-        if zdotdir and zdotdir != home:
-            zshenv_path = posixpath.join(zdotdir, '.zshenv')
-            if _contains(root, zshenv_path):
-                kinds[zshenv_path] = 'f'
-                parent = posixpath.dirname(zshenv_path)
-                while parent != root and _contains(root, parent):
-                    kinds.setdefault(parent, 'p')
-                    parent = posixpath.dirname(parent)
         # Sorted, a parent comes before what's inside it, both to be created and to be mounted.
         paths = sorted(kinds)
         if paths:

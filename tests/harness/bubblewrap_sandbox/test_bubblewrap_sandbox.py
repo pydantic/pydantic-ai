@@ -300,11 +300,11 @@ async def test_a_relative_home_directory_is_unavailable(tmp_path: Path) -> None:
 
 async def test_zdotdir_inside_the_working_dir_is_mounted_read_only(tools: FakeRemoteTools, tmp_path: Path) -> None:
     """ZDOTDIR overrides HOME for zsh startup, so sshd_config SetEnv could escape the sandbox through it."""
-    home = tmp_path.parent / 'home'
-    home.mkdir(exist_ok=True)
-    zdotdir = tmp_path / 'zsh'
-    zdotdir.mkdir()
-    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)})
+    work, home = tmp_path / 'work', tmp_path / 'home'
+    zdotdir = work / 'zsh'
+    zdotdir.mkdir(parents=True)
+    home.mkdir()
+    backend = LocalWorkspaceBackend(work, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)})
     workspace = BubblewrapWorkspace(Workspace(backend))
 
     await workspace.run(['true'])
@@ -332,11 +332,10 @@ async def test_zdotdir_same_as_home_uses_standard_protection(tools: FakeRemoteTo
 
 async def test_zdotdir_outside_working_dir_needs_no_extra_protection(tools: FakeRemoteTools, tmp_path: Path) -> None:
     """A ZDOTDIR outside the writable directory cannot be planted by a sandboxed command."""
-    home = tmp_path.parent / 'home'
-    home.mkdir(exist_ok=True)
-    zdotdir = tmp_path.parent / 'zsh'
-    zdotdir.mkdir(exist_ok=True)
-    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)})
+    work, home, zdotdir = tmp_path / 'work', tmp_path / 'home', tmp_path / 'zsh'
+    for directory in (work, home, zdotdir):
+        directory.mkdir()
+    backend = LocalWorkspaceBackend(work, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)})
     workspace = BubblewrapWorkspace(Workspace(backend))
 
     await workspace.run(['true'])
@@ -347,7 +346,10 @@ async def test_zdotdir_outside_working_dir_needs_no_extra_protection(tools: Fake
 
 async def test_a_relative_zdotdir_is_unavailable(tmp_path: Path) -> None:
     """A relative ZDOTDIR would resolve against the working directory, allowing a sandbox escape."""
-    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(tmp_path.parent / 'home'), 'ZDOTDIR': 'relative'})
+    # The home directory must exist, or the sandbox fails on resolving it before it ever reads `ZDOTDIR`.
+    home = tmp_path / 'home'
+    home.mkdir()
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': 'relative'})
 
     with pytest.raises(WorkspaceUnavailableError, match='relative ZDOTDIR'):
         await BubblewrapWorkspace(Workspace(backend)).run(['true'])
