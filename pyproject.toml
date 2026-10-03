@@ -358,6 +358,7 @@ extend-select = [
     "TID251",
     "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
     "PGH003", # https://docs.astral.sh/ruff/rules/blanket-type-ignore/
+    "BLE001", # https://docs.astral.sh/ruff/rules/blind-except/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
@@ -406,6 +407,7 @@ quote-style = "single"
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
+"!src/pydantic_clai2/**/*.py" = ["BLE001"]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -542,6 +544,7 @@ include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
+    "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
     "tests/**/*.py",
 ]
 omit = [

@@ -17,11 +17,12 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._output import truncate_head
+from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
     from youdotcom import You, models
     from youdotcom.errors import NoResponseError, YouError
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'youdotcom is required for the You.com capabilities. '
         'Install it with: pip install "pydantic-ai-harness[youdotcom]"'
@@ -193,7 +194,7 @@ def default_client(timeout_ms: int) -> YouClient:
         app_name='pydantic-ai-harness',
         app_version=_harness_version(),
         app_title='Pydantic AI Harness',
-        app_url='https://github.com/pydantic/pydantic-ai-harness',
+        app_url='https://github.com/pydantic/pydantic-ai',
     )
 
 
@@ -277,6 +278,9 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
 
     `get_page` and full-page `web_search` text are capped at `max_text_chars`
     characters. Bounds are validated by `YouSearch` at construction.
+
+    With `defer_to_native=True`, `web_search` is the local fallback for the
+    model's native web search, as `YouSearch(native=True)` sets up.
     """
 
     def __init__(
@@ -292,6 +296,7 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         freshness: str | None = None,
         country: str | None = None,
         timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
+        defer_to_native: bool = False,
     ) -> None:
         super().__init__()
         self._client = client if client is not None else default_client(timeout_ms)
@@ -303,7 +308,9 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         self._boost_domains = list(boost_domains) if boost_domains else None
         self._freshness = freshness
         self._country = country
-        self.add_function(self.web_search, name='web_search')
+        self.add_function(
+            self.web_search, name='web_search', prepare=defer_to_native_web_search if defer_to_native else None
+        )
         self.add_function(self.get_page, name='get_page')
 
     def _extraction(self) -> models.Extraction:

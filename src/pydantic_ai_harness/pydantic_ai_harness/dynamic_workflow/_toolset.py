@@ -795,7 +795,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
         except MontyTypingError as e:
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
-        except MontySyntaxError as e:  # pragma: no cover -- backstop; the type checker parses first
+        # Backstop: the type checker parses the code first. `lax` because the errors handled below
+        # are still matched against this clause.
+        except MontySyntaxError as e:  # pragma: lax no cover
             raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
             if budget_exhausted:

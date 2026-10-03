@@ -101,7 +101,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import try_import
+from ..conftest import IsDatetime, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
 
@@ -1037,7 +1037,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
         'create_response': True,
         'interrupt_response': True,
     }
-    assert session['audio']['input']['transcription'] == {'model': 'gpt-realtime-whisper'}  # `'auto'` resolved
+    assert session['audio']['input']['transcription'] == {'model': 'gpt-live-transcribe'}  # `'auto'` resolved
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
@@ -3619,6 +3619,17 @@ async def test_truncate_resets_generated_audio_between_responses() -> None:
     }
 
 
+async def test_truncate_clamps_at_the_profile_output_sample_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 3200 bytes of mono PCM16 is 100 ms at 16 kHz (and would be ~67 ms at the 24 kHz default).
+    ws = FakeWebSocket([_created(), _updated(), _audio_delta('item_7', audio_bytes=3200)])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', profile=RealtimeModelProfile(audio_output_sample_rate=16000))
+    async with _connect(model, 'x') as conn:
+        _ = [e async for e in conn]
+        await conn.send(TruncateOutput(audio_end_ms=1000))
+    assert json.loads(ws.sent[-1])['audio_end_ms'] == 100
+
+
 async def test_truncate_sideband_connection_does_not_clamp() -> None:
     ws = FakeWebSocket([_audio_delta('item_7')])
     conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
@@ -4724,6 +4735,35 @@ def _response_frames(response_id: str, transcript: str) -> list[dict[str, Any]]:
 
 
 @pytest.mark.anyio
+async def test_image_history_cap_evicts_the_oldest_image_the_provider_added() -> None:
+    """Both session cores drop the oldest retained image to keep within `retain_images_max`."""
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        retain_images_max=1,
+    )
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(2)]
+    async with session:
+        for index, image in enumerate(images):
+            await session.send(image)
+            ws.push(
+                {
+                    'type': 'conversation.item.added',
+                    'item': {'id': f'pydantic_ai_item_{index}', 'type': 'message', 'role': 'user', 'content': []},
+                }
+            )
+        for _ in range(20):
+            await asyncio.sleep(0)
+    assert session.all_messages() == [
+        ModelRequest(parts=[UserPromptPart(content=[images[1]], timestamp=IsDatetime())], timestamp=IsDatetime())
+    ]
+
+
+@pytest.mark.shadow_divergence(reason='SIM-2a: turns sent after the reply started are filed after it, not before')
+@pytest.mark.anyio
 async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for_once() -> None:
     """Turns sent while a reply is in flight share one deferred response, and `wait_for_reply()` returns after it.
 
@@ -4904,6 +4944,9 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
             await session.wait_for_reply()
 
 
+@pytest.mark.shadow_divergence(
+    reason="SIM-2a: a turn sent after the batch's answer was requested is filed after that answer"
+)
 @pytest.mark.anyio
 async def test_tool_batch_response_create_counts_as_one_request() -> None:
     """A batch's `response.create` is one request, however many outputs it follows.
