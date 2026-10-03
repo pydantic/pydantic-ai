@@ -1053,11 +1053,10 @@ Change a single tool definition, and the whole prefix is re-created instead — 
 
 A tool's name is chosen by whoever wrote or configured it, and can be renamed or prefixed (for example by [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]), so code that needs to recognize a particular tool should not compare names. Instead, a tool can declare what it is with [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. Its call and return parts carry the same `tool_kind` and are promoted to typed subclasses of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. A hook or history processor can then match the tool with `isinstance`, whatever it is called. Core's tool search and deferred-capability tools work this way: [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] and [`LoadCapabilityReturnPart`][pydantic_ai.messages.LoadCapabilityReturnPart] are examples.
 
-A kind is registered by defining its typed subclass: a subclass that sets a `tool_kind` default registers that kind, and narrows `args` (or `content`, for a return part) to the shape it promises:
+A kind is registered by defining its typed subclass, passing `namespace` and `tool_kind` as class arguments, the way [capability events](capabilities/overview.md#capability-events) are defined. The kind is `'{namespace}.{tool_kind}'`: the namespace keeps kinds from different packages apart, which matters because the kind is stored in every message history. The subclass narrows `args` (or `content`, for a return part) to the shape it promises:
 
 ```python {title="typed_tool_part.py"}
 from dataclasses import KW_ONLY, dataclass
-from typing import Literal
 
 from typing_extensions import TypedDict
 
@@ -1069,14 +1068,13 @@ class LookupArgs(TypedDict):
 
 
 @dataclass(repr=False)
-class LookupCallPart(ToolCallPart):
+class LookupCallPart(ToolCallPart, namespace='inventory', tool_kind='lookup'):
     _: KW_ONLY
 
     args: str | LookupArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
-    tool_kind: Literal['inventory-lookup'] = 'inventory-lookup'  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
-response = ModelResponse(parts=[ToolCallPart('lookup_v2', {'sku': 'A-1'}, tool_kind='inventory-lookup')])
+response = ModelResponse(parts=[ToolCallPart('lookup_v2', {'sku': 'A-1'}, tool_kind='inventory.lookup')])
 part = response.parts[0]
 assert isinstance(part, LookupCallPart)
 print(part.args)
@@ -1089,7 +1087,7 @@ print(type(ModelMessagesTypeAdapter.validate_json(stored)[0].parts[0]).__name__)
 
 A tool declares the kind by setting `tool_kind` on its [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], for example in its toolset's `get_tools` or a [`prepare`](#tool-prepare) function. A `ToolDefinition` with a kind no typed part has registered raises [`UserError`][pydantic_ai.exceptions.UserError], so kinds are declared up front.
 
-A typed subclass may only narrow `args` / `content` and add properties; adding a field of its own raises `UserError` when the part is first promoted. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't register (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is registered. A return part whose [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] isn't `'success'` also stays a base part, since its content is an error rather than the typed result.
+A typed subclass may only narrow `args` / `content` and add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't register (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is registered. A return part whose [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] isn't `'success'` also stays a base part, since its content is an error rather than the typed result.
 
 ## See Also
 

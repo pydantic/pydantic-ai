@@ -41,7 +41,7 @@ class LoadCapabilityReturn(TypedDict):
 
 
 @dataclass(repr=False)
-class LoadCapabilityCallPart(ToolCallPart):
+class LoadCapabilityCallPart(ToolCallPart, _core=True):
     """Typed `ToolCallPart` for the `load_capability` tool."""
 
     _: KW_ONLY
@@ -75,7 +75,7 @@ class LoadCapabilityCallPart(ToolCallPart):
 
 
 @dataclass(repr=False)
-class LoadCapabilityReturnPart(ToolReturnPart):
+class LoadCapabilityReturnPart(ToolReturnPart, _core=True):
     """Typed `ToolReturnPart` for the `load_capability` tool."""
 
     _: KW_ONLY

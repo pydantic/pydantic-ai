@@ -113,7 +113,7 @@ class ToolSearchReturnContent(TypedDict):
 
 
 @dataclass(repr=False)
-class NativeToolSearchCallPart(NativeToolCallPart):
+class NativeToolSearchCallPart(NativeToolCallPart, _core=True):
     """Typed view of a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] for tool search.
 
     Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
@@ -184,7 +184,7 @@ class NativeToolSearchCallPart(NativeToolCallPart):
 
 
 @dataclass(repr=False)
-class NativeToolSearchReturnPart(NativeToolReturnPart):
+class NativeToolSearchReturnPart(NativeToolReturnPart, _core=True):
     """Typed view of a [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] for tool search.
 
     Used on the native server-side tool-search path (Anthropic BM25/regex, OpenAI
@@ -234,7 +234,7 @@ class NativeToolSearchReturnPart(NativeToolReturnPart):
 
 
 @dataclass(repr=False)
-class ToolSearchCallPart(ToolCallPart):
+class ToolSearchCallPart(ToolCallPart, _core=True):
     """Typed view of a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] for the local `search_tools` function call.
 
     Used on the local-fallback path (and as the synthetic-injection target on
@@ -306,7 +306,7 @@ class ToolSearchCallPart(ToolCallPart):
 
 
 @dataclass(repr=False)
-class ToolSearchReturnPart(ToolReturnPart):
+class ToolSearchReturnPart(ToolReturnPart, _core=True):
     """Typed view of a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for the local `search_tools` function return.
 
     Used on the local-fallback path (and as the synthetic-injection target on

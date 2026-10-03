@@ -26,7 +26,7 @@ from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
-from .messages import ToolPartKind, is_registered_tool_kind
+from .messages import ToolPartKind, parse_tool_kind
 from .native_tools import AbstractNativeTool
 
 __all__ = (
@@ -751,11 +751,11 @@ class ToolDefinition:
     """
 
     def __post_init__(self) -> None:
-        if self.tool_kind is not None and not is_registered_tool_kind(self.tool_kind):
+        if self.tool_kind is not None and parse_tool_kind(self.tool_kind) is None:
             raise UserError(
                 f'Tool {self.name!r} declares `tool_kind={self.tool_kind!r}`, which no typed tool part has registered. '
-                'Define a `ToolCallPart` / `ToolReturnPart` subclass that sets this `tool_kind` default, and import '
-                'its module before building the tool.'
+                'Define a typed `ToolCallPart` / `ToolReturnPart` subclass with this kind, and import its module '
+                'before building the tool.'
             )
 
     @cached_property
