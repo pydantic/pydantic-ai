@@ -41,9 +41,7 @@ def _track_executors(monkeypatch: pytest.MonkeyPatch) -> list[ThreadPoolExecutor
     return created_executors
 
 
-async def test_database_context_exit_shuts_down_executor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_database_context_exit_shuts_down_executor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """After a normal exit, the executor built by `Database.connect` rejects new work."""
     created_executors = _track_executors(monkeypatch)
     async with chat_app.Database.connect(tmp_path / 'messages.sqlite') as database:
@@ -56,9 +54,7 @@ async def test_database_context_exit_shuts_down_executor(
         created_executors[0].submit(int)
 
 
-async def test_database_body_exception_shuts_down_executor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_database_body_exception_shuts_down_executor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An exception in the body propagates and still shuts the executor down."""
     created_executors = _track_executors(monkeypatch)
     with pytest.raises(ValueError, match='boom'):
@@ -73,9 +69,7 @@ async def test_database_body_exception_shuts_down_executor(
         created_executors[0].submit(int)
 
 
-async def test_database_shutdown_does_not_block_event_loop(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_database_shutdown_does_not_block_event_loop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The executor shutdown runs away from the event-loop thread."""
     shutdown_thread_ids: list[int] = []
 
@@ -94,14 +88,10 @@ async def test_database_shutdown_does_not_block_event_loop(
     assert shutdown_thread_ids[0] != event_loop_thread_id
 
 
-async def test_database_connect_failure_shuts_down_executor(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_database_connect_failure_shuts_down_executor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """When the SQLite connection fails, the executor built for it is still shut down."""
     created_executors = _track_executors(monkeypatch)
-    context_manager = chat_app.Database.connect(
-        tmp_path / 'missing-directory' / 'messages.sqlite'
-    )
+    context_manager = chat_app.Database.connect(tmp_path / 'missing-directory' / 'messages.sqlite')
     with pytest.raises(sqlite3.OperationalError, match='unable to open database file'):
         await context_manager.__aenter__()
 
