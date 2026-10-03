@@ -77,6 +77,48 @@ def repository(tmp_path: Path) -> Path:
     return repository
 
 
+async def test_git_add_records_one_request_and_keeps_requirement_tags(
+    tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (repository / '__init__.py').write_text("""
+from pydantic import BaseModel
+from pydantic_clai2.plugins import Plugin, PluginHost
+
+class Options(BaseModel):
+    mode: str = 'plain'
+
+class Tagged(Plugin[Options, None]):
+    @classmethod
+    def from_host(cls, host: PluginHost[None]) -> 'Tagged':
+        return cls(host, host.settings(Options, requires={'mode': ['git-plugin-mode']}))
+""")
+    git(repository, 'add', '.')
+    git(repository, 'commit', '-m', 'Declare setting requirements')
+    requests: list[tuple[str, str]] = []
+
+    def record_request(action: str, name: str) -> None:
+        requests.append((action, name))
+
+    monkeypatch.setattr('pydantic_clai2.plugins.loader._requested', record_request)
+    harness = Harness(tmp_path)
+    save = harness.store.save_plugin
+
+    def save_configured(
+        plugin: PluginSettings, *, requires: Requirements | None = None, overwrite: bool = True
+    ) -> None:
+        save(plugin, requires=requires, overwrite=overwrite)
+        if not overwrite:
+            # Another session may configure the declaration before activation learns its requirements.
+            save(plugin.model_copy(update={'settings': {'mode': 'custom'}}))
+
+    monkeypatch.setattr(harness.store, 'save_plugin', save_configured)
+    await harness.loader.command(['add', repository.as_uri()])
+    assert requests == [('add', 'demo_plugin')]
+    assert harness.store.plugin_requirements('demo_plugin') == {'mode': ['git-plugin-mode']}
+    assert harness.store.plugins()[0].settings == {'mode': 'custom'}
+    await harness.loader.close('exit')
+
+
 @pytest.mark.parametrize('entrypoint', ['__init__.py', 'plugin.py'])
 async def test_add_git_plugin_lifecycle(tmp_path: Path, repository: Path, entrypoint: str) -> None:
     if entrypoint != '__init__.py':
@@ -183,6 +225,15 @@ async def test_remove_does_not_claim_a_foreign_git_directory(tmp_path: Path) -> 
     assert harness.store.plugins() == [declaration]
 
 
+@pytest.mark.parametrize('source', ['pkg.mod:Class', 'pydantic_ai_harness.coder:Coder'])
+async def test_module_without_id_does_not_start_a_git_install(tmp_path: Path, source: str) -> None:
+    harness = Harness(tmp_path)
+    with pytest.raises(ValueError, match='Usage:'):
+        await harness.loader.command(['add', source])
+    assert harness.store.plugins() == []
+    assert not (harness.store.plugins_dir / '_git').exists()
+
+
 def test_shell_git_install_directs_user_to_a_clai_session(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     with pytest.raises(ValueError, match=r'only inside a CLAI session: /plugins add GIT_URL'):
@@ -198,7 +249,7 @@ def test_shell_git_install_directs_user_to_a_clai_session(tmp_path: Path) -> Non
         ('https://example.com/my.plugin/', 'https://example.com/my.plugin/', 'my_plugin'),
         ('ssh://git@example.com:2222/team/plugin.git', 'ssh://git@example.com:2222/team/plugin.git', 'plugin'),
         ('git@example.com:team/plugin.git', 'git@example.com:team/plugin.git', 'plugin'),
-        ('example.com:team/plugin', 'example.com:team/plugin', 'plugin'),
+        ('ssh://example.com/team/plugin', 'ssh://example.com/team/plugin', 'plugin'),
         ('git+https://example.com/plugin.git', 'https://example.com/plugin.git', 'plugin'),
         ('git+ssh://git@example.com/plugin.git', 'ssh://git@example.com/plugin.git', 'plugin'),
         ('file:///tmp/plugin.git', 'file:///tmp/plugin.git', 'plugin'),
@@ -216,6 +267,9 @@ def test_repository_url(source: str, url: str, name: str) -> None:
         '-x',
         'ext::command',
         'ftp://example.com/plugin.git',
+        'example.com:team/plugin',
+        'pkg.mod:Class',
+        'pydantic_ai_harness.coder:Coder',
         'http://example.com/plugin.git',
         'git://example.com/plugin.git',
         'https:///plugin.git',

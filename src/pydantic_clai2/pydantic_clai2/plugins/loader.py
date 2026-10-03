@@ -544,9 +544,13 @@ class PluginLoader(Generic[DepsT]):
         _requested('enable', name)
         declaration = entry.declaration.model_copy(update={'enabled': True})
         self._store.save_plugin(declaration, requires=self._requirements(entry))
-        await self.load(name)
+        await self._load_enabled(entry)
+
+    async def _load_enabled(self, entry: PluginEntry[DepsT]) -> None:
+        """Load an enabled declaration and remember requirements learned from its plugin."""
+        await self.load(entry.name)
         # `load` refreshed the entries; only a loaded plugin can say what its settings need.
-        loaded = self._entries[name].loaded
+        loaded = self._entries[entry.name].loaded
         host = loaded.plugin.host if loaded is not None else None
         if host is not None and host.requirements:
             self._store.save_plugin(self._saved(entry), requires=host.requirements)
@@ -641,7 +645,7 @@ class PluginLoader(Generic[DepsT]):
                     raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
                 self._store.save_plugin(declaration, overwrite=False)
             _requested('add', declaration.id)
-            await self.enable(declaration.id)
+            await self._load_enabled(self._entry(declaration.id))
             return await self._configure_new(declaration.id, f'Added and loaded {declaration.id}.')
         if rest:
             rest[0] = canonical_plugin_id(rest[0])

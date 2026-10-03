@@ -678,11 +678,15 @@ Three ways to install one:
    hyphens and dots replaced by underscores. Names must start with a letter and
    contain only letters, digits, dots, hyphens, or underscores. Existing plugins
    and checkouts are never replaced. Network URLs must use HTTPS or SSH (including
-   `git@host:path`); these may also start with `git+`. Local `file://` URLs work too.
+   `git@host:path`); these may also start with `git+`. SCP-style URLs require
+   `user@host:path`; use `ssh://host/path` for an SSH alias without an explicit user.
+   Local `file://` URLs work too.
    Plaintext `http://` and `git://` transports are rejected because they cannot
    authenticate the plugin code being downloaded.
    Authentication uses your existing Git credentials without terminal prompts.
-   A failed or cancelled clone is removed. If the plugin itself fails to load,
+   CLAI removes failed or cancelled clones. If the operating system prevents
+   cleanup, clear the leftover checkout directory before retrying.
+   If the plugin itself fails to load,
    its checkout and declaration remain so you can fix it and `/plugins enable my_plugin`.
    To update, run `!git -C <checkout-directory> pull --ff-only`, then
    `/plugins reload my_plugin`. Reloading by itself does not fetch from Git.

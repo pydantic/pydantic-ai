@@ -4,10 +4,13 @@ import asyncio
 import os
 import re
 import shutil
+import stat
 import subprocess
-from collections.abc import AsyncGenerator, Collection
-from contextlib import asynccontextmanager
+import sys
+from collections.abc import AsyncGenerator, Callable, Collection
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from types import TracebackType
 from urllib.parse import unquote, urlsplit
 
 from anyio import CancelScope, fail_after
@@ -19,7 +22,7 @@ from pydantic_clai2.runtime._processes import kill_process_tree
 ADD_USAGE = 'Usage: /plugins add GIT_URL or /plugins add ID MODULE[:ATTR] [JSON]'
 CHECKOUTS_DIR = '_git'
 
-_SCP_URL = re.compile(r'(?:[\w.-]+@)?[\w.-]+:[^:\s].*')
+_SCP_URL = re.compile(r'[\w.-]+@[\w.-]+:[^:\s].*')
 _PLUGIN_ID = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
 
 
@@ -88,8 +91,35 @@ async def install_git_plugin(
             raise ValueError('A plugin repository must contain a regular __init__.py or plugin.py at its root.')
         yield PluginSettings(id=name, factory=name, path=str(entry))
     except BaseException:
-        shutil.rmtree(destination)
+        # Cleanup must not replace the installation error or cancellation.
+        with suppress(OSError):
+            remove_checkout(destination)
         raise
+
+
+def remove_checkout(destination: Path, *, windows: bool = os.name == 'nt') -> None:
+    """Remove an incomplete checkout, including Git's read-only object files on Windows."""
+    if not windows:
+        shutil.rmtree(destination)
+    elif sys.version_info >= (3, 12):
+        shutil.rmtree(destination, onexc=retry_readonly)
+    else:
+        shutil.rmtree(destination, onerror=retry_readonly_legacy)
+
+
+def retry_readonly(function: Callable[[str], object], path: str, error: BaseException) -> None:
+    """Retry a failed removal after clearing a regular file or directory's read-only bit."""
+    if not isinstance(error, PermissionError) or function not in (os.unlink, os.rmdir) or os.path.islink(path):
+        raise error
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
+
+
+def retry_readonly_legacy(
+    function: Callable[[str], object], path: str, error: tuple[type[BaseException], BaseException, TracebackType]
+) -> None:
+    """Adapt Python 3.10/3.11's `rmtree` callback to the exception-based one."""
+    retry_readonly(function, path, error[1])
 
 
 def git_executable(*, windows: bool = os.name == 'nt') -> str:
