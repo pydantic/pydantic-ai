@@ -160,7 +160,7 @@ jobs:
           import os
           import sys
           from urllib.error import HTTPError
-          from urllib.request import Request, urlopen
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
 
           api_key = os.environ.get('ZAI_API_KEY', '')
 
@@ -196,8 +196,11 @@ jobs:
               headers={'Authorization': api_key, 'Accept': 'application/json'},
               method='GET',
           )
+          request.redirect_dict = {}
+          redirect_handler = HTTPRedirectHandler()
+          redirect_handler.max_redirections = 0
           try:
-              with urlopen(request, timeout=20) as response:
+              with build_opener(redirect_handler).open(request, timeout=20) as response:
                   status = response.status
                   body = response.read(1_000_001)
           except HTTPError as error:
@@ -217,7 +220,7 @@ jobs:
 
           try:
               payload = json.loads(body)
-          except (UnicodeDecodeError, json.JSONDecodeError):
+          except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
               emit('json_parse', 'failed')
               sys.exit(1)
 
