@@ -149,6 +149,129 @@ jobs:
           mkdir -p provider-health
           python3 .github/scripts/agent_provider_health.py check --output provider-health/provider-health.json
           python3 -c "import json; from pathlib import Path; health = json.loads(Path('provider-health/provider-health.json').read_text()); assert health['ready'] is True, health.get('reason', 'provider is not ready')"
+      - name: Diagnose Z.ai quota response safely
+        if: ${{ !cancelled() && steps.health.outcome == 'failure' }}
+        env:
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scoped to the read-only quota diagnostic step only.
+        run: |
+          python3 - <<'PY'
+          import json
+          import math
+          import os
+          import sys
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+
+          api_key = os.environ.get('ZAI_API_KEY', '')
+
+          def emit(field: str, value: object) -> None:
+              rendered = str(value)
+              if api_key:
+                  rendered = rendered.replace(api_key, '[REDACTED]')
+              print(f'{field}={rendered}')
+
+          def safe_type(value: object) -> str:
+              value_type = type(value)
+              if value is None:
+                  return 'null'
+              if value_type in (bool, int, float, str, list, dict):
+                  return value_type.__name__
+              return 'other'
+
+          def safe_number(value: object) -> int | float | None:
+              if isinstance(value, bool):
+                  return None
+              if isinstance(value, int) and abs(value) <= 1_000_000_000_000:
+                  return value
+              if isinstance(value, float) and math.isfinite(value) and abs(value) <= 1_000_000_000_000:
+                  return value
+              return None
+
+          if not api_key:
+              emit('request_error', 'missing_api_key')
+              sys.exit(1)
+
+          request = Request(
+              'https://api.z.ai/api/monitor/usage/quota/limit',
+              headers={'Authorization': api_key, 'Accept': 'application/json'},
+              method='GET',
+          )
+          try:
+              with urlopen(request, timeout=20) as response:
+                  status = response.status
+                  body = response.read(1_000_001)
+          except HTTPError as error:
+              emit('request_error', type(error).__name__)
+              emit('http_status', safe_number(error.code) or 'unknown')
+              sys.exit(1)
+          except Exception as error:
+              emit('request_error', type(error).__name__)
+              sys.exit(1)
+
+          emit('http_status', safe_number(status) or 'unknown')
+          if not isinstance(status, int) or isinstance(status, bool) or not 200 <= status < 300:
+              sys.exit(1)
+          if len(body) > 1_000_000:
+              emit('json_parse', 'size_limit')
+              sys.exit(1)
+
+          try:
+              payload = json.loads(body)
+          except (UnicodeDecodeError, json.JSONDecodeError):
+              emit('json_parse', 'failed')
+              sys.exit(1)
+
+          if not isinstance(payload, dict):
+              emit('envelope_type', safe_type(payload))
+              sys.exit(1)
+
+          code = safe_number(payload.get('code'))
+          emit('envelope_code', code if code is not None else 'unknown')
+          success = payload.get('success')
+          emit('envelope_success', success if isinstance(success, bool) else 'unknown')
+
+          data = payload.get('data')
+          limits = data.get('limits') if isinstance(data, dict) else None
+          if not isinstance(limits, list):
+              emit('limits_type', safe_type(limits) if limits is not None else 'missing')
+              sys.exit(0)
+
+          emit('window_count', len(limits))
+          known_window_types = {'TOKENS_LIMIT', 'CREDIT_LIMIT', 'TIME_LIMIT'}
+          for row in limits[:20]:
+              if not isinstance(row, dict):
+                  emit('window_type', 'unknown')
+                  emit('window_unit', 'unknown')
+                  emit('window_number', 'unknown')
+                  emit('window_percentage', 'unknown')
+                  emit('next_reset_time_presence', 'absent')
+                  emit('next_reset_time_type', 'unknown')
+                  continue
+
+              window_type = row.get('type')
+              if isinstance(window_type, str) and window_type in known_window_types:
+                  emit('window_type', window_type)
+              else:
+                  emit('window_type', 'unknown')
+              for source, target in (('unit', 'window_unit'), ('number', 'window_number')):
+                  value = safe_number(row.get(source))
+                  emit(target, value if value is not None else 'unknown')
+              percentage = safe_number(row.get('percentage'))
+              if percentage is not None and 0 <= percentage <= 100:
+                  emit('window_percentage', percentage)
+              else:
+                  emit('window_percentage', 'unknown')
+
+              if 'nextResetTime' not in row:
+                  emit('next_reset_time_presence', 'absent')
+                  emit('next_reset_time_type', 'missing')
+              else:
+                  reset_time = row['nextResetTime']
+                  emit('next_reset_time_presence', 'present')
+                  emit('next_reset_time_type', safe_type(reset_time))
+                  if isinstance(reset_time, int) and not isinstance(reset_time, bool):
+                      emit('next_reset_time_value', reset_time)
+          PY
       - name: Verify the Z.ai x-api-key request path
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scoped to this live SDK request only.
