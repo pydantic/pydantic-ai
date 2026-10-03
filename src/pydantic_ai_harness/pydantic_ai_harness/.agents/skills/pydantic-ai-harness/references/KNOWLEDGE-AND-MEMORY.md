@@ -40,6 +40,7 @@ only).
 | `FileStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
 | `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A shared `connection` needs `check_same_thread=False` and must be dedicated to the store |
 | `PostgresMemoryStore(pool, *, table='agent_memory')` | Durable, shared | Driver-neutral `PostgresPool` protocol (for example an `asyncpg` pool); you own the pool lifecycle; no harness extra |
+| `PixeltableMemoryStore(table_name='harness.memory')` | Durable, shared Pixeltable catalog | Install `[pixeltable]` on Python 3.11+; creates the table on first use |
 
 ```python
 from pydantic_ai import Agent
@@ -76,6 +77,14 @@ Gotchas:
   implement `MemoryStore` mutations atomically.
 - `FileStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
   processes use `SqliteMemoryStore` or `PostgresMemoryStore`.
+
+### Pixeltable catalog
+
+`Pixeltable(tables=['app.documents'])` gives an agent read-only tools to list and describe allowed
+tables, query rows, and search an embedding index. The `tables` allowlist is required and two
+instances combine by intersecting allowlists. `PixeltableMemoryStore` is a separate store for
+`Memory`; neither requires the other. Install `pydantic-ai-harness[pixeltable]` on Python 3.11+.
+See the [Pixeltable guide](https://pydantic.dev/docs/ai/harness/pixeltable/) for limits and examples.
 
 ### Namespaces (multi-user)
 
