@@ -11,9 +11,11 @@ around a match stay within the match's run.
 
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import re
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -36,7 +38,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness._warn import warn_default_changed
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_default_changed
 from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource
 
 SEARCH_HISTORY_DESCRIPTION = """\
@@ -287,6 +289,31 @@ def _display_lines(messages: list[ModelMessage]) -> list[str]:
     return [f'[{index}] {line or "[no text content]"}' for index, line in enumerate(lines)]
 
 
+def _accepts_conversation_filter(source: HistorySource) -> bool:
+    """Return whether `source.list_runs` takes `conversation_id=`, warning when it does not.
+
+    `HistorySource.list_runs` gained the keyword so a conversation-scoped search stops
+    enumerating every conversation's runs. A source written against the old signature
+    keeps working (the toolset filters the full list itself) but is told to update.
+    """
+    parameters = inspect.signature(source.list_runs).parameters.values()
+    keyword_kinds = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    if any(
+        (p.name == 'conversation_id' and p.kind in keyword_kinds) or p.kind is inspect.Parameter.VAR_KEYWORD
+        for p in parameters
+    ):
+        return True
+    warnings.warn(
+        f'`{type(source).__name__}.list_runs()` does not accept `conversation_id=`. '
+        '`HistorySource.list_runs` now takes it so a conversation-scoped search only lists that '
+        "conversation's runs; without it every search lists the whole store. Add the keyword "
+        'argument; support for the old signature will be removed in a future release.',
+        category=HarnessDeprecationWarning,
+        stacklevel=3,
+    )
+    return False
+
+
 @dataclass
 class _RunSection:
     """One run's slice of the corpus, index-aligned per run."""
@@ -338,6 +365,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         if not 0.0 <= bm25_b <= 1.0:
             raise ValueError(f'bm25_b must be between 0.0 and 1.0, got {bm25_b!r}.')
         self._source = source
+        self._source_filters_conversations = _accepts_conversation_filter(source)
         self._max_matches = max_matches
         self._context_lines = context_lines
         self._params = _Bm25Params(k1=bm25_k1, b=bm25_b)
@@ -438,11 +466,18 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         return header + '\n\n---\n\n'.join(results)
 
     async def _load_sections(self, run_id: str | None, conversation_id: str | None) -> list[_RunSection]:
-        runs = await self._source.list_runs()
-        if conversation_id is not None:
-            runs = [run for run in runs if run.conversation_id == conversation_id]
-        if run_id is not None:
-            runs = [run for run in runs if run.run_id == run_id]
+        if self._source_filters_conversations:
+            runs = await self._source.list_runs(conversation_id=conversation_id)
+        else:
+            runs = await self._source.list_runs()
+        # Filter here too: the conversation boundary is a security boundary, so it must
+        # hold even for a source that accepts `conversation_id` and ignores it.
+        runs = [
+            run
+            for run in runs
+            if (conversation_id is None or run.conversation_id == conversation_id)
+            and (run_id is None or run.run_id == run_id)
+        ]
         sections: list[_RunSection] = []
         for run in runs:
             messages = await self._source.run_history(run_id=run.run_id)

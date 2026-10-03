@@ -195,11 +195,17 @@ Gotchas:
   a run with neither gets a fresh id and searches only itself.
 - `SnapshotHistorySource(store)` raises `TypeError` at construction if the store lacks
   `list_runs` / `list_snapshots`; the shipped `InMemoryStepStore`, `FileStepStore`,
-  `SqliteStepStore`, `MongoStepStore` all work. A custom `HistorySource` must populate
-  `conversation_id` on its `RunRecord`s.
+  `SqliteStepStore`, `MongoStepStore` all work. A custom `HistorySource` must
+  populate `conversation_id` on its `RunRecord`s and implement
+  `list_runs(*, conversation_id: str | None = None)`. The old no-argument signature still
+  works at runtime and warns, but fails static `HistorySource` compatibility checks,
+  including when passed to `ConversationSearch`. Return all runs for `None` and only the
+  matching conversation's runs otherwise.
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being
-  retained (`max_snapshots_per_run` can prune them). The corpus is rebuilt on every call, so cost
-  grows with in-scope history.
+  retained (`max_snapshots_per_run` can prune them). `SnapshotHistorySource` caches each run's
+  reconstructed record and only folds in snapshots saved since, keeping the
+  `max_cached_runs=128` most recently searched runs (`0` disables it). BM25 ranking still runs
+  over the whole in-scope corpus on every call.
 
 ## Skills
 
