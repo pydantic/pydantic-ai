@@ -93,7 +93,7 @@ from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
-from ..conversation import Conversation, resolve_conversation
+from ..conversation import Conversation
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -1413,7 +1413,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        message_history, usage, conversation_id = resolve_conversation(
+        message_history, usage, conversation_id = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
 

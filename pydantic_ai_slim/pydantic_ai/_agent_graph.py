@@ -9,7 +9,7 @@ from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import field, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
@@ -70,6 +70,7 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -114,6 +115,7 @@ __all__ = (
     'build_run_context',
     'capture_run_messages',
     'HistoryProcessor',
+    'resolve_conversation',
     'resolve_conversation_id',
     'process_tool_calls',
     'resolve_run_id',
@@ -289,6 +291,41 @@ def resolve_conversation_id(
             if (cid := message.conversation_id) is not None:
                 return cid
     return str(uuid7())
+
+
+def resolve_conversation(
+    conversation: Conversation | None,
+    *,
+    message_history: Sequence[_messages.ModelMessage] | None,
+    usage: _usage.RunUsage | None,
+    conversation_id: str | None,
+) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None]:
+    """Resolve a `conversation` argument into the three arguments it stands in for.
+
+    The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
+    passing the conversation's own object would make running from a conversation change it —
+    double-counting across two runs started from the same one, and corrupting it as a point to
+    branch from. `copy` covers the mutable `details` mapping too, per `UsageBase.__copy__`.
+    """
+    if conversation is None:
+        return message_history, usage, conversation_id
+
+    if conflicts := [
+        name
+        for name, value in (
+            ('message_history', message_history),
+            ('usage', usage),
+            ('conversation_id', conversation_id),
+        )
+        if value is not None
+    ]:
+        listed = ' and '.join(f'`{name}`' for name in conflicts)
+        raise exceptions.UserError(
+            f'`conversation` already carries {listed}, so passing both is ambiguous. '
+            f'Pass the conversation on its own, or pass its pieces yourself.'
+        )
+
+    return conversation.messages, copy(conversation.usage), conversation.conversation_id
 
 
 def resolve_run_id(

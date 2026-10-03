@@ -41,7 +41,7 @@ from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._run_context import set_current_run_context
 from ..capabilities import AgentCapability
-from ..conversation import Conversation, resolve_conversation
+from ..conversation import Conversation
 from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
@@ -1865,7 +1865,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (but not `new_messages()`). Hand off from a prior session or a standard
                 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
         """
-        message_history, usage, conversation_id = resolve_conversation(
+        message_history, usage, conversation_id = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
         # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's
