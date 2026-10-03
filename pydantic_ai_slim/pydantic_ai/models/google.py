@@ -830,6 +830,29 @@ class GoogleModel(Model[Client]):
 
             for tool in model_request_parameters.native_tools:
                 if isinstance(tool, WebSearchTool):
+                    # Check for constraint fields that Google native search cannot honor
+                    # These fields exist for compliance/trust reasons - silently dropping them
+                    # would violate the constraint, so we raise UserError instead
+                    unsupported: list[str] = []
+                    if tool.allowed_domains is not None:
+                        unsupported.append('allowed_domains')
+                    if tool.blocked_domains is not None:
+                        unsupported.append('blocked_domains')
+                    if tool.max_uses is not None:
+                        unsupported.append('max_uses')
+                    if tool.external_web_access is not None:
+                        unsupported.append('external_web_access')
+                    
+                    if unsupported:
+                        raise UserError(
+                            f'Google native web search (google_search) does not support these '
+                            f'WebSearchTool constraint fields: {", ".join(unsupported)}. '
+                            f'These constraints cannot be silently dropped as they may exist for '
+                            f'compliance or trust requirements. '
+                            f'Either use `WebSearch(local=True)` with a search engine that supports '
+                            f'your constraints, or remove the unsupported fields.'
+                        )
+                    
                     tools.append(ToolDict(google_search=GoogleSearchDict()))
                 elif isinstance(tool, WebFetchTool):
                     tools.append(ToolDict(url_context=UrlContextDict()))
