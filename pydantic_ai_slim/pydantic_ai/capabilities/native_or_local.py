@@ -54,7 +54,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
       Returning `None` omits the native tool.
 
     The field keeps what was passed, so `dataclasses.replace` and merging resolve it again from the
-    new configuration. Assigning it on a constructed capability resolves it again on the next read.
+    new configuration. Assigning it on a constructed capability resolves it again on the next read but
+    skips the checks construction runs, so reconfigure with `dataclasses.replace` instead.
     [`get_native_tools()`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] returns the
     tool it resolves to.
     """
@@ -69,8 +70,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     - A `Tool` or `AbstractToolset` instance: use this specific local tool.
     - A bare callable: automatically wrapped in a `Tool`.
 
-    The field keeps what was passed and is resolved again on the next read after it is assigned,
-    like `native`.
+    The field keeps what was passed. Like `native`, assigning it resolves it again on the next read
+    but skips the checks construction runs, so reconfigure with `dataclasses.replace` instead.
     [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] returns the toolset it
     resolves to.
     """
@@ -142,7 +143,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         """Resolve `native` and `local` into `_native_tool` and `_local_tool`, recording what they came from.
 
         Runs from `__post_init__`, and from `get_native_tools()` and `get_toolset()` once `native` or
-        `local` has been assigned since. Construction-time validation stays in `__post_init__`.
+        `local` has been assigned since. Construction-time validation stays in `__post_init__`, so an
+        assigned value is not validated.
         """
         # Resolve native=True → default instance (subclass hook)
         native = self.native
