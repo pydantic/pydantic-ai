@@ -6,7 +6,7 @@ Plan for [#9641](https://github.com/pydantic/pydantic-ai/issues/9641). This PR p
 
 `LLMJudge` turns a textless model's verdict into a binary score and omits confidence information from the evaluator result. The reporter's gated judge improved agreement with labelled answers from 308/390 to 356/390 while Jev decided 60% of cases. Those measurements have not been independently reproduced.
 
-Preserve existing score, assertion, and string-rubric behavior. Add explicit probability reporting and an opt-in Boolean confidence gate first. Integrate a structured rubric after the structured input design in [#9640](https://github.com/pydantic/pydantic-ai/issues/9640) is agreed.
+Preserve existing score, assertion, and `rubric: str` behavior. Add explicit probability reporting and an opt-in Boolean confidence gate first. Add `LLMJudge.criteria: BoolCriteria | None = None` after the structured input design in [#9640](https://github.com/pydantic/pydantic-ai/issues/9640) is agreed.
 
 ## Recommended API
 
@@ -15,9 +15,9 @@ Preserve existing score, assertion, and string-rubric behavior. Add explicit pro
 | `LLMJudge.probability` | `bool \| OutputConfig`, default `False`; emit a separate native probability metric. |
 | `DecisionModelSettings.decision_boolean_confidence_threshold` | `float \| None`, default `None`; accept values in `[0, 1]` and hand off native Boolean answers below the threshold. |
 | `UnsureBoolean` in `pydantic_ai.models.decision` | A new `ModelAPIError` carrying the field name, verdict, raw probability, confidence, and configured threshold. |
-| `LLMJudge.rubric` | Extend `str` to `str \| BoolCriteria`; the existing string path stays unchanged. |
+| `LLMJudge.criteria` | Add `BoolCriteria \| None`, default `None`; keep the existing `rubric: str` parameter and string-rubric behavior unchanged. |
 
-The first three surfaces can ship before structured input. The `BoolCriteria` rubric path follows #9640.
+The first three surfaces can ship before structured input. `LLMJudge.criteria` follows #9640.
 
 ```python
 from pydantic_ai.models.decision import DecisionHandOff, DecisionModelSettings, UnsureBoolean
@@ -49,34 +49,38 @@ When requested, `LLMJudge` emits the final selected response's `pass` probabilit
 
 Use the existing Boolean confidence definition relative to `decision_boolean_threshold`, including its six-decimal reporting precision. For multiple native Boolean fields, hand off the whole response if any field is below the configured confidence threshold, before output acceptance or tool execution. Leave list/mapping membership decisions, rubric scores, and route thresholds unchanged. No configured threshold means no new handoff.
 
-At the default verdict cutoff of `0.5`, confidence `0.6` accepts `p <= 0.2` or `p >= 0.8`; threshold equality is accepted. With a different verdict cutoff, use its existing scaled distance rather than hard-coded probability bands. Validate thresholds before calling the backend.
+At the default verdict cutoff of `0.5`, confidence `0.6` accepts approximately `p <= 0.2` or `p >= 0.8`; threshold equality is accepted. With a different verdict cutoff, use its existing scaled distance rather than hard-coded probability bands. Validate thresholds before calling the backend.
 
-`UnsureBoolean` extends `ModelAPIError` directly. Existing `DecisionHandOff` requires route/probability attributes that describe route selection; Boolean uncertainty must not populate those attributes with unrelated values. `FallbackModel` already handles response predicates and exception tuples, so no change to its dispatch is needed. A tuple catches both route handoffs and uncertain Boolean outputs while allowing backend failures to propagate.
+`UnsureBoolean` extends `ModelAPIError` directly. Existing `DecisionHandOff` requires route/probability attributes that describe route selection; Boolean uncertainty must not populate those attributes with unrelated values. Raise `UnsureBoolean` only after answer decoding succeeds and outside `_fill`'s backend-error wrapper, so `FallbackModel` can receive the uncertainty. Existing backend failures remain terminal. For this opt-in threshold, uncertainty in a selected route's filled output causes whole-step fallback after route filling and before tool execution. `FallbackModel` already handles response predicates and exception tuples, so no change to its dispatch is needed.
 
-### Structured rubric and material
+### Explicit criteria and material
 
-Reuse the existing `BoolCriteria` type, exported from `pydantic_ai`:
+Keep `rubric: str` unchanged and add `LLMJudge.criteria: BoolCriteria | None = None`. When `criteria` is provided, the caller's rubric becomes the question description and `BoolCriteria` supplies the true/false criteria. This opt-in path follows #9640; with `criteria=None`, the existing string-rubric path and prompts stay unchanged.
+
+Reuse the existing criteria type, exported from pydantic_ai:
 
 ```python
-rubric = BoolCriteria(
+from pydantic_ai import BoolCriteria
+
+criteria = BoolCriteria(
     true='The output conveys the facts requested by the input and expected_output.',
     false='The output contradicts or omits a requested fact.',
 )
 ```
 
-For this opt-in rubric form, use named material fields `output`, `input`, and `expected_output`, honoring the existing inclusion flags. Serialize material to JSON with Pydantic serialization and raise a clear error for unsupported values. Send that material through #9640's explicit structured content API. Put the grading question in the Boolean field description and the true/false rubric in `BoolCriteria`; exclude the rubric from state.
+When `criteria` is provided, use named material fields `output`, `input`, and `expected_output`, honoring the existing inclusion flags. Serialize material to JSON with Pydantic serialization and raise a clear error for unsupported values. Send that material through #9640's explicit structured content API. Put the caller's rubric in the Boolean field description and the true/false criteria in `BoolCriteria`; exclude the criteria from state.
 
-A text-capable judge renders the same explicit criteria into its grading instructions. The mixed fallback path depends on #9640 defining JSON-to-text projection without mutating stored history. Keep both models judging the same material and criteria. Do not parse free-form rubric strings into criteria or change their prompt encoding.
+A text-capable judge renders the same explicit criteria together with the rubric in its grading instructions. The mixed fallback path depends on #9640 defining JSON-to-text projection without mutating stored history. Keep both models judging the same material and criteria. Do not parse free-form rubric strings into criteria or change their prompt encoding.
 
 ## Implementation and verification
 
 | Criterion | Verification to add |
 | --- | --- |
-| Existing users retain binary scores, assertions, names, and prompts | Existing judge snapshots and a default-settings regression in `tests/evals/test_llm_as_a_judge.py`. |
+| Existing users retain binary scores, assertions, names, prompts, and the `rubric: str` type | Existing judge snapshots, a default-settings regression, and a rubric type assertion in `tests/evals/test_llm_as_a_judge.py`. |
 | Native probability remains exact and separate from confidence | Boolean response metadata cases in `tests/models/test_decision.py`; preserve other distribution shapes. |
-| The confidence gate respects custom cutoffs, endpoints, equality, and multiple fields | Targeted decision-model cases, including invalid-setting rejection before backend calls and unchanged non-Boolean paths. |
+| The confidence gate respects custom cutoffs, endpoints, equality, and multiple fields | Targeted decision-model cases for forced routes, two-request route fills, streaming, validation before backend calls, unchanged non-Boolean paths, and unchanged backend failures. |
 | Mixed fallback accepts uncertain Boolean outputs without inventing probability | End-to-end judge cases in `tests/evals/test_typesafe_judges.py`; test predicate and exception-tuple fallback, metric omission, and backend-error propagation. |
-| Structured material and explicit criteria reach both models correctly | After #9640, record each backend test with its own test function; assert object state, question criteria, and text fallback projection. |
+| Structured material and explicit criteria reach both models correctly when `criteria` is provided | After #9640, record each backend test with its own test function; assert object state, question criteria, and text fallback projection. |
 
 Before accepting default thresholds for an application, rerun the reporter's benchmark with its rubric and labelled sample. Confidence is a model signal, not a guarantee of calibration. The unlabelled benchmark's similar pass rates do not prove accuracy.
 
