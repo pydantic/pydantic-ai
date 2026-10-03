@@ -16,6 +16,7 @@ from types import ModuleType
 from typing import Any
 
 import anyio
+import pydantic
 import pytest
 
 import pydantic_ai._utils as utils_module
@@ -1252,3 +1253,49 @@ def test_replace_no_init() -> None:
     with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
         replace_no_init(self_copying, name='b')
     assert self_copying.name == 'a', 'the original must not be mutated in place'
+
+
+def _resolve_branch_leaf_value_type(branch: dict[str, Any], defs: dict[str, dict[str, Any]]) -> str:
+    """Follow `$ref`s from a merged `anyOf` branch down to its leaf model's `value` field."""
+    node: dict[str, Any] = branch
+    while True:
+        if '$ref' in node:
+            node = defs[str(node['$ref']).removeprefix('#/$defs/')]
+            continue
+        props: dict[str, Any] = node.get('properties', {})
+        next_props = [prop for prop in props.values() if '$ref' in prop]
+        if not next_props:
+            return str(node['properties']['value']['type'])
+        node = defs[str(next_props[0]['$ref']).removeprefix('#/$defs/')]
+
+
+def test_output_json_schema_transitive_collision_preserves_branches():
+    """Two output models with same-named nested defs of different bodies keep per-branch fidelity."""
+    first_leaf = pydantic.create_model('ZLeaf', value=(str, ...))
+    first_middle = pydantic.create_model('Middle', leaf=(first_leaf, ...))
+    first = pydantic.create_model('AOuter', middle=(first_middle, ...))
+    second_leaf = pydantic.create_model('ZLeaf', value=(int, ...))
+    second_middle = pydantic.create_model('Middle', leaf=(second_leaf, ...))
+    second = pydantic.create_model('AOuter', middle=(second_middle, ...))
+
+    schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
+
+    defs = schema['$defs']
+    assert _resolve_branch_leaf_value_type(schema['anyOf'][0], defs) == 'string'
+    assert _resolve_branch_leaf_value_type(schema['anyOf'][1], defs) == 'integer'
+
+
+def test_output_json_schema_transitive_collision_preserves_branches_name_permutation():
+    """Same shape with outer/middle/leaf def names permuted to (A, C, B), another order that corrupted a branch."""
+    first_leaf = pydantic.create_model('B', value=(str, ...))
+    first_middle = pydantic.create_model('C', leaf=(first_leaf, ...))
+    first = pydantic.create_model('A', middle=(first_middle, ...))
+    second_leaf = pydantic.create_model('B', value=(int, ...))
+    second_middle = pydantic.create_model('C', leaf=(second_leaf, ...))
+    second = pydantic.create_model('A', middle=(second_middle, ...))
+
+    schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
+
+    defs = schema['$defs']
+    assert _resolve_branch_leaf_value_type(schema['anyOf'][0], defs) == 'string'
+    assert _resolve_branch_leaf_value_type(schema['anyOf'][1], defs) == 'integer'

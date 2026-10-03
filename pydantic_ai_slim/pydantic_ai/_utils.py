@@ -1005,11 +1005,13 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         schema = schema.copy()
         defs = schema.pop('$defs', None)
         schema_name_mapping: dict[str, str] = {}
+        new_def_names: set[str] = set()
 
         # Process definitions and build mapping
         for name, def_schema in defs.items():
             if name not in all_defs:
                 all_defs[name] = def_schema
+                new_def_names.add(name)
                 schema_name_mapping[name] = name
             elif def_schema != all_defs[name]:
                 # Different def with same name — assign a unique name
@@ -1019,29 +1021,42 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
 
         # Defs that are structurally equal (same dict) may still be semantically
         # different if they contain $refs that point to defs that were renamed in
-        # this schema. E.g. both schemas have Wrapper={$ref Inner}, but their
-        # Inner defs differ, so Schema B's Inner was renamed to Inner_1. The shared
-        # Wrapper is not actually equal — Schema B needs its own copy with updated refs.
-        # Loop until stable, since creating a copy can trigger further copies
-        # in defs that reference it (transitive chains).
+        # this schema. Revisit every definition until a full pass makes no new
+        # mapping, so transitive references are resolved regardless of definition
+        # order.
         changed = True
         while changed:
             changed = False
             for name, def_schema in defs.items():
-                if name not in schema_name_mapping:
-                    updated = copy.deepcopy(def_schema)
-                    _update_mapped_json_schema_refs(updated, schema_name_mapping)
-                    if updated != def_schema:
-                        schema_name_mapping[name] = _unique_def_name(name, schema, all_defs)
-                        all_defs[schema_name_mapping[name]] = updated
+                updated = copy.deepcopy(def_schema)
+                _update_mapped_json_schema_refs(updated, schema_name_mapping)
+                mapped_name = schema_name_mapping.get(name)
+                if updated != def_schema:
+                    if mapped_name is None:
+                        # Structurally equal to an earlier schema's def, but its
+                        # $refs now resolve differently: it needs its own copy
+                        # under a new name.
+                        new_name = _unique_def_name(name, schema, all_defs)
+                        schema_name_mapping[name] = new_name
+                        all_defs[new_name] = updated
                         changed = True
-                    else:
-                        schema_name_mapping[name] = name
+                    elif mapped_name == name and name in new_def_names:
+                        # The current schema introduced this def, so it is not
+                        # shared with an earlier schema: keep the name and
+                        # update its $refs in place.
+                        _update_mapped_json_schema_refs(all_defs[name], schema_name_mapping)
+                        changed = True
+                elif mapped_name is None:
+                    schema_name_mapping[name] = name
+                    changed = True
 
-        # Update refs inside definitions so internal cross-references
-        # (e.g. Outer referencing Inner which was renamed to Inner_1) are corrected.
-        for new_name in schema_name_mapping.values():
-            _update_mapped_json_schema_refs(all_defs[new_name], schema_name_mapping)
+        # Update refs inside renamed definitions using copies so definitions shared
+        # with earlier schemas are not mutated in place.
+        for name, new_name in schema_name_mapping.items():
+            if new_name != name:
+                updated = copy.deepcopy(defs[name])
+                _update_mapped_json_schema_refs(updated, schema_name_mapping)
+                all_defs[new_name] = updated
 
         _update_mapped_json_schema_refs(schema, schema_name_mapping)
         rewritten_schemas.append(schema)
