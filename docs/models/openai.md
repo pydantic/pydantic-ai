@@ -507,6 +507,42 @@ agent = Agent(model)
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
 
+## Decisions API
+
+OpenAI's Decisions API runs a GPT model as a [decision model](decision.md): it answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text. [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page.
+
+It takes model IDs that the Responses API also serves, such as `gpt-6-luna`, so the `'openai-decisions:'` prefix is what picks it:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai-decisions:gpt-6-luna', output_type=bool, instructions='Is this request harmful?')
+result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
+print(result.output)
+#> True
+```
+
+It reads the same `OPENAI_API_KEY`. Its provider, [`OpenAIDecisionsProvider`][pydantic_ai.providers.openai_decisions.OpenAIDecisionsProvider], takes the same arguments as [`OpenAIProvider`](#configure-the-provider), including a [custom client](#custom-openai-client):
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
+from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+
+model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key='your-api-key'))
+agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
+...
+```
+
+All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI has not published separate pricing for it, so its cost is estimated at the model's token prices. Like every decision model, it [reads no files](decision.md#what-decision-models-cannot-do).
+
+`timeout`, `extra_headers` and `extra_body` are forwarded to the request, and the other generic settings, such as `temperature`, are ignored. [`OpenAIDecisionsModelSettings`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModelSettings] adds the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
+
+OpenAI publishes no limits on how many options a pick-one or how many levels a rubric can have, so none are checked before a request is sent. A request over a limit gets an error response from the API, which is raised as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over. Where you know a limit, set it in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile] with `profile=`, as on the [System One page](system-one.md#limits).
+
+!!! note "Measure on your own data"
+    A threshold tuned on another decision model does not carry over to this one. Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
+
 ## OpenAI-compatible Models
 
 Many other services serve OpenAI-compatible APIs. See [Other compatible APIs](compatible-apis.md) for the ones Pydantic AI has a provider for, and for connecting to any other OpenAI-compatible endpoint.
