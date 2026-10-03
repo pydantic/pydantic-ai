@@ -535,8 +535,7 @@ jobs:
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
       # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
-      # collects it on 3.10: `pydantic-clai2` and its tests have 3.10-only branches that `all-extras`
-      # covers otherwise.
+      # collects it on 3.10: `tests/clai2` has 3.10-only branches that `all-extras` covers otherwise.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.10' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
@@ -1416,13 +1415,13 @@ jobs:
       - run: uv sync --group dev --group coverage
       - run: uv run --no-sync coverage combine
       # Only the `pydantic-clai2` cells ran for a change confined to it, so they can only vouch
-      # for its own source and tests: the rest of the workspace is covered on the full path.
+      # for its own tests: the rest of the workspace is covered on the full path.
       - name: coverage report
         env:
           CLAI2_ONLY: ${{ needs.classify.outputs.clai2_only }}
         run: |
           if [ "$CLAI2_ONLY" = true ]; then
-            uv run --no-sync coverage report --include='src/pydantic_clai2/*,tests/clai2/*'
+            uv run --no-sync coverage report --include='tests/clai2/*'
           else
             uv run --no-sync coverage report
           fi

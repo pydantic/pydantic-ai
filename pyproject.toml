@@ -545,9 +545,6 @@ include = [
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
     "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
-    # A subprocess resolves a relative pattern against its own working directory, and
-    # `tests/clai2/test_reload.py` runs the package in one started from a temporary directory.
-    "**/src/pydantic_clai2/pydantic_clai2/**/*.py",
     "tests/**/*.py",
 ]
 omit = [
