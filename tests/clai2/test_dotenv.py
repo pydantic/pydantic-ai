@@ -88,11 +88,7 @@ def test_startup_without_dotenv_values(
         monkeypatch.setattr('pydantic_clai2.__main__.load_dotenv', unreadable)
     elif state == 'fifo':
         os.mkfifo(tmp_path / '.env')
-
-        def unexpected_load(dotenv_path: str) -> bool:
-            pytest.fail('A `.env` FIFO must not be passed to `load_dotenv`')
-
-        monkeypatch.setattr('pydantic_clai2.__main__.load_dotenv', unexpected_load)
+        monkeypatch.setattr('pydantic_clai2.__main__.load_dotenv', pytest.fail)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('PYTHON_DOTENV_DISABLED', '1' if state == 'disabled' else '0')
     monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
