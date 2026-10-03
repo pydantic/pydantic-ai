@@ -291,7 +291,7 @@ def _parse_zai_quota(value: object) -> Quota:
     ):
         return Quota('unknown')
 
-    quota_rows: list[object] = limits
+    quota_rows: list[object] = limits  # pyright: ignore[reportUnknownVariableType]
     windows: dict[int, tuple[float, str, int]] = {}
     for item in quota_rows:
         entry = _mapping(item)
