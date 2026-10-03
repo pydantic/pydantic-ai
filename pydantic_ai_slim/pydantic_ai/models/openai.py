@@ -632,17 +632,83 @@ class _OpenAIPromptCacheBreakpoint(TypedDict):
     mode: Literal['explicit']
 
 
+_LEADING_CACHE_POINT_ERROR = (
+    'CachePoint cannot be the first content in a user message - '
+    'there must be previous content to attach the cache breakpoint to.'
+)
+
+
 def _add_openai_prompt_cache_breakpoint(
     content: Sequence[ChatCompletionContentPartParam | responses.ResponseInputContentParam],
 ) -> None:
-    if not content:
-        raise UserError(
-            'CachePoint cannot be the first content in a user message - '
-            'there must be previous content to attach the cache breakpoint to.'
-        )
+    """Mark the last content part as a cache breakpoint.
 
+    A `CachePoint` that opens a user message has nothing in that message to attach to. The caller
+    then appends an empty text part for it to sit on, which `_move_leading_cache_breakpoints` moves
+    onto the previous message once the whole request is mapped: "cache everything up to here" means
+    the same there, and it's what Anthropic and Bedrock do.
+    """
     cache_breakpoint: _OpenAIPromptCacheBreakpoint = {'mode': 'explicit'}
     content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
+
+
+def _leading_cache_breakpoint(item: dict[str, Any]) -> _OpenAIPromptCacheBreakpoint | None:
+    """The breakpoint a leading `CachePoint` left on an empty placeholder opening this user message, if any."""
+    content = item.get('content')
+    if item.get('role') != 'user' or not isinstance(content, list) or not content:
+        return None
+    first = cast('dict[str, Any]', content[0])
+    if first.get('type') in ('text', 'input_text') and first.get('text') == '' and 'prompt_cache_breakpoint' in first:
+        return cast(_OpenAIPromptCacheBreakpoint, first['prompt_cache_breakpoint'])
+    return None
+
+
+def _move_leading_cache_breakpoints(
+    items: list[chat.ChatCompletionMessageParam] | list[responses.ResponseInputItemParam],
+    *,
+    text_type: Literal['text', 'input_text'],
+) -> None:
+    """Move the breakpoint a leading `CachePoint` left on an empty placeholder onto the previous item.
+
+    The breakpoint goes on the last content part of the closest earlier item that has content to
+    carry it: a tool result, a user or assistant message, or a function call output. A
+    string body becomes a single text part so it can carry the marker; the text is unchanged.
+    Raises `UserError` when there's no earlier content at all, as Anthropic does.
+    """
+    index = 0
+    while index < len(items):
+        item = cast('dict[str, Any]', items[index])
+        breakpoint_value = _leading_cache_breakpoint(item)
+        if breakpoint_value is not None:
+            if not _attach_cache_breakpoint_before(items, index, breakpoint_value, text_type=text_type):
+                raise UserError(_LEADING_CACHE_POINT_ERROR)
+            content = cast('list[Any]', item['content'])
+            if len(content) == 1:
+                del items[index]
+                continue
+            item['content'] = content[1:]
+        index += 1
+
+
+def _attach_cache_breakpoint_before(
+    items: list[chat.ChatCompletionMessageParam] | list[responses.ResponseInputItemParam],
+    index: int,
+    breakpoint_value: _OpenAIPromptCacheBreakpoint,
+    *,
+    text_type: Literal['text', 'input_text'],
+) -> bool:
+    for previous in reversed(items[:index]):
+        item = cast('dict[str, Any]', previous)
+        key = 'output' if item.get('type') == 'function_call_output' else 'content'
+        body = item.get(key)
+        if isinstance(body, str) and body:
+            item[key] = [{'type': text_type, 'text': body, 'prompt_cache_breakpoint': breakpoint_value}]
+            return True
+        if isinstance(body, list) and body:
+            last = cast('dict[str, Any]', body[-1])
+            last['prompt_cache_breakpoint'] = breakpoint_value
+            return True
+    return False
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -1713,6 +1779,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
+        _move_leading_cache_breakpoints(openai_messages, text_type='text')
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
@@ -1965,6 +2032,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         `cache_control` breakpoint on the preceding part).
         """
         if isinstance(item, CachePoint) and self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            if not content:
+                content.append(ChatCompletionContentPartTextParam(text='', type='text'))
             _add_openai_prompt_cache_breakpoint(content)
         else:
             mapped_item = await self._map_content_item(item)
@@ -3802,6 +3871,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 )
             else:
                 assert_never(message)
+        _move_leading_cache_breakpoints(openai_messages, text_type='input_text')
         instructions = get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
@@ -3868,6 +3938,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     content.append(self._map_uploaded_file_to_response_content(item))  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, CachePoint):
                     if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+                        if not content:
+                            content.append(responses.ResponseInputTextParam(text='', type='input_text'))
                         _add_openai_prompt_cache_breakpoint(content)
                 elif is_multi_modal_content(item):
                     content.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'user prompts'))  # pyright: ignore[reportArgumentType]
