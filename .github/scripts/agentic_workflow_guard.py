@@ -741,14 +741,26 @@ def _is_zai_workflow(frontmatter: Mapping[str, object]) -> bool:
 
 
 def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
-    """The shared and workflow-local engines must use the configured Z.AI credential."""
+    """Shared and workflow-local engines must use the shared provider configuration."""
     engine_path = workflows_dir / 'shared' / 'engine-zai.md'
     if not engine_path.is_file():
         return [Violation(str(engine_path), 'provider-engine-config', 'Shared Z.AI engine configuration is missing.')]
 
     engine_config = parse_frontmatter(engine_path)
+    shared_engine = _as_mapping(engine_config.get('engine'))
+    shared_env = _as_mapping(shared_engine.get('env'))
+    endpoint = shared_env.get('ANTHROPIC_BASE_URL')
+    credential = shared_env.get('ANTHROPIC_API_KEY')
+    if not isinstance(endpoint, str) or not endpoint or not isinstance(credential, str) or not credential:
+        return [
+            Violation(
+                str(engine_path),
+                'provider-engine-config',
+                'The shared agent engine must define a nonempty `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`.',
+            )
+        ]
+
     shared_engines: tuple[tuple[str, object], ...] = (
-        ('agent', engine_config.get('engine')),
         (
             'threat-detection',
             _as_mapping(_as_mapping(engine_config.get('safe-outputs')).get('threat-detection')).get('engine'),
@@ -757,61 +769,31 @@ def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
     violations: list[Violation] = []
     for engine_name, engine_value in shared_engines:
         engine_env = _as_mapping(_as_mapping(engine_value).get('env'))
-        if (
-            engine_env.get('ANTHROPIC_BASE_URL') != 'https://api.z.ai/api/anthropic'
-            or engine_env.get('ANTHROPIC_API_KEY') != '${{ secrets.ZAI_API_KEY }}'
-        ):
+        if engine_env.get('ANTHROPIC_BASE_URL') != endpoint or engine_env.get('ANTHROPIC_API_KEY') != credential:
             violations.append(
                 Violation(
                     str(engine_path),
                     'provider-engine-config',
-                    f'The shared {engine_name} engine must use the Z.AI Anthropic endpoint and `ZAI_API_KEY`.',
+                    f'The shared {engine_name} engine must use the shared agent engine endpoint and credential.',
                 )
             )
 
-    legacy_values = ('shared/engine-minimax.md', 'api.minimax.io', 'MINIMAX_API_KEY', 'MINIMAX_QUOTA_RESOURCE')
     source_paths = list(workflows_dir.glob(AGENTIC_GLOB))
     for source in (workflows_dir / 'shared' / 'provider-health.md', workflows_dir / 'agent-provider-health.yml'):
         if source.is_file():
             source_paths.append(source)
     for source in source_paths:
-        source_text = source.read_text(encoding='utf-8')
-        if any(value in source_text for value in legacy_values):
-            violations.append(
-                Violation(
-                    str(source),
-                    'provider-engine-legacy',
-                    'Workflow configuration still contains MiniMax engine settings.',
-                )
-            )
         frontmatter = parse_frontmatter(source) if source.suffix == '.md' else {}
         local_engine = _as_mapping(frontmatter.get('engine'))
         local_env = _as_mapping(local_engine.get('env'))
-        if 'ANTHROPIC_BASE_URL' in local_env and (
-            local_env.get('ANTHROPIC_BASE_URL') != 'https://api.z.ai/api/anthropic'
-            or local_env.get('ANTHROPIC_API_KEY') != '${{ secrets.ZAI_API_KEY }}'
+        if ('ANTHROPIC_BASE_URL' in local_env or 'ANTHROPIC_API_KEY' in local_env) and (
+            local_env.get('ANTHROPIC_BASE_URL') != endpoint or local_env.get('ANTHROPIC_API_KEY') != credential
         ):
             violations.append(
                 Violation(
                     str(source),
                     'provider-engine-config',
-                    'A workflow-local Z.AI engine must use the Z.AI Anthropic endpoint and `ZAI_API_KEY`.',
-                )
-            )
-
-    attention_triage = workflows_dir / 'pydantic-ai-attention-triage.md'
-    if attention_triage.is_file():
-        attention_frontmatter = parse_frontmatter(attention_triage)
-        trigger = _as_mapping(attention_frontmatter.get('on'))
-        workflow_call = _as_mapping(trigger.get('workflow_call'))
-        declared_secrets = _as_mapping(workflow_call.get('secrets'))
-        zai_secret = _as_mapping(declared_secrets.get('ZAI_API_KEY'))
-        if zai_secret.get('required') is not True:
-            violations.append(
-                Violation(
-                    str(attention_triage),
-                    'provider-engine-config',
-                    'The workflow-call path must require `ZAI_API_KEY`.',
+                    'A workflow-local engine override must use the shared engine endpoint and credential.',
                 )
             )
     return violations

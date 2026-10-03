@@ -26,7 +26,7 @@ ASSIGNEE = 'dsfaccini'
 
 Scope = Literal['provider', 'workflow', 'task']
 QuotaStatus = Literal['healthy', 'exhausted', 'unknown']
-FailureKind = Literal['balance', 'authentication', 'rate_limit', 'request_limit', 'timeout', 'other']
+FailureKind = Literal['authentication', 'rate_limit', 'request_limit', 'timeout', 'other']
 
 
 @dataclass(frozen=True)
@@ -39,8 +39,6 @@ class Quota:
     weekly_remaining_percent: float | None = None
     interval_reset_at: str | None = None
     weekly_reset_at: str | None = None
-    interval_unlimited: bool | None = None
-    weekly_unlimited: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -186,8 +184,6 @@ def _write_health(path: Path, health: Health) -> None:
             'weekly_remaining_percent': health.quota.weekly_remaining_percent,
             'interval_reset_at': health.quota.interval_reset_at,
             'weekly_reset_at': health.quota.weekly_reset_at,
-            'interval_unlimited': health.quota.interval_unlimited,
-            'weekly_unlimited': health.quota.weekly_unlimited,
         },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,8 +221,6 @@ def _health_from_json(value: object) -> Health:
     )
     interval_percent = _validated_percent(quota_data.get('interval_remaining_percent'))
     weekly_percent = _validated_percent(quota_data.get('weekly_remaining_percent'))
-    interval_unlimited = quota_data.get('interval_unlimited')
-    weekly_unlimited = quota_data.get('weekly_unlimited')
     if (
         workflow is None
         or task_key is None
@@ -238,8 +232,6 @@ def _health_from_json(value: object) -> Health:
         or (quota_data.get('reset_at') is not None and reset_at is None)
         or (quota_data.get('interval_reset_at') is not None and interval_reset_at is None)
         or (quota_data.get('weekly_reset_at') is not None and weekly_reset_at is None)
-        or (interval_unlimited is not None and not isinstance(interval_unlimited, bool))
-        or (weekly_unlimited is not None and not isinstance(weekly_unlimited, bool))
     ):
         raise ValueError('provider-health artifact is missing required validated fields')
     return Health(
@@ -257,8 +249,6 @@ def _health_from_json(value: object) -> Health:
             weekly_percent,
             interval_reset_at,
             weekly_reset_at,
-            interval_unlimited,
-            weekly_unlimited,
         ),
     )
 
@@ -527,7 +517,7 @@ def _failure_from(value: object) -> Failure | None:
     if data is None:
         return None
     kind = data.get('kind')
-    if kind not in ('balance', 'authentication', 'rate_limit', 'request_limit', 'timeout', 'other'):
+    if kind not in ('authentication', 'rate_limit', 'request_limit', 'timeout', 'other'):
         return None
     status = data.get('http_status')
     if status is not None and (isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599):
@@ -596,7 +586,7 @@ def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
     failure = result.failure
     if failure is None:
         return 'workflow', result.workflow, 'execution'
-    if failure.kind in ('balance', 'authentication') or failure.http_status in (401, 403):
+    if failure.kind == 'authentication' or failure.http_status in (401, 403):
         return 'provider', 'zai', failure.kind
     if failure.kind == 'rate_limit':
         return 'provider', 'zai', failure.kind
@@ -609,7 +599,6 @@ def _failure_reason(failure: Failure | None) -> str:
     if failure is None:
         return 'Agent execution failed before a typed provider result was available'
     reasons: dict[FailureKind, str] = {
-        'balance': 'Z.ai reported an insufficient balance',
         'authentication': 'Z.ai rejected the configured credentials',
         'rate_limit': 'Z.ai rate limits stopped the run',
         'request_limit': 'The agent reached its per-run request limit',
@@ -744,24 +733,16 @@ def _check_command(args: argparse.Namespace) -> int:
                     'interval',
                     health.quota.interval_remaining_percent,
                     health.quota.interval_reset_at,
-                    health.quota.interval_unlimited,
                 ),
                 (
                     'weekly',
                     health.quota.weekly_remaining_percent,
                     health.quota.weekly_reset_at,
-                    health.quota.weekly_unlimited,
                 ),
             )
             details: list[str] = []
-            for name, percent, reset_at, is_unlimited in windows:
-                remaining = (
-                    'unlimited'
-                    if is_unlimited
-                    else f'{percent:g}% remaining'
-                    if percent is not None
-                    else 'remaining percentage unknown'
-                )
+            for name, percent, reset_at in windows:
+                remaining = f'{percent:g}% remaining' if percent is not None else 'remaining percentage unknown'
                 details.append(f'{name}: {remaining}; resets at {reset_at}')
             quota_detail = '\n\nPlan quota windows: ' + '; '.join(details) + '.'
         with open(summary, 'a', encoding='utf-8') as handle:

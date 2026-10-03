@@ -173,8 +173,6 @@ def test_zai_quota_parses_observed_windows_and_ignores_mcp_limit() -> None:
     assert quota.interval_reset_at == '2026-10-03T07:35:26Z'
     assert quota.weekly_reset_at == '2026-10-08T14:54:29Z'
     assert quota.reset_at is None
-    assert quota.interval_unlimited is None
-    assert quota.weekly_unlimited is None
 
 
 @pytest.mark.parametrize(
@@ -425,15 +423,22 @@ def test_health_artifact_round_trips_versioned_gate_dto(tmp_path: Path) -> None:
             weekly_remaining_percent=30,
             interval_reset_at='2026-10-01T13:00:00Z',
             weekly_reset_at='2026-10-07T00:00:00Z',
-            interval_unlimited=False,
-            weekly_unlimited=False,
         ),
     )
     path = tmp_path / 'provider-health.json'
 
     _write_health(path, original)
 
-    assert _health_from_json(json.loads(path.read_text())) == original
+    payload: object = json.loads(path.read_text())
+    payload_data = _mapping(payload)
+    assert payload_data is not None
+    quota_data = _mapping(payload_data.get('quota'))
+    assert quota_data is not None
+    assert 'interval_unlimited' not in quota_data
+    assert 'weekly_unlimited' not in quota_data
+    quota_data['interval_unlimited'] = 'legacy value'
+    quota_data['weekly_unlimited'] = {'legacy': True}
+    assert _health_from_json(payload_data) == original
 
 
 def test_check_requires_the_actual_run_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -501,6 +506,18 @@ def test_result_parser_reads_shim_terminal_jsonl_at_root(tmp_path: Path) -> None
     assert health.parse_run_result(result_file) == health.RunResult(
         'nightly-sweep', 'task-1', 'schedule', 1, health.Failure('rate_limit', 429, None)
     )
+
+
+def test_result_parser_rejects_retired_balance_failure_kind() -> None:
+    """The removed MiniMax failure kind is not accepted as current runner metadata."""
+    provider_health: dict[str, object] = {
+        'workflow': 'nightly-sweep',
+        'task_key': 'task-1',
+        'trigger_event': 'schedule',
+        'run_attempt': 1,
+        'failure': {'kind': 'balance'},
+    }
+    assert _run_result_from({'type': 'result', 'provider_health': provider_health}) is None
 
 
 def test_monitor_creates_one_assigned_labeled_incident_then_reuses_it() -> None:
@@ -913,10 +930,10 @@ def test_check_command_reads_zai_quota_and_writes_secret_free_artifact(
 
 def test_scope_rules_for_typed_and_untyped_failures() -> None:
     """Terminal failure kinds map to provider, task, or scheduled workflow scope."""
-    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('balance', None, None))) == (
+    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('authentication', None, None))) == (
         'provider',
         'zai',
-        'balance',
+        'authentication',
     )
     assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('other', 403, None))) == (
         'provider',
@@ -1205,7 +1222,7 @@ def test_monitor_uses_trusted_context_when_terminal_metadata_mismatches(
                     'task_key': 'other-task',
                     'trigger_event': 'workflow_dispatch',
                     'run_attempt': 1,
-                    'failure': {'kind': 'balance'},
+                    'failure': {'kind': 'authentication'},
                 },
             }
         )

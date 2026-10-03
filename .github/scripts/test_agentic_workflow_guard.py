@@ -1132,7 +1132,7 @@ jobs:
     assert 'prompt-path-outside-workspace' in {violation.check for violation in violations}
 
 
-def test_provider_engine_config_requires_the_zai_host_and_credential(tmp_path: Path):
+def test_provider_engine_config_rejects_drift_from_shared_values(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     shared = workflows / 'shared'
     engine = _write(
@@ -1158,23 +1158,29 @@ safe-outputs:
         '    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}\n---\nPrompt\n',
     )
 
+    alternate_endpoint = 'https://provider.example/api/anthropic'
+    alternate_credential = '${{ secrets.CURRENT_PROVIDER_API_KEY }}'
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8')
+        .replace('https://api.z.ai/api/anthropic', alternate_endpoint)
+        .replace('${{ secrets.ZAI_API_KEY }}', alternate_credential),
+    )
+    _write(
+        local,
+        local.read_text(encoding='utf-8')
+        .replace('https://api.z.ai/api/anthropic', alternate_endpoint)
+        .replace('${{ secrets.ZAI_API_KEY }}', alternate_credential),
+    )
+
     assert check_provider_engine_config(workflows) == []
 
     _write(
         engine,
         engine.read_text(encoding='utf-8').replace(
-            'ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic',
-            'ANTHROPIC_BASE_URL: https://api.z.ai/anthropic',
-            1,
-        ),
-    )
-    assert [violation.check for violation in check_provider_engine_config(workflows)] == ['provider-engine-config']
-
-    _write(
-        engine,
-        engine.read_text(encoding='utf-8').replace(
-            'ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}',
-            'ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}',
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: '
+            + alternate_endpoint,
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: https://provider.example/anthropic',
             1,
         ),
     )
@@ -1182,9 +1188,39 @@ safe-outputs:
 
     _write(
         engine,
-        engine.read_text(encoding='utf-8').replace('https://api.z.ai/anthropic', 'https://api.z.ai/api/anthropic'),
+        engine.read_text(encoding='utf-8').replace(
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: https://provider.example/anthropic',
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: '
+            + alternate_endpoint,
+            1,
+        ),
     )
-    _write(local, local.read_text(encoding='utf-8').replace('secrets.ZAI_API_KEY', 'secrets.OTHER_API_KEY'))
+    _write(local, local.read_text(encoding='utf-8').replace(alternate_credential, '${{ secrets.OTHER_API_KEY }}'))
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(local, local.read_text(encoding='utf-8').replace('${{ secrets.OTHER_API_KEY }}', alternate_credential))
+    _write(
+        local,
+        local.read_text(encoding='utf-8').replace(alternate_endpoint, 'https://provider.example/anthropic'),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace(
+            'ANTHROPIC_API_KEY: ' + alternate_credential,
+            'ANTHROPIC_API_KEY: ""',
+            1,
+        ),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace(
+            'ANTHROPIC_BASE_URL: ' + alternate_endpoint, 'ANTHROPIC_BASE_URL: ""', 1
+        ),
+    )
     assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
 
 

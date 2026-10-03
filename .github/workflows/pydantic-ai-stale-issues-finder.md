@@ -30,7 +30,7 @@ network:
 # ANTHROPIC_BASE_URL MUST be a compile-time literal (not a ${{ vars.* }}
 # expression): gh-aw derives the api-proxy target host AND the
 # `--anthropic-api-base-path` from its parsed URL path at compile time. With a
-# vars expression the path can't be parsed, so the proxy drops the `/anthropic`
+# vars expression the path can't be parsed, so the proxy drops the `/api/anthropic`
 # prefix and the upstream returns 404. Only ANTHROPIC_API_KEY stays a secret
 # (injected by the AWF api-proxy, excluded from the agent container). Z.AI Coding Plan
 # exposes an Anthropic-compatible API at https://api.z.ai/api/anthropic.

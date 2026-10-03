@@ -828,9 +828,7 @@ def test_multi_edit_replace_all(tmp_path: Path):
 
 
 def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatch):
-    """`web_fetch_20250910` is an Anthropic-server-side tool; compat
-    endpoints (MiniMax etc.) reject it with HTTP 400. The capability is
-    gated by `ANTHROPIC_BASE_URL`."""
+    """`web_fetch_20250910` is Anthropic-specific; compatible endpoints may not support it."""
     monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
     caps = shim._anthropic_native_capabilities()  # pyright: ignore[reportPrivateUsage]
     assert len(caps) == 1 and isinstance(caps[0], NativeTool)
@@ -1918,7 +1916,7 @@ _RATE_LIMITED_RESPONSE = {
 
 
 def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
-    """A real `AsyncAnthropic` whose first `rate_limited_responses` requests get a MiniMax 429."""
+    """An `AsyncAnthropic` client whose first requests receive a retryable 429."""
 
     def _handle(_request: httpx2.Request) -> httpx2.Response:
         calls.append(1)
@@ -2340,18 +2338,10 @@ def test_emit_result_error_subtype():
 @pytest.mark.parametrize(
     ('error', 'expected_kind', 'expected_status'),
     [
-        (
-            ModelHTTPError(
-                402,
-                'MiniMax-M3',
-                {'type': 'error', 'error': {'type': 'insufficient_balance_error', 'message': 'balance low'}},
-            ),
-            'balance',
-            402,
-        ),
-        (ModelHTTPError(401, 'MiniMax-M3', {'error': {'type': 'authentication_error'}}), 'authentication', 401),
-        (ModelHTTPError(403, 'MiniMax-M3', {'error': {'type': 'permission_error'}}), 'authentication', 403),
-        (ModelHTTPError(429, 'MiniMax-M3', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
+        (ModelHTTPError(401, 'test-model', {'error': {'type': 'authentication_error'}}), 'authentication', 401),
+        (ModelHTTPError(403, 'test-model', {'error': {'type': 'permission_error'}}), 'authentication', 403),
+        (ModelHTTPError(429, 'test-model', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
+        (ModelHTTPError(402, 'test-model', {'error': {'type': 'payment_required_error'}}), 'other', 402),
         (UsageLimitExceeded('request limit'), 'request_limit', None),
         (RuntimeError('provider returned a 402'), 'other', None),
     ],

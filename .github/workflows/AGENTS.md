@@ -192,17 +192,16 @@ and keeps agent workflows gated. No quota-resource repository variable is needed
 
 To request manual recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
-open, marked Z.AI incident and never closes other incidents in the same run. It closes
-the named incident only when a fresh check finds both Z.AI quota windows valid and
-healthy; healthy Z.AI quota must never be treated as recovery for a MiniMax incident.
-A scheduled run automatically closes only Z.AI rate-limit or quota-exhaustion incidents
-that include a known, elapsed reset time and pass a fresh healthy quota check. Unknown
-or malformed quota, missing reset time, credentials/configuration incidents, and
-workflow/task incidents need operator attention rather than automatic recovery.
+open, marked incident whose provider key matches the currently configured provider.
+It never closes another incident in the same run. A fresh health check must pass
+before the controller closes the named incident. A scheduled run automatically closes
+only provider rate-limit or quota-exhaustion incidents with a known, elapsed reset time
+after a fresh healthy check. Unknown or malformed quota, missing reset time,
+credentials/configuration incidents, and workflow/task incidents need operator
+attention rather than automatic recovery.
 
-The health controller never enables a disabled agent workflow. Keep manually disabled
-workflows disabled until the provider migration is merged and a fresh provider-health check is
-healthy; then re-enable the specific workflow deliberately.
+The health controller never enables a disabled agent workflow. After a fresh healthy
+provider-health check, an operator may deliberately enable a disabled workflow.
 
 ## Policy guard
 
@@ -212,6 +211,7 @@ healthy; then re-enable the specific workflow deliberately.
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
 | `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, or a monitor that accepts unlisted workflows or itself | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. |
+| `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
 | `prompt-path-outside-workspace` | prompt text pointing at `/tmp/gh-aw/...` | Outside the agent's file-tool root — `Read` rejects it and the agent burns turns rediscovering the file. Stage context under `$GITHUB_WORKSPACE`. |
