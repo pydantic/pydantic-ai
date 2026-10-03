@@ -912,6 +912,10 @@ Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting t
 
 [Agent Skills](https://agentskills.io) are loaded as [on-demand capabilities](capabilities/on-demand.md) rather than as toolsets, so each skill can stay collapsed to a catalog entry until the model needs it. See [Agent Skills](capabilities/third-party.md#agent-skills) on the third-party capabilities page.
 
+As a toolset alternative:
+
+* [`agent-skills`](https://github.com/datalayer/agent-skills) - `AgentSkillsToolset` discovers `SKILL.md` packages in local directories and registers `list_skills`, `load_skill`, `read_skill_resource`, and `run_skill_script` tools. Skill scripts run through a pluggable executor, which can use an isolated [`code-sandboxes`](https://github.com/datalayer/code-sandboxes) backend; its `eval` backend runs in the host process and is only suitable for trusted code. Compatible with [agentskills.io](https://agentskills.io).
+
 ### Task Management
 
 Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
@@ -930,6 +934,7 @@ Toolsets for file operations help agents read, write, and edit files:
 Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
 
 * [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
+* [`agent-codemode`](https://github.com/datalayer/agent-codemode) - `CodemodeToolset` generates typed Python bindings for the tools of MCP servers and exposes an `execute_code` tool, so the model writes one program that composes many tool calls instead of calling them one at a time. Code runs on a configurable execution backend from [`code-sandboxes`](https://github.com/datalayer/code-sandboxes), such as [Monty](https://github.com/pydantic/monty), Docker, Jupyter, or Modal. The default `eval` backend runs code in the host process with no isolation, so pick an isolated backend for untrusted, model-generated code. Pydantic AI Harness ships a first-party [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) capability for the same pattern.
 
 ### LangChain Tools {#langchain-tools}
 
