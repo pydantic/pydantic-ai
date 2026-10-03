@@ -31,6 +31,7 @@ from pydantic_ai_harness.code_mode._speculation import (
 from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
     CodeModeOS,
+    CodeModeOSPolicy,
     CodeModeResourceLimits,
     CodeModeToolset,
     as_os_handler,
@@ -133,6 +134,20 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
+
+    os_policy: CodeModeOSPolicy | None = None
+    """Monty session policies for the sandbox's clock, timezone, sleep, and randomness.
+
+    Keys you set are merged over the defaults, which route the clock, sleeps, and random seeding
+    to `os_access` (so without a handler, the clock and unseeded `random` are unavailable).
+    `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives sandboxed code the worker's clock
+    in that zone without any handler; a `datetime` value freezes the clock at that instant;
+    `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but makes `astimezone()`,
+    `%Z`, and `time.tzname` report that zone. See `pydantic_monty.OSPolicy` for every key.
+
+    Inside a Temporal workflow, a `'system'` clock or randomness is read again on replay; keep the
+    default or a fixed value there.
+    """
 
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
@@ -264,6 +279,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 dynamic_catalog=self.dynamic_catalog,
                 os_access=self.os_access,
                 mount=self.mount,
+                os_policy=self.os_policy,
                 monty_sandbox_url=self.monty_sandbox_url,
                 capability=self,
                 speculation=self._speculation,
@@ -277,6 +293,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
+            os_policy=self.os_policy,
             monty_sandbox_url=self.monty_sandbox_url,
             capability=self,
             speculation=self._speculation,
