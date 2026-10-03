@@ -13,7 +13,9 @@ states them outright, with an id on every entity:
 - a spoken user turn is bracketed by `UserTurnStarted` and `UserTurnEnded` (or `UserTurnDiscarded`);
 - `InputAdded` marks where an input joined the provider's conversation, so history can follow the
   provider's order;
-- `InputLost` and `ResponseRequestRefused` settle the inputs no response will ever answer.
+- `InputLost` and `ResponseRequestRefused` settle the inputs no response will ever answer;
+- `OutputItemDetails` carries what the provider says about an item of a response's output, for the part it
+  makes.
 
 An input is identified the way `InputRejected.input_index` identifies it: by its position among every
 `send()` call made on the connection.
@@ -91,6 +93,9 @@ class UserTurnEnded:
     """A spoken turn joined the provider's conversation, at this point in its order."""
 
     turn_id: str
+    still_speaking: bool = False
+    """Whether it joined while the user is still saying it (xAI adds its item at speech start): its audio, and with
+    it the turn, then ends with the speech."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -128,6 +133,19 @@ class ResponseRequestRefused:
     input_ids: tuple[InputId, ...]
 
 
+@dataclass(frozen=True, kw_only=True)
+class OutputItemDetails:
+    """What the provider says about one item of a response's output, to keep on the part that item makes.
+
+    Like OpenAI's `phase`, which tells an assistant message the model meant as commentary on its way to a tool
+    call apart from its final answer.
+    """
+
+    response_id: str
+    item_id: str
+    provider_details: dict[str, Any]
+
+
 LifecycleEvent = TypeAliasType(
     'LifecycleEvent',
     ResponseStarted
@@ -137,7 +155,8 @@ LifecycleEvent = TypeAliasType(
     | UserTurnDiscarded
     | InputAdded
     | InputLost
-    | ResponseRequestRefused,
+    | ResponseRequestRefused
+    | OutputItemDetails,
 )
 """The events a connection on the second version of the lifecycle contract yields besides the codec events."""
 
@@ -150,6 +169,7 @@ LIFECYCLE_EVENT_TYPES = (
     InputAdded,
     InputLost,
     ResponseRequestRefused,
+    OutputItemDetails,
 )
 """The `LifecycleEvent` variants, for `isinstance` checks."""
 

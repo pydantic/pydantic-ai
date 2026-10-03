@@ -179,14 +179,33 @@ sends one frame per second — so for camera and screen streams, use both delibe
 
 Input transcription defaults to `'auto'`; see [Input transcription](audio.md#input-transcription)
 and each provider page for configuration. Transcripts are recorded with the user turn they describe,
-even when they arrive after that turn's response or overlap the following turn. A turn the user
-starts while the model is still answering, whether they [barge in](turns.md#barge-in) or push to talk
-over it, is recorded after that answer. Such a turn joins history once the provider ends the answer it
-cut off, or after a few seconds if the provider never does. In that fallback the turn is recorded where
-history stands, so it lands before the answer it interrupted, and ahead of anything sent with
-[`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was still in flight. If a reported speech
-segment never receives a transcript, the session still records its retained audio or a content-less
-`SpeechPart` when the session closes.
+even when they arrive after that turn's response or overlap the following turn.
+
+On OpenAI, Azure OpenAI, and xAI, history follows the order of the provider's own conversation:
+
+- A spoken turn sits where the provider added it, and text, images, and tool results where they reached
+  it. A turn the user started while the model was still answering, but which the provider only committed
+  after that answer ended, is recorded after the answer.
+- A message appears in `all_messages()` once everything before it is final. A reply waits for the
+  transcript of the spoken turn before it, which can arrive after the reply itself is done, for up to 30
+  seconds after that; past that, the turn is recorded with the transcript it has so far.
+- Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
+  The one exception is a tool's return, which always directly follows the response that called it: a tool
+  that finishes after later messages were recorded has its return inserted ahead of them.
+
+- Assistant messages from `gpt-realtime-2` models carry their `phase` (`'commentary'` on the way to a tool
+  call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
+  records [text phases](../models/openai.md#text-phases).
+
+On Gemini Live and GPT-Live, a turn the user starts while the model is still answering, whether they
+[barge in](turns.md#barge-in) or push to talk over it, is recorded after that answer. Such a turn joins
+history once the provider ends the answer it cut off, or after a few seconds if the provider never does.
+In that fallback the turn is recorded where history stands, so it lands before the answer it interrupted,
+and ahead of anything sent with [`send()`][pydantic_ai.realtime.RealtimeSession.send] while that answer was
+still in flight.
+
+If a reported speech segment never receives a transcript, the session still records its retained audio or
+a content-less `SpeechPart`, at the latest when the session closes.
 
 With transcription disabled:
 
@@ -196,8 +215,10 @@ With transcription disabled:
   the speech between them: the silence an always-on microphone streams between utterances is no turn.
   Gemini Live reports none, so a turn there runs to the response that answers it, and audio sent after
   the last response is recorded as one more turn when the session closes;
-- with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn; a
-  commit with no audio since the last one records nothing;
+- with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn once the
+  provider has it (on xAI, commits made while a reply is still under way go out together after it, as one turn,
+  and one still held back when the session closes records nothing); a commit with no audio since the last one
+  records nothing;
 - content-less parts preserve the local turn boundary but contribute no words to a text handoff and
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.

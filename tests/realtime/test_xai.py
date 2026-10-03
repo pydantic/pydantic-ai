@@ -28,7 +28,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
-    PartEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeSessionErrorEvent,
     SpeechPart,
@@ -637,6 +636,16 @@ class _DropAfterFrames(FakeWebSocket):
         raise rt_xai.websockets.ConnectionClosed(None, None)
 
 
+class _AnsweringAfterSend(_DropAfterFrames):
+    """Like `_DropAfterFrames`, but reads nothing past the handshake until the session asked for a response."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while not any('"response.create"' in frame for frame in self.sent):
+            await asyncio.sleep(0)
+        async for frame in super().__aiter__():  # pragma: no branch (it ends by dropping the connection)
+            yield frame
+
+
 class _RecordingConnect:
     """Stand-in for `websockets.connect` that hands out sockets in order and records closes."""
 
@@ -867,17 +876,11 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     assert json.loads(good.sent[0])['session']['resumption'] == {'enabled': True}
 
 
-@pytest.mark.shadow_divergence(
-    reason=(
-        'synthetic frames: the transcript and the terminal name different responses, and the input is '
-        'acknowledged before it is sent'
-    )
-)
 async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Resumed items are suppressed even when xAI assigns new IDs to the replayed copies."""
-    dropped = _DropAfterFrames(
+    dropped = _AnsweringAfterSend(
         [
             _created(),
             _conversation_created(),
@@ -885,12 +888,14 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
             json.dumps(
                 {
                     'type': 'conversation.item.added',
-                    'item': {'id': 'item-user', 'type': 'message', 'role': 'user'},
+                    'item': {'id': 'pydantic_ai_item_0', 'type': 'message', 'role': 'user'},
                 }
             ),
+            json.dumps({'type': 'response.created', 'response': {'id': 'response-1', 'status': 'in_progress'}}),
             json.dumps(
                 {
                     'type': 'response.output_audio_transcript.done',
+                    'response_id': 'response-1',
                     'item_id': 'item-assistant',
                     'transcript': 'Hello back.',
                 }
@@ -920,6 +925,7 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
             json.dumps(
                 {
                     'type': 'response.output_audio_transcript.done',
+                    'response_id': 'response-1',
                     'item_id': 'replayed-item-assistant',
                     'transcript': 'Hello back.',
                 }
@@ -1841,16 +1847,7 @@ async def test_late_transcript_keeps_an_earlier_turn_in_its_place(monkeypatch: p
     [
         pytest.param(True, 1, True, id='transcribed'),
         pytest.param(False, 1, True, id='untranscribed'),
-        pytest.param(
-            False,
-            2,
-            True,
-            id='untranscribed-twice',
-            marks=pytest.mark.shadow_divergence(
-                reason='the connection folds the two held commits into one, which xAI makes one turn; the new core '
-                'records that one'
-            ),
-        ),
+        pytest.param(False, 2, True, id='untranscribed-twice'),
         pytest.param(True, 1, False, id='transcribed-no-text'),
     ],
 )
@@ -1911,16 +1908,14 @@ async def test_commit_held_behind_a_reply_goes_after_what_was_sent_meanwhile(
         'user: What is two plus two?',
         'assistant speech: Four.',
         *(['user: Then this.', 'user: Some context.'] if text else []),
-        *[spoken] * commits,
+        # Commits held together go out as one, which xAI makes one turn.
+        spoken,
         'assistant speech: Answer.',
     ]
 
 
-@pytest.mark.shadow_divergence(
-    reason='the commit never went out, so xAI made no turn of it; the new core records only turns the provider made'
-)
-async def test_untranscribed_turn_with_a_held_commit_is_recorded_on_close(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A spoken turn whose commit never went out still ends up in history when the session closes."""
+async def test_untranscribed_turn_with_a_held_commit_is_not_recorded_on_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A commit that never went out made no turn in xAI's conversation, so history has none either."""
     monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([_PhasedWebSocket([_created(), _updated()])]))
     settings = rt_xai.XaiRealtimeModelSettings(turn_detection=False, input_transcription_model=None)
 
@@ -1929,7 +1924,7 @@ async def test_untranscribed_turn_with_a_held_commit_is_recorded_on_close(monkey
         await session.commit_audio()
         assert session.all_messages() == []
 
-    assert _turns(session.all_messages()) == ['user speech: None']
+    assert _turns(session.all_messages()) == []
 
 
 async def test_request_replayed_after_a_reconnect_sends_no_clear() -> None:
@@ -2076,27 +2071,35 @@ async def test_speech_for_audio_already_committed_is_not_held_for_the_next_commi
     assert turns == ['user speech: First.', 'assistant speech: One.', 'user speech: Second.', 'assistant speech: Two.']
 
 
-@pytest.mark.shadow_divergence(
-    reason=(
-        'synthetic frames: xAI reports speech in audio the connection still holds back, and adds no item at speech '
-        'start (recorded: `test_xai_ws/test_push_to_talk_replies_only_when_asked`)'
-    )
-)
 async def test_turns_of_a_commit_held_behind_a_reply_keep_their_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Two utterances xAI transcribed before their held commit went out are recorded in the order spoken."""
+    """Two utterances in a commit held until the reply ends are recorded in the order spoken, after the text sent
+    while it was held, which reached xAI first."""
+
+    def added(item_id: str) -> str:
+        return json.dumps(
+            {
+                'type': 'conversation.item.added',
+                'item': {'id': item_id, 'type': 'message', 'role': 'user', 'content': []},
+            }
+        )
 
     def utterance(item_id: str, transcript: str) -> list[str]:
         return [
             json.dumps({'type': 'input_audio_buffer.speech_started', 'item_id': item_id, 'audio_start_ms': 0}),
+            added(item_id),
             _user_transcript(item_id, transcript),
+            json.dumps({'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 500}),
         ]
 
     ws = _PhasedWebSocket(
         [_created(), _updated()],
-        [_response_frame('response.created', 'r0'), _transcript_delta('r0')],
-        [*utterance('item-u1', 'One.'), *utterance('item-u2', 'Two.')],
+        [added('pydantic_ai_item_0'), _response_frame('response.created', 'r0'), _transcript_delta('r0')],
         [
+            added('pydantic_ai_item_3'),
             _response_frame('response.done', 'r0'),
+            # xAI hears the speech only once the held audio goes out with the commit, after the reply.
+            *utterance('item-u1', 'One.'),
+            *utterance('item-u2', 'Two.'),
             json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u2'}),
             *_reply('r1', 'Answer.'),
         ],
@@ -2111,11 +2114,6 @@ async def test_turns_of_a_commit_held_behind_a_reply_keep_their_order(monkeypatc
         await session.send_audio(_AUDIO.data)
         await session.commit_audio()
         await session.send('Then this.')
-        ws.advance()
-        async for event in session:  # pragma: no branch
-            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
-                if event.part.transcript == 'Two.':
-                    break
         ws.advance()
         await session.wait_for_reply()
 

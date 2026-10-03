@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeSessionReconnectEvent,
     SpeechPart,
     TextPart,
     ToolCallPart,
@@ -40,10 +41,12 @@ from pydantic_ai.realtime._core import (
     SessionCore,
     ToolCallRefused,
     ToolReturned,
+    TranscriptOverdue,
 )
 from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
+    OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
@@ -53,6 +56,7 @@ from pydantic_ai.realtime._lifecycle import (
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
+    ConversationItemCreated,
     InputRejected,
     InputTranscript,
     OutputTranscript,
@@ -326,7 +330,7 @@ def test_a_turn_that_joins_while_it_is_still_spoken_ends_with_the_speech() -> No
         AudioSent(data=b'\x01\x00'),
         UserTurnStarted(turn_id='u1'),
         RealtimeInputSpeechStartEvent(item_id='u1'),
-        UserTurnEnded(turn_id='u1'),
+        UserTurnEnded(turn_id='u1', still_speaking=True),
         AudioSent(data=b'\x02\x00' * 4),
     )
     assert session_core.all_messages() == []
@@ -341,11 +345,11 @@ def test_a_turn_that_joins_while_it_is_still_spoken_ends_with_the_speech() -> No
         session_core,
         RealtimeInputSpeechStartEvent(item_id='u2'),
         UserTurnStarted(turn_id='u2'),
-        UserTurnEnded(turn_id='u2'),
+        UserTurnEnded(turn_id='u2', still_speaking=True),
         UserTurnDiscarded(turn_id='u2'),
         RealtimeInputSpeechStartEvent(item_id='u3'),
         UserTurnStarted(turn_id='u3'),
-        UserTurnEnded(turn_id='u3'),
+        UserTurnEnded(turn_id='u3', still_speaking=True),
         Closed(),
     )
     assert summary(session_core.all_messages()) == snapshot(['{user:None+audio}', '{user:None}', '{user:None}'])
@@ -471,3 +475,149 @@ def test_a_turn_whose_transcript_can_no_longer_be_read_ends_with_what_it_has() -
     assert session_core.all_messages() == []
     feed(session_core, ReceiveEnded())
     assert summary(session_core.all_messages()) == snapshot(['{user:Good}', 'r1 [assistant:Hm.] complete stop'])
+
+
+def test_an_output_items_details_go_on_its_part() -> None:
+    """OpenAI's `phase`, for one: commentary on the way to a tool call, and the final answer after."""
+    session_core = feed(
+        core(),
+        started('r1'),
+        OutputItemDetails(response_id='r1', item_id='i1', provider_details={'phase': 'commentary'}),
+        OutputItemDetails(response_id='r1', item_id='i2', provider_details={'phase': 'final_answer'}),
+        OutputItemDetails(response_id='unknown', item_id='i3', provider_details={'phase': 'commentary'}),
+        said('r1', 'Let me check.', item_id='i1', output_text=True),
+        said('r1', 'Sunny.'),
+        said('r1', ' Warm, too.', item_id='i2'),
+        said('r1', 'No details.', item_id='i4'),
+        ended('r1'),
+    )
+    [response] = session_core.all_messages()
+    assert isinstance(response, ModelResponse)
+    assert [(part.provider_name, part.provider_details) for part in response.parts] == snapshot(
+        [('openai', {'phase': 'commentary'}), ('openai', {'phase': 'final_answer'}), (None, None)]
+    )
+
+
+def test_a_turn_whose_transcript_is_overdue_is_recorded_with_what_it_has() -> None:
+    session_core = feed(
+        core(),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+        InputTranscript('Partly', item_id='u1'),
+        started('r1'),
+        said('r1', 'Hm.'),
+        ended('r1'),
+    )
+    assert session_core.transcript_holding_history() == 'u1'
+    assert session_core.all_messages() == []
+    feed(session_core, TranscriptOverdue(turn_id='u1'), TranscriptOverdue(turn_id='unknown'))
+    assert session_core.transcript_holding_history() is None
+    # The transcript, if it does come after all, changes nothing recorded.
+    feed(session_core, InputTranscript(' said.', item_id='u1', is_final=True))
+    assert summary(session_core.all_messages()) == snapshot(['{user:Partly}', 'r1 [assistant:Hm.] complete stop'])
+
+
+def test_only_a_turn_with_something_ready_after_it_holds_history() -> None:
+    session_core = feed(core(), UserTurnStarted(turn_id='u1'), UserTurnEnded(turn_id='u1'), started('r1'))
+    # Nothing after the turn is ready yet: there is nothing to hold back.
+    assert session_core.transcript_holding_history() is None
+    feed(session_core, ended('r1', 'lost'))
+    assert session_core.transcript_holding_history() is None  # (lost before it said anything: not recorded)
+    feed(session_core, InputSent(input_id=0, request=text_request('Hi.')), InputAdded(input_id=0))
+    assert session_core.transcript_holding_history() == 'u1'
+    # Nor does a response under way, or a turn still spoken, ahead of it.
+    other = feed(core(), started('r1'), InputSent(input_id=0, request=text_request('Hi.')), InputAdded(input_id=0))
+    assert other.transcript_holding_history() is None
+    spoken = feed(
+        core(),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1', still_speaking=True),
+        InputSent(input_id=0, request=text_request('Hi.')),
+        InputAdded(input_id=0),
+    )
+    assert spoken.transcript_holding_history() is None
+
+
+def test_clearing_the_audio_drops_a_turn_that_had_not_joined() -> None:
+    session_core = feed(
+        core(input_transcription_enabled=False),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1', still_speaking=True),
+        UserTurnStarted(turn_id='u2'),
+        AudioCleared(),
+        Closed(),
+    )
+    # The turn that joined stays; the one still being said is gone, so closing records nothing for it.
+    assert summary(session_core.all_messages()) == snapshot(['{user:None}'])
+
+
+def test_a_response_under_way_when_reading_ends_is_recorded_as_cut_off() -> None:
+    session_core = feed(core(), started('r1'), said('r1', 'Partly'), ReceiveEnded())
+    assert summary(session_core.all_messages()) == snapshot(['r1 [assistant:Partly] interrupted None'])
+
+
+def test_a_withdrawn_input_is_let_go() -> None:
+    """An evicted image, say: nothing keeps what it carried alive, placed or not."""
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=text_request('Placed.')),
+        InputAdded(input_id=0),
+        InputSent(input_id=1, request=text_request('Not yet.')),
+        InputWithdrawn(input_ids=(0, 1, 2)),
+        InputAdded(input_id=1),
+    )
+    assert session_core.all_messages() == []
+    assert not session_core._inputs and not session_core._unplaced  # pyright: ignore[reportPrivateUsage]
+    assert session_core._placed == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_repeated_or_replayed_call_is_recorded_once() -> None:
+    """xAI's resumption can repeat a call of a response still open, and replay items history already has."""
+    call = ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1')
+    session_core = feed(
+        core(),
+        started('r1'),
+        call,
+        call,
+        ConversationItemCreated(item_id='item_old', tool_call_id='call_old', replayed=True),
+        ConversationItemCreated(tool_call_id='call_older', replayed=True),
+        ConversationItemCreated(item_id='item_new'),
+        ToolCall('call_old', tool_name='lookup', args='{}', response_id='r1'),
+        said('r1', 'Replayed.', item_id='item_old'),
+        ended('r1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop'])
+
+
+def test_a_new_call_whose_id_matches_a_replayed_item_is_recorded() -> None:
+    """Item ids and call ids are different kinds of id: one replayed as an item says nothing about a call."""
+    session_core = feed(
+        core(),
+        ConversationItemCreated(item_id='shared', replayed=True),
+        started('r1'),
+        ToolCall('shared', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['r1 [call:shared] complete stop'])
+
+
+def test_a_turn_still_spoken_when_the_connection_is_replaced_is_over() -> None:
+    """xAI added it at speech start; the speech end was lost with the old connection, and the new one won't hear it."""
+    session_core = feed(
+        core(input_transcription_enabled=False, retain_input_audio=True),
+        RealtimeInputSpeechStartEvent(item_id='u1'),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1', still_speaking=True),
+        AudioSent(data=b'\x01\x00'),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        started('r1'),
+        said('r1', 'Hm.'),
+        ended('r1'),
+        UserTurnStarted(turn_id='u2'),
+        UserTurnEnded(turn_id='u2'),
+    )
+    # It keeps the audio sent for it, which the next turn doesn't inherit.
+    assert summary(session_core.all_messages()) == snapshot(
+        ['{user:None+audio}', 'r1 [assistant:Hm.] complete stop', '{user:None}']
+    )
