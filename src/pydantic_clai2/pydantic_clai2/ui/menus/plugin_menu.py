@@ -75,7 +75,10 @@ class PluginMenu(Generic[DepsT]):
         """Read once per plugin, since the panel repaints on every key; reload reads again."""
 
     def items(self) -> list[MenuItem]:
-        """One row per plugin, `●` when loaded, with a coloured status and origin; then Save & close."""
+        """One row per plugin, `●` when loaded, with a coloured status and origin; then Save & close.
+
+        A plugin another loaded plugin includes is a greyed-out row naming that plugin.
+        """
         entries = self._loader.entries()
         if not entries:
             hint = f'No plugins. Use /plugins add, or drop a file in {self._loader.plugins_dir}'
@@ -83,6 +86,11 @@ class PluginMenu(Generic[DepsT]):
         width = self._name_width()
         rows: list[MenuItem] = []
         for entry in entries:
+            if entry.included_in is not None:
+                # Greyed out and skipped by the cursor: the plugin that includes it already provides it.
+                label = f'○ {entry.name:<{width}}  {"off":<{_STATUS_WIDTH}} in {entry.included_in}'
+                rows.append(MenuItem(label, value=entry.name, disabled=True))
+                continue
             word, role = _status(entry)
             status = f'{_UNDIM}{theme.sgr(role)}{word:<{_STATUS_WIDTH}}{_RESET}'
             rows.append(

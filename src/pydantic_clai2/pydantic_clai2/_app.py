@@ -136,6 +136,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
 Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
 
 `coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
+`compaction` stays off while `coder` is on, which includes context management; see `plugins.compatibility`.
 """
 
 STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
