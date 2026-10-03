@@ -267,7 +267,7 @@ def run_tests(ctx: RunContext) -> str:
     return '3 failed, 41 passed'
 ```
 
-A capability that nudges the model on every request adds one from `before_model_request`, to both the persistent history (`ctx.messages.append(...)`) and the request being prepared (`request_context.messages = [*request_context.messages, ...]`), as a `ModelRequest` of its own. Write it to both: added to the request alone, it never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation.
+A capability that nudges the model on every request adds one from `before_model_request`, to both the persistent history (`ctx.messages.append(...)`) and the request being prepared (`request_context.messages = [*request_context.messages, ...]`), as a `ModelRequest` of its own. Write it to both: added to the request alone, it never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation. The Harness [System Reminders](harness/system-reminders.md) capability is built this way.
 
 A turn-scoped prompt stays in the message history like any other part, so the history records what each request was sent. How it reaches the model depends on the provider:
 
