@@ -657,6 +657,27 @@ async def test_reported_single_pass_with_a_native_tool_establishes_the_mark() ->
         await agent.run('hi')
 
 
+async def test_reported_single_pass_with_compaction_and_a_native_tool_does_not_raise_the_mark() -> None:
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        _server_tool_response(
+            RequestUsage(
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_tokens=20000,
+                cache_write_tokens=0,
+                details={'message_iterations': 1, 'compaction_iterations': 1},
+            )
+        ),
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=8000)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        result = await agent.run('hi')
+    assert result.output == 'done'
+
+
 async def test_reported_multiple_passes_without_a_native_tool_part_keeps_the_mark() -> None:
     """A reported pass count above one is multi-pass even when no native tool part survived."""
     responses = [
