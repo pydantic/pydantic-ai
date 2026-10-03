@@ -397,6 +397,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'YouResearch': Collides('its toolset registers `research` and friends under fixed names'),
     'YouSearch': Collides('its toolset registers `web_search` and friends under fixed names'),
+    'KeenableSearch': Collides(
+        'its toolset registers `web_search` and `get_page` under fixed names',
+        lambda cls: (cls(), cls(num_results=3)),
+    ),
     'Slack': Narrows(
         'one Slack connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),

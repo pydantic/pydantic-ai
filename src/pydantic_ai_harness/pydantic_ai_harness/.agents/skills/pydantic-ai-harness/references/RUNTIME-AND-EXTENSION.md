@@ -134,7 +134,7 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
 
 - `Agent(...)` with `TemporalDurability` raises `UserError` ("Toolsets that are 'leaves' ... need to
   have a unique id") for `AskUser`, `CapabilityCreation`, `ExaSearch`, `ExaAgent`, `YouSearch`,
-  `YouResearch`, `Researcher`, `PydanticAIDocs`, `LocalStack`, `Macroscope`, and `BrowserUse` (either
+  `YouResearch`, `KeenableSearch`, `Researcher`, `PydanticAIDocs`, `LocalStack`, `Macroscope`, and `BrowserUse` (either
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
 - `PlaywrightBrowser` raises `UserError` at `Agent(...)` with any durability capability (a live
