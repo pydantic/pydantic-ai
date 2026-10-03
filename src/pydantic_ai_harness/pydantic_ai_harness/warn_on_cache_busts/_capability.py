@@ -123,13 +123,11 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     response's `(provider_name, model_name)`. When a later request for the same key reads back
     fewer than `collapse_ratio` of that established prefix, it emits a `CacheBustWarning` once
     and then stays quiet about that collapse until a healthy read-back re-stabilizes the cache,
-    so a sustained collapse warns once rather than on every subsequent request. A response
-    that ran a native tool may report usage summed over several sampling passes. When the
-    provider reports more than one pass in `usage.details['message_iterations']`, the monitor
-    keeps the existing mark; a reported single pass uses the cache read normally. If the pass
-    count is absent, a native tool call keeps the conservative behavior unless the normalized
-    usage details include `tool_use_prompt_tokens`, which separates tool-use prompt accounting
-    from cache reads and lets a healthy read raise the mark and re-arm the latch.
+    so a sustained collapse warns once rather than on every subsequent request. Native tool
+    responses may sum cache reads across internal model calls. The monitor can still warn on a
+    low total, but keeps the earlier prefix and waits for an ordinary request to confirm recovery.
+    Anthropic responses that report a single internal model call, and Gemini responses with
+    separate tool-use prompt accounting, update the prefix and confirm recovery normally.
 
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
     that continues an earlier one via `message_history` -- including history that was

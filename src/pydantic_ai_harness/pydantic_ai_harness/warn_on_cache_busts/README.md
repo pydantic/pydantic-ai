@@ -34,16 +34,11 @@ the monitor starts a fresh mark for it instead of comparing against the previous
 model's. Marks are kept per key rather than reset, so switching back to an earlier
 model within its cache TTL still compares against that model's prefix.
 
-A native tool call can mean that one API response contains usage from several
-sampling passes. A provider-reported count in
-`usage.details['message_iterations']` takes priority: more than one keeps the
-existing mark because the summed cache read is not comparable to one later request,
-while one uses the cache read normally. If that count is absent, a native tool call
-keeps the same conservative behavior unless the normalized usage details include
-`tool_use_prompt_tokens`: that accounting separates tool-use prompt tokens from
-cache reads, so a healthy cache read can raise the mark and re-arm the warning latch.
-A summed read can still prove a collapse when it falls below the threshold, but a
-healthy-looking sum does not prove that the cache re-stabilized.
+Native tool responses may sum cache reads across internal model calls. The monitor
+can still warn on a low total, but keeps the earlier prefix and waits for an ordinary
+request to confirm recovery. Anthropic responses that report a single internal model
+call, and Gemini responses with separate tool-use prompt accounting, update the
+prefix and confirm recovery normally.
 
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run
 that continues an earlier one via `message_history` -- including history that was
