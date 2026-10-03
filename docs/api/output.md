@@ -15,3 +15,8 @@
             - BoolCriteria
             - DeferredToolRequests
             - OutputObjectDefinition
+            - OutputMode
+            - StructuredOutputMode
+            - OutputSpec
+            - OutputTypeOrFunction
+            - TextOutputFunc
