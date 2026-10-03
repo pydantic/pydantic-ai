@@ -49,8 +49,6 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, RequestCapture, try_import
 
 if TYPE_CHECKING:
-    from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
-
     from .conftest import AnthropicModelFactory
 
 with try_import() as anthropic_available:
@@ -448,11 +446,11 @@ async def test_current_reminder_survives_compaction():
 
 @dataclass
 class ProviderDown(AbstractCapability[Any]):
-    """Fails every model request before anything is sent."""
+    """Fails every model request after the reminder was added, before anything is sent."""
 
-    async def wrap_model_request(
-        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
-    ) -> ModelResponse:
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
         raise RuntimeError('provider down')
 
 
@@ -478,29 +476,27 @@ async def test_failed_step_drops_its_turn_scoped_prompt(stream: bool):
 
 
 async def test_retry_without_response_drops_the_turn_scoped_prompt():
-    """A capability retry that never got a response gives up on the step and its reminder.
+    """A retry that never got a response gives up on the step and its reminder.
 
-    The retry request gets a fresh reminder of its own, and the abandoned one is gone from history.
+    The model fails, and a capability turns the failure into a retry. The retry request gets a fresh
+    reminder of its own, and the abandoned one is gone, from what the model is sent and from history.
     """
     seen: list[list[ModelMessage]] = []
 
     @dataclass
-    class RetryOnce(AbstractCapability[Any]):
-        retried: bool = False
-
-        async def wrap_model_request(
-            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    class RetryOnError(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
         ) -> ModelResponse:
-            if not self.retried:
-                self.retried = True
-                raise ModelRetry('try again')
-            return await handler(request_context)
+            raise ModelRetry('try again')
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen.append(messages)
+        if len(seen) == 1:
+            raise RuntimeError('provider down')
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(respond), capabilities=[TurnReminder(), RetryOnce()])
+    agent = Agent(FunctionModel(respond), capabilities=[TurnReminder(), RetryOnError()])
 
     result = await agent.run('hello')
 
@@ -512,7 +508,10 @@ async def test_retry_without_response_drops_the_turn_scoped_prompt():
             if 'Reminder' in str(getattr(part, 'content', ''))
         ]
         for messages in seen
-    ] == [['<system>Reminder: be terse. This is request 2.</system>']]
+    ] == [
+        ['<system>Reminder: be terse. This is request 1.</system>'],
+        ['<system>Reminder: be terse. This is request 2.</system>'],
+    ]
     assert turn_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 2.']
 
 

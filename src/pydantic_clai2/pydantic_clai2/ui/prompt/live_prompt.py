@@ -46,6 +46,10 @@ class PromptWakeup(Exception):
     """An automated continuation is ready; the editor draft is not a submission."""
 
 
+class PromptRewind(Exception):
+    """Open the rewind picker without submitting or clearing the draft."""
+
+
 class LivePrompt:
     """One terminal surface, one keyboard reader, sequential queued submissions."""
 
@@ -91,6 +95,7 @@ class LivePrompt:
         self.panel = panel
         self.notice = ''
         self._chord_prefix = ''
+        self._last_escape: float | None = None
         self.buffer = PromptBuffer(history=list(reversed(list(history.load_history_strings()))))
         self.output = PromptSurface(output=console.file, size=lambda: console.size, transcript=transcript)
         self.keys = PromptKeys(
@@ -98,7 +103,7 @@ class LivePrompt:
             feed=self.feed,
             eof=lambda: self.submit(EOFError()),
         )
-        self._submissions: deque[_Queued | KeyboardInterrupt | EOFError] = deque()
+        self._submissions: deque[_Queued | KeyboardInterrupt | EOFError | PromptRewind] = deque()
         # The queued prompt the draft would rewrite on Enter, and the queue as a recall walk found it.
         self._editing: _Queued | None = None
         self._recall_queue: list[_Queued] = []
@@ -126,11 +131,11 @@ class LivePrompt:
     def _queued(self) -> list[_Queued]:
         return [item for item in self._submissions if isinstance(item, _Queued)]
 
-    def submit(self, value: str | KeyboardInterrupt | EOFError) -> None:
+    def submit(self, value: str | KeyboardInterrupt | EOFError | PromptRewind) -> None:
         """Publish a submission without ending or replacing the editor."""
         self._enqueue(_Queued(value) if isinstance(value, str) else value)
 
-    def _enqueue(self, value: _Queued | KeyboardInterrupt | EOFError) -> None:
+    def _enqueue(self, value: _Queued | KeyboardInterrupt | EOFError | PromptRewind) -> None:
         self._submissions.append(value)
         self._submitted.set()
         self.paint()
@@ -176,6 +181,8 @@ class LivePrompt:
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
         self.notice = ''
+        if key != 'escape':
+            self._last_escape = None
         if not self._chord(key):
             self._route(key, data)
         self.paint()
@@ -184,9 +191,8 @@ class LivePrompt:
         cycles = key in ('up', 'down') and self._arrows_cycle_completions()
         if key == 'ctrl-c':
             self.interrupt()
-        elif key == 'escape' and self.interrupts.active:
-            cancelled = self.interrupts.cancel(exit_on_repeat=False)
-            telemetry.record('prompt interrupt', key='escape', cancelled_turn=cancelled)
+        elif key == 'escape':
+            self.escape()
         elif key == 'ctrl-d':
             if self.buffer.text:
                 self.buffer.edit('delete')
@@ -206,14 +212,38 @@ class LivePrompt:
             self.buffer.insert('\n')
         elif cycles:
             self.complete(backwards=key == 'up', accept_single=False)
-        elif key == 'escape':
-            self.dismiss_completions()
         elif key in ('up', 'down'):
             self.recall(backwards=key == 'up')
         else:
             self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
+
+    def escape(self) -> None:
+        """Cancel or dismiss first; only consecutive idle presses request a rewind."""
+        previous, self._last_escape = self._last_escape, None
+        if self.interrupts.active:
+            cancelled = self.interrupts.cancel(exit_on_repeat=False)
+            telemetry.record('prompt interrupt', key='escape', cancelled_turn=cancelled)
+        elif self.buffer.search is not None:
+            self.search('escape')
+        elif self._completions or self._completion_pending:
+            self.dismiss_completions()
+        elif not self._submissions:
+            now = self.clock()
+            if previous is not None and now - previous <= 0.5:
+                self.submit(PromptRewind())
+            else:
+                self._last_escape = now
+                self.notice = 'Press Esc again to rewind the conversation.'
+
+    def restore_draft(self, text: str) -> None:
+        """Replace the draft after a rewind, without editing a queued submission."""
+        self._editing = None
+        self.buffer.search = None
+        self.buffer.history_index = None
+        self.buffer.replace(text)
+        self.refresh_completions()
 
     def _arrows_cycle_completions(self) -> bool:
         """Whether Up/Down move through the popup rather than the draft and history.
@@ -498,6 +528,7 @@ class LivePrompt:
             yield
             return
         self._suspended = True
+        self._last_escape = None
         self.keys.stop()
         self.dismiss_completions()
         if self._completion_scope is not None:
