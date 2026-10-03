@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, localcontext
@@ -18,16 +19,13 @@ from opentelemetry.trace import NoOpTracer, Tracer
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import (
-    AbstractCapability,
-    CapabilityOrdering,
-    WrapModelRequestHandler,
-)
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import CompletedStreamedResponse, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning, spend
@@ -38,6 +36,7 @@ from pydantic_ai_harness.spend import (
     SpendEntry,
     SpendLimitExceeded,
     SpendLimits,
+    SpendRecordedEvent,
     SpendSnapshot,
     Spent,
     UnpricedModelError,
@@ -190,14 +189,50 @@ def _scripted_usage() -> FunctionModel:
     return FunctionModel(respond)
 
 
-def _agent(guard: SpendLimits[None], *, usage: RequestUsage | None = None) -> Agent[None, str]:
+def _agent(
+    guard: SpendLimits[None],
+    *,
+    usage: RequestUsage | None = None,
+    model_name: str | None = None,
+    provider_name: str | None = None,
+    spend_events: list[SpendRecordedEvent] | None = None,
+) -> Agent[None, str]:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[TextPart(content='ok')],
             usage=usage if usage is not None else RequestUsage(input_tokens=1000, output_tokens=100),
+            provider_name=provider_name,
         )
 
-    return Agent(FunctionModel(respond), deps_type=type(None), capabilities=[guard])
+    function_model: FunctionModel = FunctionModel(respond, model_name=model_name)
+    capabilities: list[AbstractCapability[None]] = [guard]
+    if spend_events is not None:
+        hooks = Hooks[None]()
+
+        @hooks.on.event(SpendRecordedEvent)
+        async def record_spend(ctx: RunContext[None], event: SpendRecordedEvent) -> None:
+            spend_events.append(event)
+
+        class EventFunctionModel(FunctionModel):
+            @asynccontextmanager
+            async def request_stream(
+                self,
+                messages: list[ModelMessage],
+                model_settings: ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+                run_context: RunContext[Any] | None = None,
+            ) -> AsyncGenerator[StreamedResponse, None]:
+                response = await self.request(messages, model_settings, model_request_parameters)
+                yield CompletedStreamedResponse(
+                    response,
+                    model_request_parameters=model_request_parameters,
+                    replay_events=True,
+                )
+
+        function_model = EventFunctionModel(respond, model_name=model_name)
+        capabilities.append(hooks)
+
+    return Agent(function_model, deps_type=type(None), capabilities=capabilities)
 
 
 def _no_price(response: ModelResponse) -> Decimal | None:
@@ -874,6 +909,97 @@ class TestOrdering:
 
 class TestPricing:
     """What a response cost, and whether that number is real."""
+
+    async def test_known_cost_subtotal_is_accrued_and_exhausts_the_next_run(self):
+        usage = RequestUsage(web_searches=1, unmeasured_requests=1, details={'web_search_requests': 1})
+        guard = SpendLimits(budgets=[Budget(usd=Decimal('0.005'), window='total')])
+        events: list[SpendRecordedEvent] = []
+        agent = _agent(guard, usage=usage, model_name='gpt-4o', provider_name='openai', spend_events=events)
+
+        with pytest.warns(UnpricedModelWarning, match='known subtotal') as caught:
+            result = await agent.run('first')
+
+        assert len(caught) == 1
+        assert result.usage.cost == Decimal('0.01')
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0.01')
+        assert spent.unpriced_requests == 1
+        assert len(events) == 1
+        assert events[0].usd == Decimal('0.01')
+        assert events[0].priced is False
+
+        with pytest.raises(SpendLimitExceeded):
+            await agent.run('next')
+
+    async def test_known_cost_subtotal_is_accrued_before_unpriced_policy_raises(self):
+        usage = RequestUsage(web_searches=1, unmeasured_requests=1, details={'web_search_requests': 1})
+        guard = SpendLimits(budgets=[Budget(window='total')], on_unpriced='raise')
+        agent = _agent(guard, usage=usage, model_name='gpt-4o', provider_name='openai')
+
+        with pytest.raises(UnpricedModelError):
+            await agent.run('hi')
+
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0.01')
+        assert spent.unpriced_requests == 1
+
+    async def test_pure_omission_remains_unpriced(self):
+        guard = SpendLimits(budgets=[Budget(usd=Decimal('0.005'), window='total')])
+        events: list[SpendRecordedEvent] = []
+        agent = _agent(
+            guard,
+            usage=RequestUsage(unmeasured_requests=1),
+            model_name='gpt-4o',
+            provider_name='openai',
+            spend_events=events,
+        )
+
+        with pytest.warns(UnpricedModelWarning):
+            result = await agent.run('hi')
+
+        assert result.usage.cost is None
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0')
+        assert spent.unpriced_requests == 1
+        assert len(events) == 1
+        assert events[0].usd == Decimal('0')
+        assert events[0].priced is False
+
+    @pytest.mark.parametrize('amount', ['-1', 'NaN', 'Infinity', '-Infinity'])
+    async def test_invalid_stored_partial_cost_is_not_accrued(self, amount: str):
+        usage = RequestUsage(input_tokens=1000, unmeasured_requests=1, cost=Decimal(amount))
+        guard = SpendLimits(budgets=[Budget(usd=Decimal('1'), window='total')])
+        events: list[SpendRecordedEvent] = []
+        agent = _agent(guard, usage=usage, model_name='gpt-4o', provider_name='openai', spend_events=events)
+
+        with pytest.warns(UnpricedModelWarning, match='known subtotal'):
+            await agent.run('hi')
+
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0')
+        assert spent.requests == 1
+        assert spent.unpriced_requests == 1
+        assert len(events) == 1
+        assert events[0].usd == Decimal('0')
+        assert events[0].priced is False
+
+    async def test_explicit_price_override_wins_over_partial_registry_cost(self):
+        usage = RequestUsage(web_searches=1, unmeasured_requests=1, details={'web_search_requests': 1})
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda response: Decimal('0.02'))
+        events: list[SpendRecordedEvent] = []
+        agent = _agent(guard, usage=usage, model_name='gpt-4o', provider_name='openai', spend_events=events)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always', UnpricedModelWarning)
+            await agent.run('hi')
+
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0.02')
+        assert spent.unpriced_requests == 0
+        assert len(events) == 1
+        assert events[0].usd == Decimal('0.02')
+        assert events[0].priced is True
+        assert [warning for warning in caught if issubclass(warning.category, UnpricedModelWarning)] == []
 
     async def test_the_registry_prices_a_known_model(self):
         guard = SpendLimits(budgets=[Budget(window='total')])

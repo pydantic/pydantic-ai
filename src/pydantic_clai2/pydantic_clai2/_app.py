@@ -1052,6 +1052,7 @@ def _reset_status(command: str, status: Status) -> None:
         status.context_alert = False
         status.output_tokens = None
         status.cost = None
+        status.cost_is_lower_bound = False
         status.streamed_chars = 0
 
 
@@ -1143,6 +1144,8 @@ async def _run_prompt(
         if tasks is not None:
             tasks.sink = None
         status.activity = 'ready'
-        status.cost = session_usage(session.messages).total.cost
+        total = session_usage(session.messages).total
+        status.cost = total.cost
+        status.cost_is_lower_bound = bool(total.unmeasured_requests)
         session.on_context_usage = None
         await renderer.finish()

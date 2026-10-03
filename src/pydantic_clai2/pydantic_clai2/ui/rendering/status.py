@@ -48,6 +48,8 @@ class Status:
     output_tokens: int | None = None
     cost: Decimal | None = None
     """Retained-history cost; `None` (hidden) until a priced response exists."""
+    cost_is_lower_bound: bool = False
+    """Whether omitted response usage makes the retained-history cost a lower bound."""
     streamed_chars: int = 0
     activity: str = 'ready'
     status_segments: tuple[StatusSegment, ...] = ()
@@ -82,7 +84,7 @@ class Status:
         if self.output_tokens is not None:
             output = f'{self.output_tokens:,}'
             output_label = 'output tokens'
-        cost = '' if self.cost is None else f' | {format_cost(self.cost)}'
+        cost = '' if self.cost is None else f' | {">=" if self.cost_is_lower_bound else ""}{format_cost(self.cost)}'
         # A POSIX directory name may hold a newline or an escape sequence; keep it inert on every painter.
         workspace = f' | {_short_path(terminal_text(self.workspace, keep=""))}' if self.workspace else ''
         head = f'{frame} {self.model}{workspace} | context: '.lstrip()
