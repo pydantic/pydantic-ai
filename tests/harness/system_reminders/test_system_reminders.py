@@ -93,11 +93,8 @@ async def _run_before(
 
 def _turn_scoped(message: ModelMessage) -> SystemPromptPart | None:
     """The reminder a message carries: a request holding only a turn-scoped system prompt."""
-    if isinstance(message, ModelRequest) and len(message.parts) == 1:
-        part = message.parts[0]
-        if isinstance(part, SystemPromptPart) and part.scope == 'turn':
-            return part
-    return None
+    part = message.parts[0] if isinstance(message, ModelRequest) and len(message.parts) == 1 else None
+    return part if isinstance(part, SystemPromptPart) and part.scope == 'turn' else None
 
 
 def _fired_text(messages: list[ModelMessage]) -> str | None:
