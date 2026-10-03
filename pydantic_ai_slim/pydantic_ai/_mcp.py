@@ -122,8 +122,6 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
         if isinstance(pai_message, messages.ModelRequest):
             request_start = len(sampling_msgs)
             tool_results: list[mcp_types.SamplingMessageContentBlock] = []
-            if pai_message.instructions is not None:
-                system_prompt.append(pai_message.instructions)
 
             for part in pai_message.parts:
                 if isinstance(part, messages.SystemPromptPart):
@@ -164,7 +162,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                 sampling_msgs.insert(request_start, mcp_types.SamplingMessage(role='user', content=tool_results))
         else:
             add_msg('assistant', _map_response_history(pai_message))
-    return ''.join(system_prompt), sampling_msgs
+    return '\n\n'.join(system_prompt), sampling_msgs
 
 
 def _map_user_prompt(part: messages.UserPromptPart) -> Iterator[mcp_types.TextContent | mcp_types.ImageContent]:
