@@ -16,10 +16,10 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -137,7 +137,10 @@ async def test_background_and_resume_need_an_owner(background: bool, resume: str
     )
     result = await agent.run('go')
     retries = [
-        part.content for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ]
     assert retries == ['Background execution and resume require an open `DelegationTasks` owner']
 

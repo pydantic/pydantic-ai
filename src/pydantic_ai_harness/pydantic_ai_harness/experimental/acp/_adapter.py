@@ -133,7 +133,7 @@ def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> l
                 committed.pop()
                 continue
             break
-        if any(isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_name for part in last.parts):
+        if any(isinstance(part, ToolReturnPart) for part in last.parts):
             break
         previous = committed[-2] if len(committed) > 1 else None
         if (

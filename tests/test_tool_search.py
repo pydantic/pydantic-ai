@@ -52,7 +52,6 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
-    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolPartKind,

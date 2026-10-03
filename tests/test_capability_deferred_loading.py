@@ -2572,20 +2572,16 @@ async def test_load_capability_called_twice_in_one_response_loads_once(mode: Par
 
     assert result.output == 'done'
     messages = result.all_messages()
-    tool_results = [
-        part
-        for part in messages[2].parts
-        if isinstance(part, LoadCapabilityReturnPart | RetryPromptPart | ToolAvailabilityDeltaPart)
-    ]
+    tool_results = [part for part in messages[2].parts if isinstance(part, ToolReturnPart | ToolAvailabilityDeltaPart)]
     assert [(type(part).__name__, part.tool_call_id) for part in tool_results] == [
         ('LoadCapabilityReturnPart', 'first'),
         ('ToolAvailabilityDeltaPart', 'first'),
         ('LoadCapabilityReturnPart', 'other'),
-        ('RetryPromptPart', 'duplicate'),
+        ('ToolReturnPart', 'duplicate'),
     ]
     first, _, other_return, duplicate = tool_results
     assert isinstance(first, LoadCapabilityReturnPart) and first.instructions == 'Dyn runbook.'
     assert isinstance(other_return, LoadCapabilityReturnPart) and other_return.instructions == 'Other runbook.'
-    assert isinstance(duplicate, RetryPromptPart)
+    assert isinstance(duplicate, ToolReturnPart) and duplicate.outcome == 'retried'
     assert duplicate.content == LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id='dyn')
     assert parse_loaded_capabilities(messages) == {'dyn', 'other'}

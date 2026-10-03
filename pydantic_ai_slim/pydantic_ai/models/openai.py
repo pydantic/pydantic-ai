@@ -5362,8 +5362,8 @@ def _group_settled_portable_function_calls(
 
     unsettled_call_counts: dict[str, int] = {}
     # Active tool search calls are replayed as `tool_search_call` items, not function calls, so
-    # neither they nor their answers count. A retry carries no `tool_kind`; it is matched to its
-    # search call by id and that call's name.
+    # neither they nor their answers count. A retried return carries no `tool_kind`; it is matched to
+    # its search call by id and that call's name.
     search_call_names: dict[str, str] = {}
     for part in parts:
         if client_tool_search_active and isinstance(part, ToolSearchCallPart):
