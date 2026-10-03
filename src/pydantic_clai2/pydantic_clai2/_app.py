@@ -3,8 +3,8 @@
 import asyncio
 import math
 import sys
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Thread
@@ -56,7 +56,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.runtime._session import Session, StockAgent
+from pydantic_clai2.runtime._session import Session, StockAgent, current_session_id
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
@@ -217,7 +217,10 @@ async def chat(
                     async with create_task_group() as workers:
                         workers.start_soon(shell.sessions.namer.run)
                         try:
-                            with transcript.capture(console):
+                            with (
+                                transcript.capture(console),
+                                shell.defer_identity() if resume is not None else nullcontext(),
+                            ):
                                 await shell.loader.load_all(fresh=fresh)
                                 _report_project_plugins(shell.loader, console)
                                 if resume is not None:
@@ -528,6 +531,7 @@ def create_shell(
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
+        session_id=lambda: shell.session_id,
         status=status,
         enabled=load_plugins,
     )
@@ -650,6 +654,21 @@ class _Shell(Generic[DepsT, OutputT]):
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
+    _identity_pending: bool = field(default=False, init=False)
+
+    @property
+    def session_id(self) -> str | None:
+        """The active saved ID, unavailable while startup is choosing a conversation to resume."""
+        return None if self._identity_pending else current_session_id() or self.session.summary.id
+
+    @contextmanager
+    def defer_identity(self) -> Generator[None]:
+        """Keep startup telemetry unassigned until the requested conversation is selected."""
+        self._identity_pending = True
+        try:
+            yield
+        finally:
+            self._identity_pending = False
 
     def __post_init__(self) -> None:
         self.tasks = Tasks(

@@ -252,6 +252,7 @@ class PluginHost(Generic[DepsT]):
         settings: dict[str, JsonValue],
         full_screen: FullScreen = bare_screen,
         conversation: Conversation | None = None,
+        session_id: Callable[[], str | None] = lambda: None,
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
         requirements: Requirements | None = None,
@@ -274,10 +275,16 @@ class PluginHost(Generic[DepsT]):
         screen. Between turns it is a no-op.
         """
         self.conversation: Conversation = conversation if conversation is not None else Transcript()
+        self._session_id = session_id
         self.status = status if status is not None else Status()
         self._settings = settings
         self._persist = save_settings
         self._requirements: Requirements = dict(requirements or {})
+
+    @property
+    def session_id(self) -> str | None:
+        """The current saved conversation's ID, or `None` for a host without session persistence."""
+        return self._session_id()
 
     @property
     def requirements(self) -> Requirements:

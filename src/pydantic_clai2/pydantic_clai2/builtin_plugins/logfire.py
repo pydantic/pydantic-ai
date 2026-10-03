@@ -20,9 +20,11 @@ import logfire
 from anyio import CancelScope, to_thread
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from typing_extensions import Self
 
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
@@ -40,6 +42,10 @@ class LogfireSettings(BaseModel):
     send_to_logfire: Literal[False, 'if-token-present'] = 'if-token-present'
     include_content: bool = True
     include_binary_content: bool = True
+    include_user_email: bool = Field(
+        default=False,
+        description='Tag session roots with the email from git config user.email. Never added to child spans or logs.',
+    )
     token: KeyReference | None = Field(
         default=None,
         description='A /keys entry holding the Logfire write token to send with, instead of LOGFIRE_TOKEN or the '
@@ -61,6 +67,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     def __init__(self, host: PluginHost[None], settings: LogfireSettings) -> None:
         super().__init__(host, settings)
+        self._unsubscribe: Callable[[], None] | None = None
         token, send_to_logfire = _destination(settings, host)
         private_dir = logfire_dir()
         propagator = get_global_textmap()
@@ -92,11 +99,16 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         except BaseException:
             _shutdown(self.instance)
             raise
-        # Subscribed last, so a failed construction leaves nothing to unsubscribe.
-        self._unsubscribe = telemetry.subscribe(self.instance) if settings.ui_events else None
+        self._session_tracing = SessionTracing(instance=self.instance, session_id=lambda: self.host.session_id)
+        self._ui = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
+
+    @classmethod
+    def from_host(cls, host: PluginHost[None]) -> Self:
+        """Tag the opt-in identity setting so older builds sharing the database can ignore it."""
+        return cls(host, host.settings(LogfireSettings, requires={'include_user_email': ['logfire-user-email']}))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (self.instrumentation,)
+        return (self._session_tracing, self.instrumentation)
 
     async def configure(self) -> str:
         """The settings menu; its project row runs the setup that signs in and picks where traces go."""
@@ -109,23 +121,30 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
+        self._session_tracing.start(await git_email() if self.settings.include_user_email else None)
         if self.settings.ui_events:
+            self._unsubscribe = telemetry.subscribe(self._ui, root=self._session_tracing.root)
             model = event.settings.model or 'agent default'
-            self.instance.log('info', 'session started', attributes={'model': model}, tags=[telemetry.TAG])
+            with telemetry.parent_span(self._session_tracing.root()):
+                self._ui.log('info', 'session started', attributes={'model': model})
 
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
-        self.instance.log(
-            'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
-        )
+        with telemetry.parent_span(self._session_tracing.root()):
+            self.instance.log(
+                'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
+            )
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         if self.settings.ui_events:
-            self.instance.log('info', 'turn {outcome}', attributes={'outcome': event.outcome}, tags=[telemetry.TAG])
+            with telemetry.parent_span(self._session_tracing.root()):
+                self._ui.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # Stop receiving UI events before the instance shuts down.
         if self._unsubscribe is not None:
             self._unsubscribe()
+            self._unsubscribe = None
+        self._session_tracing.end(event.reason)
         with CancelScope(shield=True):
             finished = await to_thread.run_sync(_shutdown, self.instance)
             if not finished:
@@ -203,6 +222,15 @@ _ROWS = (
         label='Binary content',
         description='Record images, audio, and other file data in spans. Needs message content included.',
         default='true',
+        choices=_BOOLEAN,
+        choice_labels=_INCLUDED,
+        allow_custom=False,
+    ),
+    FieldRow(
+        key='include_user_email',
+        label='User email',
+        description=LogfireSettings.model_fields['include_user_email'].description or '',
+        default='false',
         choices=_BOOLEAN,
         choice_labels=_INCLUDED,
         allow_custom=False,
