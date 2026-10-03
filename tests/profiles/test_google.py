@@ -294,11 +294,18 @@ def test_model_profile_image_model():
     [
         ('gemini-3.7-flash', False),
         ('gemini-3.8-flash', False),
+        ('gemini-3-pro', False),
         ('gemini-3-pro-preview', False),
+        ('gemini-3.1-pro', False),
         ('gemini-3.1-pro-preview', False),
+        ('gemini-3.5-pro', False),
+        ('gemini-3.5-pro-preview', False),
+        ('au.gemini-3.1-pro-preview', False),
+        ('publishers/google/models/au.gemini-3.5-pro', False),
         # `gemini-3.1-flash-lite-image` does accept `MINIMAL` — its levels are `minimal, high`.
         ('gemini-3.1-flash-lite-image', True),
         ('gemini-3-flash-preview', True),
+        ('au.gemini-3.5-flash', True),
     ],
 )
 def test_model_profile_supports_minimal_thinking_level(model_name: str, expected: bool):
@@ -319,15 +326,38 @@ def test_model_profile_minimal_thinking_level_matches_model_prefix():
         ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
         ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
         ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.1-pro', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
         ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.5-pro', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3.5-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('au.gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('publishers/google/models/au.gemini-3.5-pro', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-3-pro', frozenset(('LOW', 'HIGH'))),
         ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
         # Models supporting the full scale carry no level set.
         ('gemini-3-flash-preview', None),
+        ('au.gemini-3.5-flash', None),
         # Budget-based models carry no level set.
         ('gemini-2.5-flash', None),
+        ('au.gemini-2.5-pro', None),
     ],
 )
 def test_model_profile_thinking_levels(model_name: str, expected: frozenset[str] | None):
     profile = google_model_profile(model_name)
     assert profile is not None
     assert profile.get('google_thinking_levels') == expected
+
+
+@pytest.mark.parametrize(
+    ('prefixed_name', 'bare_name'),
+    [
+        ('au.gemini-3.5-flash', 'gemini-3.5-flash'),
+        ('au.gemini-3.1-pro-preview', 'gemini-3.1-pro-preview'),
+        ('us.gemini-2.5-flash', 'gemini-2.5-flash'),
+        ('eu.gemini-2.0-flash', 'gemini-2.0-flash'),
+        ('models/gemini-3-pro-preview', 'gemini-3-pro-preview'),
+        ('publishers/google/models/au.gemini-3.5-pro', 'gemini-3.5-pro'),
+    ],
+)
+def test_model_profile_normalizes_regional_and_resource_prefixes(prefixed_name: str, bare_name: str):
+    assert google_model_profile(prefixed_name) == google_model_profile(bare_name)
