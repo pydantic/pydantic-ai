@@ -610,6 +610,37 @@ class TestRun:
         with pytest.raises(asyncio.CancelledError):
             await waiter
 
+    async def test_cancel_during_the_timeout_stop_propagates(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A cancel that lands while the timeout's stop runs is the caller's: no timeout, and no second stop.
+        fake_modal.wait_hangs = True
+        backend = await started()
+        sandbox = fake_modal.sandboxes[0]
+        entered, release, stopped = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        run_exec = sandbox.exec
+
+        class HeldStop:
+            async def aio(self, *args: Any, **kwargs: Any) -> Any:
+                if 'modal-stop' not in args:
+                    return await run_exec.aio(*args, **kwargs)
+                entered.set()
+                await release.wait()
+                stopper = await run_exec.aio(*args, **kwargs)
+                stopped.set()
+                return stopper
+
+        monkeypatch.setattr(sandbox, 'exec', HeldStop())
+        waiter = asyncio.create_task(backend.run(['sleep', '30'], timeout=0.01))
+        await asyncio.wait_for(entered.wait(), 5)
+        waiter.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        await asyncio.wait_for(stopped.wait(), 5)
+        assert sum('modal-stop' in call.argv for call in sandbox.exec_calls) == 1
+
 
 class TestWorkingDir:
     async def test_configured_working_dir_is_resolved_before_first_operation(self, fake_modal: FakeModal) -> None:
