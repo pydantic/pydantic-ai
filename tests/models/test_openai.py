@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
-from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag, TypeAdapter
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import (
@@ -183,14 +183,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, web_searches=0, requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, web_searches=0, requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -201,7 +201,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='openai',
@@ -223,7 +223,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='openai',
@@ -327,7 +327,7 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='openai',
@@ -418,7 +418,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -597,7 +597,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -614,15 +614,7 @@ async def test_request_tool_call(allow_model_requests: None):
         ]
     )
     assert result.usage == snapshot(
-        RunUsage(
-            requests=3,
-            cache_read_tokens=3,
-            input_tokens=5,
-            output_tokens=3,
-            tool_calls=1,
-            unmeasured_requests=1,
-            web_searches=0,
-        )
+        RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, tool_calls=1, unmeasured_requests=1)
     )
 
 
@@ -677,7 +669,7 @@ async def test_limits_warn_when_response_reports_no_usage(allow_model_requests: 
     assert result.usage.unmeasured_requests == 1
     assert result.usage.total_tokens == 0
     assert result.usage.cost is None
-    expected_usage = RunUsage(requests=1, unmeasured_requests=1, web_searches=0)
+    expected_usage = RunUsage(requests=1, unmeasured_requests=1)
     assert result.usage == expected_usage, (result.usage.__dict__, expected_usage.__dict__)
     assert result.usage == snapshot(expected_usage)
 
@@ -785,8 +777,10 @@ async def test_healthy_stream_does_not_mark_missing_intermediate_usage(allow_mod
         async with Agent(model).run_stream('hello', usage_limits=UsageLimits(input_tokens_limit=100)) as result:
             assert await result.get_output() == 'hello world'
 
-    expected_usage = RunUsage(requests=1, input_tokens=6, output_tokens=3, unmeasured_requests=0, web_searches=0)
+    expected_usage = RunUsage(requests=1, input_tokens=6, output_tokens=3, unmeasured_requests=0)
     assert result.usage == expected_usage, (result.usage.__dict__, expected_usage.__dict__)
+    usage_adapter = TypeAdapter(RunUsage)
+    assert usage_adapter.dump_python(result.usage) == usage_adapter.dump_python(expected_usage)
     assert result.usage == snapshot(expected_usage)
 
 
@@ -5271,7 +5265,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[],
-                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -5299,7 +5293,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello back')],
-                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',

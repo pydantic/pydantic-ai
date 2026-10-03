@@ -2210,7 +2210,7 @@ async def test_backend_missing_usage_survives_realtime_session(
     )
 
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always', UsageLimitUnavailableWarning)
+        warnings.simplefilter('default', UsageLimitUnavailableWarning)
         with _patched_connect(ws):
             async with realtime.session() as session:
                 with anyio.fail_after(5):
@@ -2222,7 +2222,7 @@ async def test_backend_missing_usage_survives_realtime_session(
     if reported_zero:
         assert availability_warnings == []
     else:
-        assert availability_warnings
+        assert len(availability_warnings) == 1
         assert all('1 response(s) omitted usage information' in str(item.message) for item in availability_warnings)
     assert session.usage.requests == 1
     assert session.usage.unmeasured_requests == int(not reported_zero)

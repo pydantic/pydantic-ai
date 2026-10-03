@@ -5294,11 +5294,13 @@ def _map_usage(
     response_usage = response.usage
     web_search_requests = _web_search_requests(response)
     if response_usage is None:
-        return usage.RequestUsage(
-            unmeasured_requests=1,
-            web_searches=web_search_requests,
-            details={'web_search_requests': web_search_requests} if web_search_requests else None,
-        )
+        if web_search_requests:
+            return usage.RequestUsage(
+                unmeasured_requests=1,
+                web_searches=web_search_requests,
+                details={'web_search_requests': web_search_requests},
+            )
+        return usage.RequestUsage(unmeasured_requests=1)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details = {

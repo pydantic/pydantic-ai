@@ -3586,7 +3586,10 @@ class RealtimeSession:
         if self._usage_limits is None:
             return
         self._usage_limits.check_tokens(self.usage)
-        self._usage_limits.check_cost(self.usage, warn_if_cost_unavailable=warn_if_cost_unavailable)
+        self._usage_limits.check_cost(
+            self.usage,
+            warn_if_cost_unavailable=warn_if_cost_unavailable and not self.usage.unmeasured_requests,
+        )
 
     def _reserve_response_request(self) -> None:
         """Claim the request budget for a response this session is about to solicit.

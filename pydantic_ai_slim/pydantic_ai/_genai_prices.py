@@ -94,11 +94,7 @@ def calculate_price_for_usage(
     """Price a usage object with [genai-prices](https://github.com/pydantic/genai-prices), propagating its errors.
 
     Tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
-    Only `ModelResponse.cost()` wants this behaviour; everything internal goes through `best_effort_price`.
     """
-    if usage.unmeasured_requests:
-        raise ValueError('Cannot calculate a complete price when usage information is missing for some requests')
-
     if provider_api_url:
         try:
             return calc_price(
@@ -132,19 +128,23 @@ def best_effort_price(
     A missing model name (e.g. a synthetic response from a capability) leaves nothing to look up.
     `genai-prices` raises `LookupError` for providers/models it doesn't know about (including `test` and
     `function` models) and `ValueError` for usage it can't price (e.g. cache token counts that imply a
-    negative uncached remainder); both are expected. Anything else is unexpected and surfaces as a
-    `CostCalculationFailedWarning` rather than being raised.
+    negative uncached remainder); both are expected. For usage that includes unmeasured requests, a positive
+    price remains a known subtotal, while a zero price is treated as unknown. Anything else is unexpected and
+    surfaces as a `CostCalculationFailedWarning` rather than being raised.
     """
     if not model_name:
         return None
     try:
-        return calculate_price_for_usage(
+        price = calculate_price_for_usage(
             usage,
             model_name=model_name,
             provider_api_url=provider_api_url,
             provider_name=provider_name,
             genai_request_timestamp=genai_request_timestamp,
         )
+        if usage.unmeasured_requests and price.total_price == 0:
+            return None
+        return price
     except (LookupError, ValueError):
         # NOTE(Marcelo): We can allow some kind of hook on the provider level, which we could retrieve via
         # `ctx.deps.model.provider.calculate_cost`, but I'm not sure how would the API look like. Maybe a new parameter

@@ -53,12 +53,39 @@ def test_unmeasured_requests_are_not_values_or_token_details() -> None:
     assert 'gen_ai.usage.details.unmeasured_requests' not in usage.opentelemetry_attributes()
 
 
-def test_missing_usage_is_not_priced_as_zero() -> None:
-    usage = RequestUsage(input_tokens=20, unmeasured_requests=1)
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage], ids=['request', 'run'])
+def test_missing_usage_is_not_priced_as_zero(usage_type: type[RequestUsage]) -> None:
+    usage = usage_type(unmeasured_requests=1)
 
     assert best_effort_price(usage, model_name='gpt-4o', provider_name='openai') is None
+    assert usage.unmeasured_requests == 1
 
-    response = ModelResponse(parts=[], usage=usage, model_name='gpt-4o', provider_name='openai')
+
+@pytest.mark.parametrize('usage_type', [RequestUsage, RunUsage], ids=['request', 'run'])
+def test_best_effort_price_keeps_known_partial_cost(usage_type: type[RequestUsage]) -> None:
+    details = {'web_search_requests': 1}
+    web_search_usage = usage_type(web_searches=1, unmeasured_requests=1, details=details)
+    web_search_price = best_effort_price(web_search_usage, model_name='gpt-4o', provider_name='openai')
+    assert web_search_price is not None
+    assert web_search_price.total_price == Decimal('0.01')
+
+    token_usage = usage_type(input_tokens=20, unmeasured_requests=1)
+    token_price = best_effort_price(token_usage, model_name='gpt-4o', provider_name='openai')
+    assert token_price is not None
+    assert token_price.total_price > Decimal('0')
+
+    assert web_search_usage.unmeasured_requests == 1
+    assert web_search_usage.details == details
+
+
+def test_response_cost_rejects_partial_cost() -> None:
+    response = ModelResponse(
+        parts=[],
+        usage=RequestUsage(web_searches=1, unmeasured_requests=1, cost=Decimal('0.01')),
+        model_name='gpt-4o',
+        provider_name='openai',
+    )
+
     with pytest.raises(ValueError, match='usage information is missing'):
         response.cost()
 

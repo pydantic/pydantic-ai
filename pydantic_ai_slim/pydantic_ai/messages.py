@@ -2974,6 +2974,8 @@ class ModelResponse:
         omitted usage information, since the total cost would be incomplete.
         """
         assert self.model_name, 'Model name is required to calculate price'
+        if self.usage.unmeasured_requests:
+            raise ValueError('Cannot calculate a complete price when usage information is missing for some requests')
         return calculate_price_for_usage(
             self.usage,
             model_name=self.model_name,
