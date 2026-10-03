@@ -43,12 +43,12 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
         return email
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.git_email', configured_email)
-    previous = load_logfire(make_host(ui_events=ui_events)) if multiple_plugins else None
+    previous = load_logfire(make_host(ui_events=ui_events, include_user_email=True)) if multiple_plugins else None
     plugin = load_logfire(
         PluginHost(
             name='observability',
             console=Console(file=io.StringIO()),
-            settings={'ui_events': ui_events},
+            settings={'ui_events': ui_events, 'include_user_email': True},
             session_id=lambda: 'session-123',
         )
     )
@@ -117,6 +117,27 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
             if operation(span) == 'invoke_agent' and (span.attributes or {}).get('gen_ai.agent.name') == 'parent'
         ]
         assert [span.parent for span in parent_runs] == [span.context for span in commands]
+
+
+@pytest.mark.parametrize('include_email', [None, False, True])
+async def test_email_tag_is_opt_in_and_disabled_skips_git(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, include_email: bool | None
+) -> None:
+    looked_up = False
+
+    async def configured_email() -> str:
+        nonlocal looked_up
+        looked_up = True
+        return 'developer@example.com'
+
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.git_email', configured_email)
+    settings = {} if include_email is None else {'include_user_email': include_email}
+    plugin = load_logfire(make_host(**settings))
+    await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    await close(plugin)
+    assert looked_up is (include_email is True)
+    root = next(span for span in recorder.spans() if span.name == 'CLAI session')
+    assert (root.attributes or {})['logfire.tags'] == (('developer@example.com',) if include_email else ())
 
 
 async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: Recorder, tmp_path: Path) -> None:

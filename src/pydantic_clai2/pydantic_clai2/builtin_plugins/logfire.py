@@ -41,6 +41,10 @@ class LogfireSettings(BaseModel):
     send_to_logfire: Literal[False, 'if-token-present'] = 'if-token-present'
     include_content: bool = True
     include_binary_content: bool = True
+    include_user_email: bool = Field(
+        default=False,
+        description='Tag session roots with the email from git config user.email. Never added to child spans or logs.',
+    )
     token: KeyReference | None = Field(
         default=None,
         description='A /keys entry holding the Logfire write token to send with, instead of LOGFIRE_TOKEN or the '
@@ -111,7 +115,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
-        self._session_tracing.start(await git_email())
+        self._session_tracing.start(await git_email() if self.settings.include_user_email else None)
         if self.settings.ui_events:
             self._unsubscribe = telemetry.subscribe(self._ui, root=self._session_tracing.root)
             model = event.settings.model or 'agent default'
@@ -212,6 +216,15 @@ _ROWS = (
         label='Binary content',
         description='Record images, audio, and other file data in spans. Needs message content included.',
         default='true',
+        choices=_BOOLEAN,
+        choice_labels=_INCLUDED,
+        allow_custom=False,
+    ),
+    FieldRow(
+        key='include_user_email',
+        label='User email',
+        description=LogfireSettings.model_fields['include_user_email'].description or '',
+        default='false',
         choices=_BOOLEAN,
         choice_labels=_INCLUDED,
         allow_custom=False,

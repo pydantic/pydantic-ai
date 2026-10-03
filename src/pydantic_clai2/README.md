@@ -1688,9 +1688,13 @@ Its `agent_session_id` attribute is the saved conversation ID shown by `/session
 was already opened by this plugin instance. Unloading the plugin ends its roots;
 reloading starts new traces with the same saved conversation IDs.
 
-The root span's only identity tag is the email from `git config user.email`.
-It is not copied onto child spans or logs. If Git or the email is unavailable,
-the tag is omitted. UI records use the `clai2 ui` instrumentation scope.
+Email attribution is opt-in: `include_user_email` defaults to `false`, and Git
+is not queried while it is off. Enable **User email** with
+`/plugins configure observability`, or set `include_user_email` to `true` in the
+plugin settings.
+When enabled, the email from `git config user.email` is a tag on session roots
+only, never child spans or logs. If Git or the email is unavailable, the tag is
+omitted. UI records use the `clai2 ui` instrumentation scope.
 
 Prompts, responses, tool arguments/results, and binary image attachments are
 included by default, including retained history used by later turns. This can

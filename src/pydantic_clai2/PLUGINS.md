@@ -390,9 +390,12 @@ lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
 `/resume` reuses that conversation's root if this plugin instance already opened
-it. All roots end before the plugin flushes and shuts down. The email from
+it. All roots end before the plugin flushes and shuts down. With `include_user_email: true`, the email from
 `git config user.email`, when available, is a tag on each session root only.
-It is never inherited by child spans or logs, and is independent of the content
+This setting defaults to `false`; while disabled it neither queries Git nor
+exports an email tag. Enable **User email** in `/plugins configure observability`
+or set it in the plugin's saved or project settings. When enabled, the email
+is never inherited by child spans or logs, and is independent of the content
 capture settings.
 
 `ui_events` (default `false`) also records CLAI's UI interactions on the same

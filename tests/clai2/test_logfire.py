@@ -531,10 +531,11 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             pick('service_name'),
             pick('include_content'),
             pick('include_binary_content'),
+            pick('include_user_email'),
             pick('ui_events'),
             MenuResult(cancelled=True),
         ],
-        choices=[pick('false'), pick('false'), pick('false'), pick('true')],
+        choices=[pick('false'), pick('false'), pick('false'), pick('true'), pick('true')],
         texts=[typed('my-clai')],
     )
     monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
@@ -544,7 +545,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
         assert loader.configurable('observability')
         assert await loader.command(['configure', 'observability']) == (
             'Saved Send to Logfire.\nSaved Service name.\nSaved Message content.\nSaved Binary content.\n'
-            'Saved UI events.'
+            'Saved User email.\nSaved UI events.'
         )
         [declaration] = store.plugins()
         assert declaration.settings == {
@@ -552,6 +553,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'send_to_logfire': False,
             'include_content': False,
             'include_binary_content': False,
+            'include_user_email': True,
             'token': None,
             'base_url': None,
             'ui_events': True,
