@@ -63,6 +63,20 @@ print(result.output)
 #> ...
 ```
 
+## Video, audio, and images
+
+Download the [video example](https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/pixeltable_video.py)
+and run it once with a short expense-policy video containing speech and `OPENAI_API_KEY` set:
+
+```bash
+uv run python pixeltable_video.py training.mp4
+```
+
+On insertion, Pixeltable calls OpenAI to transcribe 30-second audio segments, caption one frame
+every 10 seconds, and index the stored text. Searches embed the query and retrieve that text with
+timestamps; media columns are omitted. The agent also saves a preference for visual examples and
+recalls it in a second run without the first run's chat history.
+
 ## Catalog tools
 
 | Tool | What it does |
