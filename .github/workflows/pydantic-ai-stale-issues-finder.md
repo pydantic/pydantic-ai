@@ -24,7 +24,7 @@ network:
     - python
     # ANTHROPIC_BASE_URL is a compile-time literal (below) so gh-aw already
     # auto-allowlists the host; this explicit entry is a harmless safety net.
-    - api.minimax.io
+    - api.z.ai
 # We register as the built-in `claude` engine and only override `command`, so
 # gh-aw runs its full Claude proxy + credential-injection machinery for us.
 # ANTHROPIC_BASE_URL MUST be a compile-time literal (not a ${{ vars.* }}
@@ -32,8 +32,8 @@ network:
 # `--anthropic-api-base-path` from its parsed URL path at compile time. With a
 # vars expression the path can't be parsed, so the proxy drops the `/anthropic`
 # prefix and the upstream returns 404. Only ANTHROPIC_API_KEY stays a secret
-# (injected by the AWF api-proxy, excluded from the agent container). MiniMax
-# exposes an Anthropic-compatible API at https://api.minimax.io/anthropic.
+# (injected by the AWF api-proxy, excluded from the agent container). Z.AI Coding Plan
+# exposes an Anthropic-compatible API at https://api.z.ai/api/anthropic.
 runtimes:
   uv: {}
 engine:
@@ -47,8 +47,8 @@ engine:
   # `uv run --script` against the workspace harness.
   command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
   env:
-    ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
     GITHUB_WORKFLOW: ${{ github.workflow }}
     PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
     PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -85,8 +85,8 @@ safe-outputs:
       id: claude
       model: ${{ vars.GH_AW_MODEL }}
       env:
-        ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
         GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
 env:
@@ -98,7 +98,7 @@ env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
 # Fallback pricing in dollars per 1M tokens, read only if an AI-credits budget is ever
 # active — it is not, and no `models.providers` entry accompanies it. See
-# `shared/engine-minimax.md` for why pricing `MiniMax-M3` there is what stops the agent.
+# `shared/engine-zai.md` for why pricing the configured model there can stop the agent.
 models:
   default-ai-credits-pricing:
     input: 0.6

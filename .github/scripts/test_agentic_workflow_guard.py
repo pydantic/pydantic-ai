@@ -30,6 +30,7 @@ from agentic_workflow_guard import (
     check_job_timeout_env,
     check_lock_regenerated,
     check_prompt_paths,
+    check_provider_engine_config,
     check_provider_health_identity,
     check_provider_health_monitor,
     check_provider_health_wiring,
@@ -1131,11 +1132,67 @@ jobs:
     assert 'prompt-path-outside-workspace' in {violation.check for violation in violations}
 
 
+def test_provider_engine_config_requires_the_zai_host_and_credential(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    engine = _write(
+        shared / 'engine-zai.md',
+        """---
+engine:
+  env:
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+safe-outputs:
+  threat-detection:
+    engine:
+      env:
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+---
+""",
+    )
+    _write(shared / 'provider-health.md', '---\n# provider health\n---\n')
+    local = _write(
+        workflows / 'pydantic-ai-local.md',
+        '---\nengine:\n  env:\n    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic\n'
+        '    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}\n---\nPrompt\n',
+    )
+
+    assert check_provider_engine_config(workflows) == []
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace(
+            'ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic',
+            'ANTHROPIC_BASE_URL: https://api.z.ai/anthropic',
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_engine_config(workflows)] == ['provider-engine-config']
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace(
+            'ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}',
+            'ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}',
+            1,
+        ),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace('https://api.z.ai/anthropic', 'https://api.z.ai/api/anthropic'),
+    )
+    _write(local, local.read_text(encoding='utf-8').replace('secrets.ZAI_API_KEY', 'secrets.OTHER_API_KEY'))
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+
 def test_provider_health_wiring_requires_the_shared_gate_and_compiled_activation_dependency(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     source = _write(
         workflows / 'pydantic-ai-mini.md',
-        '---\nname: MiniMax\nimports:\n  - shared/engine-minimax.md\nif: true\n---\nPrompt\n',
+        '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\nif: true\n---\nPrompt\n',
     )
     lock = _write(
         source.with_suffix('.lock.yml'),
@@ -1167,9 +1224,9 @@ def test_provider_health_readiness_must_be_required_in_every_or_branch(tmp_path:
     source = _write(
         workflows / 'pydantic-ai-mini.md',
         """---
-name: MiniMax
+name: Z.AI
 imports:
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
   - shared/provider-health.md
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 safe-outputs:
@@ -1232,7 +1289,7 @@ def test_provider_health_identity_is_shared_and_stable_for_workflow_run_retries(
         "${{ github.event.workflow_run.head_sha }}:${{ (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}"
     )
     engine = _write(
-        shared / 'engine-minimax.md',
+        shared / 'engine-zai.md',
         f'engine:\n  env:\n    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
         f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
         f'    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n    PYDANTIC_AI_TASK_KEY: {task_key}\n',
@@ -1274,7 +1331,7 @@ def test_provider_health_identity_rejects_gate_shim_drift(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     shared = workflows / 'shared'
     _write(
-        shared / 'engine-minimax.md',
+        shared / 'engine-zai.md',
         'engine:\n  env:\n    GITHUB_WORKFLOW: ${{ github.workflow }}\n'
         '    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}\n'
         '    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}: ${{ github.run_id }}\n',
@@ -1292,7 +1349,7 @@ def test_provider_health_identity_requires_run_attempt_for_local_engine_config(t
         "${{ github.event.workflow_run.head_sha }}:${{ (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}"
     )
     _write(
-        shared / 'engine-minimax.md',
+        shared / 'engine-zai.md',
         f'engine:\n  env:\n    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
         f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
         f'    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n    PYDANTIC_AI_TASK_KEY: {task_key}\n',
@@ -1304,7 +1361,7 @@ def test_provider_health_identity_requires_run_attempt_for_local_engine_config(t
     )
     local = _write(
         workflows / 'pydantic-ai-local.md',
-        f'---\nengine:\n  env:\n    ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic\n'
+        f'---\nengine:\n  env:\n    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic\n'
         f'    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
         f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
         f'    PYDANTIC_AI_TASK_KEY: {task_key}\n---\nPrompt\n',
@@ -1326,11 +1383,11 @@ def test_provider_health_monitor_is_explicitly_scoped_and_cannot_recurse(tmp_pat
     workflows = tmp_path / '.github' / 'workflows'
     _write(
         workflows / 'pydantic-ai-a.md',
-        '---\nname: Agent A\nimports:\n  - shared/engine-minimax.md\n---\nPrompt\n',
+        '---\nname: Agent A\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n',
     )
     _write(
         workflows / 'pydantic-ai-b.md',
-        '---\nname: Agent B\nimports:\n  - shared/engine-minimax.md\n---\nPrompt\n',
+        '---\nname: Agent B\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n',
     )
     monitor = _write(
         workflows / 'agent-provider-health.yml',
@@ -1378,13 +1435,11 @@ jobs:
           --agent-artifact agent/agent-stdio.log
       - if: github.event_name == 'schedule'
         env:
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-          MINIMAX_QUOTA_RESOURCE: ${{ vars.MINIMAX_QUOTA_RESOURCE }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
         run: python3 .github/scripts/agent_provider_health.py monitor
       - if: github.event_name == 'workflow_dispatch'
         env:
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-          MINIMAX_QUOTA_RESOURCE: ${{ vars.MINIMAX_QUOTA_RESOURCE }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
         run: python3 .github/scripts/agent_provider_health.py monitor --recover-issue 1
 """,
     )
