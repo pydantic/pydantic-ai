@@ -104,7 +104,7 @@ agent = Agent(
 
 A [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is where the agent's files and commands live: your machine with `LocalWorkspace`, or an isolated sandbox. Harness capabilities never pick one for you. Attach one, or the run fails at its start and tells you what to attach.
 
-[Coder](pydantic_ai_harness/coder/), [FileSystem](pydantic_ai_harness/filesystem/), [Shell](pydantic_ai_harness/shell/), [Repo Context](pydantic_ai_harness/repo_context/), and [Macroscope](pydantic_ai_harness/macroscope/) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](pydantic_ai_harness/coder/#sharing-a-workspace).
+[Coder](pydantic_ai_harness/coder/), [FileSystem](pydantic_ai_harness/filesystem/), [Shell](pydantic_ai_harness/shell/), [Repo Context](pydantic_ai_harness/repo_context/), [Macroscope](pydantic_ai_harness/macroscope/), and [LocalStack](pydantic_ai_harness/localstack/) (its `aws_cli` tool) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](pydantic_ai_harness/coder/#sharing-a-workspace).
 
 Skills, SubAgents, ToolOutputLimits, and Memory's `FileStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
 

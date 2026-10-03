@@ -6,8 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.localstack._toolset import LocalStackToolset
 
 _INSTRUCTIONS = (
@@ -27,13 +27,17 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     Gives the agent AWS CLI tooling wired to a running LocalStack instance, so it
     can provision and interact with AWS services (S3, DynamoDB, SQS, Lambda, …)
     without touching real AWS. Start LocalStack separately (`localstack start` or
-    its Docker image) before running the agent.
+    its Docker image) before running the agent, or set `manage_container=True`.
+
+    `aws_cli` runs in the run's workspace, like `Shell`, so a run without one fails at its
+    start. The health check and a managed container run on the agent's host.
 
     ```python
     from pydantic_ai import Agent
+    from pydantic_ai.capabilities import LocalWorkspace
     from pydantic_ai_harness.localstack import LocalStack
 
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[LocalStack()])
+    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[LocalWorkspace('.'), LocalStack()])
     result = agent.run_sync('Create an S3 bucket called reports and list all buckets.')
     print(result.output)
     ```
@@ -44,6 +48,9 @@ class LocalStack(AbstractCapability[AgentDepsT]):
 
     Defaults to LocalStack's `localhost.localstack.cloud` domain (which resolves to
     `127.0.0.1`) for compatibility with AWS SDKs that need subdomain-style hosts.
+    For an external instance, it must be reachable from both the workspace (AWS CLI)
+    and the agent's host (health check). With `manage_container=True`, only this URL's
+    port is used; the endpoint host comes from `host_address`.
     """
 
     region: str = 'us-east-1'
@@ -62,13 +69,13 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     """These AWS services are always rejected (denylist)."""
 
     default_timeout: float = 60.0
-    """Default timeout in seconds for AWS CLI commands and the health check."""
+    """Default timeout in seconds for AWS CLI commands and the health check. Must be positive and finite."""
 
     max_output_chars: int = 50_000
     """Maximum characters of output returned to the model. Must be positive."""
 
     aws_cli_path: str = 'aws'
-    """Path or name of the AWS CLI executable (e.g. `aws` or `awslocal`)."""
+    """Path or name of the AWS CLI executable in the workspace (e.g. `aws` or `awslocal`)."""
 
     manage_container: bool = False
     """If True, start a LocalStack Docker container for each run and stop it when the run ends.
@@ -81,7 +88,11 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     """Docker image to run when `manage_container` is True."""
 
     host_address: str = '127.0.0.1'
-    """Host address Docker publishes the LocalStack edge port on."""
+    """Host address Docker publishes the LocalStack edge port on, also used for the CLI endpoint.
+
+    For a remote workspace, use a concrete host interface address it can reach.
+    `127.0.0.1` and `0.0.0.0` both produce a loopback endpoint.
+    """
 
     service_port_range: str | None = None
     """Optional host/container port range for services that expose their own ports, e.g. `4510-4559`."""
@@ -110,7 +121,11 @@ class LocalStack(AbstractCapability[AgentDepsT]):
             return None
         return _INSTRUCTIONS.format(endpoint_url=self.endpoint_url)
 
-    def get_toolset(self) -> AgentToolset[AgentDepsT]:
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Fail the run at its start when it has no workspace to run the AWS CLI in."""
+        require_workspace(ctx.workspace, 'LocalStack', ctx.messages)
+
+    def get_toolset(self) -> LocalStackToolset[AgentDepsT]:
         """Build and return the LocalStack toolset."""
         return LocalStackToolset[AgentDepsT](
             endpoint_url=self.endpoint_url,

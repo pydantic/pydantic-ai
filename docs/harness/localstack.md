@@ -32,11 +32,15 @@ and credentials, and adds a health check for the emulated services.
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import LocalStack
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[LocalStack()],
+    capabilities=[
+        LocalWorkspace('.'),
+        LocalStack(),
+    ],
 )
 
 result = agent.run_sync('Create an S3 bucket called reports and list all buckets.')
@@ -50,6 +54,17 @@ for example with the
 endpoint `http://localhost.localstack.cloud:4566` (which resolves to
 `127.0.0.1`) and `test` / `test` credentials. Set `manage_container=True` to have
 the capability start and stop a fresh Docker container per run.
+
+`aws_cli` runs in the agent's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/),
+like `Shell`: on your machine with `LocalWorkspace`, or in the sandbox when the run uses one. A run
+without a workspace fails at its start. The AWS CLI must be installed in the workspace.
+For an externally managed instance, `endpoint_url` must be reachable from both the workspace
+and the agent's host (for the health check). The default `localhost.localstack.cloud` address
+only works when LocalStack runs on the same machine as the workspace. For managed containers,
+see [Managing the container](#managing-the-container). Commands get the workspace's
+environment with the endpoint, region, and credentials set on top, and every other `AWS_*`
+variable (profiles, session tokens, config files) removed. `localstack_health` and a managed
+container always run on the agent's host.
 
 ## Tools
 
@@ -66,7 +81,7 @@ so errors survive truncation.
 
 The AWS CLI can read from and write to local files through arguments such as
 `--body`, `file://`, `fileb://`, and `s3 cp`. Treat this capability as both
-AWS-emulator access and AWS CLI access to the process's filesystem.
+AWS-emulator access and AWS CLI access to the workspace's filesystem.
 
 ## Service controls
 
@@ -88,6 +103,13 @@ both. The service is the first non-flag token of the command (`s3` in `s3 ls`).
 Set `manage_container=True` and the capability starts a LocalStack Docker
 container for each run and stops it when the run ends, so the agent always gets a
 fresh, isolated environment. Docker must be installed and running.
+
+In this mode, only the port from `endpoint_url` is used: the CLI endpoint host comes from
+`host_address`. For a remote workspace, set `host_address` to a concrete interface address on
+this host that the workspace can reach. Both `127.0.0.1` and `0.0.0.0` produce the loopback
+`localhost.localstack.cloud` endpoint, so binding to all interfaces is not enough. To use a
+separate hostname or proxy URL, manage the instance externally (`manage_container=False`)
+and set `endpoint_url` to an address reachable from both the workspace and the agent's host.
 
 ```python
 from pydantic_ai_harness import LocalStack
@@ -160,7 +182,7 @@ LocalStack(
     denied_services=[],                    # denylist
     default_timeout=60.0,                  # seconds, per command and health check
     max_output_chars=50_000,               # output cap returned to the model
-    aws_cli_path='aws',                    # CLI executable (e.g. 'aws' or 'awslocal')
+    aws_cli_path='aws',                    # CLI executable in the workspace (e.g. 'aws' or 'awslocal')
     manage_container=False,                # start/stop a Docker container per run
     image='localstack/localstack',         # image used when managing the container
     host_address='127.0.0.1',              # host address for Docker port publishing
@@ -174,9 +196,9 @@ LocalStack(
 )
 ```
 
-The AWS CLI must be installed and on `PATH` (or point `aws_cli_path` at it). If
-the binary is missing, `aws_cli` returns a clear error instead of aborting the
-run. Set `include_instructions=False` to omit the capability's prompt text when
+The AWS CLI must be installed and on the workspace's `PATH` (or point
+`aws_cli_path` at it). If the binary is missing, `aws_cli` returns a clear error
+instead of aborting the run. Set `include_instructions=False` to omit the capability's prompt text when
 you supply your own.
 
 ## Agent spec (YAML/JSON)
@@ -188,6 +210,7 @@ you supply your own.
 # agent.yaml
 model: anthropic:claude-sonnet-4-6
 capabilities:
+  - LocalWorkspace: .
   - LocalStack:
       endpoint_url: http://localhost.localstack.cloud:4566
       allowed_services: ['s3', 'dynamodb', 'sqs']
