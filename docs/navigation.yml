@@ -678,6 +678,13 @@ navigation:
     slug: ""
     top-level: true
     contents:
+      - page: "Going to Production"
+        path: "production.md"
+        slug: "guides/production"
+        aliases:
+          - "production"
+          - "deployment"
+          - "deploy"
       - page: "Extensibility"
         path: "extensibility.md"
         slug: "guides/extensibility"
@@ -1439,7 +1446,7 @@ redirects:
     to: "capabilities/durable_execution/overview"
     status: 302
   - from: "comparisons/production-agents"
-    to: "comparisons/overview"
+    to: "guides/production"
     status: 302
   - from: "comparisons/under-the-hood"
     to: "comparisons/overview"
