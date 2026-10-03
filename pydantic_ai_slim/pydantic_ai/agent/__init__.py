@@ -319,7 +319,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
-        await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+        await _utils.wait_for_any_task((_ready_waiter, _wrap_task))
     except BaseException as exc:
         # Unblock `_do_run` before draining, mirroring the streaming handoff: if
         # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's

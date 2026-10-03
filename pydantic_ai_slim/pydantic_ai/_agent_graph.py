@@ -28,7 +28,14 @@ from pydantic_ai._instrumentation import (
     get_instructions_source as _get_history_instructions_source,
 )
 from pydantic_ai._tool_execution import process_tool_calls
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
+from pydantic_ai._utils import (
+    cancel_and_drain,
+    dataclasses_no_defaults_repr,
+    fill_run_metadata,
+    is_str_dict,
+    now_utc,
+    wait_for_any_task,
+)
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
@@ -1440,7 +1447,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
-            await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+            await wait_for_any_task((ready_waiter, wrap_task))
         except BaseException:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
