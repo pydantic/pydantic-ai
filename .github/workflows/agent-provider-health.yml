@@ -181,7 +181,7 @@ jobs:
                   stage = 'run_model'
                   result = await Agent(model).run('Reply with OK.')
                   stage = 'check_usage'
-                  usage = result.usage()
+                  usage = result.usage
                   assert result.output.strip()
                   assert usage.input_tokens > 0
                   assert usage.output_tokens > 0
