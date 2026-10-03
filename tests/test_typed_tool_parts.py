@@ -218,6 +218,20 @@ def test_a_typed_part_may_not_add_fields() -> None:
             extra: int = 0
 
 
+def test_a_field_inherited_from_an_intermediate_dataclass_is_rejected() -> None:
+    @dataclass(repr=False)
+    class WithField(ToolCallPart):
+        _: KW_ONLY
+
+        extra: int = 0
+
+    with pytest.raises(UserError, match='InheritsField adds the field\\(s\\) extra to ToolCallPart'):
+
+        @dataclass(repr=False)
+        class InheritsField(WithField, namespace='test', tool_kind='inherits-field'):
+            pass
+
+
 def test_a_payload_type_defined_in_a_function_is_reported() -> None:
     class LocalArgs(TypedDict):
         name: str
@@ -270,7 +284,7 @@ async def test_an_agent_tool_with_a_registered_kind_produces_typed_parts() -> No
         else:
             yield 'done'
 
-    async def mark_kind(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    async def mark_kind(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
         return replace(tool_def, tool_kind='test.lookup')
 
     def lookup(sku: str) -> LookupResult:
@@ -278,7 +292,7 @@ async def test_an_agent_tool_with_a_registered_kind_produces_typed_parts() -> No
 
     events: list[AgentStreamEvent] = []
 
-    async def collect(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             events.append(event)
 

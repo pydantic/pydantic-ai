@@ -1459,11 +1459,20 @@ def _register_typed_tool_part(
             )
         return
     base_fields = {f.name for f in dataclasses.fields(base)}
-    added = [
+    # `cls` isn't a dataclass yet, so its own fields come from its annotations; fields it inherits
+    # from dataclasses between it and `base` are already built.
+    inherited = [
+        f.name
+        for k in cls.__mro__[1:]
+        if k is not base and issubclass(k, base) and dataclasses.is_dataclass(k)
+        for f in dataclasses.fields(k)
+    ]
+    own = [
         name
         for name, annotation in _utils.own_annotations(cls).items()
-        if name != '_' and name not in base_fields and not _utils.is_classvar_annotation(annotation)
+        if name != '_' and not _utils.is_classvar_annotation(annotation)
     ]
+    added = list(dict.fromkeys(name for name in [*inherited, *own] if name not in base_fields))
     if added:
         raise UserError(
             f'Typed tool part {cls.__qualname__} adds the field(s) {", ".join(added)} to {base.__name__}. '
