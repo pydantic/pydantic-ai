@@ -1957,6 +1957,102 @@ def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
     assert len(calls) == 4
 
 
+@pytest.mark.parametrize(
+    'error_code',
+    [
+        '1308',
+        '1309',
+        '1310',
+        '1316',
+        '1317',
+        '1318',
+        '1319',
+        '1320',
+        '1321',
+        pytest.param(1316, id='numeric-1316'),
+    ],
+)
+def test_rate_limit_retry_transport_does_not_retry_plan_quota_exhaustion(error_code: str | int):
+    calls: list[int] = []
+    quota_response: dict[str, object] = {'error': {'code': error_code, 'message': 'Usage limit reached'}}
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        return httpx2.Response(
+            429,
+            headers={'content-type': 'application/json'},
+            stream=httpx2.ByteStream(json.dumps(quota_response).encode()),
+        )
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['wait'] = wait_none()
+    transport.config['stop'] = stop_after_attempt(4)
+    client = AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+    async def _request() -> None:
+        async with client:
+            with pytest.raises(RateLimitError) as exc_info:
+                await client.messages.create(
+                    model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}]
+                )
+            assert exc_info.value.body == quota_response
+
+    asyncio.run(_request())
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    'error_body',
+    [
+        pytest.param(json.dumps({'error': {'code': '1302', 'message': 'Rate limited'}}).encode(), id='rate-limit-1302'),
+        pytest.param(
+            json.dumps({'error': {'code': '1305', 'message': 'Temporarily overloaded'}}).encode(), id='overloaded-1305'
+        ),
+        pytest.param(json.dumps({'error': {'code': '9999', 'message': 'Unknown'}}).encode(), id='unknown-code'),
+        pytest.param(
+            json.dumps({'error': {'code': '9' * 5000, 'message': 'Unknown'}}).encode(), id='large-numeric-code'
+        ),
+        pytest.param(b'{invalid json', id='malformed-json'),
+    ],
+)
+def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s(error_body: bytes):
+    calls: list[int] = []
+
+    def _handle(_request: httpx2.Request) -> httpx2.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx2.Response(
+                429,
+                headers={'content-type': 'application/json'},
+                stream=httpx2.ByteStream(error_body),
+            )
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport(httpx2.MockTransport(_handle))
+    transport.config['wait'] = wait_none()
+    transport.config['stop'] = stop_after_attempt(4)
+    client = AsyncAnthropic(
+        api_key='x',
+        max_retries=shim._LLM_MAX_RETRIES,  # pyright: ignore[reportPrivateUsage]
+        http_client=httpx2.AsyncClient(transport=transport),
+    )
+
+    async def _request() -> None:
+        async with client:
+            message = await client.messages.create(
+                model='glm-5.3-flash', max_tokens=1, messages=[{'role': 'user', 'content': 'hi'}]
+            )
+            assert message.content[0].type == 'text'
+            assert message.content[0].text == 'ok'
+
+    asyncio.run(_request())
+    assert len(calls) == 2
+
+
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):
     async def _hang(*_a: object, **kw: object) -> int:
         usage = kw['usage']
