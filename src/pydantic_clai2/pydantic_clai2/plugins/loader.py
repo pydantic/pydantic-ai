@@ -44,7 +44,7 @@ from pydantic_clai2.plugins import (
     collect,
 )
 from pydantic_clai2.plugins._factories import build, import_file, settings_capability
-from pydantic_clai2.plugins._git import install_git_plugin
+from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
@@ -567,9 +567,9 @@ class PluginLoader(Generic[DepsT]):
         await self.unload(name)
         checkout_notice = ''
         if entry.path is not None and not entry.shipped:
-            if (
-                entry.path.parent.parent.name == '_git'
-                and entry.path.parent == self.plugins_dir.resolve() / '_git' / name
+            # Unrelated file plugins remain removable even when the drop-in directory cannot be resolved.
+            if entry.path.parent.parent.name == CHECKOUTS_DIR and entry.path.parent == checkout_dir(
+                self.plugins_dir, name
             ):
                 checkout_notice = (
                     f' Checkout kept at {entry.path.parent}. Delete that directory before reinstalling from Git.'
@@ -631,9 +631,11 @@ class PluginLoader(Generic[DepsT]):
                 '\n'.join(f'{entry.name}: {entry.source} ({entry.state})' for entry in self.entries()) or 'No plugins.'
             )
         action, *rest = args
-        if action == 'add' and len(rest) <= 1:
+        if action == 'add' and not rest:
+            raise ValueError(ADD_USAGE)
+        if action == 'add' and len(rest) == 1:
             async with install_git_plugin(
-                rest[0] if rest else '', plugins_dir=self.plugins_dir, names=[entry.name for entry in self.entries()]
+                rest[0], plugins_dir=self.plugins_dir, names=[entry.name for entry in self.entries()]
             ) as declaration:
                 if any(entry.name == declaration.id for entry in self.entries()):
                     raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')

@@ -16,6 +16,9 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import canonical_plugin_id
 from pydantic_clai2.runtime._processes import kill_process_tree
 
+ADD_USAGE = 'Usage: /plugins add GIT_URL or /plugins add ID MODULE[:ATTR] [JSON]'
+CHECKOUTS_DIR = '_git'
+
 _SCP_URL = re.compile(r'(?:[\w.-]+@)?[\w.-]+:[^:\s].*')
 _PLUGIN_ID = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
 
@@ -36,13 +39,18 @@ def parse_repository(source: str) -> tuple[str, str]:
     elif _SCP_URL.fullmatch(url):
         path = url.partition(':')[2]
     else:
-        raise ValueError('Usage: /plugins add GIT_URL or /plugins add ID MODULE[:ATTR] [JSON]')
+        raise ValueError(ADD_USAGE)
     name = path.rstrip('/').rsplit('/', 1)[-1].removesuffix('.git').replace('-', '_').replace('.', '_')
     if _PLUGIN_ID.fullmatch(name) is None:
         raise ValueError(
             'The Git repository name must start with a letter and contain only letters, digits, dots, hyphens, or underscores.'
         )
     return url, canonical_plugin_id(name)
+
+
+def checkout_dir(plugins_dir: Path, name: str) -> Path:
+    """The managed checkout directory for a plugin ID."""
+    return plugins_dir.resolve() / CHECKOUTS_DIR / name
 
 
 @asynccontextmanager
@@ -54,7 +62,7 @@ async def install_git_plugin(
     if name in names:
         raise ValueError(f'Plugin {name} already exists; choose a repository with a different name.')
     # Keep incomplete checkouts out of drop-in discovery, including in other running CLAI sessions.
-    destination = plugins_dir.resolve() / '_git' / name
+    destination = checkout_dir(plugins_dir, name)
     try:
         destination.mkdir(parents=True)
     except FileExistsError as exc:

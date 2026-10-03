@@ -153,6 +153,22 @@ async def test_remove_git_plugin_restores_a_shipped_declaration(tmp_path: Path, 
     await upgraded.loader.close('exit')
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='requires creating a directory symlink without special privileges')
+async def test_remove_other_file_plugin_with_unresolvable_plugins_directory(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    path = tmp_path / 'external.py'
+    path.write_text(SEGMENT.format(name='external'))
+    declaration = PluginSettings(id='external', factory='external', path=str(path))
+    harness.store.save_plugin(declaration)
+    await harness.loader.load_all()
+    harness.store.plugins_dir.rmdir()
+    harness.store.plugins_dir.symlink_to(harness.store.plugins_dir.name, target_is_directory=True)
+    # Python 3.10 raises when resolving this loop; unrelated file plugins must not need that resolution.
+    assert (await harness.loader.command(['remove', 'external'])).startswith('Disabled external.')
+    assert harness.store.plugins() == [declaration.model_copy(update={'enabled': False})]
+    assert path.is_file()
+
+
 async def test_remove_does_not_claim_a_foreign_git_directory(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     declaration = PluginSettings(
