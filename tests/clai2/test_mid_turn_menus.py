@@ -161,15 +161,15 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
-            pipe.send_text('start\n')
+            pipe.send_text('start\r')
             await working.wait()
-            pipe.send_text('/menu\n')
+            pipe.send_text('/menu\r')
             assert await in_worker(opened.wait, 5)
             finish.set()
             await streamed.wait()
             assert 'Finished work' not in output.getvalue()
             close.set()
-            pipe.send_text('/exit\n')
+            pipe.send_text('/exit\r')
             await done.wait()
     text = output.getvalue()
     assert text.index('> /menu') < text.index('Finished work') < text.index('menu closed') < text.index('Goodbye.')
