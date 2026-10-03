@@ -784,18 +784,22 @@ def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
             source_paths.append(source)
     for source in source_paths:
         frontmatter = parse_frontmatter(source) if source.suffix == '.md' else {}
-        local_engine = _as_mapping(frontmatter.get('engine'))
-        local_env = _as_mapping(local_engine.get('env'))
-        if ('ANTHROPIC_BASE_URL' in local_env or 'ANTHROPIC_API_KEY' in local_env) and (
-            local_env.get('ANTHROPIC_BASE_URL') != endpoint or local_env.get('ANTHROPIC_API_KEY') != credential
-        ):
-            violations.append(
-                Violation(
-                    str(source),
-                    'provider-engine-config',
-                    'A workflow-local engine override must use the shared engine endpoint and credential.',
+        local_engines: tuple[object, ...] = (
+            frontmatter.get('engine'),
+            _as_mapping(_as_mapping(frontmatter.get('safe-outputs')).get('threat-detection')).get('engine'),
+        )
+        for local_engine in local_engines:
+            local_env = _as_mapping(_as_mapping(local_engine).get('env'))
+            if ('ANTHROPIC_BASE_URL' in local_env or 'ANTHROPIC_API_KEY' in local_env) and (
+                local_env.get('ANTHROPIC_BASE_URL') != endpoint or local_env.get('ANTHROPIC_API_KEY') != credential
+            ):
+                violations.append(
+                    Violation(
+                        str(source),
+                        'provider-engine-config',
+                        'A workflow-local engine override must use the shared engine endpoint and credential.',
+                    )
                 )
-            )
     return violations
 
 

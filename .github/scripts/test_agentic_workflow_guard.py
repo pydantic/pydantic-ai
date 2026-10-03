@@ -1224,6 +1224,53 @@ safe-outputs:
     assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
 
 
+def test_provider_engine_config_checks_workflow_local_threat_detection(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    _write(
+        shared / 'engine-zai.md',
+        """---
+engine:
+  env:
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+safe-outputs:
+  threat-detection:
+    engine:
+      env:
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+---
+""",
+    )
+    _write(
+        workflows / 'pydantic-ai-local.md',
+        """---
+safe-outputs:
+  threat-detection:
+    engine:
+      env:
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+---
+Prompt
+""",
+    )
+
+    assert check_provider_engine_config(workflows) == []
+
+    local = workflows / 'pydantic-ai-local.md'
+    matching_config = local.read_text(encoding='utf-8')
+    _write(
+        local,
+        matching_config.replace('https://api.z.ai/api/anthropic', 'https://provider.example/api/anthropic'),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(local, matching_config.replace('secrets.ZAI_API_KEY', 'secrets.OTHER_API_KEY'))
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+
 def test_provider_health_wiring_requires_the_shared_gate_and_compiled_activation_dependency(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     source = _write(
