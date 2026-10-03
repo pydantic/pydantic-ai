@@ -34,6 +34,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
+from .models.mock_xai import MockXai, create_response, get_mock_chat_create_kwargs
 
 with try_import() as anthropic_imports:
     from anthropic import omit as anthropic_omit
@@ -1355,6 +1356,22 @@ class TestXaiThinkingTranslation:
         )
         _, resolved = non_always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
         assert resolved.thinking is False
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
+async def test_xai_thinking_effort_not_dropped_for_grok_4_7(allow_model_requests: None) -> None:
+    """`grok-4.7` resolves the grok-4.5+ reasoning profile, so a `Thinking` effort reaches the request."""
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel('grok-4.7', provider=XaiProvider(xai_client=mock_client))
+    settings: XaiModelSettings = {'thinking': 'low'}
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('hi')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    assert kwargs[0]['reasoning_effort'] == 'low'
 
 
 # ---------------------------------------------------------------------------
