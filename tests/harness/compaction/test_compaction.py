@@ -3284,7 +3284,7 @@ class TestSlidingWindowCompactionReceipts:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         messages: list[ModelMessage] = [_user('original task'), _assistant('a'), _user('later'), _assistant('b')]
         result = await sw.compact(messages, _make_ctx())
-        assert _receipt_parts(result)[0].startswith('[History before this point (3 messages,')
+        assert _receipt_parts(result)[0].startswith('[History before this point (2 messages,')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3821,6 +3821,30 @@ class TestStructuralFeaturesThroughAgent:
         # `preserve_first_user_message` defaults on, so the real opening turn -- not the
         # receipt that now sits ahead of it -- is what gets carried forward.
         assert 'FIRST' in _user_texts(seen[1])
+
+    @pytest.mark.parametrize('preserve_first_user_message', [False, True])
+    async def test_receipt_does_not_take_the_only_kept_slot(self, preserve_first_user_message: bool):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_messages=3,
+                    keep_messages=1,
+                    receipts=True,
+                    preserve_first_user_message=preserve_first_user_message,
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('first'), _assistant('b'), _user('c'), _assistant('d')]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert ('first' in _user_texts(request)) is preserve_first_user_message
+            assert _receipt_parts(request[:1])
 
     async def test_pin_survives_compaction_in_a_run(self):
         seen: list[list[ModelMessage]] = []
