@@ -193,9 +193,7 @@ async def test_anthropic_turn_scoped_reminders_keep_thinking_and_cache(
     assert len(bodies) == len(responses)
     assert all(_TURN_SCOPED_BETA in headers.get('anthropic-beta', '') for headers in request_capture.headers)
     assert_append_only(bodies)
-    turn_entries = [
-        message for message in bodies[-1]['messages'] if isinstance(message, dict) and 'clear_at' in message
-    ]
+    turn_entries = [message for message in bodies[-1]['messages'] if 'clear_at' in message]
     assert turn_entries == [
         {
             'role': 'system',
@@ -261,7 +259,7 @@ async def test_anthropic_turn_scoped_fallback_on_model_without_native_support(
             block['text']
             for message in body['messages']
             for block in message['content']
-            if isinstance(block, dict) and block.get('type') == 'text' and 'Reminder' in str(block.get('text'))
+            if block['type'] == 'text' and 'Reminder' in block['text']
         ]
         assert texts == [f'<system>Reminder: be terse. This is request {n}.</system>']
         last_content = body['messages'][-1]['content']
@@ -307,7 +305,7 @@ async def test_openai_turn_scoped_reminder_sent_only_while_current(
     assert len(bodies) == len(responses) >= 3
     for n, body in enumerate(bodies, start=1):
         sent = body['messages'] if api == 'chat' else body['input']
-        reminders = [item for item in sent if isinstance(item, dict) and 'Reminder' in str(item.get('content'))]
+        reminders = [item for item in sent if 'Reminder' in str(item.get('content'))]
         assert reminders == [{'role': 'system', 'content': f'Reminder: be terse. This is request {n}.'}]
         assert sent[-1] == reminders[0]
     for previous, current in zip(responses, responses[1:]):
@@ -381,10 +379,10 @@ async def test_native_support_sends_every_reminder():
 async def test_enqueued_turn_scoped_prompt():
     """`ctx.enqueue` delivers a turn-scoped prompt into the next request, and it's gone from the one after."""
     seen: list[list[ModelMessage]] = []
-    agent: Agent[None, str] = Agent(recording_function_model(seen))
+    agent = Agent(recording_function_model(seen))
 
     @agent.tool
-    def get_weather(ctx: RunContext[None], city: str) -> str:
+    def get_weather(ctx: RunContext[Any], city: str) -> str:
         ctx.enqueue(SystemPromptPart(f'The {city} result is cached; do not fetch it again.', scope='turn'))
         return f'{city}: 18C, cloudy'
 
@@ -478,6 +476,24 @@ async def test_failed_step_drops_its_turn_scoped_prompt(stream: bool):
                     pass  # pragma: no cover
             else:
                 await agent.run('hello')
+
+    assert [[type(part).__name__ for part in message.parts] for message in messages] == [['UserPromptPart']]
+
+
+async def test_failed_step_keeps_the_rest_of_a_request_holding_a_turn_scoped_prompt():
+    """Only the turn-scoped part goes when the request it's in also holds other content.
+
+    Here the prompt arrives in the trailing request of `message_history`, which the run resumes
+    without a new prompt; the step fails, and the user prompt next to it stays.
+    """
+    agent = Agent(TestModel(), capabilities=[ProviderDown()])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hello'), SystemPromptPart('Be brief.', scope='turn')])
+    ]
+
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='provider down'):
+            await agent.run(message_history=history)
 
     assert [[type(part).__name__ for part in message.parts] for message in messages] == [['UserPromptPart']]
 
