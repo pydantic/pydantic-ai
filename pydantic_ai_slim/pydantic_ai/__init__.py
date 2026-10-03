@@ -51,7 +51,7 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UsageExtractionFailedWarning,
     UsageLimitExceeded,
-    UsageNotReportedWarning,
+    UsageLimitUnavailableWarning,
     UserError,
 )
 from .format_prompt import format_as_xml
@@ -247,7 +247,7 @@ __all__ = (
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
-    'UsageNotReportedWarning',
+    'UsageLimitUnavailableWarning',
     'ModelRetry',
     'ToolFailed',
     'ModelAPIError',

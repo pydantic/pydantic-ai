@@ -96,6 +96,9 @@ def calculate_price_for_usage(
     Tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
     Only `ModelResponse.cost()` wants this behaviour; everything internal goes through `best_effort_price`.
     """
+    if usage.unmeasured_requests:
+        raise ValueError('Cannot calculate a complete price when usage information is missing for some requests')
+
     if provider_api_url:
         try:
             return calc_price(

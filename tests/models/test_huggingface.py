@@ -486,6 +486,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
@@ -782,6 +783,66 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    usage = (
+        None
+        if missing_usage
+        else ChatCompletionOutputUsage.parse_obj_as_instance({'input_tokens': 0, 'output_tokens': 0})  # pyright: ignore[reportUnknownMemberType]
+    )
+    completion = completion_message(
+        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'hello', 'role': 'assistant'}),  # pyright: ignore[reportUnknownMemberType]
+        usage=usage,
+    )
+    model = HuggingFaceModel(
+        'test-model', provider=HuggingFaceProvider(hf_client=MockHuggingFace.create_mock(completion), api_key='x')
+    )
+
+    result = await Agent(model).run('hello')
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
+
+
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_stream_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    usage = (
+        None if missing_usage else ChatCompletionStreamOutputUsage(completion_tokens=0, prompt_tokens=0, total_tokens=0)
+    )
+    chunk = ChatCompletionStreamOutput(
+        id='x',
+        choices=[
+            ChatCompletionStreamOutputChoice(
+                index=0, delta=ChatCompletionStreamOutputDelta(role='assistant', content='hello')
+            )
+        ],
+        created=1704067200,
+        model='hf-model',
+        system_fingerprint='fp',
+        usage=usage,
+    )
+    model = HuggingFaceModel(
+        'hf-model',
+        provider=HuggingFaceProvider(
+            provider_name='nebius', hf_client=MockHuggingFace.create_stream_mock([chunk]), api_key='x'
+        ),
+    )
+
+    async with Agent(model).run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
+
+
 async def test_retry_prompt_without_tool_name(allow_model_requests: None):
     responses = [
         completion_message(
@@ -817,6 +878,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='invalid-response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
@@ -844,6 +906,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',

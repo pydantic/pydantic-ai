@@ -19,11 +19,10 @@ from pydantic_ai._instrumentation import (
     model_request_parameters_attributes,
     span_include_content,
 )
-from pydantic_ai._run_context import RunContext, get_current_run_context
+from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe, get_first_param_type
 
 from .._genai_prices import fill_response_cost
-from .._warnings import warn_if_usage_not_reported
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile
@@ -250,6 +249,7 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
         rejected_cost: Decimal | None = None
+        rejected_unmeasured_requests = 0
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
@@ -302,21 +302,16 @@ class FallbackModel(Model):
                 fill_response_cost(response)
                 if response.usage.cost is not None:
                     rejected_cost = (rejected_cost or Decimal()) + response.usage.cost
+                rejected_unmeasured_requests += response.usage.unmeasured_requests
                 rejected_responses.append(response)
                 continue
 
-            if rejected_cost is not None:
-                # The graph checks token limits later, but adding rejected costs would hide
-                # missing usage from its cost-only warning. Check before changing the cost.
-                if (
-                    (ctx := get_current_run_context()) is not None
-                    and ctx.usage_limits is not None
-                    and not ctx.usage_limits.has_token_limits()
-                ):
-                    warn_if_usage_not_reported(ctx.usage_limits, response)
+            if rejected_cost is not None or rejected_unmeasured_requests:
                 fill_response_cost(response)
                 usage = copy(response.usage)
-                usage.cost = (usage.cost or Decimal()) + rejected_cost
+                if rejected_cost is not None:
+                    usage.cost = (usage.cost or Decimal()) + rejected_cost
+                usage.unmeasured_requests += rejected_unmeasured_requests
                 response = replace(response, usage=usage)
 
             # After a rewind, the first successful response is fresh generation that supersedes the

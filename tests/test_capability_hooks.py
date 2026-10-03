@@ -18,6 +18,7 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai import UsageLimitUnavailableWarning
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -37,7 +38,6 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
-    UsageNotReportedWarning,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -659,7 +659,7 @@ class TestModelRequestHooks:
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipCap()])
         with warnings.catch_warnings():
-            warnings.simplefilter('error', UsageNotReportedWarning)
+            warnings.simplefilter('error', UsageLimitUnavailableWarning)
             result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=100))
         assert result.output == 'skipped model'
 

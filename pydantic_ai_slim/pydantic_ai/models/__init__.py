@@ -1166,6 +1166,7 @@ class StreamedResponse(ABC):
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
+    _usage_received: bool | None = field(default=None, init=False)
     _cancelled: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
     _first_chunk_monotonic: float | None = field(default=None, init=False)
@@ -1360,7 +1361,7 @@ class StreamedResponse(ABC):
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self._usage,
+            usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
@@ -1373,6 +1374,8 @@ class StreamedResponse(ABC):
     @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        if self._usage_received is False:
+            return self._usage + RequestUsage(unmeasured_requests=1)
         return self._usage
 
     @property

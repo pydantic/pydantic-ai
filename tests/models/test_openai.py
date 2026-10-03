@@ -43,7 +43,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
-    UsageNotReportedWarning,
+    UsageLimitUnavailableWarning,
     UseEnumMemberDocstrings,
     UserError,
     UserPromptPart,
@@ -52,7 +52,7 @@ from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
 from pydantic_ai.capabilities import NativeTool, Thinking, ToolSearch
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.exceptions import ContentFilterError, UsageLimitExceeded
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     InstructionPart,
@@ -183,14 +183,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, web_searches=0, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, web_searches=0, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -201,6 +201,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
                 model_name='gpt-4o-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='openai',
@@ -222,6 +223,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
                 model_name='gpt-4o-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='openai',
@@ -284,6 +286,25 @@ async def test_request_simple_usage(allow_model_requests: None):
     )
 
 
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    usage = None if missing_usage else CompletionUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+    completion = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=usage)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', UsageLimitUnavailableWarning)
+        result = await Agent(model).run('hello', usage_limits=UsageLimits(input_tokens_limit=100))
+
+    assert len(caught) == int(missing_usage)
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
+
+
 async def test_response_with_created_timestamp_but_no_provider_details(allow_model_requests: None):
     class MinimalOpenAIChatModel(OpenAIChatModel):
         def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
@@ -306,6 +327,7 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
                 model_name='gpt-4o-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='openai',
@@ -396,6 +418,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -574,6 +597,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -590,7 +614,15 @@ async def test_request_tool_call(allow_model_requests: None):
         ]
     )
     assert result.usage == snapshot(
-        RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, tool_calls=1)
+        RunUsage(
+            requests=3,
+            cache_read_tokens=3,
+            input_tokens=5,
+            output_tokens=3,
+            tool_calls=1,
+            unmeasured_requests=1,
+            web_searches=0,
+        )
     )
 
 
@@ -633,15 +665,68 @@ async def test_stream_text(allow_model_requests: None):
     ids=['token_limit', 'cost_limit'],
 )
 async def test_limits_warn_when_response_reports_no_usage(allow_model_requests: None, usage_limits: UsageLimits):
-    # A priced model, so the missing usage is priced as a confident zero rather than left unpriced.
+    # The model is priceable, but absent usage must leave the cost unknown.
     c = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=None)
     mock_client = MockOpenAI.create_mock(c.model_copy(update={'model': 'gpt-4o'}))
     agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
 
-    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o' reported no token usage"):
+    with pytest.warns(UsageLimitUnavailableWarning, match='response\\(s\\) omitted usage information'):
         result = await agent.run('hello', usage_limits=usage_limits)
 
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
+    assert result.usage.requests == 1
+    assert result.usage.unmeasured_requests == 1
+    assert result.usage.total_tokens == 0
+    assert result.usage.cost is None
+    expected_usage = RunUsage(requests=1, unmeasured_requests=1, web_searches=0)
+    assert result.usage == expected_usage, (result.usage.__dict__, expected_usage.__dict__)
+    assert result.usage == snapshot(expected_usage)
+
+
+@pytest.mark.parametrize(
+    'missing_first', [True, False, None], ids=['missing-then-known', 'known-then-missing', 'known-then-known']
+)
+async def test_mixed_known_and_missing_usage_keeps_known_totals(
+    allow_model_requests: None, missing_first: bool | None
+) -> None:
+    known_usage = CompletionUsage(prompt_tokens=100, completion_tokens=100, total_tokens=200)
+    missing_usage = None
+    tool_response = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                chat.ChatCompletionMessageToolCall(
+                    id='call_1', function=Function(arguments='{}', name='get_value'), type='function'
+                )
+            ],
+        ),
+        usage=missing_usage if missing_first is True else known_usage,
+    )
+    final_response = completion_message(
+        ChatCompletionMessage(content='done', role='assistant'),
+        usage=known_usage if missing_first is True else missing_usage if missing_first is False else known_usage,
+    )
+    model = OpenAIChatModel(
+        'gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock([tool_response, final_response]))
+    )
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_value() -> str:
+        return 'value'
+
+    if missing_first is None:
+        with pytest.raises(UsageLimitExceeded, match='Exceeded the total_tokens_limit of 300'):
+            await agent.run('hello', usage_limits=UsageLimits(total_tokens_limit=300))
+        return
+
+    with pytest.warns(UsageLimitUnavailableWarning, match='response\\(s\\) omitted usage information') as caught:
+        result = await agent.run('hello', usage_limits=UsageLimits(total_tokens_limit=300))
+
+    assert len(caught) == (2 if missing_first else 1)
+    assert result.output == 'done'
+    assert result.usage.total_tokens == 200
+    assert result.usage.unmeasured_requests == 1
 
 
 async def test_limits_warn_when_stream_reports_no_usage(allow_model_requests: None):
@@ -650,11 +735,44 @@ async def test_limits_warn_when_stream_reports_no_usage(allow_model_requests: No
         OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
     )
 
-    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o-123' reported no token usage"):
+    with pytest.warns(UsageLimitUnavailableWarning, match='response\\(s\\) omitted usage information'):
         async with agent.run_stream('hello', usage_limits=UsageLimits(output_tokens_limit=100)) as result:
             assert await result.get_output() == 'hello '
 
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage.requests == 1
+    assert result.usage.unmeasured_requests == 1
+    assert result.usage.total_tokens == 0
+    assert result.usage.cost is None
+
+
+async def test_usage_unavailable_warning_can_be_promoted_to_error(allow_model_requests: None):
+    completion = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=None)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UsageLimitUnavailableWarning)
+        with pytest.raises(UsageLimitUnavailableWarning, match='response\\(s\\) omitted usage information'):
+            await Agent(model).run('hello', usage_limits=UsageLimits(input_tokens_limit=100))
+
+
+async def test_healthy_stream_does_not_mark_missing_intermediate_usage(allow_model_requests: None):
+    stream = [
+        text_chunk('hello ').model_copy(update={'usage': None}),
+        text_chunk('world').model_copy(update={'usage': None}),
+        chunk([], finish_reason='stop').model_copy(
+            update={'usage': CompletionUsage(prompt_tokens=6, completion_tokens=3, total_tokens=9)}
+        ),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UsageLimitUnavailableWarning)
+        async with Agent(model).run_stream('hello', usage_limits=UsageLimits(input_tokens_limit=100)) as result:
+            assert await result.get_output() == 'hello world'
+
+    expected_usage = RunUsage(requests=1, input_tokens=6, output_tokens=3, unmeasured_requests=0, web_searches=0)
+    assert result.usage == expected_usage, (result.usage.__dict__, expected_usage.__dict__)
+    assert result.usage == snapshot(expected_usage)
 
 
 async def test_no_usage_warning_without_token_or_cost_limits(allow_model_requests: None):
@@ -663,10 +781,50 @@ async def test_no_usage_warning_without_token_or_cost_limits(allow_model_request
     agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c))))
 
     with warnings.catch_warnings():
-        warnings.simplefilter('error', UsageNotReportedWarning)
+        warnings.simplefilter('error', UsageLimitUnavailableWarning)
         result = await agent.run('hello', usage_limits=UsageLimits(request_limit=5))
 
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage.requests == 1
+    assert result.usage.unmeasured_requests == 1
+    assert result.usage.total_tokens == 0
+    assert result.usage.cost is None
+
+
+async def test_missing_usage_without_limits_does_not_warn(allow_model_requests: None):
+    completion = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=None)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UsageLimitUnavailableWarning)
+        result = await Agent(model).run('hello')
+
+    assert result.usage.requests == 1
+    assert result.usage.unmeasured_requests == 1
+
+
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_stream_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    stream = [
+        text_chunk('hello ').model_copy(update={'usage': None}),
+        chunk([], finish_reason='stop').model_copy(
+            update={
+                'usage': None
+                if missing_usage
+                else CompletionUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+            }
+        ),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream('hello') as result:
+        assert await result.get_output() == 'hello '
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
@@ -5098,6 +5256,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[],
+                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -5125,6 +5284,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello back')],
+                usage=RequestUsage(unmeasured_requests=1, web_searches=0),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -6547,6 +6707,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     # Final usage should be from the last chunk (15 output tokens)
     # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+    assert result.usage.unmeasured_requests == 0
 
 
 async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):

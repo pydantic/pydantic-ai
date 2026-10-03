@@ -412,7 +412,7 @@ class CohereModel(Model[AsyncClientV2]):
 def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
     u = response.usage
     if u is None:
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
     else:
         details: dict[str, int] = {}
         if u.billed_units is not None:

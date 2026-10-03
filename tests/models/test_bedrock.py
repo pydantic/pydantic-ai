@@ -1084,7 +1084,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
             ),
             ModelResponse(
                 parts=[TextPart(content='The')],
-                usage=RequestUsage(cost=Decimal('0.00000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -1421,6 +1421,32 @@ async def test_bedrock_stream_usage_with_cached_tokens(
             cost=Decimal('0.000650595'),
         )
     )
+
+
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_bedrock_stream_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture, missing_usage: bool
+) -> None:
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+    events: list[dict[str, Any]] = [
+        {'messageStart': {'role': 'assistant'}},
+        {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'hello'}}},
+        {'contentBlockStop': {'contentBlockIndex': 0}},
+        {'messageStop': {'stopReason': 'end_turn'}},
+    ]
+    if not missing_usage:
+        events.append({'metadata': {'usage': {'inputTokens': 0, 'outputTokens': 0, 'totalTokens': 0}}})
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': iter(events), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
 
 
 _BEDROCK_GUARDRAIL_TRACE: dict[str, Any] = {'guardrail': {'modelOutput': ['blocked']}}
@@ -6286,6 +6312,7 @@ async def test_bedrock_model_with_instructions_only(
 
     result = await agent.run()
     assert result.output
+    assert result.response.model_name == model_name
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -6297,7 +6324,7 @@ async def test_bedrock_model_with_instructions_only(
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
-                model_name=model_name,
+                model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -6334,6 +6361,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
     first_result = await agent.run()
     second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
     assert second_result.output
+    assert second_result.response.model_name == model_name
     assert second_result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -6345,7 +6373,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
-                model_name=model_name,
+                model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',

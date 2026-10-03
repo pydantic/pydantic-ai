@@ -72,7 +72,6 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
-from ._warnings import warn_if_usage_not_reported
 from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -1070,7 +1069,7 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
         provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
-        run_context.usage_limits.check_tokens(provisional)
+        run_context.usage_limits.check_tokens(provisional, warn_if_usage_unavailable=False)
         if continuation_usage.cost is not None:
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
@@ -1415,7 +1414,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
-            warn_if_usage_not_reported(ctx.deps.usage_limits, response)
             _handler_response = response
             _handler_usage_recorded = True
             self._record_response_usage(ctx, response, request_context=req_ctx)
@@ -1632,7 +1630,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 response = await model_request(
                     req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
                 )
-                warn_if_usage_not_reported(ctx.deps.usage_limits, response)
                 _handler_response = response
                 _handler_usage_recorded = True
                 self._record_response_usage(ctx, response, request_context=req_ctx)

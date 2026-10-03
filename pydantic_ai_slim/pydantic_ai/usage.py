@@ -14,7 +14,7 @@ from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
 from ._genai_prices import iter_provider_references
-from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning
+from ._warnings import CostNotFoundWarning, UsageExtractionFailedWarning, UsageLimitUnavailableWarning
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -113,6 +113,13 @@ class UsageBase:
         Field(validation_alias=AliasChoices('output_tokens', 'response_tokens')),
     ] = 0
     """Number of output/completion tokens."""
+
+    unmeasured_requests: Annotated[int, Field(exclude_if=lambda value: value == 0)] = 0
+    """Number of responses that omitted usage information.
+
+    When non-zero, token totals and any known cost are lower bounds for the run. This count does not imply a
+    particular number of missing tokens, cost, or usage details.
+    """
 
     input_audio_tokens: int = 0
     """Number of audio input tokens. Included in `input_tokens`."""
@@ -276,7 +283,9 @@ class UsageBase:
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
-        return any(self.details.values()) or any(v for k, v in self.__dict__.items() if k != 'details')
+        return any(self.details.values()) or any(
+            v for k, v in self.__dict__.items() if k not in {'details', 'unmeasured_requests'}
+        )
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -430,6 +439,7 @@ class RunUsage(UsageBase):
         return RunUsage(
             requests=self.requests - other.requests,
             tool_calls=self.tool_calls - other.tool_calls,
+            unmeasured_requests=self.unmeasured_requests - other.unmeasured_requests,
             input_tokens=self.input_tokens - other.input_tokens,
             cache_write_tokens=self.cache_write_tokens - other.cache_write_tokens,
             cache_read_tokens=self.cache_read_tokens - other.cache_read_tokens,
@@ -579,6 +589,9 @@ class UsageLimits:
             raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
 
     def _warn_if_cost_unavailable(self, usage: RunUsage) -> None:
+        if usage.unmeasured_requests:
+            self._warn_if_usage_unavailable(usage)
+            return
         if self.cost_limit is not None and usage.cost is None:
             warnings.warn(
                 CostNotFoundWarning(
@@ -588,8 +601,13 @@ class UsageLimits:
                 )
             )
 
-    def check_tokens(self, usage: RunUsage) -> None:
-        """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""
+    def check_tokens(self, usage: RunUsage, *, warn_if_usage_unavailable: bool = True) -> None:
+        """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits.
+
+        Args:
+            usage: The accumulated run usage to check.
+            warn_if_usage_unavailable: Whether to warn when some responses omitted usage information.
+        """
         input_tokens = usage.input_tokens
         if self.input_tokens_limit is not None and input_tokens > self.input_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the input_tokens_limit of {self.input_tokens_limit} ({input_tokens=})')
@@ -603,6 +621,20 @@ class UsageLimits:
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
+
+        if warn_if_usage_unavailable:
+            self._warn_if_usage_unavailable(usage)
+
+    def _warn_if_usage_unavailable(self, usage: RunUsage) -> None:
+        if usage.unmeasured_requests and (self.has_token_limits() or self.cost_limit is not None):
+            warnings.warn(
+                UsageLimitUnavailableWarning(
+                    f'{usage.unmeasured_requests} response(s) omitted usage information, so the known token and cost '
+                    'totals are lower bounds and configured limits cannot be fully enforced. Check the provider or '
+                    'server usage reporting, or promote `UsageLimitUnavailableWarning` to an error.'
+                ),
+                stacklevel=3,
+            )
 
     def check_before_tool_call(self, projected_usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the next tool call(s) would exceed the tool call limit."""
