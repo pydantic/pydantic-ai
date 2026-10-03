@@ -91,4 +91,6 @@ async def test_clone_uses_the_resolved_windows_executable(tmp_path: Path, monkey
     monkeypatch.chdir(workspace)
     monkeypatch.setenv('PATH', os.pathsep.join((str(workspace), str(trusted))))
     monkeypatch.setattr(_git, 'git_executable', lambda: git_executable(windows=True))
-    assert await _git.clone_repository('https://example.invalid/plugin.git', tmp_path / 'checkout') == (0, b'trusted')
+    destination = tmp_path / 'checkout'
+    destination.mkdir()
+    assert await _git.clone_repository('https://example.invalid/plugin.git', destination) == (0, b'trusted')

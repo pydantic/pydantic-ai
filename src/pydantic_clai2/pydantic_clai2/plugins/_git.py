@@ -159,6 +159,8 @@ async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
             str(destination),
             env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'},
             start_new_session=True,
+            # Git must not mistake a workspace path resembling the URL for the trusted repository.
+            cwd=destination,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

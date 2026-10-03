@@ -119,6 +119,36 @@ class Tagged(Plugin[Options, None]):
     await harness.loader.close('exit')
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='the shadow repository path contains colons')
+@pytest.mark.parametrize('source_kind', ['https', 'ssh', 'file'])
+async def test_workspace_repository_cannot_shadow_a_trusted_url(
+    tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+) -> None:
+    source = {
+        'https': 'https://example.invalid/demo-plugin.git',
+        'ssh': 'git@example.invalid:team/demo-plugin.git',
+        'file': repository.as_uri(),
+    }[source_kind]
+    workspace = tmp_path / 'workspace'
+    shadow = workspace / source
+    shadow.mkdir(parents=True)
+    git(shadow, 'init', '--bare')
+    monkeypatch.chdir(workspace)
+    # No network request is needed: a local shadow would bypass this protocol restriction.
+    monkeypatch.setenv('GIT_ALLOW_PROTOCOL', 'file')
+    monkeypatch.setenv('LC_ALL', 'C')
+    harness = Harness(tmp_path)
+    if source_kind == 'file':
+        await harness.loader.command(['add', source])
+        assert await harness.commands.execute_async('/git_hello') == 'Hello from Git'
+        await harness.loader.close('exit')
+    else:
+        with pytest.raises(ValueError, match=r"transport '(https|ssh)' not allowed"):
+            await harness.loader.command(['add', source])
+        assert harness.store.plugins() == []
+        assert not (harness.store.plugins_dir / '_git' / 'demo_plugin').exists()
+
+
 @pytest.mark.parametrize('entrypoint', ['__init__.py', 'plugin.py'])
 async def test_add_git_plugin_lifecycle(tmp_path: Path, repository: Path, entrypoint: str) -> None:
     if entrypoint != '__init__.py':
