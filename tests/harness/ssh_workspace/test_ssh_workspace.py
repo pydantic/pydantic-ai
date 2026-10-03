@@ -125,6 +125,31 @@ async def test_stopping_a_command_kills_its_process_group_on_the_host(tools: Fak
         bystander.wait()
 
 
+async def test_stopping_a_command_does_not_run_helpers_planted_on_the_login_path(
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop runs on the host, outside any sandbox, so a `PATH` entry the command could write isn't used."""
+    impostor = tmp_path / 'bin'
+    impostor.mkdir()
+    ran = tmp_path / 'ran'
+    for name in ('ps', 'tr', 'grep', 'awk', 'sort', 'sleep'):
+        planted = impostor / name
+        planted.write_text(f'#!/bin/sh\ntouch {ran}\n')
+        planted.chmod(0o755)
+    tag = '__pydantic_ai_ssh_job_00112233aabbccdd'
+    remote = subprocess.Popen(['sh', '-c', f': {tag}; sleep 60; :'], start_new_session=True)
+    # After the fake `ssh`, so it still runs, but ahead of the system directories on the "remote" login `PATH`.
+    monkeypatch.setenv('PATH', f'{tools.bin_dir}{os.pathsep}{impostor}{os.pathsep}{os.environ["PATH"]}')
+    try:
+        await SSHWorkspaceBackend('box')._stop(tag)  # pyright: ignore[reportPrivateUsage]
+
+        assert await anyio.to_thread.run_sync(remote.wait, 10) != 0
+        assert not ran.exists()
+    finally:
+        remote.kill()
+        remote.wait()
+
+
 @pytest.mark.parametrize('shell', [path for name in ('dash', 'bash', 'sh') if (path := shutil.which(name))])
 async def test_the_stop_script_works_in_every_posix_shell(shell: str) -> None:
     """Remote hosts run it with their own `sh`, which is dash on Debian and Ubuntu."""
