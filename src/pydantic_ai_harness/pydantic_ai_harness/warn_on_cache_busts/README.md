@@ -34,6 +34,14 @@ the monitor starts a fresh mark for it instead of comparing against the previous
 model's. Marks are kept per key rather than reset, so switching back to an earlier
 model within its cache TTL still compares against that model's prefix.
 
+A response that ran a native tool (web search, code execution, tool search) was
+sampled more than once inside the one API call, and the provider reports a single
+usage summed over every pass, so its `cache_read_tokens` is roughly the prefix times
+the number of passes rather than a prefix the next request can read back. Such a
+response is still judged -- a summed read that falls below the threshold means the
+first pass read little -- but it neither raises the mark nor clears the latch, so the
+healthy request after a round of searches is not reported as a collapse.
+
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run
 that continues an earlier one via `message_history` -- including history that was
 serialized and loaded back, which carries the conversation id with it -- is judged

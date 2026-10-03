@@ -21,7 +21,7 @@ import warnings
 from dataclasses import dataclass, field, replace
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelResponse, NativeToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -123,7 +123,10 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     response's `(provider_name, model_name)`. When a later request for the same key reads back
     fewer than `collapse_ratio` of that established prefix, it emits a `CacheBustWarning` once
     and then stays quiet about that collapse until a healthy read-back re-stabilizes the cache,
-    so a sustained collapse warns once rather than on every subsequent request.
+    so a sustained collapse warns once rather than on every subsequent request. A response
+    that ran a native tool (web search, code execution, tool search) reports usage summed
+    over the several sampling passes of that one API call; it can still show a collapse, but
+    it neither raises the mark nor clears the latch.
 
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
     that continues an earlier one via `message_history` -- including history that was
@@ -266,6 +269,13 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
             established, prev_seen, prev_run, collapsed = 0, now, ctx.run_id, False
         else:
             established, prev_seen, prev_run, collapsed = entry.prefix, entry.seen_at, entry.run_id, entry.collapsed
+        # A response that ran a native tool (web search, code execution, tool search) was sampled
+        # more than once inside the one API call, and the provider reports one usage summed over
+        # every pass: `cache_read_tokens` is then roughly `passes * prefix`, not a prefix the next
+        # request can read back. Such a sum can still prove a collapse (every pass read at least
+        # what the first did, so a low total means the first pass read little), but it can neither
+        # establish a mark nor prove the cache re-stabilized, so the mark and the latch stand.
+        multi_pass = any(isinstance(part, NativeToolCallPart) for part in response.parts)
         is_collapse = established >= self.min_prefix_tokens and read < established * self.collapse_ratio
         # Warn on the transition into a collapse only; the latch keeps a sustained collapse -- and a
         # provider that keeps writing an unread cache (read stays low, write stays high) -- to one
@@ -289,9 +299,12 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
                 CacheBustWarning,
                 stacklevel=2,
             )
-        conversation.keys[key] = _KeyState(
-            max(established, read + usage.cache_write_tokens), now, ctx.run_id, is_collapse
-        )
+        if multi_pass:
+            conversation.keys[key] = _KeyState(established, now, prev_run, collapsed or is_collapse)
+        else:
+            conversation.keys[key] = _KeyState(
+                max(established, read + usage.cache_write_tokens), now, ctx.run_id, is_collapse
+            )
         conversation.seen_at = now
         if state.conversation_id is not None:
             # The sweep may have dropped this conversation while the run sat in a long tool call;

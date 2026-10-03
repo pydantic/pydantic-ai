@@ -16,7 +16,15 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -525,6 +533,78 @@ async def test_collapse_latch_carries_across_runs() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter('error', CacheBustWarning)
         await agent.run('second', message_history=first.all_messages())
+
+
+def _server_tool_response(usage: RequestUsage, *, steps: bool = True) -> ModelResponse:
+    """A response that ran a native tool, so the provider sampled more than once and summed the usage.
+
+    The trailing `ToolCallPart` keeps the run stepping; pass `steps=False` for a final text answer.
+    """
+    parts = [
+        NativeToolCallPart('web_search', {'query': 'x'}, tool_call_id='srv-1', provider_name='test'),
+        NativeToolReturnPart('web_search', 'results', tool_call_id='srv-1', provider_name='test'),
+        ToolCallPart('noop', {}) if steps else TextPart('done'),
+    ]
+    return ModelResponse(parts=parts, usage=usage)
+
+
+async def test_server_tool_response_does_not_raise_the_mark() -> None:
+    """A response with native tool calls reports usage summed over its sampling passes.
+
+    Three web searches inside one request read the ~8k prefix on each of four passes, so the
+    response says ~33k cached tokens. That is not a prefix the next request can read back; raising
+    the mark to it made the next, perfectly healthy request look like a collapse.
+    """
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=8000, write=200)),
+        _server_tool_response(_usage(read=32800, write=600)),
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=8400, write=300)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        result = await agent.run('hi')
+    assert result.output == 'done'
+
+
+async def test_collapse_after_server_tool_response_still_warns() -> None:
+    """The mark established before a native-tool response still judges the requests after it."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        _server_tool_response(_usage(read=32000, write=600)),
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=500)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning, match='request 3.*established ~8000'):
+        await agent.run('hi')
+
+
+async def test_server_tool_response_can_prove_a_collapse() -> None:
+    """A summed read that is still below the threshold means the first pass read little: warn."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        _server_tool_response(_usage(read=1000, write=9000), steps=False),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning, match='request 2'):
+        await agent.run('hi')
+
+
+async def test_server_tool_response_does_not_clear_the_collapse_latch() -> None:
+    """A healthy-looking summed read cannot prove the cache re-stabilized, so a sustained collapse warns once."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=100)),  # collapse -> warn
+        _server_tool_response(_usage(read=16000, write=8000)),  # two passes, each re-reading a rewritten cache
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=100)),  # still collapsed: latched
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning) as record:
+        await agent.run('hi')
+    busts = [str(w.message) for w in record if issubclass(w.category, CacheBustWarning)]
+    assert len(busts) == 1
+    assert 'request 2' in busts[0]
 
 
 def test_invalid_config_rejected() -> None:
