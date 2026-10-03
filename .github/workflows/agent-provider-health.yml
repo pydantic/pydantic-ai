@@ -37,7 +37,12 @@ concurrency:
 
 jobs:
   monitor:
-    if: github.repository == 'pydantic/pydantic-ai'
+    # Fork pull_request runs have no provider secret; their unknown quota cannot establish an outage.
+    if: >-
+      github.repository == 'pydantic/pydantic-ai' &&
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.event != 'pull_request' ||
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

@@ -1487,6 +1487,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   monitor:
+    if: >-
+      github.repository == 'pydantic/pydantic-ai' &&
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.event != 'pull_request' ||
+       github.event.workflow_run.head_repository.full_name == github.repository)
     env:
       PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     permissions:
@@ -1605,6 +1610,31 @@ jobs:
     assert 'provider-health-monitor-source-run-attempt' in {
         violation.check for violation in check_provider_health_monitor(workflows)
     }
+
+
+def test_provider_health_monitor_rejects_credentialless_fork_runs(tmp_path: Path):
+    """The ungated monitor that opened #9753 must not pass CI policy checks."""
+    workflows = tmp_path / '.github' / 'workflows'
+    for source in WORKFLOWS_DIR.glob('pydantic-ai-*.md'):
+        _write(workflows / source.name, source.read_text(encoding='utf-8'))
+    trusted_config = (WORKFLOWS_DIR / 'agent-provider-health.yml').read_text(encoding='utf-8')
+    monitor = _write(workflows / 'agent-provider-health.yml', trusted_config)
+    assert check_provider_health_monitor(workflows) == []
+
+    _write(
+        monitor,
+        trusted_config.replace(
+            "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
+            "      (github.event_name != 'workflow_run' ||\n"
+            "       github.event.workflow_run.event != 'pull_request' ||\n"
+            '       github.event.workflow_run.head_repository.full_name == github.repository)',
+            "if: github.repository == 'pydantic/pydantic-ai'",
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-fork-gate'
+    ]
 
 
 def test_assigned_alert_metadata_gate_excludes_operational_incidents(tmp_path: Path):
