@@ -194,9 +194,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
 
     What server-side state survives a reconnect depends on the provider (see
-    [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]). Setting a policy enables native
-    session resumption on the providers that offer it: xAI always, and Gemini unless
-    `google_enable_session_resumption=False` is set explicitly — that combination raises
+    [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]). Setting a policy enables Gemini's
+    native session resumption unless `google_enable_session_resumption=False` is set explicitly — that
+    combination raises
     [`UserError`][pydantic_ai.exceptions.UserError] at connect time, since a re-dial without
     resumption would lose the conversation.
 
@@ -239,10 +239,10 @@ class ReconnectPolicy(TypedDict, total=False):
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a
     [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] event. What server-side state
-    survives depends on the provider: OpenAI Realtime and Azure OpenAI keep no server state across
-    connections, so the session replays its finalized message history into the new one (prior turns
-    survive; buffered input audio and a reply in flight do not), while Gemini Live and xAI restore prior
-    turns through native session resumption, enabled automatically whenever a reconnect policy is set
+    survives depends on the provider: OpenAI Realtime, Azure OpenAI and xAI Grok Voice have the session
+    replay its finalized message history into the new connection (prior turns survive; buffered input
+    audio and a reply in flight do not), while Gemini Live restores prior turns through native session
+    resumption, enabled automatically whenever a reconnect policy is set
     (Gemini honors an explicit `google_enable_session_resumption=False` opt-out by refusing the
     combination with a [`UserError`][pydantic_ai.exceptions.UserError]).
     """

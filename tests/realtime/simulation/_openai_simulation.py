@@ -274,14 +274,7 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
         return session is not None and session.active is not None
 
     def can_drop(self) -> bool:
-        session = self.server_session()
-        if session is None:
-            return False
-        # What xAI's native resumption does with a response in flight has never been recorded, so its drops
-        # are kept to the moments the recording covers: between responses, with nothing on the wire.
-        return self.openai_sim.openai.dialect != 'xai' or (
-            session.active is None and session.late_done is None and not self.openai_sim.server.network.in_flight()
-        )
+        return self.server_session() is not None
 
     @precondition(lambda self: self.active())
     @rule(chunks=st.integers(min_value=1, max_value=2), deliver=st.booleans(), ticks=TICKS)
@@ -358,8 +351,7 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
     def reject_next(self, kind: Literal['content', 'response'], ticks: int | None) -> None:
         self.run(lambda: self.openai_sim.reject_next(kind=kind, ticks=ticks))
 
-    # A fault armed now can hit a send made mid-response, so it is left out where drops are restricted.
-    @precondition(lambda self: self.can_drop() and self.openai_sim.openai.dialect != 'xai')
+    @precondition(lambda self: self.can_drop())
     @rule(fault=st.sampled_from(['lost', 'ambiguous']), ticks=TICKS)
     def fail_next_send(self, fault: SendFault, ticks: int | None) -> None:
         self.run(lambda: self.openai_sim.fail_next_send(fault=fault, ticks=ticks))

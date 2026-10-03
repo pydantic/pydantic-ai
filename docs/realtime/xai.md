@@ -1,5 +1,5 @@
 ---
-description: "Connect a Pydantic AI agent to xAI Grok Voice with XaiRealtimeModel: setup, grok-voice model names, voices, turn detection, reasoning and session resumption."
+description: "Connect a Pydantic AI agent to xAI Grok Voice with XaiRealtimeModel: setup, grok-voice model names, voices, turn detection, reasoning and reconnects."
 ---
 
 # xAI Grok Voice
@@ -85,7 +85,7 @@ Other Grok Voice models ignore the setting.
 | Native tools | Unsupported | xAI offers web search, X search, file search, and MCP tools, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
-| State-restoring reconnect | Full feature support | Native [resumption](#session-resumption) is automatic with a reconnect policy |
+| Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new conversation; in-flight media is lost |
 
 See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
 [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
@@ -94,15 +94,6 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
 
 Grok Voice is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
 through `provider='xai'` or an `XaiProvider`.
-
-## Session resumption
-
-With a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy], xAI automatically enables native
-resumption for [state-restoring reconnects](lifecycle.md#state-restoration): it restores prior
-turns and suppresses the provider's replay burst from the local event stream. The handle is xAI's
-conversation ID, and xAI keeps the conversation for 30 minutes of inactivity, but Pydantic AI holds
-the ID only in memory, so another process can't resume it yet
-([#7302](https://github.com/pydantic/pydantic-ai/issues/7302)).
 
 ## Provider-specific quirks
 

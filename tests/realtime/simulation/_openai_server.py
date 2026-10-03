@@ -101,8 +101,6 @@ class ServerSession:
     ended_responses: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     """The `response.done` frames sent on this session, for duplicate-terminal faults."""
     late_done: dict[str, Any] | None = None
-    resumed: bool = False
-    """An xAI re-dial that resumed the conversation."""
 
     @property
     def server_vad(self) -> bool:
@@ -134,9 +132,6 @@ class OpenAIServer:
         # inputs for its whole life, across re-dials, so this outlives any one server session.
         self._client_items: dict[int, str] = {}
         self._client_images: dict[int, bool] = {}
-        self._conversation_id = 'conv_simulated'
-        # The finished conversation, as `(role, text)`, which an xAI resumption replays.
-        self._finished_items: list[tuple[Literal['user', 'assistant'], str]] = []
         # Azure OpenAI speaks the GA event names too (every `test_azure_ws` cassette does); only Voice Live, which
         # has a connection class of its own that isn't simulated, still uses the beta names.
         self._audio_delta = 'response.output_audio.delta'
@@ -148,8 +143,6 @@ class OpenAIServer:
     def on_connect(self, socket: FakeWebSocket, url: str) -> None:
         self.truth.connections += 1
         session = ServerSession(index=len(self.sessions), socket=socket)
-        # xAI resumes a conversation natively: a re-dial naming it gets the finished conversation back.
-        session.resumed = self.dialect == 'xai' and f'conversation_id={self._conversation_id}' in url
         self.sessions.append(session)
         socket.emit(
             {
@@ -169,7 +162,8 @@ class OpenAIServer:
                 {
                     'type': 'conversation.created',
                     'event_id': 'evt_conversation',
-                    'conversation': {'id': self._conversation_id, 'object': 'realtime.conversation'},
+                    # Every dial is a new conversation: a reconnect doesn't resume the dropped one.
+                    'conversation': {'id': f'conv_{socket.index}', 'object': 'realtime.conversation'},
                 },
                 immediately=True,
             )
@@ -270,25 +264,6 @@ class OpenAIServer:
             config['turn_detection'] if 'turn_detection' in config else audio_input.get('turn_detection')
         )
         session.transcription = audio_input.get('transcription') is not None
-        if session.resumed:
-            # xAI replays the resumed conversation during the handshake, under fresh item ids (recorded:
-            # `test_xai_ws/test_session_resumption_after_drop`).
-            for role, text in self._finished_items:
-                session.socket.emit(
-                    {
-                        'type': 'conversation.item.added',
-                        'event_id': f'evt_replay_{self._next_item}',
-                        'item': {
-                            'id': self._new_item('item_replayed'),
-                            'object': 'realtime.item',
-                            'type': 'message',
-                            'status': 'completed',
-                            'role': role,
-                            'content': [{'type': 'input_text' if role == 'user' else 'text', 'text': text}],
-                        },
-                    },
-                    immediately=True,
-                )
         session.socket.emit(
             {'type': 'session.updated', 'event_id': 'evt_updated', 'session': {**config, 'model': self.model}},
             immediately=True,
@@ -353,8 +328,6 @@ class OpenAIServer:
             return
         self.truth.add_input(key, kind, client_index=client_index)
         self._item_added(session, item)
-        if kind == 'text':
-            self._finished_items.append(('user', key))
         assert client_index is not None
         self._client_items[client_index] = key
         self._client_images[client_index] = kind == 'image'
@@ -532,8 +505,6 @@ class OpenAIServer:
         }
         if self.dialect == 'xai':
             done['usage'] = usage
-        if status == 'completed' and truth.words:
-            self._finished_items.append(('assistant', ' '.join(truth.words)))
         self._end_truth(truth, status)
         session.active = None
         session.ended_responses.append(done)
