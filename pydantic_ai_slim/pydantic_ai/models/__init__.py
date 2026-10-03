@@ -919,15 +919,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
-        # Counted before a retry translates or a delta renders into a `SystemPromptPart`: the standing
-        # prompt is what the history was authored with, and feedback or an announcement opening the
-        # first request is not part of it.
-        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
-        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
-        messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
+        # history was authored with, and an announcement opening the first request is not part of it.
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -2439,9 +2438,8 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
     in the first request". The caller counts them on the history as authored and passes
-    `standing_prompt_count`, because translating a `RetryFeedbackPart` or rendering a
-    `ToolAvailabilityDeltaPart` can put a `SystemPromptPart` in front of the first request, where
-    counting again would take it for the standing prompt.
+    `standing_prompt_count`, because rendering a `ToolAvailabilityDeltaPart` can put an announcement
+    in front of the first request, where counting again would take it for the standing prompt.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2545,26 +2543,26 @@ for, on a turn the user didn't write.
 def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool) -> list[ModelMessage]:
     """Replace every retry part with the part that carries it on the wire.
 
-    Runs first in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages], so the tool-search
-    synthesis, the tool-availability announcement and the `<system>` wrap below it all see plain
+    Runs in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] ahead of the tool-search
+    synthesis, the tool-availability announcement and the `<system>` wrap, so they all see plain
     parts: feedback bound for the system voice is degraded by the same
-    `_wrap_non_leading_system_prompts` that degrades an operator's own mid-conversation prompt, rather
-    than by a rule of its own.
+    `_wrap_non_leading_system_prompts` that degrades an operator's own mid-conversation prompt.
 
     Replaced in place, so a request that also holds a user prompt keeps the order it was authored in,
     and the original list comes back when nothing changed, so the identity check in `_make_request`
     can skip the redundant `_clean_message_history` pass.
 
-    A translated `SystemPromptPart` opening the first request does not join the standing prompt:
-    `prepare_messages` counts that on the parts as authored, before this runs, so the `<system>` wrap
-    degrades the feedback like any other mid-conversation system prompt. A run's own feedback reaches
-    that position when a model-request hook retries the first request of a run with no user prompt.
+    The one exception is feedback that would extend the first request's opening run of system
+    prompts. Every adapter lifts that run into the provider's system field as the run's standing
+    prompt, inline-capable profiles included, and feedback is never part of it, so there it is
+    `<system>`-tagged user text on every profile. A run's own feedback reaches that position when a
+    model-request hook retries the first request of a run with no user prompt.
 
     With `keep_feedback`, for a model that sets `Model._renders_retry_feedback`, a `RetryFeedbackPart`
     stays as it is, and so does the one a tool-less legacy `RetryPromptPart` becomes.
     """
 
-    def translate(part: ModelRequestPart) -> ModelRequestPart:
+    def translate(part: ModelRequestPart, *, in_standing_run: bool) -> ModelRequestPart:
         # TODO(v3): remove `RetryPromptPart`
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             translated = _translate_legacy_retry_part(part)
@@ -2573,10 +2571,13 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool)
             part = translated
         elif not isinstance(part, RetryFeedbackPart) or keep_feedback:
             return part
-        if _retry_feedback_speaks_for_the_harness(part):
-            return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
-        return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+        if not _retry_feedback_speaks_for_the_harness(part):
+            return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+        if in_standing_run:
+            return UserPromptPart(content=_wrap_in_system_tags(part.model_response()), timestamp=part.timestamp)
+        return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
 
+    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
     transformed: list[ModelMessage] = []
     changed = False
     for message in messages:
@@ -2588,7 +2589,13 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool)
             transformed.append(message)
             continue
         changed = True
-        transformed.append(replace(message, parts=[translate(part) for part in message.parts]))
+        in_standing_run = message is first_request
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            translated = translate(part, in_standing_run=in_standing_run)
+            in_standing_run = in_standing_run and isinstance(translated, SystemPromptPart)
+            parts.append(translated)
+        transformed.append(replace(message, parts=parts))
     return transformed if changed else messages
 
 

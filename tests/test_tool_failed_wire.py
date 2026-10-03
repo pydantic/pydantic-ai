@@ -157,8 +157,8 @@ _CHANNEL_LESS_CASES = [
                     'content': '{"error":"Disk full"}',
                 },
                 {
-                    'role': 'system',
-                    'content': 'Disk full',
+                    'role': 'user',
+                    'content': '<system>Disk full</system>',
                 },
             ]
         ),
@@ -177,8 +177,8 @@ _CHANNEL_LESS_CASES = [
                     'output': '{"error":"Disk full"}',
                 },
                 {
-                    'role': 'system',
-                    'content': 'Disk full',
+                    'role': 'user',
+                    'content': '<system>Disk full</system>',
                 },
             ]
         ),
@@ -197,8 +197,8 @@ _CHANNEL_LESS_CASES = [
                     'content': '{"error":"Disk full"}',
                 },
                 {
-                    'role': 'system',
-                    'content': 'Disk full',
+                    'role': 'user',
+                    'content': '<system>Disk full</system>',
                 },
             ]
         ),
@@ -217,8 +217,8 @@ _CHANNEL_LESS_CASES = [
                     'tool_call_id': 'call_1',
                 },
                 {
-                    'content': 'Disk full',
-                    'role': 'system',
+                    'content': '<system>Disk full</system>',
+                    'role': 'user',
                 },
             ]
         ),
@@ -272,7 +272,7 @@ _CHANNEL_LESS_CASES = [
         legacy_retry_wire=snapshot(
             [
                 '{"error":"Disk full"}',
-                'Disk full',
+                '<system>Disk full</system>',
             ]
         ),
         marks=(pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed'),),
@@ -311,7 +311,9 @@ async def test_legacy_retry_prompt_part_framing(case: ChannelLessCase) -> None:
     before this release — carries one, and `prepare_messages` translates it before any adapter sees
     it. Both shapes are pinned: the tool-bound one, which arrives as its call's own retried result,
     and the tool-less one, which no longer arrives as the bare user text
-    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end.
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end. Each part is mapped
+    as a history of its own, so the tool-less one opens the first request and takes the
+    `<system>`-tagged form that keeps feedback out of the standing prompt on every provider.
     """
     parts: list[ModelRequestPart] = [
         legacy_retry_prompt_part(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),

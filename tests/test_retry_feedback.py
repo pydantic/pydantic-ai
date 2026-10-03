@@ -531,6 +531,7 @@ async def test_a_legacy_retry_prompt_part_is_translated_to_the_part_it_always_me
     )
 
 
+@pytest.mark.parametrize('inline', [False, True], ids=['wrapped-profile', 'inline-profile'])
 @pytest.mark.parametrize(
     'authored, expected',
     [
@@ -558,18 +559,19 @@ async def test_a_legacy_retry_prompt_part_is_translated_to_the_part_it_always_me
     ],
 )
 def test_feedback_opening_the_first_request_stays_out_of_the_standing_prompt(
-    authored: list[ModelRequestPart], expected: list[tuple[type[ModelRequestPart], object]]
+    authored: list[ModelRequestPart], expected: list[tuple[type[ModelRequestPart], object]], inline: bool
 ):
-    """Feedback translated into a `SystemPromptPart` is never part of the run's standing prompt.
+    """Feedback never extends the first request's opening run of system prompts, on either profile.
 
-    Only the `SystemPromptPart`s the history was authored with count as the standing prompt, which
-    non-inline adapters lift into the provider's system field, so feedback opening the first request
-    is degraded like any other mid-conversation system prompt — as a tool-availability announcement
-    in that position is.
+    Every adapter lifts that run into the provider's system field as the run's standing prompt —
+    one that takes system messages mid-conversation too — so feedback there goes out as
+    `<system>`-tagged user text, as a tool-availability announcement in that position does. This
+    pins `prepare_messages` itself; the wire shape is pinned by
+    `test_feedback_opening_the_first_request_stays_out_of_anthropics_system`.
     """
     model = FunctionModel(
         lambda _m, _i: ModelResponse(parts=[TextPart('ok')]),
-        profile=ModelProfile(supports_inline_system_prompts=False),
+        profile=ModelProfile(supports_inline_system_prompts=inline),
     )
 
     [request] = model.prepare_messages([ModelRequest(parts=authored)], ModelRequestParameters())
@@ -582,7 +584,34 @@ def test_feedback_opening_the_first_request_stays_out_of_the_standing_prompt(
     assert rendered == expected
 
 
-async def test_a_hook_retry_before_any_prompt_stays_out_of_the_system_prompt():
+def test_feedback_after_a_user_prompt_stays_inline_on_an_inline_profile():
+    """Only the opening run is guarded: later feedback keeps the system voice where the profile allows it."""
+    model = FunctionModel(
+        lambda _m, _i: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_inline_system_prompts=True),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='How many continents are there?'),
+                RetryFeedbackPart(content='answer with a word', cause='model_retry'),
+            ]
+        )
+    ]
+
+    [request] = model.prepare_messages(history, ModelRequestParameters())
+
+    assert isinstance(request, ModelRequest)
+    assert request.parts == snapshot(
+        [
+            UserPromptPart(content='How many continents are there?', timestamp=IsDatetime()),
+            SystemPromptPart(content='answer with a word', timestamp=IsDatetime()),
+        ]
+    )
+
+
+@pytest.mark.parametrize('inline', [False, True], ids=['wrapped-profile', 'inline-profile'])
+async def test_a_hook_retry_before_any_prompt_stays_out_of_the_system_prompt(inline: bool):
     """A run's own feedback can open the history: a model-request hook retrying a run with no prompt.
 
     No response is saved, so the feedback merges into the first request right behind the agent's
@@ -605,7 +634,7 @@ async def test_a_hook_retry_before_any_prompt_stays_out_of_the_system_prompt():
             raise ModelRetry('Use metric units.')
         return request_context
 
-    model = FunctionModel(respond, profile=ModelProfile(supports_inline_system_prompts=False))
+    model = FunctionModel(respond, profile=ModelProfile(supports_inline_system_prompts=inline))
     agent = Agent(model, system_prompt='You are terse.', capabilities=[hooks])
     await agent.run()
 
@@ -616,6 +645,34 @@ async def test_a_hook_retry_before_any_prompt_stays_out_of_the_system_prompt():
         assert isinstance(part, SystemPromptPart | UserPromptPart)
         rendered.append((type(part), part.content))
     assert rendered == [(SystemPromptPart, 'You are terse.'), (UserPromptPart, '<system>Use metric units.</system>')]
+
+
+@anthropic_installed
+async def test_feedback_opening_the_first_request_stays_out_of_anthropics_system(anthropic_api_key: str):
+    """Anthropic lifts the first request's opening system run into `system` on every profile.
+
+    `claude-opus-4-8` takes system messages mid-conversation, so no `<system>` wrap runs for it: the
+    translation itself has to keep feedback out of that run, or the adapter would hoist it.
+    """
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    assert model.profile.get('supports_inline_system_prompts')
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are terse.'),
+                RetryFeedbackPart(content='Use metric units.', cause='model_retry'),
+            ]
+        )
+    ]
+
+    system, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history, ModelRequestParameters()), ModelRequestParameters(), {}
+    )
+
+    assert system == 'You are terse.'
+    assert messages == snapshot(
+        [{'role': 'user', 'content': [{'text': '<system>Use metric units.</system>', 'type': 'text'}]}]
+    )
 
 
 @pytest.mark.parametrize(
