@@ -59,7 +59,7 @@ with try_import() as anthropic_available:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -189,7 +189,7 @@ async def test_anthropic_turn_scoped_reminders_keep_thinking_and_cache(
     assert all((response.provider_details or {}).get('input_transformations') is None for response in responses)
     assert any(isinstance(part, TextPart) for part in responses[-1].parts)
 
-    bodies = request_capture.bodies('/v1/messages')
+    bodies: list[dict[str, Any]] = request_capture.bodies('/v1/messages')
     assert len(bodies) == len(responses)
     assert all(_TURN_SCOPED_BETA in headers.get('anthropic-beta', '') for headers in request_capture.headers)
     assert_append_only(bodies)
@@ -254,7 +254,7 @@ async def test_anthropic_turn_scoped_fallback_on_model_without_native_support(
 
     responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
     assert all(response.parts for response in responses)
-    bodies = request_capture.bodies('/v1/messages')
+    bodies: list[dict[str, Any]] = request_capture.bodies('/v1/messages')
     assert all(_TURN_SCOPED_BETA not in headers.get('anthropic-beta', '') for headers in request_capture.headers)
     for n, body in enumerate(bodies, start=1):
         texts = [
@@ -291,7 +291,9 @@ async def test_openai_turn_scoped_reminder_sent_only_while_current(
     """
     provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     if api == 'chat':
-        model = OpenAIChatModel('gpt-5.6', provider=provider, settings={'openai_reasoning_effort': 'none'})
+        model = OpenAIChatModel(
+            'gpt-5.6', provider=provider, settings=OpenAIChatModelSettings(openai_reasoning_effort='none')
+        )
         path = '/chat/completions'
     else:
         model = OpenAIResponsesModel('gpt-5.6', provider=provider)
@@ -301,7 +303,7 @@ async def test_openai_turn_scoped_reminder_sent_only_while_current(
     result = await agent.run(PROMPT)
 
     responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
-    bodies = request_capture.bodies(path)
+    bodies: list[dict[str, Any]] = request_capture.bodies(path)
     assert len(bodies) == len(responses) >= 3
     for n, body in enumerate(bodies, start=1):
         sent = body['messages'] if api == 'chat' else body['input']
@@ -342,7 +344,12 @@ async def test_superseded_reminders_are_left_out_without_native_support():
     ]
     assert all(len(turn_scoped_texts(messages)) == 0 for messages in seen)
     assert all(
-        sum('Reminder' in str(getattr(part, 'content', '')) for message in messages for part in message.parts) == 1
+        sum(
+            isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
+            for message in messages
+            for part in message.parts
+        )
+        == 1
         for messages in seen
     )
     assert turn_scoped_texts(result.all_messages()) == [
@@ -374,7 +381,7 @@ async def test_native_support_sends_every_reminder():
 async def test_enqueued_turn_scoped_prompt():
     """`ctx.enqueue` delivers a turn-scoped prompt into the next request, and it's gone from the one after."""
     seen: list[list[ModelMessage]] = []
-    agent = Agent(recording_function_model(seen))
+    agent: Agent[None, str] = Agent(recording_function_model(seen))
 
     @agent.tool
     def get_weather(ctx: RunContext[None], city: str) -> str:
@@ -505,7 +512,7 @@ async def test_retry_without_response_drops_the_turn_scoped_prompt():
             str(part.content)
             for message in messages
             for part in message.parts
-            if 'Reminder' in str(getattr(part, 'content', ''))
+            if isinstance(part, UserPromptPart) and 'Reminder' in str(part.content)
         ]
         for messages in seen
     ] == [
@@ -532,7 +539,9 @@ async def test_fallback_attempts_keep_the_turn_scoped_prompt():
 
     result = await agent.run('hello')
 
-    assert [[str(part.content) for part in messages[-1].parts] for messages in seen] == [
+    assert [
+        [str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)] for messages in seen
+    ] == [
         ['hello', '<system>Reminder: be terse. This is request 1.</system>'],
         ['hello', '<system>Reminder: be terse. This is request 1.</system>'],
     ]

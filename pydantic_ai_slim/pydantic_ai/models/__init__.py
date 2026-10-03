@@ -2486,7 +2486,7 @@ def _move_turn_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[Mode
     return moved
 
 
-def _turn_scoped_tail_texts(messages: Sequence[ModelMessage]) -> frozenset[str]:
+def _turn_scoped_tail_texts(messages: Sequence[ModelMessage]) -> frozenset[str]:  # pyright: ignore[reportUnusedFunction]
     """The texts the current turn's turn-scoped prompts render as, for a model that can't clear them itself.
 
     Adapters that place a cache breakpoint automatically skip wire blocks carrying these texts, so the
