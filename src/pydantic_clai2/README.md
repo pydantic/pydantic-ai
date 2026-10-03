@@ -332,16 +332,21 @@ yourself, in PowerShell syntax on Windows.
 
 ## Environment variables
 
+CLAI trusts the launch directory and its parents for automatic dotenv loading.
+A `.env` can change provider endpoints while reusing your exported API keys, and
+alter how tool subprocesses execute. Set `PYTHON_DOTENV_DISABLED=1` in your
+environment before launching CLAI in an untrusted directory.
+
 CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
 settings or importing agents and plugins. It searches the launch directory first,
-then its parents, and loads only the first file found. With `--worktree`, this
-happens before switching directories. Missing, unreadable, and non-UTF-8 files are
-ignored, and named pipes are not read.
+then its parents, and loads only the first file found. The search is not limited
+to Git repository boundaries. With `--worktree`, loading happens before switching
+directories. Missing files and named pipes are ignored. Unreadable or non-UTF-8
+files are skipped with a diagnostic on stderr.
 
 Use `.env` for provider API keys and settings such as `CLAI_MODEL` or
 `CLAI_NO_SPLASH`. Existing environment variables take precedence, including empty
-values. Set `PYTHON_DOTENV_DISABLED=1` in your environment to disable loading.
-Keep `.env` files containing credentials out of version control.
+values. Keep `.env` files containing credentials out of version control.
 
 ## Your own agent
 

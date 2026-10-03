@@ -12,13 +12,14 @@ from dotenv import find_dotenv, load_dotenv
 
 def main() -> None:
     """Load the project environment, then cover heavyweight imports with the splash."""
+    dotenv_path = '.env'
     try:
         dotenv_path = find_dotenv(usecwd=True)
         # Named pipes must not block automatic startup.
         if Path(dotenv_path).is_file():
             load_dotenv(dotenv_path)
-    except (OSError, UnicodeDecodeError):
-        pass
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f'Ignoring `.env` at {dotenv_path!r}: {exc}', file=sys.stderr)
 
     from pydantic_clai2.ui.rendering.splash import Splash
 

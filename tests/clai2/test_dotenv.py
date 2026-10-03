@@ -52,8 +52,24 @@ def test_startup_loads_nearest_dotenv(
     assert observed == [expected, expected]
 
 
-@pytest.mark.parametrize('state', ['missing', 'empty', 'disabled', 'invalid_encoding', 'unreadable'])
-def test_startup_without_dotenv_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str) -> None:
+@pytest.mark.parametrize(
+    ('state', 'error'),
+    [
+        ('missing', None),
+        ('empty', None),
+        ('disabled', None),
+        ('invalid_encoding', "'utf-8' codec can't decode byte 0xff"),
+        ('unreadable', 'Cannot read dotenv file'),
+    ],
+)
+def test_startup_without_dotenv_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    capsys: pytest.CaptureFixture[str],
+    state: str,
+    error: str | None,
+) -> None:
     if state == 'empty':
         (tmp_path / '.env').write_text('')
     elif state == 'disabled':
@@ -78,6 +94,11 @@ def test_startup_without_dotenv_values(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(pydantic_clai2.cli._cli, 'run', run)
     main()
     assert observed == [None]
+    stderr = capsys.readouterr().err
+    if error is None:
+        assert stderr == ''
+    else:
+        assert stderr.startswith(f'Ignoring `.env` at {str(tmp_path / ".env")!r}: {error}')
 
 
 def test_dotenv_loaded_before_startup_imports(tmp_path: Path) -> None:
