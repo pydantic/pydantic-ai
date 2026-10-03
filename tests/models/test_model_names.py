@@ -276,6 +276,12 @@ def test_known_model_names_accessor():
     assert known_model_names() == get_args(KnownModelName.__value__)
 
 
+def test_grok_4_7_is_known_model_name():
+    """`grok-4.7` is a bridged `XaiModelName` and a `KnownModelName` member."""
+    assert 'grok-4.7' in get_args(get_args(XaiModelName)[-1])
+    assert 'xai:grok-4.7' in known_model_names()
+
+
 class HerokuModel(TypedDict):
     model_id: str
     regions: list[str]

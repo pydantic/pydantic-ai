@@ -71,6 +71,8 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         ('grok-4-fast-reasoning', True, False),
         ('grok-4-fast-non-reasoning', True, False),
         ('grok-4-1-fast-non-reasoning', True, False),
+        # `grok-4.7` continues the grok-4.5+ reasoning family, so it shares grok-4.6's always-on unified thinking.
+        ('grok-4.7', True, True),
         # `grok-4.20`'s effort knob controls agent count, not thinking depth, so unified thinking is unsupported.
         ('grok-4.20', False, False),
         ('grok-4.20-multi-agent', False, False),
@@ -91,6 +93,7 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         'grok-4-fast-reasoning',
         'grok-4-fast-non-reasoning',
         'grok-4-1-fast-non-reasoning',
+        'grok-4.7',
         'grok-4.20',
         'grok-4.20-multi-agent',
         'grok-4.20-reasoning',
@@ -110,6 +113,13 @@ def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool, e
     # Only models whose `reasoning_effort` set lacks `'none'` (the grok-3-mini family) are always-on;
     # Grok 4.3 and its redirect slugs accept `'none'`, so `thinking=False` disables reasoning there.
     assert profile.get('thinking_always_enabled', False) == expected_always_enabled
+
+
+def test_grok_4_7_profile_reasoning_efforts() -> None:
+    """`grok-4.7` resolves the grok-4.5+ reasoning profile, so it offers grok-4.6's efforts (no `xhigh` yet)."""
+    profile = grok_model_profile('grok-4.7')
+    assert profile is not None
+    assert profile.get('grok_reasoning_efforts') == frozenset({'low', 'medium', 'high'})
 
 
 async def test_grok_4_reasoning_model_forwards_reasoning_effort(allow_model_requests: None) -> None:
