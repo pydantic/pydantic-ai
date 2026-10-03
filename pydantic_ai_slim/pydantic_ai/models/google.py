@@ -5,8 +5,8 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
@@ -665,7 +665,28 @@ class GoogleModel(Model[Client]):
                     'This model does not support output tools and built-in tools at the same time. '
                     'Use `output_type=PromptedOutput(...)` instead.'
                 )
-        return super().prepare_request(model_settings, model_request_parameters)
+        merged_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if model_request_parameters.cache:
+            if (merged_settings or {}).get('google_cached_content'):
+                # The explicit cached content takes precedence, so the unified value must not be reported
+                # as resolved either, matching the other providers' explicit cache settings.
+                model_request_parameters = replace(model_request_parameters, cache=None)
+            else:
+                warnings.warn(
+                    'The unified `cache` setting adds nothing to a Google request: Gemini 2.5 and newer '
+                    'cache prompts implicitly, and explicit caching requires a pre-created cache resource '
+                    'passed via the `google_cached_content` setting.',
+                    UserWarning,
+                )
+        return merged_settings, model_request_parameters
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Gemini caching claims no resolvable retention.
+
+        The implicit cache retention is undocumented and a `google_cached_content` resource
+        manages its own TTL, so the unified `cache` setting resolves no retention either.
+        """
+        return None
 
     async def request(
         self,

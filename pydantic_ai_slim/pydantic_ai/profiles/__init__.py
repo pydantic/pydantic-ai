@@ -13,6 +13,7 @@ from ..exceptions import PydanticAIDeprecationWarning
 from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
+from ..settings import CacheRetention
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage
@@ -135,6 +136,32 @@ class ModelProfile(TypedDict, total=False):
 
     json_schema_transformer: type[JsonSchemaTransformer] | None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model. Default: `None`."""
+
+    supports_cache: bool
+    """Whether the model supports prompt caching configuration. Default: `False`.
+
+    When False, the unified `cache` setting in `ModelSettings` is silently ignored.
+    Set by providers rather than shared profile functions, since cache behavior is a
+    fact about the provider's API, not the model family.
+    """
+
+    supports_auto_cache: bool
+    """Whether the provider has a server-managed automatic prompt-caching mode. Default: `False`.
+
+    When True, `cache=True` uses that mode instead of library-placed cache breakpoints.
+    """
+
+    supported_cache_retentions: tuple[CacheRetention, ...]
+    """The prompt-cache retention tiers the provider supports, shortest first. Default: `('5m',)`.
+
+    A retention requested via the unified `cache` setting snaps down to the nearest supported tier. Empty when
+    the provider has no retention tier to request, in which case a requested retention caches at the provider's
+    default retention.
+    [`prompt_cache_outlook`][pydantic_ai.profiles.prompt_cache_outlook] likewise only lets a
+    [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] in the history extend the expected retention
+    when it's one of these tiers, since a provider that doesn't support a tier doesn't honor it on a
+    cache point either.
+    """
 
     default_cache_retention: timedelta | None
     """How long the provider keeps a cached prompt prefix when the request doesn't ask for a specific retention. Default: `None` (unknown).
@@ -336,6 +363,9 @@ DEFAULT_PROFILE: ModelProfile = {
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
     'json_schema_transformer': None,
+    'supports_cache': False,
+    'supports_auto_cache': False,
+    'supported_cache_retentions': ('5m',),
     'default_cache_retention': None,
     'supports_thinking': False,
     'thinking_always_enabled': False,
@@ -412,8 +442,9 @@ def prompt_cache_outlook(
     has no response after it (like the just-appended request a [history processor](../message-history.md#processing-message-history)
     sees, which hasn't been sent yet) never touched the cache, so its timestamp must not reset the idle clock.
 
-    Cache points in the history extend whichever boundary applies to their largest TTL, assuming they
-    were honored by the provider that served the requests.
+    Cache points in the history extend whichever boundary applies to their largest TTL that the provider
+    honors: one of the profile's [`supported_cache_retentions`][pydantic_ai.profiles.ModelProfile.supported_cache_retentions].
+    Without a profile, or with one that doesn't declare its tiers, every cache point TTL is assumed to be honored.
 
     Args:
         messages: The message history the next request would be built on, oldest first.
@@ -455,12 +486,19 @@ def _expected_cache_retention(
     """How long the provider is expected to keep this history's cached prefix, or `None` if unknown.
 
     `retention` (the retention requested by settings) replaces the profile's default, and cache points in
-    `messages` extend either to their largest TTL. Cache points alone never produce a boundary: without a
-    known base, whether the provider honored them at all is unknown.
+    `messages` extend either to their largest TTL the provider honors. Cache points alone never produce a
+    boundary: without a known base, whether the provider honored them at all is unknown.
+
+    A TTL is honored when it's one of the profile's `supported_cache_retentions`: OpenAI, for one, ignores
+    `CachePoint.ttl`, so a `'1h'` marker must not stretch GPT-5.6's 30-minute retention, or an expired cache
+    would read as warm (and its collapse as unexpected). With no profile, or a profile that doesn't declare
+    its tiers, every TTL is assumed honored: a false `'warm'` merely defers maintenance, while a false `'cold'`
+    would sacrifice a live cache hit, the same trade-off `default_cache_retention` resolves toward the higher end.
     """
     if retention is None and profile is not None:
         retention = profile.get('default_cache_retention')
-    if retention is not None and (cache_point_ttl := _max_cache_point_ttl(messages)) is not None:
+    honored = profile.get('supported_cache_retentions') if profile is not None else None
+    if retention is not None and (cache_point_ttl := _max_cache_point_ttl(messages, honored=honored)) is not None:
         retention = max(retention, cache_point_ttl)
     return retention
 
@@ -468,11 +506,14 @@ def _expected_cache_retention(
 _CACHE_POINT_TTLS: dict[str, timedelta] = {'5m': timedelta(minutes=5), '1h': timedelta(hours=1)}
 
 
-def _max_cache_point_ttl(messages: Sequence[ModelMessage]) -> timedelta | None:
-    """The largest [`CachePoint`][pydantic_ai.messages.CachePoint] TTL in the served history, or `None` if there are none.
+def _max_cache_point_ttl(
+    messages: Sequence[ModelMessage], *, honored: Sequence[CacheRetention] | None = None
+) -> timedelta | None:
+    """The largest honored [`CachePoint`][pydantic_ai.messages.CachePoint] TTL in the served history, or `None` if there are none.
 
     Like the idle clock, this only counts requests with a response after them: a cache point on a
-    request that hasn't been sent yet hasn't written anything to the provider's cache.
+    request that hasn't been sent yet hasn't written anything to the provider's cache. When `honored`
+    is given, TTLs outside it are skipped; `None` means every TTL counts.
     """
     served = next((index for index in range(len(messages), 0, -1) if isinstance(messages[index - 1], ModelResponse)), 0)
     ttls = [
@@ -482,7 +523,7 @@ def _max_cache_point_ttl(messages: Sequence[ModelMessage]) -> timedelta | None:
         for part in message.parts
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
         for content in part.content
-        if isinstance(content, CachePoint)
+        if isinstance(content, CachePoint) and (honored is None or content.ttl in honored)
     ]
     return max(ttls) if ttls else None
 

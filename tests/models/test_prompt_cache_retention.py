@@ -57,6 +57,20 @@ def test_openai_resolve_cache_retention(
     assert model.resolve_cache_retention(settings) == expected
 
 
+@pytest.mark.parametrize('api', ['chat', 'responses'])
+def test_openai_resolve_cache_retention_ignores_unified_cache(api: Literal['chat', 'responses']) -> None:
+    """The unified `cache` setting adds nothing to an OpenAI request (OpenAI caches implicitly), so it
+    requests no retention either: the profile's `default_cache_retention` keeps applying."""
+    model_type = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
+    model = model_type('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
+
+    assert model.resolve_cache_retention(OpenAIChatModelSettings(cache='1h')) is None
+    assert model.resolve_cache_retention(OpenAIChatModelSettings(cache=True)) is None
+    assert model.resolve_cache_retention(
+        OpenAIChatModelSettings(cache='5m', openai_prompt_cache_retention='24h')
+    ) == timedelta(hours=24)
+
+
 @pytest.mark.parametrize(
     ('settings', 'expected'),
     [
