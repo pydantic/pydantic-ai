@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
@@ -38,12 +38,14 @@ class _Warning:
 class WarnNearLimits(AbstractCapability[AgentDepsT]):
     """Injects a warning message when the agent approaches configured limits.
 
-    The warning is appended as a trailing `ModelRequest` with a
-    `UserPromptPart` so that the model treats it as a distinct user turn
-    (models tend to pay more attention to user messages than system messages).
+    Each warning is a [turn-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt
+    at the end of the request: the model sees it for that request only, and it stays in the
+    message history, so a later request never has an earlier warning deleted from it and the
+    cached prefix and the model's earlier reasoning stay valid. A new warning is added on every
+    request past a threshold, with the current counts.
 
-    Previous warnings injected by this capability are stripped before deciding
-    whether to inject a new one.
+    Earlier warnings don't count toward the context limit, since the model doesn't see them again.
+    Warnings that older versions kept in history as user prompts are still removed.
 
     Example:
         ```python
@@ -145,6 +147,10 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
     # -- internal helpers --
 
     @staticmethod
+    def _is_turn_scoped_marker_part(part: Any) -> bool:
+        return isinstance(part, SystemPromptPart) and part.scope == 'turn' and _MARKER in part.content
+
+    @staticmethod
     def _is_marker_part(part: Any) -> bool:
         if isinstance(part, SystemPromptPart):
             return _MARKER in part.content or _LEGACY_MARKER in part.content
@@ -152,7 +158,15 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
             return _MARKER in part.content or _LEGACY_MARKER in part.content
         return False
 
-    def _strip_old_warnings(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+    def _strip_old_warnings(
+        self, messages: list[ModelMessage], *, keep_turn_scoped: bool = False
+    ) -> list[ModelMessage]:
+        """Remove this capability's warnings.
+
+        `keep_turn_scoped` keeps the turn-scoped ones, which the request must still carry: the
+        model's provider clears them itself or core leaves them out, and deleting one would be an
+        edit to history the provider has already seen.
+        """
         cleaned: list[ModelMessage] = []
         for msg in messages:
             if not isinstance(msg, ModelRequest):
@@ -165,7 +179,11 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
             if not msg.parts:
                 cleaned.append(msg)
                 continue
-            parts = [p for p in msg.parts if not self._is_marker_part(p)]
+            parts = [
+                p
+                for p in msg.parts
+                if not self._is_marker_part(p) or (keep_turn_scoped and self._is_turn_scoped_marker_part(p))
+            ]
             if not parts:
                 continue
             if len(parts) == len(msg.parts):
@@ -228,8 +246,18 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Strip old warnings, then inject a new one if thresholds are exceeded."""
-        messages = self._strip_old_warnings(list(request_context.messages))
+        """Add a turn-scoped warning to this request and the history if a threshold is exceeded.
+
+        The warning goes into the run's history through `ctx.messages` and into this request
+        through a new `request_context.messages` list, as a `ModelRequest` of its own that's sent
+        merged into the request it follows.
+        """
+        # A provider-resume turn hands back history ending in a suspended `ModelResponse`, echoed
+        # verbatim to continue it; any change to it would corrupt the continuation.
+        original = request_context.messages
+        if original and isinstance(last := original[-1], ModelResponse) and last.state == 'suspended':
+            return request_context
+        messages = self._strip_old_warnings(list(original), keep_turn_scoped=True)
 
         active: list[_Warning] = []
 
@@ -248,7 +276,7 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
             if context_limit is not None:  # pragma: no branch -- the kind is only active when one is set
                 w = self._build_context_warning(
                     estimate_context_tokens(
-                        messages,
+                        self._strip_old_warnings(messages),
                         model_request_parameters=request_context.model_request_parameters,
                     ),
                     context_limit,
@@ -267,7 +295,7 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         order = {k: i for i, k in enumerate(_WARNING_ORDER)}
         active.sort(key=lambda w: order[w.kind])
         warning_text = self._format_warning(active)
-        messages.append(ModelRequest(parts=[UserPromptPart(content=warning_text)]))
-
-        request_context.messages = messages
+        warning = ModelRequest(parts=[SystemPromptPart(warning_text, scope='turn')])
+        ctx.messages.append(warning)
+        request_context.messages = [*messages, warning]
         return request_context
