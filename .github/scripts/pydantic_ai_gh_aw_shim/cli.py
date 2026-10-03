@@ -43,6 +43,7 @@ import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
 
@@ -1120,10 +1121,13 @@ async def _run_with_timeout(
     budget = _run_timeout_secs()
     usage = RunUsage()
     try:
-        return await asyncio.wait_for(
-            run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
-            timeout=budget,
-        )
+        async with AsyncExitStack() as stack:
+            if isinstance(model, AnthropicModel):
+                await stack.enter_async_context(model.client)
+            return await asyncio.wait_for(
+                run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
+                timeout=budget,
+            )
     except asyncio.TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
