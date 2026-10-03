@@ -159,20 +159,28 @@ jobs:
           import asyncio
           import os
 
-          from anthropic import AsyncAnthropic
+          from anthropic import APIStatusError, AsyncAnthropic
           from pydantic_ai import Agent
+          from pydantic_ai.exceptions import ModelHTTPError
           from pydantic_ai.models.anthropic import AnthropicModel
           from pydantic_ai.providers.anthropic import AnthropicProvider
 
+          stage = 'construct_client'
+
           async def main() -> None:
+              global stage
               async with AsyncAnthropic(
                   api_key=os.environ['ZAI_API_KEY'], base_url='https://api.z.ai/api/anthropic'
               ) as client:
+                  stage = 'check_auth_headers'
                   auth_headers = {header.lower() for header in client.auth_headers}
+                  print(f'auth_header_names={",".join(sorted(auth_headers))}')
                   assert 'x-api-key' in auth_headers
                   assert 'authorization' not in auth_headers
                   model = AnthropicModel('glm-5.3-flash', provider=AnthropicProvider(anthropic_client=client))
+                  stage = 'run_model'
                   result = await Agent(model).run('Reply with OK.')
+                  stage = 'check_usage'
                   usage = result.usage()
                   assert result.output.strip()
                   assert usage.input_tokens > 0
@@ -180,13 +188,25 @@ jobs:
 
           try:
               asyncio.run(main())
-          except Exception:
-              print('header_probe=failed')
+          except Exception as exc:
+              print(f'header_probe=failed stage={stage} error_type={type(exc).__name__}')
+              if isinstance(exc, ModelHTTPError):
+                  print(f'provider_http_status={exc.status_code}')
+                  body = exc.body
+                  error_body = body.get('error') if isinstance(body, dict) else None
+                  code = error_body.get('code') if isinstance(error_body, dict) else None
+                  if isinstance(code, str) and code.isdecimal():
+                      print(f'provider_error_code={code}')
+                  elif isinstance(code, int) and not isinstance(code, bool):
+                      print(f'provider_error_code={code}')
+              elif isinstance(exc, APIStatusError):
+                  print(f'provider_http_status={exc.status_code}')
               raise SystemExit(1) from None
 
           print('header_probe=passed model=glm-5.3-flash header_type=x-api-key')
           PY
       - name: Verify the live GLM runner
+        if: ${{ !cancelled() && steps.health.outcome == 'success' }}
         env:
           GH_AW_SHIM_LIVE_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scoped to this live endpoint test only.
           GH_AW_SHIM_LIVE_BASE_URL: https://api.z.ai/api/anthropic
