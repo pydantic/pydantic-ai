@@ -122,6 +122,33 @@ class TestPixeltableToolsetDescribe:
 
 
 class TestPixeltableToolsetQuery:
+    @pytest.mark.parametrize('boundary', ['get_metadata', 'select', 'where', 'collect'])
+    @pytest.mark.parametrize(
+        'error',
+        [
+            pxt.RequestError(pxt.ErrorCode.INVALID_ARGUMENT, 'synthetic failure'),
+            pxt.ServiceUnavailableError(pxt.ErrorCode.DATABASE_UNAVAILABLE, 'synthetic failure'),
+        ],
+        ids=['request', 'infrastructure'],
+    )
+    def test_query_errors_retry_or_propagate(
+        self, catalog: str, monkeypatch: pytest.MonkeyPatch, boundary: str, error: pxt.Error
+    ) -> None:
+        # Inject failures at public Pixeltable boundaries; successful queries cannot exercise these paths.
+        def fail(*args: object, **kwargs: object) -> None:
+            raise error
+
+        table = f'{catalog}.chunks'
+        target = type(get_table(table)) if boundary in ('get_metadata', 'select') else pxt.Query
+        monkeypatch.setattr(target, boundary, fail)
+        expected = ModelRetry if isinstance(error, pxt.RequestError) else pxt.ServiceUnavailableError
+        with pytest.raises(expected, match='synthetic failure') as exc_info:
+            _chunks(catalog).query_table(table, where={'pos': 1})
+        if isinstance(error, pxt.RequestError):
+            assert exc_info.value.__cause__ is error
+        else:
+            assert exc_info.value is error
+
     def test_equality_where_and_default_columns(self, catalog: str) -> None:
         result = _chunks(catalog).query_table(f'{catalog}.chunks', where={'status': 'open'})
         assert result == {
