@@ -244,3 +244,14 @@ def test_an_intermediate_subclass_registers_nothing() -> None:
     part = ToolCallPart('t', {}, tool_kind='test.unknown')
     assert ToolCallPart.narrow_type(part) is part
     assert not isinstance(part, _Intermediate)
+
+
+def test_a_slotted_typed_part_registers_the_recreated_class() -> None:
+    # `@dataclass(slots=True)` builds a new class, re-running registration without the class arguments.
+    @dataclass(repr=False, slots=True)
+    class SlottedCallPart(ToolCallPart, namespace='test', tool_kind='slotted'):
+        pass
+
+    promoted = ToolCallPart.narrow_type(ToolCallPart('t', {}, tool_kind='test.slotted'))
+    assert type(promoted) is SlottedCallPart
+    assert SlottedCallPart('t').tool_kind == 'test.slotted'
