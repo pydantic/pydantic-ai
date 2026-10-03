@@ -1694,13 +1694,7 @@ jobs:
             echo "An open pull request already bumps the pin: ${title}"
             exit 0
           fi
-          if gh api "repos/${GH_REPO}/git/ref/heads/${branch}" --silent 2>/dev/null; then
-            echo "The branch ${branch} already exists."
-            exit 0
-          fi
-
           base_sha=$(gh api "repos/${GH_REPO}/git/ref/heads/${DEFAULT_BRANCH}" --jq .object.sha)
-          file_sha=$(gh api "repos/${GH_REPO}/contents/${definition}?ref=${base_sha}" --jq .sha)
           current="${RUNNER_TEMP}/pydantic.md"
           bumped="${RUNNER_TEMP}/pydantic.bumped.md"
           gh api "repos/${GH_REPO}/contents/${definition}?ref=${base_sha}" \
@@ -1724,13 +1718,23 @@ jobs:
             exit 0
           fi
 
-          gh api "repos/${GH_REPO}/git/refs" -f ref="refs/heads/${branch}" -f sha="${base_sha}" --silent
-          gh api -X PUT "repos/${GH_REPO}/contents/${definition}" \
-            -f branch="${branch}" \
-            -f sha="${file_sha}" \
-            -f message="chore: bump the gh-aw engine pin to ${RELEASED}" \
-            -f content="$(base64 -w0 "$bumped")" \
-            --silent
+          # A rerun after a failure further down finds the branch an earlier attempt created,
+          # and finishes the pull request from it instead of stopping.
+          if ! gh api "repos/${GH_REPO}/git/ref/heads/${branch}" --silent 2>/dev/null; then
+            gh api "repos/${GH_REPO}/git/refs" -f ref="refs/heads/${branch}" -f sha="${base_sha}" --silent
+          fi
+          on_branch="${RUNNER_TEMP}/pydantic.branch.md"
+          gh api "repos/${GH_REPO}/contents/${definition}?ref=${branch}" \
+            -H 'Accept: application/vnd.github.raw' > "$on_branch"
+          if ! cmp -s "$on_branch" "$bumped"; then
+            file_sha=$(gh api "repos/${GH_REPO}/contents/${definition}?ref=${branch}" --jq .sha)
+            gh api -X PUT "repos/${GH_REPO}/contents/${definition}" \
+              -f branch="${branch}" \
+              -f sha="${file_sha}" \
+              -f message="chore: bump the gh-aw engine pin to ${RELEASED}" \
+              -f content="$(base64 -w0 "$bumped")" \
+              --silent
+          fi
 
           # A heredoc rather than an inline `--body`: the body is Markdown with
           # blank lines and backticks, and only the variables are meant to expand.
