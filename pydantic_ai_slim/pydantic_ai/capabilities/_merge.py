@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 
 if TYPE_CHECKING:
@@ -152,6 +153,11 @@ def merge_field_values(values: Sequence[Any], *, field_name: str) -> Any:
     if not stated:
         return None
     first, *rest = stated
+    if isinstance(first, Model):
+        # A model's `settings` and `profile` live on the non-dataclass `Model` base, outside the field
+        # equality its dataclass subclasses generate, so two differently configured models can compare
+        # equal. Merging them to the first would drop the later one's configuration.
+        return stated[-1]
     if all(_same_value(first, other) for other in rest):
         return first
     if all(isinstance(value, Mapping) for value in stated):
