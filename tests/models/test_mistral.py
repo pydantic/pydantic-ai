@@ -24,7 +24,6 @@ from pydantic_ai import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     StructuredDict,
     SystemPromptPart,
     TextContent,
@@ -1671,11 +1670,12 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -1849,11 +1849,12 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        outcome='retried',
                     )
                 ],
                 instructions='this is the system prompt',
@@ -2297,11 +2298,12 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        outcome='retried',
                     )
                 ],
                 instructions='this is the system prompt',
@@ -3562,7 +3564,7 @@ async def test_stream_cancel(allow_model_requests: None):
 async def test_mistral_empty_response_skipped_in_history(allow_model_requests: None):
     """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
     neither content nor tool calls, which Mistral rejects with a 400. The agent graph retries
-    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty responses by emitting a `RetryFeedbackPart`, relying on the model adapter to omit the
     empty response from the API payload.
     """
     completions = [
@@ -3577,11 +3579,13 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
     assert result.output == 'hello back'
 
     # The empty response is omitted from the payload (no assistant message with neither content nor
-    # tool calls, which would trigger a 400); a retry prompt is appended instead so the model can
-    # self-correct.
+    # tool calls, which would trigger a 400); the retry feedback is appended instead so the model can
+    # self-correct. Mistral honors a mid-conversation system message, so the feedback keeps the
+    # system voice rather than degrading to `<system>`-tagged user text.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == ['user', 'user']
+    assert [message.role for message in second_call_messages] == ['user', 'system']
+    assert second_call_messages[-1].content == snapshot('Please return text.')
 
 
 #####################

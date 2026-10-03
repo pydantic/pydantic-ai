@@ -14,7 +14,6 @@ from pydantic_ai.messages import (
     CapabilityEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -40,7 +39,7 @@ class DelegationToolCallEvent(FunctionToolCallEvent):
 class SandboxCallFinishedEvent(CapabilityEvent, namespace='pydantic_clai2'):
     """A tool called from inside `run_code` returned or failed."""
 
-    result: ToolReturnPart | RetryPromptPart
+    result: ToolReturnPart
 
 
 @dataclass

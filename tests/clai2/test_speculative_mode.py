@@ -547,13 +547,7 @@ class TestSandboxCallDisplay:
         assert all(re.fullmatch(r'.+__\d+', call.tool_call_id) for call in started)
         # A missing file is a plain result, not a retry; failed speculative launches are
         # still claimed and shown, like cold failures.
-        assert [type(result).__name__ for result in finished] == [
-            'ToolReturnPart',
-            'ToolReturnPart',
-            'ToolReturnPart',
-            'RetryPromptPart',
-            'RetryPromptPart',
-        ]
+        assert [result.outcome for result in finished] == ['success', 'success', 'success', 'retried', 'retried']
         headers = [line for line in output.getvalue().splitlines() if line.startswith('\u25cf')]
         # Eager execution can announce `run_code` before its `code` argument has finished streaming.
         assert headers[0] in (

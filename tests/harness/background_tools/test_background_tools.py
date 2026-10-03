@@ -27,7 +27,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -1215,9 +1214,15 @@ class TestBackgroundTools:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             nonlocal retry_seen
             retry_seen = retry_seen or any(
-                isinstance(part, RetryPromptPart) for message in messages for part in message.parts
+                isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+                for message in messages
+                for part in message.parts
             )
-            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            if any(
+                isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+                for message in messages
+                for part in message.parts
+            ):
                 return ModelResponse(parts=[TextPart(content='researched')])
             if retry_seen:
                 return ModelResponse(parts=[ToolCallPart(tool_name='research', args='{}')])

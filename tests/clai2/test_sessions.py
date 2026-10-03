@@ -25,7 +25,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -508,7 +507,7 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
                 for message in messages
                 if isinstance(message, ModelRequest)
                 for part in message.parts
-                if isinstance(part, (ToolReturnPart, RetryPromptPart))
+                if isinstance(part, ToolReturnPart)
             ]
             assert any('workspace content' in str(part.content) for part in returns)
             assert any(('Denied by plugin' if deny else 'plugin result') in str(part.content) for part in returns)

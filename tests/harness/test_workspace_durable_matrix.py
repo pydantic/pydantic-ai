@@ -16,7 +16,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 pytest.importorskip('dbos')
@@ -76,7 +76,7 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
     script = scripts[capability]
 
     def model(messages: list[ModelMessage], info: object) -> ModelResponse:
-        returns = [p for m in messages for p in m.parts if isinstance(p, (ToolReturnPart, RetryPromptPart))]
+        returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
         # Past the script's end, a shell job still running gets checked again.
         if len(returns) >= len(script) and '[status: running]' not in str(returns[-1].content):
             return ModelResponse(parts=[TextPart('done')])

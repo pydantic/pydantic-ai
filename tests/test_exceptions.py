@@ -24,7 +24,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import RetryFeedbackPart, ToolReturnPart
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
@@ -58,7 +58,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: ModelAPIError('model', 'test message'),
         lambda: ModelHTTPError(500, 'model'),
         lambda: IncompleteToolCall('test'),
-        lambda: ToolRetryError(RetryPromptPart(content='test', tool_name='test')),
+        lambda: ToolRetryError(ToolReturnPart(tool_name='test', content='test', outcome='retried')),
     ],
     ids=[
         'ModelRetry',
@@ -180,15 +180,37 @@ def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], chec
 
 def test_tool_retry_error_pickle_round_trip():
     """Test that ToolRetryError survives pickle round-trip with tool_retry preserved."""
-    part = RetryPromptPart(content='retry this', tool_name='my_tool')
+    part = ToolReturnPart(tool_name='my_tool', content='retry this', outcome='retried')
     exc = ToolRetryError(part)
     restored = pickle.loads(pickle.dumps(exc))
 
     assert type(restored) is ToolRetryError
     assert str(restored) == str(exc)
+    assert isinstance(restored.tool_retry, ToolReturnPart)
     assert restored.tool_retry.content == 'retry this'
     assert restored.tool_retry.tool_name == 'my_tool'
     assert restored.tool_retry.tool_call_id == part.tool_call_id
+    assert restored.tool_retry.timestamp == part.timestamp
+
+
+def test_tool_retry_error_pickle_round_trip_with_feedback():
+    """`tool_retry` also holds the retry that answers no call, so the reconstruction must accept one.
+
+    `__reduce__` rebuilds through `__init__`, which formats a message differently for this part: there
+    is no `tool_name` to name in it. Error details rather than a string is what reaches that branch.
+    """
+    errors: list[ErrorDetails] = [
+        {'type': 'missing', 'loc': ('city',), 'msg': 'Field required', 'input': {'country': 'FR'}}
+    ]
+    part = RetryFeedbackPart(content=errors, cause='validation_error')
+    exc = ToolRetryError(part)
+    restored = pickle.loads(pickle.dumps(exc))
+
+    assert type(restored) is ToolRetryError
+    assert str(restored) == str(exc)
+    assert isinstance(restored.tool_retry, RetryFeedbackPart)
+    assert restored.tool_retry.content == errors
+    assert restored.tool_retry.cause == 'validation_error'
     assert restored.tool_retry.timestamp == part.timestamp
 
 
@@ -220,8 +242,7 @@ def test_tool_failed_error_non_str_content():
 
 def test_tool_retry_error_str_with_string_content():
     """Test that ToolRetryError uses string content as message automatically."""
-    part = RetryPromptPart(content='error from tool', tool_name='my_tool')
-    error = ToolRetryError(part)
+    error = ToolRetryError(RetryFeedbackPart(content='error from tool', cause='model_retry'))
     assert str(error) == 'error from tool'
 
 
@@ -230,11 +251,11 @@ def test_tool_retry_error_str_with_error_details():
     validation_error = ValidationError.from_exception_data(
         'Test', [{'type': 'string_type', 'loc': ('name',), 'input': 123}]
     )
-    part = RetryPromptPart(content=validation_error.errors(include_url=False), tool_name='my_tool')
+    part = RetryFeedbackPart(content=validation_error.errors(include_url=False), cause='validation_error')
     error = ToolRetryError(part)
 
     assert str(error) == (
-        "1 validation error for 'my_tool'\nname\n  Input should be a valid string [type=string_type, input_value=123]"
+        '1 validation error\nname\n  Input should be a valid string [type=string_type, input_value=123]'
     )
 
 
@@ -253,11 +274,11 @@ def test_tool_retry_error_str_with_value_error_type():
             'input': 'foo',
         }
     ]
-    part = RetryPromptPart(content=error_details, tool_name='my_tool')
+    part = RetryFeedbackPart(content=error_details, cause='validation_error')
     error = ToolRetryError(part)
 
     assert str(error) == (
-        "1 validation error for 'my_tool'\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
+        "1 validation error\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
     )
 
 

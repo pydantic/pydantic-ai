@@ -59,7 +59,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1018,7 +1017,13 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
     retries: list[str] = []
 
     def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        retries.extend(str(p.content) for m in messages[-1:] for p in m.parts if isinstance(p, RetryPromptPart))
+        # The model sees the harness's retry feedback as a `<system>`-tagged user turn.
+        retries.extend(
+            p.content
+            for m in messages[-1:]
+            for p in m.parts
+            if isinstance(p, UserPromptPart) and isinstance(p.content, str) and p.content.startswith('<system>')
+        )
         if not retries:
             return ModelResponse(parts=[TextPart('Now let me analyze the key concerns.')])
         if not sink.exists():
@@ -1027,9 +1032,9 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
 
     assert _run_shim(_respond, sink) == 0
     assert retries == [
-        'You ended your turn without emitting a safe output, so nothing has been posted. '
+        '<system>You ended your turn without emitting a safe output, so nothing has been posted. '
         'Continue the task and finish by calling the safe-output tool it ends with, '
-        'or `noop` if there is nothing to report.'
+        'or `noop` if there is nothing to report.</system>'
     ]
     assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
 
@@ -1769,17 +1774,17 @@ def test_stream_events_truncates_long_tool_results():
     assert '…[+' in emitted and 'chars]' in emitted
 
 
-def test_stream_events_tags_retry_prompt_as_error():
-    """`ToolResultEvent.part` is `ToolReturnPart | RetryPromptPart`. A retry
-    means tool-call validation failed — gh-aw must see `is_error=True` so it
-    doesn't read it as a successful result."""
+def test_stream_events_tags_retried_result_as_error():
+    """A `ToolResultEvent` carrying `outcome='retried'` means the call has to be
+    made again — gh-aw must see `is_error=True` so it doesn't read it as a
+    successful result."""
 
     async def _events():
         yield FunctionToolResultEvent(
             part=ToolReturnPart(tool_name='Bash', content='ok', tool_call_id='c1'),
         )
         yield FunctionToolResultEvent(
-            part=RetryPromptPart(content='Validation failed', tool_name='Bash', tool_call_id='c2'),
+            part=ToolReturnPart(tool_name='Bash', content='Validation failed', tool_call_id='c2', outcome='retried'),
         )
 
     buf = io.StringIO()

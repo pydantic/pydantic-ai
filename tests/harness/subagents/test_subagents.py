@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -148,7 +147,7 @@ def _delegate_returns(result: Any) -> list[str]:
         str(part.content)
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task' and part.outcome != 'retried'
     ]
 
 
@@ -243,7 +242,7 @@ class TestDelegation:
             part.content
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task' and part.outcome != 'retried'
         ]
         assert returns == ['WORKER RESULT']
 
@@ -320,7 +319,7 @@ class TestDelegation:
             part.content
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
         ]
         assert any(
             "Unknown sub-agent 'ghost'" in str(r) and 'Available sub-agents: helper, worker' in str(r) for r in retries
@@ -522,7 +521,7 @@ class TestDelegation:
             part.content
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
         ]
         assert any("Sub-agent 'boomer' failed" in str(r) for r in retries)
 
@@ -685,7 +684,7 @@ class TestRunControls:
             part
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
         ]
         assert retries == []
         assert _delegate_returns(result) == ['steer: use existing evidence']
@@ -759,12 +758,12 @@ def _crash(message: str = 'provider down') -> FunctionModel:
 
 
 def _delegate_retries(result: Any) -> list[str]:
-    """The `delegate_task` retry-prompt contents from a run result, in order."""
+    """The `delegate_task` retry contents from a run result, in order."""
     return [
         str(part.content)
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
     ]
 
 
@@ -1039,7 +1038,7 @@ class TestIncludeSelf:
             str(part.content)
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, RetryPromptPart)
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
         ]
         assert retries == ["Unknown sub-agent 'ghost'. Available sub-agents: self, worker."]
 
