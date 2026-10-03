@@ -2464,6 +2464,32 @@ def test_output_type_structured_dict():
     )
 
 
+def test_structured_dict_shared_schema():
+    """`StructuredDict`s built from the same schema dict each keep their own name and description.
+
+    `FunctionModel` rather than VCR: the output tool definitions are built before any provider is involved.
+    """
+    schema: dict[str, Any] = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}
+    PersonDict = StructuredDict(schema, name='Person', description='A person')
+    PetDict = StructuredDict(schema, name='Pet')
+
+    output_tools: list[ToolDefinition] = []
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        output_tools.extend(info.output_tools)
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"name": "John Doe"}')])
+
+    Agent(FunctionModel(call_tool), output_type=[PersonDict, PetDict]).run_sync('Generate a person')
+
+    assert [(tool.name, tool.description) for tool in output_tools] == snapshot(
+        [
+            ('final_result_Person', 'A person'),
+            ('final_result_Pet', 'Pet: The final response which ends this conversation'),
+        ]
+    )
+    assert schema == snapshot({'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']})
+
+
 class Apple(BaseModel):
     color: str
 
