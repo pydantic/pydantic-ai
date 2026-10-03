@@ -1552,6 +1552,7 @@ def test_model_json_schema_with_capabilities():
                         'xai:grok-4.5',
                         'xai:grok-4.5-latest',
                         'xai:grok-4.6',
+                        'xai:grok-4.7',
                         'xai:grok-build-0.1',
                         'xai:grok-code-fast-1',
                         'zai:autoglm-phone-multilingual',
