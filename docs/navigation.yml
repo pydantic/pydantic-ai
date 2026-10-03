@@ -36,6 +36,11 @@ navigation:
         slug: "overview/troubleshooting"
         aliases:
           - "troubleshooting"
+      - page: "Network requests"
+        path: "network-requests.md"
+        slug: "overview/network-requests"
+        aliases:
+          - "network-requests"
   - section: "Core Concepts"
     slug: ""
     contents:

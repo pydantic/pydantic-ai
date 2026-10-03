@@ -14,6 +14,8 @@ from textwrap import wrap
 from threading import Lock
 from typing import IO, Protocol, cast, get_args
 
+from . import _version_check
+
 _banner_displayed = False
 _banner_lock = Lock()
 
@@ -77,9 +79,17 @@ these so that no width can wrap them, and `test_display` holds that at every wid
 laid out for, so a reworded line or a wider logo can't quietly cost a link.
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
+_UPDATE_PREFIX = 'update available: '
+_VERSION_CHECK_LINE = 'checks for new versions daily: https://pydantic.dev/docs/ai/network-requests/'
+"""Says that the check happens, wherever it does, and where to read what it sends and how to stop it.
+
+Short enough to stay on one line beside the logo: the banner is already as tall as it should get.
+"""
 
 _MIN_TEXT_WIDTH = len(_INFO_INDENT) + max(
-    len(word) for line in (_OBSERVABILITY_HEADING, _LOGFIRE_LINE, _OTEL_LINE, _HIDE_LINE) for word in line.split()
+    len(word)
+    for line in (_OBSERVABILITY_HEADING, _LOGFIRE_LINE, _OTEL_LINE, _HIDE_LINE, _VERSION_CHECK_LINE)
+    for word in line.split()
 )
 """Narrowest the text column can be and still hold the banner's own words whole.
 
@@ -179,7 +189,8 @@ def detect_coding_agent() -> str | None:
 
     The table is best-effort and will always be behind, which is why it errs towards missing rather
     than guessing: an agent it doesn't know is left where every agent was before, with no banner,
-    and `AI_AGENT` is there for anything that wants to say so itself. The name isn't used yet.
+    and `AI_AGENT` is there for anything that wants to say so itself. Unknown names are used only
+    in the local banner; the version check reports them as the generic `agent`.
     """
     for name, signals in _CODING_AGENTS:
         if any(_agent_signal_matches(signal) for signal in signals):
@@ -190,6 +201,19 @@ def detect_coding_agent() -> str | None:
             return 'agent' if value.lower() in _UNNAMED_AGENT_VALUES else value
 
     return None
+
+
+def known_coding_agent() -> str | None:
+    """The detected coding agent under a name from this module's own table, or the generic `agent`.
+
+    What `detect_coding_agent` returns for an agent it doesn't know is whatever `AI_AGENT` was set
+    to, which is free text from the user's environment. That's fine in a banner they are the only
+    reader of, and not something to put in a request.
+    """
+    agent = detect_coding_agent()
+    if agent is None or any(agent == name for name, _ in _CODING_AGENTS):
+        return agent
+    return 'agent'
 
 
 def _agent_signal_matches(signal: str) -> bool:
@@ -239,6 +263,8 @@ def render_banner(
     output_type: object,
     tools: int | None,
     capabilities: int,
+    updates: Sequence[tuple[str, str]] = (),
+    version_check: bool = False,
     observability: bool = True,
     color: bool = True,
     width: int | None = None,
@@ -252,6 +278,8 @@ def render_banner(
         tools: Number of tools the agent can call, or `None` when the caller can't count them
             without connecting to something, which leaves the count out rather than understating it.
         capabilities: Number of capabilities registered on the agent.
+        updates: Distribution names and newer versions to show below the installed versions.
+        version_check: Whether to disclose the daily version check at the end of the banner.
         observability: Whether to include the pointer to setting up observability.
         color: Whether to emit the ANSI colour codes that highlight the logo and the agent's identity.
         width: Columns the banner has to lay itself out in, or `None` when the caller is writing
@@ -269,14 +297,20 @@ def render_banner(
         info.append(('tools', str(tools), False))
     info.append(('capabilities', str(capabilities), False))
 
-    # The versions carry no colour, so unlike the details below them they can be left to `textwrap`.
-    lines = [*_wrapped(_version_line(), text_width), '', *_info_lines(info, text_width)]
+    # Installed versions carry no colour; update values are coloured only after wrapping so the
+    # escape codes never count towards the available width.
+    lines = [*_wrapped(_version_line(), text_width)]
+    if updates:
+        lines += _update_lines(updates, text_width)
+    lines += ['', *_info_lines(info, text_width)]
     if observability:
         # Both halves of this are advice for someone who hasn't set observability up, so a session
         # that has stays out of it entirely rather than being told to do what it has already done.
         lines += ['', *_observability_lines(text_width)]
         # Only what the block above doesn't already say: it opens by telling them to set it up.
         lines += ['', *_wrapped(_HIDE_LINE, text_width)]
+    if version_check:
+        lines += ['', *_wrapped(_VERSION_CHECK_LINE, text_width)]
 
     banner = _beside_logo(lines) if beside_logo else '\n'.join(line.rstrip() for line in lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
@@ -324,12 +358,15 @@ def display_agent_banner(
         return
 
     try:
+        version_check = _version_check.version_check_enabled()
         banner = render_banner(
             name=name,
             model=model,
             output_type=output_type,
             tools=tools,
             capabilities=capabilities,
+            updates=_version_check.cached_updates() if version_check else (),
+            version_check=version_check,
             # Nothing renders this one for us, so the conventions have to be honored here: colour
             # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
             color=is_terminal and 'NO_COLOR' not in os.environ,
@@ -337,6 +374,8 @@ def display_agent_banner(
         )
         # Written to the stream that was checked, rather than to whatever `sys.stderr` is by now.
         print(banner, file=stderr)
+        if version_check:
+            _version_check.start_version_check()
     except Exception:
         # A banner is a courtesy, and a courtesy that fails is not worth an agent run. A terminal
         # whose encoding can't take the logo (`LC_ALL=C`) raises here, as does a `stderr` that has
@@ -484,6 +523,15 @@ def _observability_lines(text_width: int) -> list[str]:
         *_wrapped(_LOGFIRE_LINE, text_width, indented=True),
         *_wrapped(_OTEL_LINE, text_width, indented=True),
     ]
+
+
+def _update_lines(updates: Sequence[tuple[str, str]], text_width: int) -> list[str]:
+    """Lay out an update notice, highlighting versions without counting ANSI codes as width."""
+    items = [f'{distribution} v{version}' for distribution, version in updates]
+    lines = _wrapped(_UPDATE_PREFIX + _INFO_SEPARATOR.join(items), text_width)
+    for item in items:
+        lines = [line.replace(item, _colored(item, _HIGHLIGHT_COLOR)) for line in lines]
+    return lines
 
 
 def _beside_logo(lines: Sequence[str]) -> str:
