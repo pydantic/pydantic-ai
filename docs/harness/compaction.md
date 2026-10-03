@@ -451,6 +451,7 @@ SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
 The receipt text carries no timestamp, so it is a pure function of the compaction. The message part still has its ordinary request timestamp.
 
 Wording follows what actually survived. `SummarizingCompaction` leaves a summary, so its receipt says the summary above is secondhand; `SlidingWindowCompaction` drops history outright, so its receipt says that context is gone. The blank-in-place strategies (`ClearToolResults`, `DeduplicateFileReads`, `ClampOversizedMessages`) keep every message and cross no boundary, so they emit no receipt.
+On `SlidingWindowCompaction`, the receipt occupies one of the `keep_messages` tail slots (`keep_messages=2` keeps one message plus the receipt). A positive `keep_messages` never leaves the receipt as the only tail content: `keep_messages=1` keeps the receipt plus the newest message, and `keep_messages=0` keeps the receipt alone.
 
 Attach any capability exposing `compaction_transcript_handle() -> str | None` -- the `TranscriptHandleProvider` protocol -- and the receipt gains a `Persisted run handle: <handle>` pointer. `StepPersistence` implements it, returning its `run_id`, so attaching it is enough. Each receipt is also emitted as a `compaction.receipt` event on the `compact_messages` span, carrying `compaction.receipt.strategy`, `compaction.receipt.messages_dropped`, `compaction.receipt.tokens_dropped`, `compaction.receipt.by`, and `compaction.receipt.handle` when a handle was found.
 

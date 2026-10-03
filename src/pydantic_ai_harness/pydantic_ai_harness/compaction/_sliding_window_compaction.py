@@ -86,7 +86,13 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     registry cannot resolve."""
 
     keep_messages: int = 40
-    """Number of tail messages to retain after trimming (message-count trigger)."""
+    """Number of tail messages to retain after trimming (message-count trigger).
+
+    With `receipts=True`, the receipt occupies one of these slots from `keep_messages=2` up,
+    but a positive value never leaves the receipt as the only tail content: `keep_messages=1`
+    retains the newest message plus the receipt, and `keep_messages=0` retains the receipt
+    alone.
+    """
 
     keep_tokens: int | None = None
     """Target token budget after trimming (token-count trigger).
@@ -109,6 +115,8 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     receipts: bool = False
     """When `True`, prepend a deterministic compaction receipt recording how much history
     was dropped, with a transcript handle when a `TranscriptHandleProvider` capability is attached.
+    The receipt counts toward the `keep_messages` tail from `keep_messages=2` up; a positive
+    `keep_messages` always retains at least one real tail message beside it.
 
     Opt-in for now: the receipt text is content, so defaulting it on is deferred to the
     benchmark eval-rig pass.  The mechanism itself is structural.
@@ -135,7 +143,12 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             reservation = self._receipt_token_reservation(messages, ctx) if self.receipts else 0
             cutoff = find_token_cutoff(messages, max(0, self.keep_tokens - reservation), self.tokenizer)
         else:
-            cutoff = find_safe_cutoff(messages, max(0, self.keep_messages - int(self.receipts)))
+            keep = self.keep_messages
+            if self.receipts and keep > 0:
+                # A positive keep_messages always retains at least one real tail message
+                # beside the receipt; only keep_messages=0 leaves the receipt alone.
+                keep = max(1, keep - 1)
+            cutoff = find_safe_cutoff(messages, keep)
 
         if cutoff <= 0:
             return messages

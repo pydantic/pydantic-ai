@@ -3284,7 +3284,7 @@ class TestSlidingWindowCompactionReceipts:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         messages: list[ModelMessage] = [_user('original task'), _assistant('a'), _user('later'), _assistant('b')]
         result = await sw.compact(messages, _make_ctx())
-        assert _receipt_parts(result)[0].startswith('[History before this point (3 messages,')
+        assert _receipt_parts(result)[0].startswith('[History before this point (2 messages,')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3821,6 +3821,66 @@ class TestStructuralFeaturesThroughAgent:
         # `preserve_first_user_message` defaults on, so the real opening turn -- not the
         # receipt that now sits ahead of it -- is what gets carried forward.
         assert 'FIRST' in _user_texts(seen[1])
+
+    async def test_keep_messages_one_with_receipts_keeps_the_current_request(self):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
+        first = await agent.run('one', message_history=history)
+        second = await agent.run('two', message_history=first.all_messages())
+        await agent.run('three', message_history=second.all_messages())
+
+        # `keep_messages=1` retains the current request beside the receipt: every trimmed
+        # turn sends the prompt the model is answering now, not the receipt alone.
+        for request, prompt in zip(seen, ['one', 'two', 'three'], strict=True):
+            assert prompt in _user_texts(request)
+            assert len(_receipt_parts(request)) == 1
+
+    async def test_keep_messages_one_with_receipts_and_preserved_first_user_turn(self):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)],
+        )
+        history: list[ModelMessage] = [_user('original task'), _assistant('b'), _user('c'), _assistant('d')]
+        first = await agent.run('one', message_history=history)
+        await agent.run('two', message_history=first.all_messages())
+
+        # The preserved first turn is additive: with `keep_messages=1` the newest prompt
+        # also survives beside the receipt on every trim.
+        for request, prompt in zip(seen, ['one', 'two'], strict=True):
+            assert prompt in _user_texts(request)
+            assert 'original task' in _user_texts(request)
+            assert len(_receipt_parts(request)) == 1
+
+    async def test_keep_tokens_with_receipts_keeps_the_current_request(self):
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_tokens=10,
+                    keep_tokens=5,
+                    receipts=True,
+                    preserve_first_user_message=False,
+                    tokenizer=len,
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('a' * 20), _assistant('b' * 20), _user('c' * 20)]
+        await agent.run('one', message_history=history)
+
+        # The token trigger already reserves the newest message; the receipt rides on top
+        # rather than displacing it.
+        assert 'one' in _user_texts(seen[0])
+        assert len(_receipt_parts(seen[0])) == 1
 
     async def test_pin_survives_compaction_in_a_run(self):
         seen: list[list[ModelMessage]] = []
