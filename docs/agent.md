@@ -1392,16 +1392,16 @@ result1 = agent.run_sync('Who was Albert Einstein?')
 print(result1.output)
 #> Albert Einstein was a German-born theoretical physicist.
 
-# Second run, passing previous messages
+# Second run, continuing the first one's conversation
 result2 = agent.run_sync(
     'What was his most famous equation?',
-    message_history=result1.new_messages(),  # (1)!
+    conversation=result1.conversation,  # (1)!
 )
 print(result2.output)
 #> Albert Einstein's most famous equation is (E = mc^2).
 ```
 
-1. Continue the conversation; without `message_history` the model would not know who "his" was referring to.
+1. Continue the conversation; without it the model would not know who "his" was referring to. A [`Conversation`][pydantic_ai.conversation.Conversation] carries the messages along with the running usage and the conversation ID, and is what to [store](persistence.md#storing-a-conversation-yourself) between requests. Passing `message_history=result1.all_messages()` instead carries only the messages; see [Messages and chat history](message-history.md).
 
 _(This example is complete, it can be run "as is")_
 
