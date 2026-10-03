@@ -488,9 +488,14 @@ class Bell(Plugin):
         self.host.console.bell()
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
-next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
+Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
+importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
+repository with `/plugins add https://github.com/your-org/my-plugin.git` inside
+CLAI. Git repositories need an `__init__.py` or `plugin.py` at their root; install
+any dependencies in CLAI's Python environment first. See
+[where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md#where-plugins-live)
+for supported URLs and checkout management.
+The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Plugins are trusted code running as you.
 
 [PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.

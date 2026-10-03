@@ -652,7 +652,7 @@ this directory is an executable startup configuration, not a sandbox. The defaul
 Coder runs as your OS user and can modify it, just as it can modify your shell
 startup files. Use a separate OS identity or sandbox for untrusted agent work.
 
-Two ways to install one:
+Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
@@ -664,6 +664,41 @@ Two ways to install one:
    clai2 plugins add notify my_package.notify
    /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": true}'
    ```
+3. From inside CLAI, clone a trusted Git repository:
+
+   ```text
+   /plugins add https://github.com/your-org/my-plugin.git
+   /plugins add git@github.com:your-org/my-plugin.git
+   ```
+
+   Git must be installed and available on `PATH`. On Windows, CLAI resolves
+   `git.exe` only from absolute `PATH` directories outside the working directory.
+   The repository must have an `__init__.py` or `plugin.py`
+   at its root that defines one public `Plugin` subclass. If both exist,
+   `__init__.py` is used. Relative imports can load other files from the checkout.
+   Install the plugin's dependencies in CLAI's Python environment first; this
+   command does not install packages or run build scripts.
+
+   CLAI clones the default branch into `plugins/_git/my_plugin/` under its
+   configuration directory. The repository name becomes the plugin ID, with
+   hyphens and dots replaced by underscores. Names must start with a letter and
+   contain only letters, digits, dots, hyphens, or underscores. Existing plugins
+   and checkouts are never replaced. Network URLs must use HTTPS or SSH (including
+   `git@host:path`); these may also start with `git+`. SCP-style URLs require
+   `user@host:path`; use `ssh://host/path` for an SSH alias without an explicit user.
+   Local `file://` URLs work too.
+   Plaintext `http://` and `git://` transports are rejected because they cannot
+   authenticate the plugin code being downloaded.
+   Authentication uses your existing Git credentials without terminal prompts.
+   CLAI removes failed or cancelled clones. If the operating system prevents
+   cleanup, clear the leftover checkout directory before retrying.
+   If the plugin itself fails to load,
+   its checkout and declaration remain so you can fix it and `/plugins enable my_plugin`.
+   To update, run `!git -C <checkout-directory> pull --ff-only`, then
+   `/plugins reload my_plugin`. Reloading by itself does not fetch from Git.
+   `/plugins remove my_plugin` unloads it and forgets its declaration, but keeps
+   the checkout so local changes are not lost. To reinstall, delete the checkout
+   directory named in the response, then run `/plugins add GIT_URL` again.
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
@@ -1478,18 +1513,19 @@ failed. A plugin that is installed but fails to import one of its dependencies
 is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
 
-With arguments `/plugins` is a plain command, and `clai2 plugins ...` outside
-CLAI does the same thing:
+With arguments `/plugins` is a plain command. The standalone `clai2 plugins ...`
+commands edit saved declarations without loading plugin code. Git installation,
+configuration menus, and live reloading are available only inside a CLAI session:
 
 | Command | Does |
 |---|---|
 | `/plugins list` | show every plugin and whether it is on |
 | `/plugins add NAME module[:Class] [JSON]` | save it and load it now |
-| `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
+| `/plugins add GIT_URL` | clone a trusted repository and load its plugin (in a CLAI session only); see [where plugins live](#where-plugins-live) |
+| `/plugins remove NAME` | forget an installed declaration, keeping any Git checkout on disk; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
-| `/plugins configure NAME` | open a loaded plugin's settings menu (in a CLAI session only) |
-| `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
-| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure`; `enable` and `add` open it too |
+| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure` (in a CLAI session only); `enable` and `add` open it too |
+| `/plugins reload NAME` | re-import the file and load it again (in a CLAI session only; does not fetch Git updates) |
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,

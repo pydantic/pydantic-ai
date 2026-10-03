@@ -45,6 +45,7 @@ from pydantic_clai2.plugins import (
     collect,
 )
 from pydantic_clai2.plugins._factories import build, import_file, settings_capability
+from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
@@ -549,9 +550,13 @@ class PluginLoader(Generic[DepsT]):
         _requested('enable', name)
         declaration = entry.declaration.model_copy(update={'enabled': True})
         self._store.save_plugin(declaration, requires=self._requirements(entry))
-        await self.load(name)
+        await self._load_enabled(entry)
+
+    async def _load_enabled(self, entry: PluginEntry[DepsT]) -> None:
+        """Load an enabled declaration and remember requirements learned from its plugin."""
+        await self.load(entry.name)
         # `load` refreshed the entries; only a loaded plugin can say what its settings need.
-        loaded = self._entries[name].loaded
+        loaded = self._entries[entry.name].loaded
         host = loaded.plugin.host if loaded is not None else None
         if host is not None and host.requirements:
             self._store.save_plugin(self._saved(entry), requires=host.requirements)
@@ -570,17 +575,28 @@ class PluginLoader(Generic[DepsT]):
         _requested('remove', name)
         requires = self._requirements(entry)
         await self.unload(name)
+        checkout_notice = ''
         if entry.path is not None and not entry.shipped:
-            self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
-            return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
+            # Unrelated file plugins remain removable even when the drop-in directory cannot be resolved.
+            if entry.path.parent.parent.name == CHECKOUTS_DIR and entry.path.parent == checkout_dir(
+                self.plugins_dir, name
+            ):
+                checkout_notice = (
+                    f' Checkout kept at {entry.path.parent}. Delete that directory before reinstalling from Git.'
+                )
+            else:
+                self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
+                return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
         shipped = self._project.get(name) or self._builtin.get(name)
         if shipped is None:
-            return f'Removed {name}.'
+            return f'Removed {name}.{checkout_notice}'
         if shipped.enabled:
             await self.load(name)
         origin = 'declared by the project' if name in self._project else 'built in'
-        return f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.'
+        return (
+            f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.{checkout_notice}'
+        )
 
     async def reload(self, name: str) -> None:
         """Unload, re-import the module, and load again."""
@@ -625,40 +641,25 @@ class PluginLoader(Generic[DepsT]):
                 '\n'.join(f'{entry.name}: {entry.source} ({entry.state})' for entry in self.entries()) or 'No plugins.'
             )
         action, *rest = args
+        if action == 'add' and not rest:
+            raise ValueError(ADD_USAGE)
+        if action == 'add' and len(rest) == 1:
+            async with install_git_plugin(
+                rest[0], plugins_dir=self.plugins_dir, names=[entry.name for entry in self.entries()]
+            ) as declaration:
+                if any(entry.name == declaration.id for entry in self.entries()):
+                    raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
+                self._store.save_plugin(declaration, overwrite=False)
+            _requested('add', declaration.id)
+            await self._load_enabled(self._entry(declaration.id))
+            return await self._configure_new(declaration.id, f'Added and loaded {declaration.id}.')
         if rest:
             rest[0] = canonical_plugin_id(rest[0])
         if action == 'add':
-            existing = next((entry for entry in self.entries() if rest and entry.name == rest[0]), None)
-            if existing is not None and not existing.shipped:
-                raise ValueError(f'Plugin {rest[0]} already exists; remove its declaration before replacing it.')
-            declaration = added_plugin([action, *rest])
-            loaded = existing is not None and existing.loaded is not None
-            if existing is not None:
-                await self.unload(rest[0])
-            # Settings are plaintext, so they are saved only once the plugin accepts them: settings it
-            # rejects, perhaps a pasted secret, never reach the store.
-            self._staged[rest[0]] = declaration
-            try:
-                await self.load(rest[0])
-            except PluginSettingsError:
-                del self._staged[rest[0]]
-                if loaded:
-                    await self.load(rest[0])
-                raise
-            except BaseException:
-                requires = self._requirements(self._entry(rest[0]))
-                self._store.save_plugin(self._staged.pop(rest[0]), requires=requires)
-                raise
-            requires = self._requirements(self._entry(rest[0]))
-            self._store.save_plugin(self._staged.pop(rest[0]), requires=requires)
-            _requested('add', rest[0])
-            if existing is None:
-                return await self._configure_new(rest[0], f'Added and loaded {rest[0]}.')
-            kind = 'project' if existing.project else 'built-in'
-            return await self._configure_new(rest[0], f'Replaced {kind} {rest[0]}.')
+            return await self._add_module(rest)
         if len(rest) != 1:
             raise ValueError(
-                'Usage: /plugins [list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID'
+                'Usage: /plugins [list|add GIT_URL|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID'
                 '|configure ID]'
             )
         name = rest[0]
@@ -679,6 +680,38 @@ class PluginLoader(Generic[DepsT]):
         run, past = actions[action]
         await run(name)
         return self._with_notice(name, f'{past} {name}.')
+
+    async def _add_module(self, args: list[str]) -> str:
+        """Load a module declaration, saving only settings accepted by the plugin."""
+        existing = next((entry for entry in self.entries() if args and entry.name == args[0]), None)
+        if existing is not None and not existing.shipped:
+            raise ValueError(f'Plugin {args[0]} already exists; remove its declaration before replacing it.')
+        declaration = added_plugin(['add', *args])
+        name = declaration.id
+        loaded = existing is not None and existing.loaded is not None
+        if existing is not None:
+            await self.unload(name)
+        # Settings are plaintext, so they are saved only once the plugin accepts them: settings it
+        # rejects, perhaps a pasted secret, never reach the store.
+        self._staged[name] = declaration
+        try:
+            await self.load(name)
+        except PluginSettingsError:
+            del self._staged[name]
+            if loaded:
+                await self.load(name)
+            raise
+        except BaseException:
+            requires = self._requirements(self._entry(name))
+            self._store.save_plugin(self._staged.pop(name), requires=requires)
+            raise
+        requires = self._requirements(self._entry(name))
+        self._store.save_plugin(self._staged.pop(name), requires=requires)
+        _requested('add', name)
+        if existing is None:
+            return await self._configure_new(name, f'Added and loaded {name}.')
+        kind = 'project' if existing.project else 'built-in'
+        return await self._configure_new(name, f'Replaced {kind} {name}.')
 
     def _with_notice(self, name: str, message: str) -> str:
         """`message`, then the plugin's ignored-settings notice when its last load had one."""

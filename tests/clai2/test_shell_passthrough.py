@@ -19,11 +19,11 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.cli.shell_passthrough import (
-    _taskkill_path,  # pyright: ignore[reportPrivateUsage]
     run_shell_command,
     shell_command,
 )
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime._processes import taskkill_path
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_app_edges import inputs
 
@@ -75,9 +75,9 @@ async def shell_session(
 def test_taskkill_is_resolved_from_system_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `taskkill.exe` planted in the working directory must never be the one that runs."""
     monkeypatch.setenv('SystemRoot', r'D:\Win')
-    assert _taskkill_path() == r'D:\Win\System32\taskkill.exe'
+    assert taskkill_path() == r'D:\Win\System32\taskkill.exe'
     monkeypatch.delenv('SystemRoot')
-    assert _taskkill_path() == r'C:\Windows\System32\taskkill.exe'
+    assert taskkill_path() == r'C:\Windows\System32\taskkill.exe'
 
 
 class TestShellPassthrough:
@@ -120,7 +120,7 @@ class TestShellPassthrough:
 
         monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', delayed_spawn)
         monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._interrupt', interrupt)
-        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._kill_process_tree', kill_process_tree)
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.kill_process_tree', kill_process_tree)
         output = io.StringIO()
         interrupts = Interrupts()
         command = asyncio.create_task(
