@@ -149,6 +149,43 @@ jobs:
           mkdir -p provider-health
           python3 .github/scripts/agent_provider_health.py check --output provider-health/provider-health.json
           python3 -c "import json; from pathlib import Path; health = json.loads(Path('provider-health/provider-health.json').read_text()); assert health['ready'] is True, health.get('reason', 'provider is not ready')"
+      - name: Verify the Z.ai x-api-key request path
+        env:
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scoped to this live SDK request only.
+          UV_NO_SYNC: "1"
+        run: |
+          test -n "$ZAI_API_KEY"
+          uv run python - <<'PY'
+          import asyncio
+          import os
+
+          from anthropic import AsyncAnthropic
+          from pydantic_ai import Agent
+          from pydantic_ai.models.anthropic import AnthropicModel
+          from pydantic_ai.providers.anthropic import AnthropicProvider
+
+          async def main() -> None:
+              async with AsyncAnthropic(
+                  api_key=os.environ['ZAI_API_KEY'], base_url='https://api.z.ai/api/anthropic'
+              ) as client:
+                  auth_headers = {header.lower() for header in client.auth_headers}
+                  assert 'x-api-key' in auth_headers
+                  assert 'authorization' not in auth_headers
+                  model = AnthropicModel('glm-5.3-flash', provider=AnthropicProvider(anthropic_client=client))
+                  result = await Agent(model).run('Reply with OK.')
+                  usage = result.usage()
+                  assert result.output.strip()
+                  assert usage.input_tokens > 0
+                  assert usage.output_tokens > 0
+
+          try:
+              asyncio.run(main())
+          except Exception:
+              print('header_probe=failed')
+              raise SystemExit(1) from None
+
+          print('header_probe=passed model=glm-5.3-flash header_type=x-api-key')
+          PY
       - name: Verify the live GLM runner
         env:
           GH_AW_SHIM_LIVE_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- scoped to this live endpoint test only.
