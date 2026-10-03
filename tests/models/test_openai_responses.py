@@ -18019,3 +18019,24 @@ async def test_responses_provider_details_hook_builtin_wins_collisions(allow_mod
         'finish_reason': 'completed',
         'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
     }
+
+
+async def test_openai_responses_replays_hosted_tool_search_paths() -> None:
+    """Hosted tool search takes `paths`; we store them canonically as `queries`, so replay maps them back."""
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name=ToolSearchTool.kind,
+                    args={'queries': ['get_weather']},
+                    tool_call_id='search-hosted',
+                    provider_name='openai',
+                )
+            ],
+            provider_name='openai',
+        ),
+    ]
+    items = await _replay_input(history, group_function_calls=False)
+    [call] = [item for item in items if item.get('type') == 'tool_search_call']
+    assert call['execution'] == 'server'
+    assert call['arguments'] == {'paths': ['get_weather']}
