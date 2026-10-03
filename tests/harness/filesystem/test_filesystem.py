@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import posixpath
 import re
@@ -19,7 +20,15 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, on_event
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -181,8 +190,9 @@ class FilesystemOnlyWorkspace:
         return await self._local.exists(path)
 
 
-def _reported_hash(result: str) -> str:
+def _reported_hash(result: str | list[str | BinaryContent]) -> str:
     """Extract the content hash a tool reports, from a `[hash:xxxx]` suffix."""
+    assert isinstance(result, str)
     return result.partition('hash:')[2].split()[0].rstrip(']')
 
 
@@ -282,6 +292,18 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
         max_list_results=1000,
         max_search_results=1000,
         max_find_results=1000,
+    )
+
+
+def _unhashed_toolset() -> FileSystemToolset[None]:
+    return FileSystemToolset(
+        allowed_patterns=[],
+        denied_patterns=[],
+        max_read_lines=2000,
+        max_list_results=1000,
+        max_search_results=1000,
+        max_find_results=1000,
+        content_hashes=False,
     )
 
 
@@ -737,8 +759,75 @@ class TestReadFile:
 
     async def test_read_binary_file(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.read_file('binary.bin', workspace=ws)
-        assert 'Binary file' in result
-        assert '4 bytes' in result
+        content_hash = hashlib.sha256(b'\x00\x01\x02\x03').hexdigest()[:12]
+        assert result == (
+            f'[binary.bin | application/octet-stream | 4 bytes | hash:{content_hash}]\n'
+            'Binary file; the first bytes in hex:\n'
+            '00000000  00 01 02 03\n'
+        )
+
+    async def test_read_binary_file_previews_only_the_first_bytes(self, tmp_path: Path) -> None:
+        (tmp_path / 'data.zip').write_bytes(bytes(range(100)))
+        toolset = _unhashed_toolset()
+        result = await toolset.read_file('data.zip', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            '[data.zip | application/zip | 100 bytes]\n'
+            'Binary file; the first bytes in hex:\n'
+            '00000000  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\n'
+            '00000010  10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f\n'
+            '00000020  20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f\n'
+            '00000030  30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f\n'
+            '... (36 more bytes)\n'
+        )
+
+    async def test_read_binary_file_preview_fits_max_read_chars(self, tmp_path: Path) -> None:
+        (tmp_path / 'data.zip').write_bytes(bytes(range(100)))
+        toolset = FileSystemToolset[None](
+            allowed_patterns=[],
+            denied_patterns=[],
+            max_read_lines=2000,
+            max_read_chars=400,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            content_hashes=False,
+        )
+        result = await toolset.read_file('data.zip', workspace=LocalWorkspaceBackend(tmp_path))
+        # 400 characters, less the header, the intro and the reserved notice, leave room for two rows.
+        assert result == (
+            '[data.zip | application/zip | 100 bytes]\n'
+            'Binary file; the first bytes in hex:\n'
+            '00000000  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\n'
+            '00000010  10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f\n'
+            '... (68 more bytes)\n'
+        )
+
+    @pytest.mark.parametrize(
+        ('data', 'media_type'),
+        [
+            (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', 'image/png'),
+            (b'\xff\xd8\xff\xe0\x00\x10JFIF', 'image/jpeg'),
+            (b'GIF89a\x01\x00\x01\x00', 'image/gif'),
+            (b'RIFF\x24\x00\x00\x00WEBPVP8 ', 'image/webp'),
+            # A PDF often has no null byte near the start, so it is recognized by its signature, not as binary.
+            (b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n', 'application/pdf'),
+        ],
+    )
+    async def test_read_image_or_pdf_returns_the_file(self, tmp_path: Path, data: bytes, media_type: str) -> None:
+        # The bytes decide the media type, not the extension.
+        (tmp_path / 'upload.bin').write_bytes(data)
+        toolset = _unhashed_toolset()
+        result = await toolset.read_file('upload.bin', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == [
+            f'[upload.bin | {media_type} | {len(data)} bytes]\n',
+            BinaryContent(data=data, media_type=media_type),
+        ]
+
+    async def test_read_oversized_image_is_described(self, tmp_path: Path) -> None:
+        (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(5_000_000))
+        toolset = _unhashed_toolset()
+        result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == '[big.png | image/png | 5000008 bytes]\nToo large to view: the limit is 5000000 bytes.\n'
 
     async def test_read_traversal_blocked(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         with pytest.raises(ModelRetry):
@@ -2747,3 +2836,31 @@ class TestUsedAsAToolset:
         )
         with pytest.raises(UserError, match=r'Pass `capabilities=\[FileSystem\(\)\]` rather than its toolset'):
             await agent.run('go')
+
+
+class TestReadFileInARun:
+    @pytest.fixture
+    def anyio_backend(self) -> str:
+        # Agent.run needs asyncio.
+        return 'asyncio'
+
+    async def test_an_image_reaches_the_model_in_the_tool_result(self, tmp_path: Path) -> None:
+        png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
+        (tmp_path / 'chart.png').write_bytes(png)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'chart.png'})])
+            return ModelResponse(parts=[TextPart('seen')])
+
+        agent = Agent(FunctionModel(model), capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()])
+        result = await agent.run('look at the chart')
+        request = result.all_messages()[2]
+        assert isinstance(request, ModelRequest)
+        tool_return = request.parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        content_hash = hashlib.sha256(png).hexdigest()[:12]
+        assert tool_return.content == [
+            f'[chart.png | image/png | {len(png)} bytes | hash:{content_hash}]\n',
+            BinaryContent(data=png, media_type='image/png'),
+        ]
