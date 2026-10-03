@@ -289,7 +289,9 @@ Without installing, run `uvx pydantic-clai2`. The package also installs a
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
-For API-key providers, set the provider's API key environment variable before starting.
+For API-key providers, export the provider's API key before starting, or put it in
+a `.env` in the launch directory. See [Environment variables](#environment-variables)
+for discovery, precedence, and trust requirements.
 Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
 can read and modify files and execute commands with your user permissions. Run it
 in a workspace you trust. CLAI does not add a sandbox or approval layer.

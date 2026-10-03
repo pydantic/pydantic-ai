@@ -21,6 +21,7 @@ def main() -> None:
     except (OSError, UnicodeDecodeError) as exc:
         print(f'Ignoring `.env` at {dotenv_path!r}: {exc}', file=sys.stderr)
 
+    # Splash imports configuration, which must see the loaded environment.
     from pydantic_clai2.ui.rendering.splash import Splash
 
     os.environ['PYDANTIC_AI_NO_BANNER'] = '1'
