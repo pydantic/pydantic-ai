@@ -24,7 +24,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
+from pydantic_ai_harness.filesystem import DEFAULT_TOOL_NAMES, FileChangeRequestEvent, FileSystem
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -104,18 +104,22 @@ async def test_temporal_default_runner_veto(tmp_path: Path) -> None:
     'capability,tool_name,args',
     [
         pytest.param(capability, tool_name, args, id=f'{tool_name}-{name}')
-        for name, capability in [('filesystem', FileSystem()), ('coder', Coder())]
+        for name, capability in [
+            ('filesystem', FileSystem(tools=[*DEFAULT_TOOL_NAMES, 'multi_edit'])),
+            ('coder', Coder()),
+        ]
         for tool_name, args in [
             ('write_file', {'path': 'note.txt', 'content': 'changed'}),
             ('edit_file', {'path': 'note.txt', 'old_text': 'original', 'new_text': 'changed'}),
+            ('multi_edit', {'path': 'note.txt', 'edits': [{'old_string': 'original', 'new_string': 'changed'}]}),
             ('create_directory', {'path': 'newdir'}),
         ]
-        # Coder does not expose create_directory.
-        if not (name == 'coder' and tool_name == 'create_directory')
+        # Coder exposes neither create_directory nor multi_edit.
+        if not (name == 'coder' and tool_name in {'create_directory', 'multi_edit'})
     ],
 )
 async def test_temporal_vetoes_before_mutation(
-    tmp_path: Path, capability: FileSystem | Coder, tool_name: str, args: dict[str, str]
+    tmp_path: Path, capability: FileSystem | Coder, tool_name: str, args: dict[str, object]
 ) -> None:
     (tmp_path / 'note.txt').write_text('original')
     requests: list[str] = []
@@ -160,6 +164,7 @@ async def test_temporal_vetoes_before_mutation(
                 )
                 == 'done'
             )
-    assert requests == [tool_name.removesuffix('_file') if tool_name != 'create_directory' else 'create_directory']
+    operations = {'write_file': 'write', 'edit_file': 'edit', 'multi_edit': 'edit'}
+    assert requests == [operations.get(tool_name, tool_name)]
     assert (tmp_path / 'note.txt').read_text() == 'original'
     assert not (tmp_path / 'newdir').exists()

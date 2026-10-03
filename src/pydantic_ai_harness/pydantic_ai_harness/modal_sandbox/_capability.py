@@ -77,6 +77,7 @@ _WORKSPACE_TOOL_NAMES = frozenset(
         'read_file',
         'write_file',
         'edit_file',
+        'multi_edit',
         'list_directory',
         'search_files',
         'find_files',

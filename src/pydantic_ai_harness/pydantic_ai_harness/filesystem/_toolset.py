@@ -67,7 +67,7 @@ DEFAULT_TOOL_NAMES: tuple[str, ...] = (
 RIPGREP_TOOL_NAMES: tuple[str, ...] = ('list_files', 'grep')
 """Opt-in tools backed by the `rg` executable, which respects `.gitignore` and skips hidden files."""
 
-FILE_SYSTEM_TOOL_NAMES: tuple[str, ...] = (*DEFAULT_TOOL_NAMES, *RIPGREP_TOOL_NAMES)
+FILE_SYSTEM_TOOL_NAMES: tuple[str, ...] = (*DEFAULT_TOOL_NAMES, 'multi_edit', *RIPGREP_TOOL_NAMES)
 """Every tool `FileSystem` can register, in registration order."""
 
 _MAX_SEARCH_FILE_BYTES = 10 << 20
@@ -113,6 +113,16 @@ class Replacement:
     _: KW_ONLY
     old_text: str
     new_text: str
+
+
+@dataclass
+class EditOp:
+    """One edit in a `multi_edit` batch: the first occurrence of `old_string`, or every one with `replace_all`."""
+
+    _: KW_ONLY
+    old_string: str
+    new_string: str
+    replace_all: bool = False
 
 
 # Errors that mean "the model asked for something the tool couldn't do" -- a
@@ -428,6 +438,29 @@ def _apply_replacements(text: str, replacements: Sequence[Replacement], path: st
     return text
 
 
+def _apply_edit_ops(text: str, edits: Sequence[EditOp], path: str) -> tuple[str, int]:
+    """Apply `edits` in order, each to the first match or every match; nothing is written on failure.
+
+    Returns the new text and the number of replacements made.
+    """
+    if not edits:
+        raise ValueError('edits is empty; provide at least one edit.')
+    count = 0
+    for index, edit in enumerate(edits):
+        if not edit.old_string:
+            raise ValueError(f'edits[{index}]: old_string is empty. No changes were written.')
+        found = text.count(edit.old_string)
+        if found == 0:
+            raise ValueError(f'edits[{index}]: old_string not found in {path}. No changes were written.')
+        if edit.replace_all:
+            text = text.replace(edit.old_string, edit.new_string)
+            count += found
+        else:
+            text = text.replace(edit.old_string, edit.new_string, 1)
+            count += 1
+    return text, count
+
+
 def _glob_parts(pattern: str) -> tuple[list[str], bool]:
     """Split a relative glob into its components and whether it only matches directories (a trailing `/`)."""
     parts = [part for part in pattern.split('/') if part not in ('', '.')]
@@ -555,6 +588,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             'read_file': self._read_file_tool,
             'write_file': self._write_file_tool if content_hashes else self._write_file_tool_unhashed,
             'edit_file': self._edit_file_tool if content_hashes else self._edit_file_tool_unhashed,
+            'multi_edit': self._multi_edit_tool if content_hashes else self._multi_edit_tool_unhashed,
             'list_directory': self._list_directory_tool,
             'search_files': self._search_files_tool,
             'find_files': self._find_files_tool,
@@ -566,7 +600,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         for name in FILE_SYSTEM_TOOL_NAMES:
             if name in self._tools:
                 # Approval must run in the workflow before the durable workspace write activity.
-                metadata = {'temporal': False} if name in {'write_file', 'edit_file', 'create_directory'} else None
+                metadata = (
+                    {'temporal': False}
+                    if name in {'write_file', 'edit_file', 'multi_edit', 'create_directory'}
+                    else None
+                )
                 self.add_function(registrations[name], name=name, metadata=metadata)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -1160,6 +1198,25 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         *,
         expected_hash: str | None = None,
     ) -> str:
+        def apply(text: str) -> tuple[str, str]:
+            return _apply_replacements(text, replacements, path), f'Edited {path}.'
+
+        return await self._edit(scope, ctx, path, apply, tool='edit_file', expected_hash=expected_hash)
+
+    async def _edit(
+        self,
+        scope: _Scope,
+        ctx: RunContext[AgentDepsT] | None,
+        path: str,
+        apply: Callable[[str], tuple[str, str]],
+        *,
+        tool: str,
+        expected_hash: str | None,
+    ) -> str:
+        """Read a text file, rewrite it with `apply`, announce the change, and write it back once.
+
+        `apply` returns the new content and the result's summary; it raises to leave the file untouched.
+        """
         resolved, real = await self._safe_resolve_real(scope, path, write=True)
         async with self._changing(scope, real):
             entry = await self._stat(scope, resolved)
@@ -1167,7 +1224,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 raise FileNotFoundError(f'File not found: {path}')
             raw = await scope.workspace.read_bytes(resolved)
             if _is_binary(raw):
-                raise ValueError(f'{path} is a binary file; edit_file only edits text files.')
+                raise ValueError(f'{path} is a binary file; {tool} only edits text files.')
             # Strict decoding: an edit writes the whole file back, so undecodable bytes are refused
             # rather than replaced. No newline translation, so CRLF and the hash are preserved.
             text = raw.decode('utf-8')
@@ -1176,7 +1233,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if expected_hash is not None:
                 _check_expected_hash(path, current_hash, expected_hash)
 
-            new_content = _apply_replacements(text, replacements, path)
+            new_content, summary = apply(text)
             change = Change.propose(
                 **self._event_location(scope, resolved), operation='edit', old=text, new=new_content
             )
@@ -1195,7 +1252,78 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         new_hash = _content_hash(new_content)
         if ctx is not None:
             await ctx.emit(change.edited(content_hash=new_hash))
-        return f'Edited {path}.{self._hash_suffix(new_hash)}'
+        return f'{summary}{self._hash_suffix(new_hash)}'
+
+    async def multi_edit(
+        self,
+        path: str,
+        edits: Sequence[EditOp],
+        *,
+        expected_hash: str | None = None,
+        workspace: WorkspaceBackend,
+    ) -> str:
+        """Apply a batch of edits to a text file in `workspace` directly, outside an agent run."""
+        return await self._multi_edit(await self._scope(workspace), None, path, edits, expected_hash=expected_hash)
+
+    async def _multi_edit_tool(
+        self,
+        ctx: RunContext[AgentDepsT],
+        path: str,
+        edits: list[EditOp],
+        *,
+        expected_hash: str | None = None,
+    ) -> str:
+        """Apply an ordered list of exact-string edits to one file, writing only if every edit matches.
+
+        Each edit operates on the result of the previous one and replaces the
+        first occurrence of its old_string, or every occurrence when
+        replace_all is set. Unlike edit_file, a match does not have to be unique.
+        If any old_string is not found, the file is left untouched.
+
+        Args:
+            ctx: The current agent run context.
+            path: File path relative to the working directory.
+            edits: Edits to apply in order.
+            expected_hash: If provided, rejects the batch when the file's
+                current hash doesn't match (optimistic concurrency).
+
+        Returns:
+            Summary with new hash for subsequent operations.
+        """
+        return await self._multi_edit(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits, expected_hash=expected_hash
+        )
+
+    async def _multi_edit_tool_unhashed(self, ctx: RunContext[AgentDepsT], path: str, edits: list[EditOp]) -> str:
+        """Apply an ordered list of exact-string edits to one file, writing only if every edit matches.
+
+        Each edit operates on the result of the previous one and replaces the
+        first occurrence of its old_string, or every occurrence when
+        replace_all is set. Unlike edit_file, a match does not have to be unique.
+        If any old_string is not found, the file is left untouched.
+
+        Args:
+            ctx: The current agent run context.
+            path: File path relative to the working directory.
+            edits: Edits to apply in order.
+        """
+        return await self._multi_edit(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits)
+
+    @_recoverable
+    async def _multi_edit(
+        self,
+        scope: _Scope,
+        ctx: RunContext[AgentDepsT] | None,
+        path: str,
+        edits: Sequence[EditOp],
+        *,
+        expected_hash: str | None = None,
+    ) -> str:
+        def apply(text: str) -> tuple[str, str]:
+            new_content, count = _apply_edit_ops(text, edits, path)
+            return new_content, f'Applied {len(edits)} edits ({count} replacements) to {path}.'
+
+        return await self._edit(scope, ctx, path, apply, tool='multi_edit', expected_hash=expected_hash)
 
     async def list_directory(self, path: str = '.', *, workspace: WorkspaceBackend) -> str:
         """List a directory in `workspace` directly, outside an agent run."""

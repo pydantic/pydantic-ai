@@ -113,7 +113,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     """
 
     content_hashes: bool = True
-    """Whether tool results report content hashes and `write_file`/`edit_file` accept `expected_hash`.
+    """Whether tool results report content hashes and the write and edit tools accept `expected_hash`.
 
     The hashes give a model optimistic concurrency control over a workspace
     that something else may also be editing. Turn them off for a single-writer
@@ -123,7 +123,8 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     tools: Sequence[str] = DEFAULT_TOOL_NAMES
     """Which tools to register, from `FILE_SYSTEM_TOOL_NAMES`.
 
-    The default is every tool that needs only the workspace's filesystem. Name
+    The default is every tool that needs only the workspace's filesystem except
+    `multi_edit`, a first-occurrence batch edit tool that is opt-in by name. Name
     `list_files` and `grep` to add the ripgrep-backed listing and search tools,
     which run the `rg` executable inside the workspace (the `coder` extra
     installs it for a local workspace) and respect `.gitignore`.

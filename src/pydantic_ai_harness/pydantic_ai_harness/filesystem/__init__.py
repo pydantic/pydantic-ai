@@ -20,6 +20,7 @@ from pydantic_ai_harness.filesystem._toolset import (
     FILE_SYSTEM_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
     RIPGREP_TOOL_NAMES,
+    EditOp,
     FileSystemToolset,
     Replacement,
 )
@@ -34,6 +35,7 @@ __all__ = [
     'RIPGREP_TOOL_NAMES',
     'DirectoryCreatedEvent',
     'DirectoryListedEvent',
+    'EditOp',
     'FileChangeRequestEvent',
     'FileEditedEvent',
     'FileOperation',

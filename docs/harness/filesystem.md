@@ -61,13 +61,14 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 ## Tools
 
-`FileSystem` contributes eight tools by default, plus two opt-in ripgrep tools, all path-scoped to `root_dir`:
+`FileSystem` contributes eight tools by default, plus `multi_edit` and two ripgrep tools by name, all path-scoped to `root_dir`:
 
 | Tool | Purpose |
 |---|---|
 | `read_file` | Read a text file with line numbers and a content hash. Binary files are detected and not dumped. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
+| `multi_edit` | Opt-in: ordered `edits` of `old_string`/`new_string`, each applied to the result of the previous one. An edit replaces the first match, or every match with `replace_all`; a match need not be unique. Checked in memory and written only if every `old_string` matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
 | `search_files` | Regex search over file contents, optionally narrowed by an `include_glob`; skips files over 10 MiB or unreadable files and reports skipped paths. |
 | `find_files` | Glob search over file names (e.g. `*.py`, `**/*.json`). The pattern is relative to `path`; absolute patterns are rejected. |
@@ -88,7 +89,10 @@ Recursive file walks visit each real directory once, so aliases to a directory d
 
 `tools` names the tools to register, from `FILE_SYSTEM_TOOL_NAMES`. The default,
 `DEFAULT_TOOL_NAMES`, is the eight tools that need only the workspace's
-filesystem. `list_files` and `grep` run the `rg` executable inside the
+filesystem. `multi_edit` is opt-in by name: it overlaps with `edit_file`'s
+`replacements` batch and differs only in matching the first occurrence, or
+every one with `replace_all`, instead of requiring a unique match, so it suits
+a harness that already speaks that edit format. `list_files` and `grep` run the `rg` executable inside the
 workspace when it is on its `PATH`, so they are opt-in by name. The
 `coder` extra installs `rg` for a local workspace. Without `rg`, both use an in-workspace POSIX command. The fallback lacks ripgrep `file_type` support and some ignore-file rules. On a read-only or filesystem-only workspace, both walk the files instead, without ignore files or `file_type`.
 
@@ -114,8 +118,8 @@ is reported as truncated. `read_only=True` keeps only the tools in
 ### Content hashes
 
 `content_hashes=False` drops the hash from `read_file` headers and from
-`write_file`/`edit_file` results, and removes the `expected_hash` parameter from
-those two tools. The hashes give a model optimistic concurrency control over a
+`write_file`/`edit_file`/`multi_edit` results, and removes the `expected_hash`
+parameter from those tools. The hashes give a model optimistic concurrency control over a
 workspace that something else may also be editing; for a single-writer coding
 agent they only add tokens to every read and write. Events still carry
 `content_hash` either way.
@@ -143,16 +147,16 @@ lands, without parsing tool arguments:
 
 | Event | Dispatch | Operation | Payload |
 |---|---|---|---|
-| `FileChangeRequestEvent` | immediate | `write_file`, `edit_file`, `create_directory` | `path`, `root_dir`, `operation`, `diff`, `truncated`; `cancel(reason)` |
+| `FileChangeRequestEvent` | immediate | `write_file`, `edit_file`, `multi_edit`, `create_directory` | `path`, `root_dir`, `operation`, `diff`, `truncated`; `cancel(reason)` |
 | `FileReadEvent` | stream | `read_file` | `path`, `root_dir`, `content_hash` |
 | `DirectoryListedEvent` | stream | `list_directory` | `path`, `root_dir`, `entry_count` |
 | `FileWrittenEvent` | stream | `write_file` | `path`, `root_dir`, `content_hash` |
-| `FileEditedEvent` | stream | `edit_file` | a `FileWrittenEvent` plus `diff`, `truncated` |
+| `FileEditedEvent` | stream | `edit_file`, `multi_edit` | a `FileWrittenEvent` plus `diff`, `truncated` |
 | `DirectoryCreatedEvent` | stream | `create_directory` | `path`, `root_dir` |
 | `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
 
 `FileChangeRequestEvent` is a decision. It fires after the path has passed the
-access checks and, for `write_file` and `edit_file`, after the conflict check,
+access checks and, for `write_file`, `edit_file`, and `multi_edit`, after the conflict check,
 so a listener only sees changes that would otherwise go ahead: a denied path,
 a missing parent for `write_file`, a parent that is not a directory, a stale
 `expected_hash` for a file that exists, or a directory that collides with a
@@ -270,7 +274,7 @@ applies the same rule to absolute symlink targets.
   `[... walk cut short ...]` line.
 - **Binary detection.** `read_file` returns a placeholder instead of dumping
   binary bytes into the model context.
-- **Optimistic concurrency.** `write_file`/`edit_file` accept an
+- **Optimistic concurrency.** `write_file`/`edit_file`/`multi_edit` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than silently overwriting newer content.
 - **Write targets.** `write_file` won't overwrite a directory. With
@@ -340,9 +344,9 @@ agent = Agent(
 
 The three rules apply at two different granularities:
 
-- **Direct access** (`read_file`, `write_file`, `edit_file`, `file_info`,
-  `create_directory`) gates the operation's target path. You must name a path
-  that the patterns permit.
+- **Direct access** (`read_file`, `write_file`, `edit_file`, `multi_edit`,
+  `file_info`, `create_directory`) gates the operation's target path. You must
+  name a path that the patterns permit.
 - **Walkers** (`list_directory`, `search_files`, `find_files`, `list_files`, `grep`) gate their root
   by denied patterns, but **not** by `allowed_patterns` -- a directory root
   like `.` never matches a file pattern such as `src/*.py`, so requiring it to
@@ -381,7 +385,7 @@ FileSystem(
     max_find_results=1000,         # cap for find_files and list_files
     read_only=False,               # keep only READ_ONLY_TOOL_NAMES
     content_hashes=True,           # report hashes and accept expected_hash
-    tools=DEFAULT_TOOL_NAMES,      # which tools to register (add 'list_files', 'grep')
+    tools=DEFAULT_TOOL_NAMES,      # which tools to register (add 'multi_edit', 'list_files', 'grep')
     max_retries=None,              # consecutive retries per tool before the run fails (None = the agent's budget)
 )
 ```

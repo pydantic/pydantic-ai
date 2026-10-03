@@ -124,8 +124,8 @@ new sandbox per message (no ref in the web protocol); the CLI keeps one per sess
 ## FileSystem
 
 Path-scoped file tools. `tools=` defaults to `read_file`, `write_file`, `edit_file`, `list_directory`,
-`search_files`, `find_files`, `create_directory`, `file_info`. Opt-in ripgrep tools `list_files` and
-`grep` must be named in `tools` (a sandbox image needs its own `rg`, else a POSIX git/grep/find
+`search_files`, `find_files`, `create_directory`, `file_info`. Opt-in `multi_edit` and the ripgrep tools
+`list_files` and `grep` must be named in `tools` (a sandbox image needs its own `rg`, else a POSIX git/grep/find
 fallback runs).
 
 ```python
@@ -150,6 +150,7 @@ agent = Agent(
 Tool arguments (scripted tests need them; `expected_hash` exists only with `content_hashes=True`, the default):
 `read_file(path, offset=0, limit=None)`, `write_file(path, content, expected_hash=None)`,
 `edit_file(path, old_text=None, new_text=None, replacements=None, expected_hash=None)`,
+`multi_edit(path, edits=[{'old_string', 'new_string', 'replace_all': False}], expected_hash=None)` (first match, not unique),
 `list_directory(path='.')`, `search_files(pattern, path='.', include_glob=None)`,
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
 as under Coder.
