@@ -16,7 +16,7 @@ import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
@@ -4077,3 +4077,63 @@ async def test_compaction_replaces_earlier_request_only_edits(inject_first: bool
 
     expected = ['old', 'reply', 'new'] if clamp else ['reply', 'new']
     assert captured == (expected if inject_first else [*expected, 'TEMP'])
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_whitespace_only_summary_retries_then_raises() -> None:
+    """A whitespace-only summary response is retried once, then the run fails instead of compacting to nothing."""
+    summary_requests: list[list[ModelMessage]] = []
+    parent_requests: list[list[ModelMessage]] = []
+
+    def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        summary_requests.append(messages)
+        return ModelResponse(parts=[TextPart('   \n\t ')])
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        parent_requests.append(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[SummarizingCompaction(model=FunctionModel(summarize), max_messages=2, keep_messages=1)],
+    )
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
+        await agent.run(
+            'continue',
+            message_history=[ModelRequest(parts=[UserPromptPart('old')]), ModelResponse(parts=[TextPart('reply')])],
+        )
+
+    # One initial summary request plus exactly one retry; the parent model request never
+    # happened, so the history was never replaced with an empty summary stand-in.
+    assert len(summary_requests) == 2
+    assert parent_requests == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+async def test_empty_summary_retries_then_raises() -> None:
+    """A truly empty summary response behaves like a whitespace-only one: retry once, then fail."""
+    summary_requests: list[list[ModelMessage]] = []
+    parent_requests: list[list[ModelMessage]] = []
+
+    def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        summary_requests.append(messages)
+        return ModelResponse(parts=[TextPart('')])
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        parent_requests.append(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[SummarizingCompaction(model=FunctionModel(summarize), max_messages=2, keep_messages=1)],
+    )
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
+        await agent.run(
+            'continue',
+            message_history=[ModelRequest(parts=[UserPromptPart('old')]), ModelResponse(parts=[TextPart('reply')])],
+        )
+
+    assert len(summary_requests) == 2
+    assert parent_requests == []

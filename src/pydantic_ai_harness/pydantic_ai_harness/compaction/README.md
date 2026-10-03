@@ -260,6 +260,11 @@ last exception is re-raised. Non-matching exceptions, cancellation, and other `B
 subclasses pass through immediately; `fallback_on` rejects types that do not derive from
 `Exception`.
 
+
+`SummarizingCompaction` raises `UnexpectedModelBehavior` when its summarizer returns nothing but
+whitespace and stays empty after its single output retry. Include it in `fallback_on` when the
+run should fall through to the next strategy on an unusable summary.
+
 ```python
 from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
 
@@ -446,6 +451,12 @@ The messages served into that template are rendered to text, and each tool retur
 turns. Raise it, or set it to `None` to render each return whole, when the summarizer's context window is
 large enough to absorb the payloads. `max_tokens` and `keep_tokens` control when compaction runs and which
 history messages are retained; they do not cap the summary-request payload.
+
+Empty and whitespace-only summary output is never accepted: the summary run validates its own
+output, retries an empty response once as a retryable model failure, and then raises
+`UnexpectedModelBehavior`, failing the run instead of continuing on a summary that says nothing.
+To keep running in that case, wrap the capability in `FallbackCompaction` with
+`UnexpectedModelBehavior` in `fallback_on` so the next strategy compacts the history instead.
 
 ## Usage accounting
 

@@ -16,6 +16,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.compaction import SummarizingCompaction
@@ -131,3 +132,46 @@ async def test_dbos_uses_custom_id_for_durable_summary(dbos: DBOS) -> None:
     assert _summary_calls == 1
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert 'durable_custom_summary__capability__custom_summary.summarize' in {step['function_name'] for step in steps}
+
+
+_whitespace_calls = 0
+
+
+async def _whitespace_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    global _whitespace_calls
+    if any(
+        isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<messages>' in part.content
+        for message in messages
+        for part in message.parts
+    ):
+        _whitespace_calls += 1
+        return ModelResponse(parts=[TextPart('   ')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_whitespace_compaction: SummarizingCompaction[None] = SummarizingCompaction(
+    max_messages=1, keep_messages=1, preserve_first_user_message=False
+)
+_whitespace_agent: Agent[None, str] = Agent(
+    FunctionModel(_whitespace_respond),
+    name='durable_whitespace_summary',
+    deps_type=type(None),
+    capabilities=[_whitespace_compaction, DBOSDurability[None]()],
+)
+
+
+@DBOS.workflow(name='durable_whitespace_summary')
+async def _whitespace_workflow() -> str:
+    return (await _whitespace_agent.run('continue', message_history=_history())).output
+
+
+async def test_durable_whitespace_only_summary_retries_then_raises(dbos: DBOS) -> None:
+    """Durable summarization shares the whitespace guard: one output retry, then the workflow fails."""
+    del dbos  # the fixture launches DBOS, which the workflow requires
+    global _whitespace_calls
+    _whitespace_calls = 0
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
+        await _whitespace_workflow()
+
+    assert _whitespace_calls == 2

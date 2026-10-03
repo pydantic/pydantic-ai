@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.output import TextOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._usage import reserved_usage_limits
@@ -165,6 +166,13 @@ def _writes_text(model: AbstractModel) -> bool:
     while isinstance(model, WrapperModel | FallbackModel):
         model = model.models[0] if isinstance(model, FallbackModel) else model.wrapped
     return not isinstance(model, Model) or model.profile.get('supports_text_output', True)
+
+
+def _non_empty_summary(text: str) -> str:
+    """Reject empty and whitespace-only summary output so the summary run retries the model."""
+    if not text.strip():
+        raise ModelRetry('The summary is empty. Summarize the messages that were provided.')
+    return text
 
 
 def _truncate_with_marker(text: str, max_chars: int) -> str:
@@ -726,6 +734,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             cast('Model[Any] | str', model),
             name='summarizing_compaction',
             deps_type=type(None),
+            output_type=TextOutput(_non_empty_summary),
             instructions=self.instructions,
             model_settings=self.model_settings,
             capabilities=list(self.summarization_capabilities),

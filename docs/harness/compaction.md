@@ -217,6 +217,9 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 
 `TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction` advances only when a strategy raises an exception selected by `fallback_on`, which defaults to Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model in a `FallbackModel` fails. Each attempt receives a fresh list containing the original message objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must still honor the `CompactionStrategy` contract and avoid mutating message objects. If every strategy fails, the last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` rejects types that do not derive from `Exception`.
 
+
+`SummarizingCompaction` raises `UnexpectedModelBehavior` when its summarizer returns nothing but whitespace and stays empty after its single output retry. Include it in `fallback_on` when the run should fall through to the next strategy on an unusable summary.
+
 Register it directly when summarization should fall back to deterministic truncation:
 
 ```python
@@ -344,6 +347,9 @@ By default `preserve_first_user_message=True` keeps the first user turn (in addi
 ## `SummarizingCompaction`: compress, do not discard
 
 When old context still matters but must be compressed, `SummarizingCompaction` summarizes the older messages with a dedicated model call and replaces them with a single structured summary, preserving the recent tail and tool-call integrity. It is the expensive tier, so it is best used behind the cheaper passes (see `TieredCompaction`).
+
+
+Empty and whitespace-only summary output is never accepted: the summary run validates its own output, retries an empty response once as a retryable model failure, and then raises `UnexpectedModelBehavior`, failing the run instead of continuing on a summary that says nothing. To keep running in that case, wrap the capability in `FallbackCompaction` with `UnexpectedModelBehavior` in `fallback_on` so the next strategy compacts the history instead.
 
 ```python
 from pydantic_ai import Agent
