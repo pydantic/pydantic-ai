@@ -185,7 +185,11 @@ workflow code, so there the command runs as its own step.
 
 A managed container (`manage_container=True`) starts empty in the process that
 recovers a run, so on DBOS `LocalStack` does not record its commands: recovery
-runs them again, which rebuilds the container's state.
+runs them again, which rebuilds the container's state. Temporal and Prefect
+record every tool call, so there recovery replays the recorded output and the
+new container lacks the resources the earlier commands created. Point
+`endpoint_url` at an external LocalStack instance for durable runs on those
+engines.
 
 The records are named after the capability's `id`, which defaults to
 `localstack`, so durable execution needs no configuration.

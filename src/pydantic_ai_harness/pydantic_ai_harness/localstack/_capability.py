@@ -8,8 +8,8 @@ from dataclasses import KW_ONLY, dataclass, field
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
-from pydantic_ai_harness._mcp import one_connection
 from pydantic_ai_harness.localstack._toolset import LocalStackOperations, LocalStackToolset
 
 _INSTRUCTIONS = (
@@ -117,7 +117,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_instructions(self) -> str | None:
         """Explain the emulated environment to the model, unless disabled."""

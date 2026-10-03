@@ -16,8 +16,8 @@ from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
-from pydantic_ai_harness._mcp import one_connection
 from pydantic_ai_harness.exa._toolset import (
     _AUTH_STATUS_RE,  # pyright: ignore[reportPrivateUsage]
     _recoverable,  # pyright: ignore[reportPrivateUsage]
@@ -311,7 +311,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> ExaAgentToolset[AgentDepsT]:
         """Build the toolset providing the `exa_agent` tool."""

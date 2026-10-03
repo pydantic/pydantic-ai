@@ -13,8 +13,8 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
-from pydantic_ai_harness._mcp import one_connection
 from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore
 from pydantic_ai_harness.capability_creation._toolset import CapabilityCreationOperations, CapabilityCreationToolset
 
@@ -90,7 +90,7 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     @property
     def store(self) -> CapabilityStore:

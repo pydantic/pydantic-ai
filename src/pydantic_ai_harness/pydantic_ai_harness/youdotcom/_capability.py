@@ -11,8 +11,8 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, Tool
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
-from pydantic_ai_harness._mcp import one_connection
 from pydantic_ai_harness._web_search import native_web_search
 from pydantic_ai_harness.youdotcom._toolset import (
     DEFAULT_SEARCH_TIMEOUT_MS,
@@ -155,7 +155,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> YouSearchToolset[AgentDepsT]:
         """Build the toolset providing `web_search` and `get_page`."""
