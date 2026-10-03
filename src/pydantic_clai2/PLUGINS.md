@@ -791,8 +791,12 @@ saves `unrestricted_filesystem` in the `coder` declaration. Supplied agents are 
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
-`agent_folders` is a JSON list of folder names or paths for disk-defined agents
-(Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
+`agent_folders` is stored as a JSON list of folder names or paths for disk-defined
+agents (Claude `*.md` or Codex `*.toml`). `/plugins configure coder` edits it through
+an individual folder list, with add, edit, remove, and local browsing actions.
+The menu validates new directory paths and rejects duplicate names or equivalent
+paths, without rewriting existing entries or changing their order. See the
+[Agent folders menu](README.md#agent-folders) for shortcuts and path handling. A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
 project definitions win. A path loads exactly that folder; `[]` disables disk
 agents. The stock CLI uses `["agents"]`. Saved `coder` declarations that omit
