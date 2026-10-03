@@ -56,6 +56,7 @@ from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
     Capability,
     DynamicCapability,
+    Fallback,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -69,6 +70,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    ModelAPIError,
     ModelHTTPError,
     ModelRetry,
     SkipModelRequest,
@@ -339,6 +341,60 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'Echo: What is the capital of Mexico?'
+
+
+# --- Durability with the `Fallback` capability ---
+
+
+def _failing_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelAPIError(model_name='failing', message='boom')
+
+
+def _fallback_target_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('from fallback')])
+
+
+fallback_durable_agent = Agent(
+    FunctionModel(_failing_model_fn, model_name='failing'),
+    name='durability_fallback_agent',
+    capabilities=[
+        # The default `fallback_on`: the model error reaches the workflow as itself, not as `ActivityError`.
+        Fallback('fallback_target'),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'fallback_target': FunctionModel(_fallback_target_fn, model_name='fallback_target')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class FallbackDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await fallback_durable_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_fallback_attempts_run_as_activities(client: Client):
+    """Each model `Fallback` moves to runs in its own activity, not inline in workflow code."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackDurableAgentWorkflow],
+        plugins=[AgentPlugin(fallback_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            FallbackDurableAgentWorkflow.run,
+            args=['hello'],
+            id=FallbackDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == 'from fallback'
+    # The failed attempt on the agent's model and the one on the fallback model.
+    assert _scheduled_activity_count(history) == 2
 
 
 # --- Model errors reach workflow code with their original type ---

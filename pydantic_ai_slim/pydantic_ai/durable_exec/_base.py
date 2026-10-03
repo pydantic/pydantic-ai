@@ -29,7 +29,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ProcessEventStream
+from pydantic_ai.capabilities import Fallback, Instrumentation, ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -1600,6 +1600,25 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Validate the final request and repair durability after an outer hook swaps the model."""
+        return await self._ensure_durable_model(ctx, request_context)
+
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Repair durability for each attempt: another attempt may be on a model a hook asked for.
+
+        [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] swaps in the requested model
+        as-is, so without this a fallback or retry attempt would call it inline in workflow code.
+        """
+        return await self._ensure_durable_model(ctx, request_context)
+
+    async def _ensure_durable_model(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         if not self.in_durable_context:
             return request_context
 
@@ -1830,8 +1849,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: install durable dispatch before outer before-hooks may perform model I/O,
-        # then run the final before-hook repair after every outer request rewrite.
-        return CapabilityOrdering(position='innermost')
+        # then run the final before-hook repair after every outer request rewrite. Inside `Fallback`,
+        # which is innermost too, so the per-attempt repair sees the model `Fallback` moved to.
+        return CapabilityOrdering(position='innermost', wrapped_by=(Fallback,))
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

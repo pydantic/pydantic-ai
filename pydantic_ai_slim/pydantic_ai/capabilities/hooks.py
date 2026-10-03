@@ -32,7 +32,7 @@ from pydantic import ValidationError
 from pydantic_ai import _utils
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.exceptions import AgentRunError, ModelRetry
+from pydantic_ai.exceptions import AgentRunError, ModelRetry, RetryModelRequest
 from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
@@ -162,6 +162,10 @@ class OnEventHookFunc(Protocol, Generic[EventT]):
 
 class BeforeModelRequestHookFunc(Protocol):
     """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
+    def __call__(self, ctx: RunContext[Any], request_context: ModelRequestContext, /) -> ModelRequestContext | Awaitable[ModelRequestContext]: ...
+
+class PrepareModelRequestHookFunc(Protocol):
+    """Protocol for [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hook functions."""
     def __call__(self, ctx: RunContext[Any], request_context: ModelRequestContext, /) -> ModelRequestContext | Awaitable[ModelRequestContext]: ...
 
 class AfterModelRequestHookFunc(Protocol):
@@ -471,6 +475,17 @@ class _HookRegistration(Generic[AgentDepsT]):
         self, func: BeforeModelRequestHookFunc | None = None, *, timeout: float | None = None
     ) -> Any:
         return _bare_or_parameterized(self._r, 'before_model_request', func, timeout=timeout)
+
+    @overload
+    def prepare_model_request(self, func: PrepareModelRequestHookFunc, /) -> PrepareModelRequestHookFunc: ...
+    @overload
+    def prepare_model_request(
+        self, *, timeout: float | None = None
+    ) -> Callable[[PrepareModelRequestHookFunc], PrepareModelRequestHookFunc]: ...
+    def prepare_model_request(
+        self, func: PrepareModelRequestHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'prepare_model_request', func, timeout=timeout)
 
     @overload
     def after_model_request(self, func: AfterModelRequestHookFunc, /) -> AfterModelRequestHookFunc: ...
@@ -810,6 +825,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         event: OnEventHookFunc[AgentStreamEvent] | None = None,
         # Model request
         before_model_request: BeforeModelRequestHookFunc | None = None,
+        prepare_model_request: PrepareModelRequestHookFunc | None = None,
         after_model_request: AfterModelRequestHookFunc | None = None,
         model_request: WrapModelRequestHookFunc | None = None,
         model_request_error: OnModelRequestErrorHookFunc | None = None,
@@ -862,6 +878,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'wrap_run_event_stream': run_event_stream,
             'on_event': event,
             'before_model_request': before_model_request,
+            'prepare_model_request': prepare_model_request,
             'after_model_request': after_model_request,
             'wrap_model_request': model_request,
             'on_model_request_error': model_request_error,
@@ -1073,6 +1090,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
             keep_mirroring(messages, request_context)
         return request_context
 
+    async def prepare_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        for entry in self._get('prepare_model_request'):
+            request_context = await _call_entry(entry, 'prepare_model_request', ctx, request_context)
+        return request_context
+
     async def after_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -1109,6 +1133,9 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 return await _call_entry(
                     entry, 'on_model_request_error', ctx, request_context=request_context, error=error
                 )
+            except (ModelRetry, RetryModelRequest):
+                # Control flow, not a replacement error: see `CombinedCapability.on_model_request_error`.
+                raise
             except Exception as new_error:
                 error = new_error
         raise error

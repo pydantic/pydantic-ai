@@ -608,6 +608,7 @@ See [Iterating Over an Agent's Graph](../agent.md#iterating-over-an-agents-graph
 | Hook | Signature | Purpose |
 |---|---|---|
 | [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`) -> `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] | Modify messages, settings, parameters, or model before the model call |
+| [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`) -> `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] | Prepare each attempt at the request for the model about to serve it (see [attempts](#model-request-attempts)) |
 | [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, response: `[`ModelResponse`][pydantic_ai.messages.ModelResponse]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Modify the model's response |
 | [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, handler: `[`WrapModelRequestHandler`][pydantic_ai.capabilities.WrapModelRequestHandler]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Wrap the complete model-request lifecycle |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, error: Exception) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Handle core model-call errors (see [error hooks](#error-hooks)) |
@@ -624,6 +625,55 @@ To change the [instructions](../agent.md#instruction-parts) for a request, rewri
 
 !!! note "Skip and chain behavior"
     A skip exception ([`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], or [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution]) raised from `before_*` stops the remaining `before_*` hooks, the core operation, and `after_*`, then propagates outward through the already-entered wrapper chain. A wrapper that raises a skip without calling its handler bypasses all inner wrappers and the entire `before_*`/core/`after_*` lifecycle. If its handler returns before the wrapper raises, that lifecycle has already completed.
+
+#### Retrying and falling back {#model-request-attempts}
+
+A request step can make more than one *attempt* at the model request. A hook asks for another attempt by raising [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], either with no arguments to re-run the same model, or with the model to move to (a [`Model`][pydantic_ai.models.Model] instance or a model ID, resolved like the agent's own):
+
+- from `on_model_request_error`, when the attempt raised;
+- from `after_model_request`, to reject the response the attempt returned;
+- from `prepare_model_request`, to send the attempt to another model before anything is sent.
+
+Unlike [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], which starts a new step with a retry prompt the model sees, another attempt stays within the step and the model sees nothing of the earlier one. [`ModelRequestContext.attempt`][pydantic_ai.models.ModelRequestContext.attempt] says which attempt is running, starting at `1`. The [`Fallback`](fallback.md) capability is built on this.
+
+```text
+wrap_model_request(handler)              once per step
+  └─ handler: before_model_request      once per step
+       └─ for each attempt:
+            prepare_model_request        the model about to serve this attempt is known
+            model call
+              ├─ failure → on_model_request_error ─┐
+              └─ success → after_model_request ────┴─ RetryModelRequest → next attempt
+```
+
+Everything that depends on which model serves the request runs per attempt: `prepare_model_request`, the model's own message preparation, and token counting for [`UsageLimits.count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request]. Each attempt starts from the request `before_model_request` produced, so an attempt never inherits preparation done for a different model. Put per-model work like compaction or context-window fitting in `prepare_model_request`, and work that should happen once per step, like a history processor or an injected message, in `before_model_request`. Changes made in `prepare_model_request` shape the request that is sent but are not persisted to message history.
+
+A response that was rejected never reaches history, but its tokens and cost still count toward the run's usage and its token and cost limits. `usage.requests` counts the step once. A streamed request can be re-attempted only while the stream is being opened: raising `RetryModelRequest` from `after_model_request` on a streamed request raises [`UserError`][pydantic_ai.exceptions.UserError], because the response has already been streamed. A step can make at most 100 attempts, after which a `UserError` is raised.
+
+```python {title="retry_once.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import ModelAPIError, RetryModelRequest
+from pydantic_ai.messages import ModelResponse
+
+
+@dataclass
+class RetryOnce(AbstractCapability[Any]):
+    """Re-attempt the same model once when a request fails with an API error."""
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        if isinstance(error, ModelAPIError) and request_context.attempt == 1:
+            raise RetryModelRequest()
+        raise error
+
+
+agent = Agent('openai:gpt-5.6-sol', capabilities=[RetryOnce()])
+```
 
 ### Tool hooks
 
@@ -849,7 +899,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 | [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error] | Core output validation fails | Return validated output |
 | [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error] | Core output processing fails | Return any output result |
 
-With multiple capabilities, `on_*_error` hooks fire in **reverse** capability order (like `after_*`). The first capability to return a result **recovers** the error — remaining capabilities' error hooks are not called. If a handler re-raises or raises a new exception, the next capability in the chain sees that exception.
+With multiple capabilities, `on_*_error` hooks fire in **reverse** capability order (like `after_*`). The first capability to return a result **recovers** the error — remaining capabilities' error hooks are not called. If a handler re-raises or raises a new exception, the next capability in the chain sees that exception. [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] and [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] are the exception: they answer for the whole chain and propagate straight away, rather than being handed to the next capability as its error.
 
 ```python {title="error_hooks_example.py" test="skip" lint="skip"}
 from dataclasses import dataclass, field

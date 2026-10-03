@@ -232,6 +232,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'HandleDeferredToolCalls': Anonymous('`CombinedCapability` chains handlers via `remaining`'),
     'ResolveModelId': Anonymous('returns `None` to let a later capability resolve; chaining is the feature'),
     'SelectModel': Anonymous('receives the lower-precedence model; chaining is designed'),
+    'Fallback': Anonymous('each instance walks its own chain; the innermost handles a failure first'),
     'ProcessHistory': Anonymous('history processors stack'),
     'ProcessEventStream': Anonymous('event-stream processors stack'),
     'PrepareTools': Anonymous('tool preparers stack'),

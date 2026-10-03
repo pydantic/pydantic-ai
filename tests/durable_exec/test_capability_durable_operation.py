@@ -18,6 +18,7 @@ from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     AbstractCapability,
+    Fallback,
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
@@ -41,7 +42,7 @@ from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOp
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import ToolConfig
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UserError
 from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
     ModelRequestContext,
@@ -49,6 +50,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     StreamedResponse,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -419,6 +421,25 @@ async def test_capability_operation_registered_model_id_swap_does_not_manage_mod
 
     assert (await agent.run('test')).output == 'from-registered'
     assert events == ['request']
+
+
+async def test_fallback_attempts_dispatch_through_durable_operations() -> None:
+    """Each attempt `Fallback` moves to runs as a durable model operation, never inline in workflow code."""
+
+    def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='failing', message='boom')
+
+    durability = RecordingDurability(models={'registered': TestModel(custom_output_text='from-fallback')})
+    agent = Agent(
+        FunctionModel(failing),
+        name='fallback_durable',
+        capabilities=[Fallback('registered'), durability],
+    )
+
+    assert (await agent.run('test')).output == 'from-fallback'
+    assert [name for name, _ in durability.calls if '__model.' in name] == snapshot(
+        ['fallback_durable__model.request', 'fallback_durable__model.request.registered']
+    )
 
 
 async def test_resolved_request_model_records_are_released_with_their_models() -> None:
