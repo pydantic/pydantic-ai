@@ -63,7 +63,9 @@ def test_menu_selects_run_boundaries_and_sanitizes_preview(monkeypatch: pytest.M
         assert result.item.value == RewindPoint(message_index=1, text='first\x1b]52;c;payload\x07', images=())
     else:
         assert result.cancelled
-    text = ' '.join(Text.from_ansi(output.getvalue()).plain.split())
+    # The menu paints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+    # https://github.com/Textualize/rich/issues/4090
+    text = ' '.join(Text.from_ansi(output.getvalue().replace('\r\n', '\n')).plain.split())
     assert 'Rewind conversation' in text and 'does NOT undo files' in text
     assert 'Replaces your current draft' in text and 'and its attachments.' in text
     assert 'steering' not in text and 'not a boundary' not in text
