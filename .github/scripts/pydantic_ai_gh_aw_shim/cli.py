@@ -43,6 +43,7 @@ import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
 
@@ -701,9 +702,11 @@ def build_model(args: Args) -> tuple[Model, str]:
     container env (`awf --exclude-env ANTHROPIC_API_KEY` — a security
     measure so the real key never reaches the agent). `pydantic-ai`'s
     auto-config requires that env var to be present, so it errors out
-    under gh-aw. The explicit `AsyncAnthropic(auth_token=...)` path
-    sends a placeholder bearer that the AWF api-proxy swaps for the
-    real key on the wire — the same dance the Claude Code CLI does.
+    under gh-aw. The explicit `AsyncAnthropic(auth_token=...)` path lets
+    the SDK construct a request with a bearer `Authorization` header
+    (the non-secret placeholder under AWF). The api-proxy sidecar strips
+    client-supplied `Authorization` and `x-api-key` headers, then injects
+    the real `x-api-key` from its isolated `ANTHROPIC_API_KEY`.
     This is a gh-aw constraint, not a pydantic-ai one; upstream gh-aw
     could lift it by allowing the agent to read the key directly, but
     that would break the credential-isolation guarantee.
@@ -1118,10 +1121,13 @@ async def _run_with_timeout(
     budget = _run_timeout_secs()
     usage = RunUsage()
     try:
-        return await asyncio.wait_for(
-            run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
-            timeout=budget,
-        )
+        async with AsyncExitStack() as stack:
+            if isinstance(model, AnthropicModel):
+                await stack.enter_async_context(model.client)
+            return await asyncio.wait_for(
+                run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
+                timeout=budget,
+            )
     except asyncio.TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(

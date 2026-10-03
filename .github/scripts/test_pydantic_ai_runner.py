@@ -66,8 +66,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model as _Model
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -1983,6 +1985,30 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     assert obj['num_turns'] == 2
     assert obj['provider_health']['failure']['kind'] == 'timeout'
     assert obj['provider_health']['run_attempt'] is None
+
+
+@pytest.mark.parametrize('outcome', ['success', 'error', 'timeout'])
+def test_run_with_timeout_closes_anthropic_client(outcome: str, monkeypatch: pytest.MonkeyPatch):
+    client = AsyncAnthropic(api_key='test')
+    model = AnthropicModel('test-model', provider=AnthropicProvider(anthropic_client=client))
+
+    async def _fake_run(*_args: object, **_kwargs: object) -> int:
+        if outcome == 'error':
+            raise RuntimeError('test failure')
+        if outcome == 'timeout':
+            await asyncio.Event().wait()
+        return 0
+
+    monkeypatch.setattr(shim, 'run', _fake_run)
+    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01 if outcome == 'timeout' else 1)
+    with redirect_stdout(io.StringIO()):
+        rc = asyncio.run(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p', model, 'lbl', FunctionToolset[object](), [], 'sess-test'
+            )
+        )
+    assert rc == (0 if outcome == 'success' else 1)
+    assert client.is_closed
 
 
 @pytest.mark.parametrize('attempt', [None, '', 'not-an-int', '0', '-2'])
