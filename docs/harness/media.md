@@ -39,11 +39,17 @@ Every store implements the `MediaStore` protocol -- `put`, `get`, `exists`, `pub
 | Store | Backed by | Use when |
 |---|---|---|
 | `DiskMediaStore(directory=...)` | A directory on disk | Local runs and tests |
-| `SqliteMediaStore(database=...)` | A SQLite database | A single-file store that travels with the data |
+| `SqliteMediaStore(database=... or connection=...)` | A SQLite-compatible database | A single-file store that travels with the data |
 | `S3MediaStore(bucket=, endpoint=, region=, ...)` | S3 or an S3-compatible bucket | Shared or production storage |
 | `MongoMediaStore(client= or db_url=, database=, ...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document |
 
-`S3MediaStore` uses path-style URLs plus handrolled SigV4, so it is compatible with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. `SqliteMediaStore` also accepts `connection=` instead of `database=` to share a `sqlite3.Connection`.
+`S3MediaStore` uses path-style URLs plus handrolled SigV4, so it is compatible with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. `SqliteMediaStore` also accepts a dedicated caller-owned `connection=` instead of `database=`. The connection must speak SQLite and provide connection-level `execute`, `commit`, and `rollback` methods plus an `in_transaction` property. The store serializes worker-thread access, but the caller controls transactions: configure autocommit or commit writes in the application. The connection must be idle for the first operation while the store creates its schema. Stdlib `sqlite3.Connection` needs `check_same_thread=False`; [Turso](https://turso.tech) also provides the required surface.
+
+```bash
+pip/uv-add pyturso
+```
+
+The application owns the Turso connection lifecycle. Pass `isolation_level=None` to `turso.connect(...)` for autocommit. Embedded replicas need explicit `pull()` and `push()` calls, and their commits are transactional only within one local replica.
 
 `MongoMediaStore` needs the `mongodb` extra (which installs `pymongo>=4.17.0`). Pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client -- call `await store.aclose()` to release it); `database=` is always required. Each blob is stored as sha256-addressed chunks in a `media_chunks` collection, with a `media` manifest document per blob (`_id = <digest>`). The chunking bounds each BSON document, so a blob larger than MongoDB's 16 MiB document cap still stores and reads back. It does not bound memory: `put` takes the whole payload as `bytes` and `get` reassembles every chunk into one `bytearray`, so a blob has to fit in process memory in both directions -- there is no streaming API. The manifest holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. Manual chunking is used rather than the GridFS driver on purpose: the digest is the manifest `_id`, so identical bytes deduplicate (GridFS keys files by `ObjectId` and does no dedup), and the plain-collection surface stays fully testable in-memory.
 

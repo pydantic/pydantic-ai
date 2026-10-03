@@ -313,7 +313,10 @@ it only fires when the provider reports cache tokens; route to Logfire with
 `S3MediaStore`, `MongoMediaStore` with the `mongodb` extra) and the `externalize_media` /
 `restore_media` walkers. `StepPersistence` stores use them automatically (`media_store='auto'`,
 `media_threshold_bytes` 64 KiB) to keep snapshots small; configure a store only to change where
-payloads live. Nothing here goes in `capabilities=[...]`.
+payloads live. `SqliteMediaStore(connection=...)` accepts dedicated stdlib SQLite or Turso
+connections; the application owns the connection, its transactions, and any Turso Sync `pull()` /
+`push()` lifecycle. Use `isolation_level=None` for Turso autocommit or commit writes explicitly.
+Nothing here goes in `capabilities=[...]`.
 
 ## Deprecated names
 
