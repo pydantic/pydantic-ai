@@ -66,7 +66,7 @@ def _round_trip(messages: list[ModelMessage]) -> list[ModelMessage]:
 
 
 def test_the_kind_is_namespaced_and_becomes_the_default() -> None:
-    assert LookupCallPart('lookup_v2', {'sku': 'A-1'}).tool_kind == 'test.lookup'
+    assert LookupCallPart('lookup_v2', args={'sku': 'A-1'}).tool_kind == 'test.lookup'
     assert LookupReturnPart('lookup_v2', content={'in_stock': True}).tool_kind == 'test.lookup'
 
 
