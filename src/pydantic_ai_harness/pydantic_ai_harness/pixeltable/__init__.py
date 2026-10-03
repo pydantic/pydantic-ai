@@ -2,7 +2,7 @@
 
 try:
     import pixeltable as _pixeltable  # noqa: F401  # pyright: ignore[reportUnusedImport]
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'pixeltable is required for the Pixeltable integration. Install it with: pip install "pydantic-ai-harness[pixeltable]"'
     ) from _import_error
