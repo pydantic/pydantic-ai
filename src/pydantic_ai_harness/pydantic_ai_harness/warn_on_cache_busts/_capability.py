@@ -124,10 +124,12 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     fewer than `collapse_ratio` of that established prefix, it emits a `CacheBustWarning` once
     and then stays quiet about that collapse until a healthy read-back re-stabilizes the cache,
     so a sustained collapse warns once rather than on every subsequent request. A response
-    that ran a native tool (web search, code execution, tool search) reports usage summed
-    over the several sampling passes of that one API call; it still warns when even that sum
-    falls below the threshold, but it neither raises the mark nor clears the latch. Where the
-    provider reports its pass count (`usage.details['message_iterations']`) that decides instead.
+    that ran a native tool may report usage summed over several sampling passes. When the
+    provider reports more than one pass in `usage.details['message_iterations']`, the monitor
+    keeps the existing mark; a reported single pass uses the cache read normally. If the pass
+    count is absent, a native tool call keeps the conservative behavior unless the normalized
+    usage details include `tool_use_prompt_tokens`, which separates tool-use prompt accounting
+    from cache reads and lets a healthy read raise the mark and re-arm the latch.
 
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
     that continues an earlier one via `message_history` -- including history that was
@@ -270,20 +272,16 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
             established, prev_seen, prev_run, collapsed = 0, now, ctx.run_id, False
         else:
             established, prev_seen, prev_run, collapsed = entry.prefix, entry.seen_at, entry.run_id, entry.collapsed
-        # A response that ran a native tool (web search, code execution, tool search) was sampled
-        # more than once inside the one API call, and the provider reports one usage summed over
-        # every pass: `cache_read_tokens` is then roughly `passes * prefix`, not a prefix the next
-        # request can read back. Such a sum can still prove a collapse (every pass read at least
-        # what the first did, so a low total means the first pass read little), but it can neither
-        # establish a mark nor prove the cache re-stabilized, so the mark and the latch stand.
-        # Where the provider's own pass count is surfaced (Anthropic's `message_iterations`, set
-        # beside compaction or advisor iterations) it decides; a response can then run a native
-        # tool such as the advisor in a single executor pass and keep establishing marks.
+        # Native tools can sum cache reads across passes, so the sum cannot establish a prefix. A
+        # separate tool-use prompt counter leaves cache reads scoped to one prompt; otherwise a
+        # native call is a conservative aggregation signal when no pass count is reported.
         passes = usage.details.get('message_iterations')
         if passes is None:
-            multi_pass = any(isinstance(part, NativeToolCallPart) for part in response.parts)
+            aggregated_cache_usage = 'tool_use_prompt_tokens' not in usage.details and any(
+                isinstance(part, NativeToolCallPart) for part in response.parts
+            )
         else:
-            multi_pass = passes > 1
+            aggregated_cache_usage = passes > 1
         is_collapse = established >= self.min_prefix_tokens and read < established * self.collapse_ratio
         # Warn on the transition into a collapse only; the latch keeps a sustained collapse -- and a
         # provider that keeps writing an unread cache (read stays low, write stays high) -- to one
@@ -307,7 +305,7 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
                 CacheBustWarning,
                 stacklevel=2,
             )
-        if multi_pass:
+        if aggregated_cache_usage:
             conversation.keys[key] = _KeyState(established, now, prev_run, collapsed or is_collapse)
         else:
             conversation.keys[key] = _KeyState(

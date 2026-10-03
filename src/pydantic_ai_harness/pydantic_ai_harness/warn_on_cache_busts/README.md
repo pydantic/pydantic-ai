@@ -34,16 +34,16 @@ the monitor starts a fresh mark for it instead of comparing against the previous
 model's. Marks are kept per key rather than reset, so switching back to an earlier
 model within its cache TTL still compares against that model's prefix.
 
-A response that ran a native tool (web search, code execution, tool search) was
-sampled more than once inside the one API call, and the provider reports a single
-usage summed over every pass, so its `cache_read_tokens` is roughly the prefix times
-the number of passes rather than a prefix the next request can read back. Such a
-response still warns when even the summed read falls below the threshold (the first
-pass can have read no more), but a healthy-looking sum proves nothing, so it neither
-raises the mark nor clears the latch, and the healthy request after a round of
-searches is not reported as a collapse. Where the provider reports its own pass count
-(`usage.details['message_iterations']`, which Anthropic sets beside compaction or
-advisor iterations) that decides instead of the native tool call.
+A native tool call can mean that one API response contains usage from several
+sampling passes. A provider-reported count in
+`usage.details['message_iterations']` takes priority: more than one keeps the
+existing mark because the summed cache read is not comparable to one later request,
+while one uses the cache read normally. If that count is absent, a native tool call
+keeps the same conservative behavior unless the normalized usage details include
+`tool_use_prompt_tokens`: that accounting separates tool-use prompt tokens from
+cache reads, so a healthy cache read can raise the mark and re-arm the warning latch.
+A summed read can still prove a collapse when it falls below the threshold, but a
+healthy-looking sum does not prove that the cache re-stabilized.
 
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run
 that continues an earlier one via `message_history` -- including history that was

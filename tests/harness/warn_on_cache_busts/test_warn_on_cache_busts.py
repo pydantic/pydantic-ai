@@ -614,6 +614,33 @@ async def test_server_tool_response_does_not_clear_the_collapse_latch() -> None:
     assert 'request 2' in busts[0]
 
 
+async def test_tool_use_prompt_accounting_updates_the_mark_and_rearms_the_latch() -> None:
+    """Google's separate tool-use prompt count leaves cache reads as an ordinary prefix count."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=100)),  # collapse -> warn
+        _server_tool_response(
+            RequestUsage(
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_tokens=12000,
+                cache_write_tokens=0,
+                details={'tool_use_prompt_tokens': 24000},
+            )
+        ),  # healthy cache read -> raise the mark and re-arm
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=5000)),  # collapse against 12000
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning) as record:
+        await agent.run('hi')
+
+    busts = [str(w.message) for w in record if issubclass(w.category, CacheBustWarning)]
+    assert len(busts) == 2
+    assert 'request 2' in busts[0]
+    assert 'request 4' in busts[1]
+    assert 'established ~12000' in busts[1]
+
+
 async def test_reported_single_pass_with_a_native_tool_establishes_the_mark() -> None:
     """The provider's own pass count wins over the part heuristic.
 
