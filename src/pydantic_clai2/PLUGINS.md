@@ -2344,6 +2344,10 @@ The connection is saved in the configured Python keyring backend after selection
 
 ## Saved API keys
 
+Startup [`.env` loading](README.md#environment-variables) makes values available to
+providers and plugins that read the environment. It does not import credentials
+into `/keys` or replace a plugin's saved-key picker.
+
 Open `/keys` to browse and manage saved API keys in a full-screen menu.
 Use A to add, Enter to replace a value, R to rename, and D to delete with
 confirmation. Values are masked and are not shown in previews. Changes save
