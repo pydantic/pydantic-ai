@@ -28,6 +28,8 @@ from pydantic_evals.evaluators import LLMJudge
 # Proposed API; llm is the configured fallback model.
 judge = LLMJudge(
     rubric='The output is equivalent to the expected output for the input.',
+    include_input=True,
+    include_expected_output=True,
     model=FallbackModel(
         TypeSafeModel('jev-1.13.0'), llm,
         fallback_on=(DecisionHandOff, UnsureBoolean),
