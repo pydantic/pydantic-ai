@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
 
 if TYPE_CHECKING:
@@ -147,12 +147,11 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # callbacks cannot change the operation index used to recover an LLM reminder.
         self.dynamic_reminders = tuple(self.dynamic_reminders)
         if self.cache_ttl is not None:
-            warnings.warn(
-                '`SystemReminders.cache_ttl` is deprecated and has no effect: reminders are turn-scoped system '
-                "prompts, and the cache breakpoints placed by the model's caching settings (such as "
-                '`anthropic_cache`) go before them. Configure caching on the model instead.',
-                HarnessDeprecationWarning,
-                stacklevel=2,
+            warn_argument_ignored(
+                'SystemReminders',
+                'cache_ttl',
+                'configure caching on the model instead (such as `anthropic_cache`); its breakpoint lands before '
+                'the reminder.',
             )
         if self.on_fire is not None:
             warnings.warn(

@@ -414,7 +414,7 @@ print(agent.run_sync('Set up storage').output)
 
 Adds reminders at the tail of each model request as a turn-scoped `SystemPromptPart`
 (`scope='turn'`): the model sees each one for that request only, it's kept in message history,
-and it never busts the prompt cache. Turn on caching on the model (e.g. `anthropic_cache`); its
+and it sits after the cached prefix, so it doesn't invalidate it. Turn on caching on the model (e.g. `anthropic_cache`); its
 breakpoint lands before the reminder. `cache_ttl` is deprecated and has no effect.
 
 ```python

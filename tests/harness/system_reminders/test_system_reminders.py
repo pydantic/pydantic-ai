@@ -412,7 +412,8 @@ class TestInjectionMechanics:
 
     def test_cache_ttl_is_deprecated(self) -> None:
         with pytest.warns(
-            HarnessDeprecationWarning, match='`SystemReminders.cache_ttl` is deprecated and has no effect'
+            HarnessDeprecationWarning,
+            match=r'`SystemReminders\(cache_ttl=\.\.\.\)` is deprecated and ignored: configure caching on the model',
         ):
             SystemReminders[None](reminders=[Reminder('r')], cache_ttl='1h')
 
