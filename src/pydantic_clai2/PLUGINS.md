@@ -2142,7 +2142,9 @@ not an assumed fallback. Set `context_alert` to paint the figure in the warning
 colour. The built-in `compaction` plugin fills these fields from Harness usage
 events, including an explicit window override, and clears the window when unloaded. A host built outside the shell gets an in-memory
 `Transcript` and a detached `Status`, so tests need no special case. The status
-row itself is CLAI's; a plugin adds to it with `get_status_segments`.
+row itself is CLAI's; a plugin adds to it with `get_status_segments`. `cost` is
+the retained-history cost; when retained responses omitted usage information,
+the shell sets `cost_is_lower_bound` and the row prefixes the value with `>=`.
 
 The double-Esc rewind menu also uses `commit_messages` between turns. It removes
 the selected prompt and later history, but does not undo plugin state, file

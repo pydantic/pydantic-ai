@@ -158,6 +158,16 @@ Pick a run method based on the interaction pattern:
 
 Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes model deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history.
 
+When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
+
+```python
+import warnings
+
+from pydantic_ai import UsageLimitUnavailableWarning
+
+warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
+```
+
 Realtime sessions do not use `event_stream_handler`; iterate the session to consume realtime-only `RealtimeEvent` members.
 
 ```python

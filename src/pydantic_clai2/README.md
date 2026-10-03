@@ -1076,6 +1076,12 @@ excludes those responses. Their requests and tokens remain in the usage totals. 
 reads `<$0.0001`. There is no spending cap here; use the agent's `UsageLimits`
 for that.
 
+When a provider response omits usage information, `/usage` and `/cost` mark the
+known token and cost totals as lower bounds. The response count is still
+included in the request total, and it is not listed as missing price data. The
+footer prefixes a known retained-history cost with `>=` while any retained
+response has omitted usage information.
+
 ## Compacting the conversation
 
 The built-in `compaction` plugin uses harness's `FallbackCompaction` with

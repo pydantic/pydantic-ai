@@ -4465,7 +4465,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
 
             async def _finalize_result(result: AgentRunResult[Any]) -> None:
-                self.usage_limits.check_cost(result.usage)
+                self.usage_limits.check_cost(
+                    result.usage, warn_if_cost_unavailable=result.usage.unmeasured_requests == 0
+                )
                 # A first-party cancellation request remains terminal even if a hook consumed the
                 # task's cancellation counter (past the helper's `raise_if_cancelling` backstop).
                 if graph_deps.cancellation.cancel_requested:

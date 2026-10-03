@@ -437,6 +437,46 @@ async def test_usage_with_cached_tokens(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
 
 
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    usage = MistralUsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+    completion = completion_message(MistralAssistantMessage(content='hello'), usage=usage)
+    if missing_usage:
+        completion = completion.model_copy(update={'usage': None})
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(completion))
+    )
+
+    result = await Agent(model).run('hello')
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
+
+
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_stream_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    event = text_chunk('hello', finish_reason='stop')
+    usage = None if missing_usage else MistralUsageInfo(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+    event = event.model_copy(update={'data': event.data.model_copy(update={'usage': usage})})
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_stream_mock([event]))
+    )
+
+    async with Agent(model).run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
+
+
 @pytest.mark.vcr()
 async def test_mistral_history_uses_prompt_cache(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
     instructions = ' '.join(['Retain this instruction prefix for the entire conversation.'] * 24)

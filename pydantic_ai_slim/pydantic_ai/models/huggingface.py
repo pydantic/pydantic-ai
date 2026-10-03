@@ -556,6 +556,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.aclose()
@@ -565,7 +566,11 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                self._usage += _map_usage(chunk)
+                chunk_usage = _map_usage(chunk)
+                if chunk.usage is not None:
+                    self._usage_received = True
+                chunk_usage.unmeasured_requests = 0
+                self._usage += chunk_usage
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id
@@ -625,7 +630,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     return usage.RequestUsage(
         input_tokens=response_usage.prompt_tokens,

@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import warnings
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import timezone
@@ -23,7 +24,7 @@ from genai_prices.data_snapshot import DataSnapshot, get_snapshot, set_custom_sn
 from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UsageLimitUnavailableWarning
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -739,11 +740,11 @@ def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
 
     events = connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
-    assert events[0] == SessionUsage(RequestUsage())
+    assert events[0] == SessionUsage(RequestUsage(unmeasured_requests=1))
     # Every backend response is reported exactly once, calls or not: each is a request the backend made.
     # A backend that gave up closed its delegation, so a later terminal isn't one of its responses.
     later = connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
-    expected = [SessionUsage(RequestUsage())] if nested_type == 'response.completed' else []
+    expected = [SessionUsage(RequestUsage(unmeasured_requests=1))] if nested_type == 'response.completed' else []
     assert [event for event in later if isinstance(event, SessionUsage)] == expected
 
 
@@ -776,8 +777,8 @@ def test_a_backend_that_gives_up_is_reported(nested: dict[str, Any], code: str, 
     events = connection._map_response_event(nested, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
     assert events == [
-        # Reported without usage, it is still a request the backend made.
-        SessionUsage(RequestUsage()),
+        # The terminal proves a request occurred even when its token usage is missing.
+        SessionUsage(RequestUsage(unmeasured_requests=1)),
         RealtimeSessionErrorEvent(
             message=f'The delegated OpenAI Responses backend did not finish ({reason}).', code=code
         ),
@@ -2105,19 +2106,23 @@ def _live_frames(*frames: dict[str, Any]) -> list[str]:
     return [json.dumps(frame) for frame in (started, *frames)]
 
 
-def _backend_completion(delegation_id: str) -> dict[str, Any]:
-    usage = {
-        'input_tokens': 10,
-        'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
-        'output_tokens': 2,
-        'output_tokens_details': {'reasoning_tokens': 0},
-        'total_tokens': 12,
-    }
+def _backend_completion(
+    delegation_id: str, *, usage: dict[str, Any] | None = None, include_usage: bool = True
+) -> dict[str, Any]:
+    if include_usage and usage is None:
+        usage = {
+            'input_tokens': 10,
+            'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+            'output_tokens': 2,
+            'output_tokens_details': {'reasoning_tokens': 0},
+            'total_tokens': 12,
+        }
+    terminal = _backend_terminal(usage=usage) if include_usage else _backend_terminal()
     return {
         'type': 'response.event',
         'event_id': 'e',
         'delegation_id': delegation_id,
-        'event': _backend_terminal(usage=usage),
+        'event': terminal,
     }
 
 
@@ -2163,6 +2168,66 @@ async def test_requests_count_backend_responses_not_spoken_replies() -> None:
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert len(responses) == 2
     assert session.usage.requests == 1
+
+
+@pytest.mark.parametrize('reported_zero', [False, True], ids=['missing-usage', 'reported-zero'])
+async def test_backend_missing_usage_survives_realtime_session(
+    reported_zero: bool,
+) -> None:
+    """Only a terminal delegated response can report usage; omission must survive session accumulation."""
+    zero_usage = {
+        'input_tokens': 0,
+        'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+        'output_tokens': 0,
+        'output_tokens_details': {'reasoning_tokens': 0},
+        'total_tokens': 0,
+    }
+    intermediate = {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': 'd1',
+        'event': {
+            'type': 'response.created',
+            'sequence_number': 0,
+            'response': _backend_response(status='in_progress'),
+        },
+    }
+    ws = _FakeWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            intermediate,
+            _backend_completion('d1', usage=zero_usage if reported_zero else None, include_usage=reported_zero),
+            {'type': 'session.output_transcript.delta', 'delta': 'Done.', 'start_ms': 0, 'end_ms': 1, 'event_id': 'e'},
+        )
+    )
+    realtime = Agent().realtime(
+        OpenAILiveModel(
+            'gpt-live-1',
+            provider='openai',
+            settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10),
+        ),
+        usage_limits=UsageLimits(input_tokens_limit=100, cost_limit=Decimal('1')),
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('default', UsageLimitUnavailableWarning)
+        with _patched_connect(ws):
+            async with realtime.session() as session:
+                with anyio.fail_after(5):
+                    async for event in session:  # pragma: no branch
+                        if isinstance(event, RealtimeTurnCompleteEvent):
+                            break
+
+    availability_warnings = [item for item in caught if issubclass(item.category, UsageLimitUnavailableWarning)]
+    if reported_zero:
+        assert availability_warnings == []
+    else:
+        assert len(availability_warnings) == 1
+        assert all('1 response(s) omitted usage information' in str(item.message) for item in availability_warnings)
+    assert session.usage.requests == 1
+    assert session.usage.unmeasured_requests == int(not reported_zero)
+    assert session.usage.input_tokens == 0
+    assert session.usage.output_tokens == 0
 
 
 async def test_request_limit_is_checked_as_backend_responses_arrive() -> None:

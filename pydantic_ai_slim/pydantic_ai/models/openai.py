@@ -3986,6 +3986,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
+    _usage_received: bool | None = field(default=False, init=False)
     # Content segments are anonymous; reasoning segments also carry their field identity.
     _content_generation: int = field(default=0, init=False)
     _reasoning_generation: int = field(default=0, init=False)
@@ -4010,10 +4011,14 @@ class OpenAIStreamedResponse(StreamedResponse):
                     }
 
                 chunk_usage = self._map_usage(chunk)
+                if chunk.usage is not None:
+                    self._usage_received = True
+                chunk_usage.unmeasured_requests = 0
                 if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
                     # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
                     # so we replace rather than increment to avoid double-counting.
-                    self._usage = chunk_usage
+                    if chunk.usage is not None:
+                        self._usage = chunk_usage
                 else:
                     self._usage += chunk_usage
 
@@ -4323,6 +4328,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _tool_call_ids_are_response_scoped: bool
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
@@ -4417,7 +4423,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
                             mcp_list_tools_return_ids.add(item.id)
 
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
                     self._set_state(chunk.response.status)
 
@@ -4452,7 +4458,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._store_conversation_id(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     # Record the terminal state first, so a failed background job isn't cancelled after the raise.
                     self._set_state(chunk.response.status)
                     if error := chunk.response.error:
@@ -4474,11 +4480,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # there's nothing we need to do here
 
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     # Parity with the non-streaming `_process_response`: map the incomplete
                     # reason when the provider sends one, leave the finish reason unset otherwise.
                     raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
@@ -4952,6 +4958,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
+    def _record_usage(self, response: responses.Response) -> None:
+        response_usage = self._map_usage(response)
+        if response.usage is not None:
+            self._usage_received = True
+        response_usage.unmeasured_requests = 0
+        self._usage += response_usage
+
     @property
     def model_name(self) -> OpenAIModelName:
         """Get the model name of the response."""
@@ -5283,9 +5296,11 @@ def _map_usage(
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
-                web_searches=web_search_requests, details={'web_search_requests': web_search_requests}
+                unmeasured_requests=1,
+                web_searches=web_search_requests,
+                details={'web_search_requests': web_search_requests},
             )
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details = {

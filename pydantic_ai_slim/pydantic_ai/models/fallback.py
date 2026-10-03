@@ -249,6 +249,7 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
         rejected_cost: Decimal | None = None
+        rejected_unmeasured_requests = 0
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
@@ -301,13 +302,16 @@ class FallbackModel(Model):
                 fill_response_cost(response)
                 if response.usage.cost is not None:
                     rejected_cost = (rejected_cost or Decimal()) + response.usage.cost
+                rejected_unmeasured_requests += response.usage.unmeasured_requests
                 rejected_responses.append(response)
                 continue
 
-            if rejected_cost is not None:
+            if rejected_cost is not None or rejected_unmeasured_requests:
                 fill_response_cost(response)
                 usage = copy(response.usage)
-                usage.cost = (usage.cost or Decimal()) + rejected_cost
+                if rejected_cost is not None:
+                    usage.cost = (usage.cost or Decimal()) + rejected_cost
+                usage.unmeasured_requests += rejected_unmeasured_requests
                 response = replace(response, usage=usage)
 
             # After a rewind, the first successful response is fresh generation that supersedes the
