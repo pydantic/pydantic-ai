@@ -38,7 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
-from ._lifecycle import LifecycleEvent
+from ._lifecycle import LifecycleEvent, TaggedEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -490,12 +490,24 @@ class RealtimeConnection(ABC):
     events from `_lifecycle_events()`.
     """
 
-    def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
-        """Iterate over the codec events together with the lifecycle events, on a version 2 connection.
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        """Every event, codec and lifecycle alike, a frame at a time, each with whether it is stale.
 
-        A version 1 connection has no lifecycle events to add, so this is its ordinary iterator.
+        A frame is what one provider message (or one transition of the connection's own, such as a
+        reconnect) makes, so a consumer can apply it whole. A stale event is a codec event about a response
+        that has already ended (a repeated or late terminal, content trailing it): the codec stream
+        (`__aiter__`) carries it, the lifecycle stream (`_lifecycle_events()`) leaves it out. A version 1
+        connection has no lifecycle events and no stale ones: each codec event is a frame of its own.
         """
-        return aiter(self)
+        async for event in self:
+            yield [(event, False)]
+
+    async def _lifecycle_events(self) -> AsyncIterator[RealtimeCodecEvent | LifecycleEvent]:
+        """Iterate over the codec events together with the lifecycle events, on a version 2 connection."""
+        async for frame in self._tagged_frames():
+            for event, stale in frame:
+                if not stale:
+                    yield event
 
     @property
     def model_name(self) -> str | None:
@@ -591,6 +603,26 @@ class RealtimeConnection(ABC):
         `True`; the OpenAI connection overrides it.
         """
         return True
+
+    @property
+    def _defers_audio_commit(self) -> bool:
+        """Whether committed audio joins the conversation only when the connection sends the commit later.
+
+        For the session's history placement only. A connection may hold a `CommitAudio` back, for instance
+        until a response is asked for, when its provider answers a commit by itself, and input sent in the
+        meantime then reaches the provider first. The session records the spoken turn where the provider
+        has it, once the connection reports sending the commit to the listener passed to
+        `_set_audio_commit_listener`. Internal until the session's lifecycle events, which track provider
+        items per input, replace it. Defaults to `False`.
+        """
+        return False
+
+    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
+        """Register what to call as a held commit goes out, on a connection that `_defers_audio_commit`.
+
+        The listener is called just before the commit is sent, and before anything the provider sends in
+        answer. Internal, like `_defers_audio_commit`. A no-op by default.
+        """
 
 
 __all__ = (

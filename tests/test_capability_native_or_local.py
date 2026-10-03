@@ -197,6 +197,14 @@ class TestXSearchCapability:
         assert cap.fallback_subagent_model is None
         assert cap.get_toolset() is None
 
+    def test_xsearch_native_false_without_local_raises(self):
+        """XSearch(native=False) without a local tool or `fallback_subagent_model` → UserError at construction.
+
+        It raises at construction, before any request, so this is not a VCR test.
+        """
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            XSearch(native=False)
+
     def test_xsearch_with_subagent_model(self):
         """XSearch(fallback_subagent_model=...) → native XSearchTool, local subagent fallback."""
         cap = XSearch(fallback_subagent_model='xai:grok-4-1-fast-non-reasoning')
@@ -230,6 +238,23 @@ class TestXSearchCapability:
         """XSearch with handle constraints requires builtin."""
         assert XSearch(allowed_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
         assert XSearch(excluded_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(excluded_x_handles=['h'])])
+
+    async def test_xsearch_native_false_local_callable(self):
+        """XSearch(native=False, local=some_function) → the user's function is the only tool offered.
+
+        It is decided at construction and toolset build, before any request, so this is not a VCR test.
+        """
+
+        def my_search(query: str) -> str:
+            return f'results for {query}'  # pragma: no cover
+
+        cap = XSearch(native=False, local=my_search)
+
+        assert cap.get_native_tools() == []
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        tools = await toolset.get_tools(_build_run_context())
+        assert list(tools) == ['my_search']
 
     def test_xsearch_native_false_local_false_raises(self):
         """XSearch(native=False, local=False) → UserError."""
@@ -300,14 +325,15 @@ class TestXSearchCapability:
             XSearch(fallback_subagent_model='xai:grok-4.3', fallback_model='xai:grok-4-1-fast-non-reasoning')
 
     def test_xsearch_callable_native_with_fallback(self):
-        """Callable native with fallback_subagent_model still creates a local fallback tool."""
-        from pydantic_ai.tools import Tool
+        """Callable native with fallback_subagent_model still provides the subagent tool.
 
+        The tool is derived when the toolset is requested, so `local` keeps what was declared.
+        """
         cap = XSearch(
             native=lambda ctx: XSearchTool(enable_image_understanding=True),
             fallback_subagent_model='xai:grok-4-1-fast-non-reasoning',
         )
-        assert isinstance(cap.local, Tool)
+        assert cap.local is None
         assert cap.get_toolset() is not None
 
     async def test_xsearch_callable_subagent_model(self, allow_model_requests: None):

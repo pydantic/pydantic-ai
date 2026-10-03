@@ -1,6 +1,8 @@
-"""The built-in `pylon` plugin: Pylon's support issues, accounts, and contacts through harness `Pylon`.
+"""Look up Pylon support issues, accounts, and contacts.
 
-The settings menu is registered with `@host.configure`, so turning the plugin on opens it, as do `C` in
+The built-in `pylon` plugin: Pylon's support issues, accounts, and contacts through harness `Pylon`.
+
+The settings menu is `PylonPlugin.configure`, so turning the plugin on opens it, as do `C` in
 `/plugins`, `/plugins configure pylon`, and `/pylon`. Each edit is saved to the plugin's settings at once and
 applies from the next run, because the capability is rebuilt per run from the current settings.
 
@@ -14,16 +16,18 @@ Harness `Pylon(auth='oauth')` would keep them in memory and give the browser the
 so CLAI builds that client itself.
 """
 
-import asyncio
 import json
 from collections.abc import Callable, Sequence
+from functools import partial
 from typing import Literal
 
+import anyio
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.pylon import Pylon
@@ -39,7 +43,7 @@ from pydantic_clai2.config.api_keys import (
 )
 from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, http_client, sign_in
-from pydantic_clai2.plugins import DepsT, PluginHost
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
@@ -215,14 +219,37 @@ async def configure(config: PylonConfig, runners: Runners | None = None) -> str:
         return '\n'.join(config.notes[notes:]) or 'Pylon settings unchanged.'
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add a per-run `Pylon` built from the current settings, its settings menu, and `/pylon`."""
-    config = PylonConfig(host.settings(PylonSettings), host.save_settings)
+class PylonPlugin(Plugin[PylonSettings, DepsT]):
+    """A per-run `Pylon` built from the current settings, its settings menu, and `/pylon`."""
 
-    def for_run(_: RunContext[DepsT]) -> Pylon[DepsT] | None:
+    def __init__(self, host: PluginHost[DepsT], settings: PylonSettings) -> None:
+        super().__init__(host, settings)
+        self.config = PylonConfig(settings, host.save_settings)
+
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        return (self._for_run,)
+
+    def get_commands(self) -> Sequence[Command]:
+        return (
+            Command(
+                name='pylon',
+                description='Pylon settings: sign-in, the /keys entry, and tool options (/pylon key, /pylon status).',
+                handler=self._command,
+                complete=lambda args: (
+                    [word for word in ('key', 'status') if word.startswith(args[0] if args else '')]
+                    if len(args) <= 1
+                    else []
+                ),
+            ),
+        )
+
+    async def configure(self) -> str:
+        return await configure(self.config)
+
+    def _for_run(self, _: RunContext[DepsT]) -> Pylon[DepsT] | None:
         # The token is resolved here, not passed as a callable `auth`: Pylon would answer with a
         # `DynamicToolset`, and pydantic-ai 2.49 drops a dynamic toolset returned from a `CapabilityFunc`.
-        settings = config.settings
+        settings = self.config.settings
         if settings.auth == 'browser':
             client, token = _browser_client(), None
         else:
@@ -237,33 +264,14 @@ def activate(host: PluginHost[DepsT]) -> None:
             include_instructions=settings.include_instructions,
         )
 
-    host.add(for_run)
-
-    @host.configure
-    async def settings_menu() -> str:
-        return await configure(config)
-
-    async def command(args: list[str]) -> str:
+    async def _command(self, args: list[str]) -> str:
         if not args:
-            return await settings_menu()
+            return await self.configure()
         if args == ['key']:
             return await choose_key()
         if args == ['status']:
-            return await asyncio.to_thread(_status, config)
+            return await anyio.to_thread.run_sync(_status, self.config, abandon_on_cancel=True)
         raise ValueError(_HELP)
-
-    host.commands.register(
-        Command(
-            name='pylon',
-            description='Pylon settings: sign-in, the /keys entry, and tool options (/pylon key, /pylon status).',
-            handler=command,
-            complete=lambda args: (
-                [word for word in ('key', 'status') if word.startswith(args[0] if args else '')]
-                if len(args) <= 1
-                else []
-            ),
-        )
-    )
 
 
 def _status(config: PylonConfig) -> str:
@@ -287,7 +295,7 @@ async def choose_key() -> str:
     if isinstance(token, str):
         if not token.strip():
             raise ValueError('A Pylon access token is required.')
-        if KEY_NAME in await asyncio.to_thread(load_keys):
+        if KEY_NAME in await anyio.to_thread.run_sync(load_keys, abandon_on_cancel=True):
             try:
                 answer = await prompt.prompt_async(
                     f'Replace {KEY_NAME} in /keys for every connection using it? [y/N]: '
@@ -296,10 +304,12 @@ async def choose_key() -> str:
                 return 'Pylon key unchanged.'
             if answer.strip().lower() != 'y':
                 return 'Pylon key unchanged.'
-        await asyncio.to_thread(save_key, name=KEY_NAME, value=token)
+        await anyio.to_thread.run_sync(partial(save_key, name=KEY_NAME, value=token), abandon_on_cancel=True)
         token = KeyReference(name=KEY_NAME)
     saved = json.dumps({'token': token.model_dump()})
-    await asyncio.to_thread(save_key_connection, account=ACCOUNT, token=token, value=saved)
+    await anyio.to_thread.run_sync(
+        partial(save_key_connection, account=ACCOUNT, token=token, value=saved), abandon_on_cancel=True
+    )
     return f'Pylon connects with {token.name} from /keys.'
 
 

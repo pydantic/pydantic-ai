@@ -26,7 +26,6 @@ from typing_extensions import TypedDict
 
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
-from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
@@ -62,6 +61,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnContent,
     ToolSearchReturnPart,
     UserPromptPart,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
     _model_request_part_discriminator,  # pyright: ignore[reportPrivateUsage]
     _model_response_part_discriminator,  # pyright: ignore[reportPrivateUsage]
 )
@@ -7801,7 +7801,8 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
 
     The part is replaced where it stands, so the message count doesn't change — which is the point:
     the fabricated `search_tools` call this replaced had to be spliced in as a separate
-    `ModelResponse` ahead of the rebuilt request.
+    `ModelResponse` ahead of the rebuilt request. `TestModel` takes no mid-conversation system
+    message, so the announcement arrives `<system>`-wrapped; it is never the standing prompt (#7899).
     """
     model = TestModel()
     tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'}, defer_loading=True)
@@ -7814,8 +7815,8 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     request = prepared[0]
     assert isinstance(request, ModelRequest)
     [part] = request.parts
-    assert isinstance(part, SystemPromptPart)
-    assert part.content == snapshot('The following tool(s) are now available: `new_tool`')
+    assert isinstance(part, UserPromptPart)
+    assert part.content == snapshot('<system>The following tool(s) are now available: `new_tool`</system>')
 
 
 def test_tool_availability_delta_does_not_announce_unknown_tool():

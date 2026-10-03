@@ -21,16 +21,17 @@ from pydantic_clai2.mcp import (
     PROJECT_MCP_FILE,
     HTTPServer,
     MCPCommand,
+    MCPPlugin,
     MCPServers,
+    MCPSettings,
     MCPStore,
     ServerForm,
     SSEServer,
     StdioServer,
-    activate,
     edit_in_editor,
     run_form,
 )
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, collect
 from tests.clai2.menu_script import Script, pick, typed
 
 ESC = MenuResult(cancelled=True)
@@ -450,9 +451,9 @@ async def test_completion(tmp_path: Path) -> None:
 async def test_registered_completion_through_the_command_registry(tmp_path: Path) -> None:
     host: PluginHost[None] = PluginHost(name='mcp', console=Console(file=io.StringIO()), settings={})
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-    activate(host, store=store)
+    loaded = collect(MCPPlugin(host, MCPSettings(), store=store))
     registry = Commands()
-    registry.register_many(host.commands)
+    registry.register_many(loaded.commands)
     store.put('local', stdio())
     [mcp] = list(registry)
     assert 'local' in mcp.complete(['logs', ''])

@@ -14,18 +14,19 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from termflow.tui.keys import Key
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, StepEvent, ToolEffectRecord
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_ai_harness.step_persistence.naming import SessionNamer
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 
@@ -107,6 +108,40 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     assert not service.namer.submit(saved_id)
     context.set_setting(['sessions.naming_model', 'null'])
     assert context.settings.session_namer_model is None
+
+
+async def test_browser_resumes_other_directory_without_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    previous_workspace = tmp_path / 'previous'
+    previous_workspace.mkdir()
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    agent = Agent(TestModel(call_tools=[], custom_output_text='saved answer'))
+    prior = Session(agent, deps=None, conversations=store, workspace=previous_workspace)
+    await prior.prompt('saved turn')
+    session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        clear_history=session.clear,
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+
+    def select(browser: SessionBrowser) -> str:
+        keys = iter([Key.ENTER, '', Key.ENTER, '', 'ctrl-c'])
+        browser.key_source = lambda: next(keys)
+        browser.output = StringIO()
+        return browser.loop()
+
+    monkeypatch.setattr(SessionBrowser, 'run', select)
+    assert 'Resumed' in await service.command([])
+    assert session.summary.id == prior.summary.id
+    assert session.messages == prior.messages
+    assert session.workspace == str(tmp_path)
+    assert Path.cwd() == tmp_path
+    assert (await store.get(conversation_id=prior.summary.id)).summary.workspace == str(previous_workspace)
 
 
 async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> None:

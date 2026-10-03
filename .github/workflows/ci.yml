@@ -42,8 +42,10 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      docs_only: ${{ steps.classify.outputs.docs_only }}
+      content_only: ${{ steps.classify.outputs.content_only }}
+      docs_changed: ${{ steps.classify.outputs.docs_changed }}
       clai2_only: ${{ steps.classify.outputs.clai2_only }}
+      clai2_changed: ${{ steps.classify.outputs.clai2_changed }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
       - name: Classify pull request changes
@@ -52,9 +54,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # Keep classification inline so this token-bearing job never executes PR-authored files.
           run_all_checks() {
-            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            echo 'content_only=false' >> "$GITHUB_OUTPUT"
+            echo 'docs_changed=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
+            echo 'clai2_changed=true' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
 
@@ -68,6 +73,16 @@ jobs:
             run_all_checks
             exit 0
           fi
+          if ! [[ "$total" =~ ^[0-9]+$ ]]; then
+            echo "::warning::PR changed-file count is not numeric ($total); running full CI."
+            run_all_checks
+            exit 0
+          fi
+          if [ "$total" -eq 0 ] || [ "$total" -ge 3000 ]; then
+            echo "::warning::PR changed-file count is $total; running full CI."
+            run_all_checks
+            exit 0
+          fi
           if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
             --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
             echo '::warning::Could not list the PR changed files; running full CI.'
@@ -76,19 +91,33 @@ jobs:
           fi
 
           mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
-          if [ "$total" -eq 0 ] || [ "${#changed_files[@]}" -ne "$total" ]; then
+          if [ "${#changed_files[@]}" -ne "$total" ]; then
             echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running full CI."
             run_all_checks
             exit 0
           fi
 
-          is_docs_markdown() {
+          needs_docs_checks() {
+            # `test_examples.py` also scans Markdown under the published package directories.
             case "$1" in
-              README.md|docs/*.md|examples/*.md) ;;
+              README.md|clai/README.md|src/pydantic_clai2/README.md|src/pydantic_ai_harness/README.md) ;;
+              docs/*.md|docs/*.mdc|docs/*.png|docs/*.svg|docs/*.ico|docs/*.jpg|docs/*.jpeg|docs/*.gif|docs/*.webp|docs/*.avif) ;;
+              examples/*.md|pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) ;;
               *) return 1 ;;
             esac
+          }
+
+          is_non_test_content() {
             case "$1" in
-              AGENTS.md|CLAUDE.md|*/AGENTS.md|*/CLAUDE.md) return 1 ;;
+              tests/*|.github/*|.macroscope/*) return 1 ;;
+            esac
+            if needs_docs_checks "$1"; then
+              return 0
+            fi
+            case "$1" in
+              .agents/*.md|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
+              *.md) [[ "$1" != */* ]] ;;
+              *) return 1 ;;
             esac
           }
 
@@ -103,6 +132,12 @@ jobs:
             esac
           }
 
+          # `test-clai2-clipboard` runs on macOS and Windows runners, so only for a change that reaches
+          # `pydantic-clai2` or the job itself.
+          is_clai2_input() {
+            is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
+          }
+
           is_pyright_input() {
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
@@ -112,32 +147,44 @@ jobs:
             esac
           }
 
-          docs_only=true
+          content_only=true
+          docs_changed=false
           clai2_only=true
+          clai2_changed=false
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
-            if ! is_docs_markdown "$filename" || \
-              { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
-              docs_only=false
+            if ! is_non_test_content "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_non_test_content "$previous_filename"; }; then
+              content_only=false
+            fi
+            if needs_docs_checks "$filename" || \
+              { [ -n "$previous_filename" ] && needs_docs_checks "$previous_filename"; }; then
+              docs_changed=true
             fi
             if ! is_clai2 "$filename" || \
               { [ -n "$previous_filename" ] && ! is_clai2 "$previous_filename"; }; then
               clai2_only=false
+            fi
+            if is_clai2_input "$filename" || \
+              { [ -n "$previous_filename" ] && is_clai2_input "$previous_filename"; }; then
+              clai2_changed=true
             fi
             if is_pyright_input "$filename" || \
               { [ -n "$previous_filename" ] && is_pyright_input "$previous_filename"; }; then
               pyright_changed=true
             fi
           done
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
+          echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
           echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
+          echo "clai2_changed=$clai2_changed" >> "$GITHUB_OUTPUT"
           echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
 
   quality:
     name: quality checks
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
@@ -169,6 +216,7 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_agent_provider_health.py
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
           .github/scripts/test_semantic_owner_router.py
@@ -179,6 +227,7 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_ci_content_classifier.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -329,7 +378,7 @@ jobs:
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -349,6 +398,8 @@ jobs:
   # The unified-docs repository renders and validates published documentation.
   # Keep this source-repository check for assets that live alongside Pydantic AI docs.
   docs-assets:
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true' || needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -378,7 +429,7 @@ jobs:
   docs-only:
     name: docs-only checks on Python 3.13
     needs: classify
-    if: needs.classify.outputs.docs_only == 'true'
+    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -409,12 +460,38 @@ jobs:
           UV_NO_SYNC: "1"
 
       - name: Test documentation snippets
-        run: uv run --no-sync pytest tests/test_examples.py -n logical --dist=loadgroup
+        run: >-
+          uv run --no-sync pytest
+          tests/test_examples.py
+          tests/harness/test_docs_installation.py
+          tests/test_docs_parity.py
+          tests/test_docs_navigation.py
+          tests/harness/test_docs_parity.py
+          tests/harness/test_doc_snippets.py
+          tests/harness/test_workspace_quickstarts.py
+          -n logical --dist=loadgroup
+
+  content-checks:
+    name: content checks
+    needs: classify
+    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        with:
+          extra_args: --all-files --verbose
+        env:
+          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -474,6 +551,20 @@ jobs:
           cache-suffix: ${{ matrix.install.name }}
 
       - run: mkdir .coverage
+
+      # Every test install includes the `dev` group, whose `mongomock-motor` pulls in PyMongo, so only
+      # this install catches a module that imports `pymongo` (the `mongodb` extra) eagerly instead of
+      # behind its lazy `__getattr__`. It runs before `uv sync --only-dev`, which removes it again.
+      - name: import pydantic-ai-harness without extras or dependency groups
+        if: matrix.install.name == 'pydantic-ai-harness'
+        run: |
+          uv sync --package pydantic-ai-harness --no-default-groups
+          # Fail if a base dependency pulls PyMongo back in, rather than pass while testing nothing.
+          uv run --no-sync python -c "
+          import importlib.util
+          assert importlib.util.find_spec('pymongo') is None, 'the base install must not include pymongo'
+          import pydantic_ai_harness, pydantic_ai_harness.media, pydantic_ai_harness.step_persistence
+          "
 
       - run: uv sync --only-dev
 
@@ -535,7 +626,7 @@ jobs:
   test-all-extras:
     name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.10' && 3 || 2 }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -571,6 +662,21 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
+      # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
+      ABSURD_REQUIRE_LIVE: "1"
+      ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -662,6 +768,16 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
+      - name: cover Absurd without a database URL
+        if: matrix.python-version == '3.14' && matrix.shard == 1
+        run: >-
+          env -u ABSURD_TEST_DATABASE_URL
+          uv run --all-packages --all-extras --no-extra mcp-tasks
+          coverage run -m pytest
+          tests/harness/absurd/test_absurd.py::TestDurability::test_replay_serves_cached_model_response
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
@@ -692,7 +808,7 @@ jobs:
   test-durable-exec:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -732,9 +848,9 @@ jobs:
 
       - run: mkdir .coverage
 
-      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
-      # tests/durable_exec/temporal/conftest.py and the harness `temporal` tests); cache it so a
-      # CDN hiccup can't fail the suite at setup (#5399).
+      # The Temporal tests download the dev-server binary on first use, to the directory that
+      # `temporal_dev_server_cache_dir` in tests/temporal_utils.py returns; cache it so a CDN
+      # hiccup can't fail the suite at setup (#5399).
       # Separate key per resolution: the lowest leg may resolve a different temporalio version
       # wanting a different binary. A stale restored dir is safe because the SDK names the
       # binary by its own version and re-downloads on a miss.
@@ -793,7 +909,7 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -902,7 +1018,7 @@ jobs:
   test-temporal-latest:
     name: test Temporal latest on Python 3.10
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -928,7 +1044,7 @@ jobs:
   test-examples:
     name: test examples on ${{ matrix.python-version }}
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -957,13 +1073,16 @@ jobs:
   test-harness-browser-use:
     name: test harness browser-use
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       CI: true
       # Not yet for the harness suites: https://github.com/pydantic/pydantic-ai/issues/8821
       BLOCKBUSTER_ENABLED: "false"
+      # No other job installs `browser-use`, so the `coverage` job sees `BrowserUse` only from here.
+      COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
+      COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.harness-browser-use
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -975,18 +1094,83 @@ jobs:
           enable-cache: true
           cache-suffix: harness-browser-use
 
+      - run: mkdir .coverage
+
       - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --group lint
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
-      - run: uv run --no-sync pytest tests/harness/browser_use
+      - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
       - run: uv run --no-sync pyright -p tests/harness/browser_use
         env:
           PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
 
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: uv run --no-sync coverage combine
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-harness-browser-use
+          path: .coverage
+          include-hidden-files: true
+
+  # CLAI2 pastes images through Pillow's native macOS and Windows clipboard readers and through
+  # `xclip` on Linux. Every other job runs on Linux and skips the opt-in native clipboard test, which
+  # replaces the system clipboard: safe here, where each runner's clipboard belongs to this job alone.
+  # Skipped on tags: a clipboard regression is caught on its PR and on `main`, and must not hold a release.
+  test-clai2-clipboard:
+    name: test clai2 clipboard on ${{ matrix.os }}
+    needs: classify
+    if: >-
+      github.ref_type != 'tag'
+      && needs.classify.outputs.content_only != 'true'
+      && needs.classify.outputs.clai2_changed == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      CI: true
+      CLAI_TEST_CLIPBOARD: "1"
+      # Drop the workflow-level `GIT_CONFIG_*` rewrite that puts the token in GitHub URLs: with it,
+      # `actions/checkout`'s fetch hung on macOS runners until the job timed out. This job installs
+      # no Git-sourced dependency, which is all the rewrite is for.
+      GIT_CONFIG_COUNT: "0"
+      GIT_CONFIG_KEY_0: ""
+      GIT_CONFIG_VALUE_0: ""
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: clai2-clipboard
+
+      - run: uv sync --only-dev
+
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xclip xvfb
+
+      - name: run tests
+        shell: bash
+        run: |
+          tests=(tests/clai2/test_image_input.py tests/clai2/test_image_clipboard_native.py)
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a uv run --package pydantic-clai2 pytest "${tests[@]}"
+          else
+            uv run --package pydantic-clai2 pytest "${tests[@]}"
+          fi
+
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1207,10 +1391,10 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
+    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
     # otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.docs_only != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1255,6 +1439,7 @@ jobs:
       - mypy
       - docs-assets
       - docs-only
+      - content-checks
       - test
       - test-all-extras
       - test-durable-exec
@@ -1263,6 +1448,7 @@ jobs:
       - test-examples
       - test-fastmcp-4
       - test-harness-browser-use
+      - test-clai2-clipboard
       - harness-integration-changes
       - harness-localstack-integration
       - harness-mongodb-integration
@@ -1277,21 +1463,26 @@ jobs:
         with:
           # The canary is advisory because it tests dependency versions we do not lock; its failures
           # signal upstream drift rather than release blockers. It runs on tag refs only, and
-          # `docs-only` runs only for Markdown-only PRs, and a PR confined to `pydantic-clai2` skips the
-          # jobs that exercise the rest of the workspace.
-          # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
+          # `docs-only` covers published docs and assets; `content-checks` covers other
+          # non-test content. Workflow and configuration changes keep the full test matrix.
+          # Each reduced path must run its selected checks.
           # The harness integration jobs run only when their paths change (always on tags), and
-          # LocalStack also skips where its secret is unreadable.
+          # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
+          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
-              needs.classify.outputs.docs_only == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
+              needs.classify.outputs.content_only == 'true'
+              && needs.classify.outputs.docs_changed == 'true'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              || needs.classify.outputs.content_only == 'true'
+              && needs.classify.outputs.docs_changed != 'true'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
-              && 'docs-only,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

@@ -27,6 +27,15 @@ class SandboxCallStartedEvent(CapabilityEvent, namespace='pydantic_clai2'):
 
 
 @dataclass(kw_only=True)
+class DelegationCallStartedEvent(SandboxCallStartedEvent):
+    """A managed delegation inside code mode, rendered by its typed lifecycle events."""
+
+
+class DelegationToolCallEvent(FunctionToolCallEvent):
+    """A native managed delegation, rendered by its typed lifecycle events."""
+
+
+@dataclass(kw_only=True)
 class SandboxCallFinishedEvent(CapabilityEvent, namespace='pydantic_clai2'):
     """A tool called from inside `run_code` returned or failed."""
 
@@ -48,6 +57,8 @@ class SandboxCallOrder:
 
     def tool_events(self, event: AgentStreamEvent) -> list[FunctionToolCallEvent | FunctionToolResultEvent] | None:
         """Core tool events to render in place of `event`, or `None` to render `event` as usual."""
+        if isinstance(event, DelegationCallStartedEvent):
+            return []
         if isinstance(event, SandboxCallStartedEvent):
             parent = event.call.tool_call_id.rpartition('__')[0]
             header: list[FunctionToolCallEvent | FunctionToolResultEvent] = []

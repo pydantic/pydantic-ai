@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
     from exa_py import AsyncExa
@@ -152,6 +153,9 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
     The `web_search` result count is bounded the same way: `num_results` is
     requested from Exa and re-applied to the response. Bounds are validated by
     `ExaSearch` at construction.
+
+    With `defer_to_native=True`, `web_search` is the local fallback for the
+    model's native web search, as `ExaSearch(native=True)` sets up.
     """
 
     def __init__(
@@ -164,6 +168,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         include_domains: Sequence[str] = (),
         exclude_domains: Sequence[str] = (),
         text_summary: bool | str = False,
+        defer_to_native: bool = False,
     ) -> None:
         super().__init__()
         self._client = client if client is not None else _default_client()
@@ -172,7 +177,9 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         self._include_domains = list(include_domains) if include_domains else None
         self._exclude_domains = list(exclude_domains) if exclude_domains else None
         self._text_summary = text_summary
-        self.add_function(self.web_search, name='web_search')
+        self.add_function(
+            self.web_search, name='web_search', prepare=defer_to_native_web_search if defer_to_native else None
+        )
         self.add_function(self.get_page, name='get_page')
         if include_deep_search:
             self.add_function(self.deep_search, name='deep_search')

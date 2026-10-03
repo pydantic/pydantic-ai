@@ -834,6 +834,26 @@ class TestFilesystem:
             await backend.list_dir('/srv')
         assert '/srv/a' in str(exc.value)
 
+    async def test_list_dir_keeps_a_transient_symlink_failure_unchanged(
+        self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A rate limit propagates as raised, so durable engines can retry it.
+        backend = await started()
+        files = fake_e2b.sandboxes[0].files
+        await backend.make_dir('/srv')
+        files.symlinks['/srv/link'] = '/srv/target'
+        files.files['/srv/link'] = b''
+        error = RateLimitException('rate limited')
+
+        async def limited(path: str, user: str | None = None, request_timeout: float | None = None) -> Any:
+            raise error
+
+        monkeypatch.setattr(files, 'get_info', limited)
+        with pytest.raises(RateLimitException) as exc:
+            await backend.list_dir('/srv')
+        assert exc.value is error
+        assert exc.value.__cause__ is None
+
     async def test_symlink_whose_target_is_gone_reads_as_dangling(self, fake_e2b: FakeE2B) -> None:
         backend = await started()
         fake_e2b.sandboxes[0].files.symlinks['/srv/link'] = '/srv/removed'

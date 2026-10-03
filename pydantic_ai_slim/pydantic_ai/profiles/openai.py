@@ -245,8 +245,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether a streamed Chat Completions response must include a non-null `finish_reason`. Default: `False`.
 
     When enabled, reaching clean EOF before any chunk supplies a `finish_reason` raises
-    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. This defaults to `False` because
-    OpenAI-compatible APIs do not consistently guarantee the field."""
+    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
+    This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
 
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
@@ -511,6 +511,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
+        # The backend runs web search; Live refuses every other native Responses tool (checked live).
+        'supported_native_tools': frozenset({WebSearchTool}),
         # The delegated backend does the reasoning, so `thinking` sets its effort. Whether a given backend
         # reasons at all is its own profile's call, so a backend that doesn't still ignores the setting.
         'supports_thinking': True,

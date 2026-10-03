@@ -5507,6 +5507,31 @@ async def test_tool_availability_delta_event_stream_handler(
     ]
 
 
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+async def test_run_stream_usage_includes_tools_run_after_final_result(
+    end_strategy: Literal['graceful', 'exhaustive'],
+) -> None:
+    """Function tools run after the final result, and the agents they delegate to, count towards `result.usage`."""
+
+    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall('final_result', '{"value": "done"}')}
+        yield {1: DeltaToolCall('delegate', '{}')}
+
+    delegate_agent = Agent(TestModel())
+    agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy=end_strategy)
+
+    @agent.tool
+    async def delegate(ctx: RunContext) -> str:
+        result = await delegate_agent.run('hi', usage=ctx.usage)
+        return result.output
+
+    usage = RunUsage()
+    async with agent.run_stream('go', usage=usage) as result:
+        await result.get_output()
+        assert result.usage == snapshot(RunUsage(requests=2, input_tokens=101, output_tokens=9, tool_calls=1))
+    assert result.usage == usage == snapshot(RunUsage(requests=2, input_tokens=101, output_tokens=9, tool_calls=1))
+
+
 async def test_event_stream_handler_propagates_tool_error():
     """When a tool raises during streaming with event_stream_handler and the error
     is suppressed by the handler, the _stream_error re-raise path in run() should
