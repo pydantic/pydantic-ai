@@ -21,7 +21,8 @@ _INTERRUPT_GRACE = 0.25
 
 def _interrupt(process: asyncio.subprocess.Process) -> None:
     """Forward Ctrl-C, which the terminal delivers to CLAI but not to a command in its own session."""
-    if sys.platform != 'win32':  # The Windows console delivers Ctrl-C to every attached process.
+    # The Windows console delivers Ctrl-C to every attached process.
+    if sys.platform != 'win32':
         signal_process_group(process, signal.SIGINT)
 
 

@@ -138,9 +138,7 @@ def test_project_selection_preview_and_back() -> None:
     widget.handle_key(Key.DOWN)
     widget.handle_key(Key.ENTER)
     assert widget.selected is not None and widget.selected.id == 'two'
-    assert widget.handle_key(Key.ENTER) is None
-    assert 'saved in /b/project' in widget.footer()
-    assert widget.handle_key('y') == 'two'
+    assert widget.handle_key(Key.ENTER) == 'two'
     assert widget.handle_key('ctrl-c') == ''
 
 
@@ -166,6 +164,7 @@ def test_search_sort_rename_delete_and_stable_refresh() -> None:
     widget.handle_key(Key.DOWN)
     widget.handle_key('d')
     assert widget.confirm is not None
+    assert widget.footer() == 'Delete saved session: Other? y confirm / any other key cancel'
     widget.handle_key('n')
     assert len(entries) == 3
     widget.handle_key('d')
@@ -196,6 +195,17 @@ def test_empty_search_and_scripted_loop() -> None:
     assert widget.handle_key(Key.ENTER) is None
     widget.handle_key(Key.ESCAPE)
     assert widget.handle_key(Key.ESCAPE) == ''
+
+
+@pytest.mark.parametrize('workspace', ['/a/project', '/b/project', '/missing/clai2/worktree'])
+def test_resume_without_directory_confirmation(workspace: str) -> None:
+    widget, entries = browser(keys=[Key.ENTER, '', Key.ENTER, '', 'ctrl-c'])
+    entries[:] = [replace(entries[1], workspace=workspace)]
+    widget.reload()
+    assert widget.loop() == 'two'
+    assert widget.confirm is None
+    assert widget.workspace == '/a/project'
+    assert entries[0].workspace == workspace
 
 
 def test_date_buckets() -> None:
@@ -298,7 +308,6 @@ def test_multiline_metadata_cannot_inject_terminal_rows() -> None:
         widget.buffer = 'rename\nnext'
         assert all('\n' not in line and '\r' not in line for line in widget.frame(width=120, height=24))
     widget.confirm = entries[0]
-    widget.confirm_action = f'Resume in {entries[0].workspace}'
     assert '\n' not in widget.footer()
     assert plain('first\nsecond', multiline=True) == 'first\nsecond'
     assert plain('first\nsecond') == 'first second'
@@ -361,9 +370,7 @@ def test_repository_grouping_and_checkout_labels(
     widget.selected_id = 'three'
     assert widget.handle_key(Key.ENTER) == 'three'
     widget.selected_id = 'two'
-    assert widget.handle_key(Key.ENTER) is None
-    assert plain(str(linked)) in widget.footer()
-    assert widget.handle_key('y') == 'two'
+    assert widget.handle_key(Key.ENTER) == 'two'
     widget.reload()
     assert widget.selected is not None and widget.selected.id == 'two'
 

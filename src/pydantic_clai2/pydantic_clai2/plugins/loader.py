@@ -34,6 +34,7 @@ from pydantic_clai2.plugins import (
     ModelProvider,
     Plugin,
     PluginHost,
+    PluginLoadFailed,
     PluginLogin,
     Renderer,
     SessionEnd,
@@ -373,17 +374,22 @@ class PluginLoader(Generic[DepsT]):
         """
         if self.enabled:
             self._ensure_plugins_dir()
+        failures: list[PluginLoadFailed] = []
         for entry in self._registration_order():
             if entry.declaration.enabled and entry.loaded is None:
                 try:
                     await self.load(entry.name, fresh=fresh)
                 except PluginError as exc:
                     if not _module_absent(entry, exc.error):
+                        failures.append(PluginLoadFailed(plugin=entry.name, error=exc.error))
                         self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
                 # `load` refreshed the entries, so read the notice from the current one.
                 ignored = self._entries[entry.name].ignored
                 if ignored is not None:
                     self._console.print(ignored, style=theme.color(theme.WARNING), markup=False)
+        # Observers can load after a failing plugin, so report only once startup loading finishes.
+        for failure in failures:
+            await self.fire(failure)
 
     async def load(self, name: str, *, fresh: bool = False) -> None:
         """Import, build the plugin, collect its contributions, and fire `session_start`.
