@@ -241,8 +241,8 @@ _CHANNEL_LESS_CASES = [
                     'tool_call_id': 'call_1',
                 },
                 {
-                    'content': [{'text': 'Disk full'}],
-                    'role': 'ROLE_SYSTEM',
+                    'content': [{'text': '<system>Disk full</system>'}],
+                    'role': 'ROLE_USER',
                 },
             ]
         ),
@@ -257,8 +257,8 @@ _CHANNEL_LESS_CASES = [
             [
                 {'role': 'tool', 'content': '{"error":"Disk full"}', 'tool_call_id': 'call_1'},
                 {
-                    'role': 'system',
-                    'content': 'Disk full',
+                    'role': 'user',
+                    'content': '<system>Disk full</system>',
                 },
             ]
         ),

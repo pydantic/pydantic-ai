@@ -23,10 +23,11 @@ from cassetter import Cassette
 from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._tool_execution import tool_bound_retry_part
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import (
     CallDeferred,
@@ -530,43 +531,91 @@ async def test_a_legacy_retry_prompt_part_is_translated_to_the_part_it_always_me
     )
 
 
-async def test_feedback_opening_the_first_request_joins_the_standing_prompt():
-    """Feedback translated into a `SystemPromptPart` behaves like an authored one wherever it sits.
+@pytest.mark.parametrize(
+    'authored, expected',
+    [
+        pytest.param(
+            [
+                RetryFeedbackPart(content='the answer has to be a number', cause='model_retry'),
+                UserPromptPart(content='try again'),
+            ],
+            [(UserPromptPart, '<system>the answer has to be a number</system>'), (UserPromptPart, 'try again')],
+            id='feedback-first',
+        ),
+        pytest.param(
+            [
+                SystemPromptPart(content='standing'),
+                RetryFeedbackPart(content='the answer has to be a number', cause='model_retry'),
+                UserPromptPart(content='try again'),
+            ],
+            [
+                (SystemPromptPart, 'standing'),
+                (UserPromptPart, '<system>the answer has to be a number</system>'),
+                (UserPromptPart, 'try again'),
+            ],
+            id='after-standing-prompt',
+        ),
+    ],
+)
+def test_feedback_opening_the_first_request_stays_out_of_the_standing_prompt(
+    authored: list[ModelRequestPart], expected: list[tuple[type[ModelRequestPart], object]]
+):
+    """Feedback translated into a `SystemPromptPart` is never part of the run's standing prompt.
 
-    Nothing in the type stops a `RetryFeedbackPart` from opening a history — a hand-built
-    `message_history`, an adapter load, or compaction can all leave one first — and there it becomes
-    the first `SystemPromptPart` of the first request, which is what `_standing_system_prompt_count`
-    reads as the run's standing prompt. So it is hoisted into the provider's top-level system field,
-    exactly as a `SystemPromptPart` written in that position would be.
-
-    That is the accepted consequence of translating rather than rendering: the position is the one the
-    caller built, the existing `SystemPromptPart` handling is what decides what happens there, and
-    there is no separate rule for feedback. A caller who does not want the feedback standing over the
-    run puts something else first, as they would with any system prompt.
+    Only the `SystemPromptPart`s the history was authored with count as the standing prompt, which
+    non-inline adapters lift into the provider's system field, so feedback opening the first request
+    is degraded like any other mid-conversation system prompt — as a tool-availability announcement
+    in that position is.
     """
     model = FunctionModel(
         lambda _m, _i: ModelResponse(parts=[TextPart('ok')]),
-        profile=ModelProfile(supports_inline_system_prompts=True),
+        profile=ModelProfile(supports_inline_system_prompts=False),
     )
-    history: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                RetryFeedbackPart(content='the answer has to be a number', cause='model_retry'),
-                UserPromptPart(content='try again'),
-            ]
-        )
-    ]
 
-    assert model.prepare_messages(history, ModelRequestParameters()) == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart(content='the answer has to be a number', timestamp=IsDatetime()),
-                    UserPromptPart(content='try again', timestamp=IsDatetime()),
-                ]
-            )
-        ]
-    )
+    [request] = model.prepare_messages([ModelRequest(parts=authored)], ModelRequestParameters())
+
+    assert isinstance(request, ModelRequest)
+    rendered: list[tuple[type[ModelRequestPart], object]] = []
+    for part in request.parts:
+        assert isinstance(part, SystemPromptPart | UserPromptPart)
+        rendered.append((type(part), part.content))
+    assert rendered == expected
+
+
+async def test_a_hook_retry_before_any_prompt_stays_out_of_the_system_prompt():
+    """A run's own feedback can open the history: a model-request hook retrying a run with no prompt.
+
+    No response is saved, so the feedback merges into the first request right behind the agent's
+    system prompt, and the model must still see it as feedback rather than as more of that prompt.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    hooks = Hooks()
+    calls = 0
+
+    @hooks.on.before_model_request
+    async def reject_first(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ModelRetry('Use metric units.')
+        return request_context
+
+    model = FunctionModel(respond, profile=ModelProfile(supports_inline_system_prompts=False))
+    agent = Agent(model, system_prompt='You are terse.', capabilities=[hooks])
+    await agent.run()
+
+    [first_request] = seen[0]
+    assert isinstance(first_request, ModelRequest)
+    rendered: list[tuple[type[ModelRequestPart], object]] = []
+    for part in first_request.parts:
+        assert isinstance(part, SystemPromptPart | UserPromptPart)
+        rendered.append((type(part), part.content))
+    assert rendered == [(SystemPromptPart, 'You are terse.'), (UserPromptPart, '<system>Use metric units.</system>')]
 
 
 @pytest.mark.parametrize(

@@ -919,14 +919,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
-        # First, so every later step — the tool-availability announcement and the `<system>` wrap
-        # below it — sees the plain parts a retry translates into rather than the retry itself.
-        messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
-        messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
-        # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
-        # history was authored with, and an announcement opening the first request is not part of it.
+        # Counted before a retry translates or a delta renders into a `SystemPromptPart`: the standing
+        # prompt is what the history was authored with, and feedback or an announcement opening the
+        # first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
         standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+        # Translated before every later step — the tool-availability announcement and the `<system>`
+        # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
+        messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
+        messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -2438,8 +2439,9 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
     in the first request". The caller counts them on the history as authored and passes
-    `standing_prompt_count`, because rendering a `ToolAvailabilityDeltaPart` can put an announcement
-    in front of the first request, where counting again would take it for the standing prompt.
+    `standing_prompt_count`, because translating a `RetryFeedbackPart` or rendering a
+    `ToolAvailabilityDeltaPart` can put a `SystemPromptPart` in front of the first request, where
+    counting again would take it for the standing prompt.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2553,10 +2555,10 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool)
     and the original list comes back when nothing changed, so the identity check in `_make_request`
     can skip the redundant `_clean_message_history` pass.
 
-    A translated `SystemPromptPart` opening the first request joins that request's standing prompt,
-    exactly as an authored one there would — `_standing_system_prompt_count` reads the parts as
-    translated. That position is only reachable through a hand-built history, an adapter load, or
-    compaction, and it is the position the agent's author put the part in.
+    A translated `SystemPromptPart` opening the first request does not join the standing prompt:
+    `prepare_messages` counts that on the parts as authored, before this runs, so the `<system>` wrap
+    degrades the feedback like any other mid-conversation system prompt. A run's own feedback reaches
+    that position when a model-request hook retries the first request of a run with no user prompt.
 
     With `keep_feedback`, for a model that sets `Model._renders_retry_feedback`, a `RetryFeedbackPart`
     stays as it is, and so does the one a tool-less legacy `RetryPromptPart` becomes.
