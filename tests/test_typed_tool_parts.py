@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import KW_ONLY, dataclass
+from collections.abc import AsyncIterable, AsyncIterator
+from dataclasses import KW_ONLY, dataclass, replace
 from typing import ClassVar, Literal
 
 import pytest
 from typing_extensions import TypedDict
 
+from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai._event_registry import set_replay_isolation_guard
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -22,6 +27,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     parse_tool_kind,
 )
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -255,3 +261,33 @@ def test_a_slotted_typed_part_registers_the_recreated_class() -> None:
     promoted = ToolCallPart.narrow_type(ToolCallPart('t', {}, tool_kind='test.slotted'))
     assert type(promoted) is SlottedCallPart
     assert SlottedCallPart('t').tool_kind == 'test.slotted'
+
+
+async def test_an_agent_tool_with_a_registered_kind_produces_typed_parts() -> None:
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='lookup', json_args='{"sku": "A-1"}', tool_call_id='c1')}
+        else:
+            yield 'done'
+
+    async def mark_kind(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        return replace(tool_def, tool_kind='test.lookup')
+
+    def lookup(sku: str) -> LookupResult:
+        return {'in_stock': sku == 'A-1'}
+
+    events: list[AgentStreamEvent] = []
+
+    async def collect(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    agent = Agent(FunctionModel(stream_function=respond), tools=[Tool(lookup, prepare=mark_kind)])
+    result = await agent.run('Is A-1 in stock?', event_stream_handler=collect)
+
+    call = result.all_messages()[1].parts[0]
+    assert isinstance(call, LookupCallPart) and call.args_as_dict() == {'sku': 'A-1'}
+    tool_return = result.all_messages()[2].parts[0]
+    assert isinstance(tool_return, LookupReturnPart) and tool_return.content == {'in_stock': True}
+    assert [type(event.part) for event in events if isinstance(event, FunctionToolCallEvent)] == [LookupCallPart]
+    assert [type(event.part) for event in events if isinstance(event, FunctionToolResultEvent)] == [LookupReturnPart]

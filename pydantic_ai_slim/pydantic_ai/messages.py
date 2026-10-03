@@ -1377,9 +1377,10 @@ Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool
 [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind], and
 [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. A kind is registered by
 defining a typed subclass of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] or
-[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (or their native counterparts) that sets a
-`tool_kind` default; see [Typed tool parts](../tools-advanced.md#typed-tool-parts). Core registers
-`'tool-search'` and `'capability-load'`.
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (or their native counterparts) with
+`namespace` and `tool_kind` class arguments: `class LookupCallPart(ToolCallPart, namespace='inventory',
+tool_kind='lookup')` registers `'inventory.lookup'`. See [Typed tool parts](../tools-advanced.md#typed-tool-parts).
+Core's `'tool-search'` and `'capability-load'` are the only kinds without a namespace.
 
 A part may carry a kind that isn't registered in the current process, for example when it was
 recorded by a process that imported the defining module. It then stays a base part that keeps its
@@ -2706,8 +2707,6 @@ class ToolCallPart(BaseToolCallPart):
         the subclass, the part stays a base part; for core's own kinds, which deserialization routes
         straight to their subclass, an unsubstantiated `tool_kind` is also stripped so the part still
         round-trips through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter].
-        A return part whose `outcome` isn't `'success'` is never promoted: its content is an error, not
-        the tool's result shape.
         """
         return _narrow_call(part, tool_kind)
 
@@ -2726,10 +2725,11 @@ class NativeToolCallPart(BaseToolCallPart):
 
     1. Add a sibling `pydantic_ai/_<name>.py` module that defines the cross-provider
        `TypedDict`s and the `NativeToolCallPart` / `NativeToolReturnPart` subclasses.
-       Each subclass declares `tool_kind: Literal['<emitter>'] = '<emitter>'` to match the
-       emitting [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind]
-       and shadows `args` / `content` with a narrower type; declaring the `tool_kind`
-       default registers it.
+       Each subclass passes `_core=True` and declares `tool_kind: Literal['<emitter>'] = '<emitter>'`
+       to match the emitting
+       [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind], and shadows
+       `args` / `content` with a narrower type; `_core=True` registers that un-namespaced kind. (A
+       kind defined outside core uses the namespaced `namespace=` / `tool_kind=` class arguments.)
     2. Late-import the new module from this file (alongside the existing tool-search
        import) so registration runs whenever `pydantic_ai.messages` is imported.
     3. Optionally, add the subclass to `ModelResponsePart`'s discriminated union and its
@@ -2771,8 +2771,6 @@ class NativeToolCallPart(BaseToolCallPart):
         the subclass, the part stays a base part; for core's own kinds, which deserialization routes
         straight to their subclass, an unsubstantiated `tool_kind` is also stripped so the part still
         round-trips through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter].
-        A return part whose `outcome` isn't `'success'` is never promoted: its content is an error, not
-        the tool's result shape.
         """
         return _narrow_call(part, tool_kind)
 
