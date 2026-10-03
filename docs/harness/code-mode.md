@@ -215,6 +215,20 @@ explicit override. `run_code` is replayed in workflow code, so measuring elapsed
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
 
+## Inferred return schemas
+
+Tools that declare no return schema (common for MCP servers without `outputSchema`) render as `-> Any` in the sandbox catalog, so the model has to guess response shapes. Pass `infer_return_schemas=True` to capture the shape of each such tool's first successful result and substitute it into later renders of the signature and into the sandbox type-check stubs:
+
+```python
+agent = Agent('openai:gpt-5', capabilities=[CodeMode(infer_return_schemas=True)])
+```
+
+Learned shapes persist across runs of the same capability instance and are keyed by tool name plus a digest of the tool's parameter schema, so a different tool that reuses a name starts fresh. With the flag on, `CodeModeReturnSchemaWarning` is not emitted, since the signature corrects itself after the first call.
+
+The flag is off by default because an upgraded signature changes `run_code`'s description and busts the prompt-cache prefix once per learned tool. With `dynamic_catalog=True` the catalog lives in dynamic instructions where the update is cache-cheap, so the two flags pair well. Inferred schemas are best-effort: one sample cannot show optional fields, error variants, or mixed-type arrays, and a wrong guess can make the sandbox type checker reject code that would have run. Tools that declare a return schema are not changed.
+
+Learned property names come from tool output and are rendered into later runs' prompts, so enable the flag only for tools whose outputs you trust to that extent. Keys that are not plain Python identifiers are dropped, nesting is capped, and dicts that look like lookup maps (many keys, one value shape) become an untyped object so data-bearing keys such as usernames stay out of the schema. A small map can still look like a record from a single sample.
+
 ## REPL state
 
 State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state. If a worker crash or host-side execution failure invalidates the session, `run_code` returns a model retry that reports the reset and the nested calls that already started; the next snippet must recreate any required state.
@@ -655,7 +669,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry.
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema. `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them.
-- A tool without a return schema is still callable, but its generated signature shows `-> Any`, so the model has to guess the result's shape. `CodeMode` names such tools in one `CodeModeReturnSchemaWarning` (a `UserWarning` subclass) per run. Give a function tool a return annotation, or have your MCP server declare an `outputSchema`; when the server is not yours, silence just this category with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.
+- A tool without a return schema is still callable, but its generated signature shows `-> Any`, so the model has to guess the result's shape. `CodeMode` names such tools in one `CodeModeReturnSchemaWarning` (a `UserWarning` subclass) per run, unless `infer_return_schemas=True` (see [Inferred return schemas](#inferred-return-schemas)). Give a function tool a return annotation, or have your MCP server declare an `outputSchema`; when the server is not yours, silence just this category with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.
 
 ## Agent spec (YAML/JSON)
 

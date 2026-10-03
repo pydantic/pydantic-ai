@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 import keyword
 import math
 import re
@@ -573,6 +575,113 @@ def _warn_missing_return_schemas(names: Sequence[str]) -> None:
     )
 
 
+# Caps on inferred-schema size. Tool results are untrusted input rendered into
+# the model-facing catalog, so a pathological response must not be able to
+# balloon the prompt with a huge or deeply nested inferred type.
+_INFER_MAX_DEPTH = 5
+_INFER_MAX_PROPERTIES = 50
+_INFER_MAX_KEY_LENGTH = 64
+_INFER_MAP_LIKE_MIN_KEYS = 10
+
+
+def _is_safe_schema_key(key: str) -> bool:
+    """Whether an object key from a tool result may appear in an inferred schema.
+
+    Inferred keys become TypedDict field names rendered into the model-facing
+    catalog. Requiring a plain identifier both matches what the renderer can
+    express and keeps a result key from carrying arbitrary prose (prompt
+    injection) or oversized identifiers into the prompt.
+    """
+    return key.isidentifier() and not keyword.iskeyword(key) and len(key) <= _INFER_MAX_KEY_LENGTH
+
+
+def _infer_object_schema(value: dict[Any, Any], depth: int) -> dict[str, Any]:
+    """The dict branch of `_infer_return_schema`: a record infers properties, a lookup map does not.
+
+    A map's keys are data (usernames, tenant ids) and must not leak into the
+    model-facing schema, while a record's keys are field names worth surfacing.
+    A record with `_INFER_MAP_LIKE_MIN_KEYS`+ identically-shaped fields is rare;
+    a map with them is the common case, so that combination stays an untyped
+    object.
+    """
+    properties: dict[str, Any] = {}
+    for k, v in value.items():
+        key = str(k)
+        if not _is_safe_schema_key(key):
+            continue
+        if len(properties) == _INFER_MAX_PROPERTIES:
+            break
+        properties[key] = _infer_return_schema(v, _depth=depth + 1)
+    if value and not properties:
+        return {}
+    if len(properties) >= _INFER_MAP_LIKE_MIN_KEYS:
+        child_schemas = list(properties.values())
+        if all(s == child_schemas[0] for s in child_schemas[1:]):
+            return {'type': 'object'}
+    return {'type': 'object', 'properties': properties}
+
+
+def _infer_return_schema(value: Any, *, _depth: int = 0) -> dict[str, Any]:
+    """Best-effort JSON schema for a single sample tool result.
+
+    Object properties carry no `required` list and arrays only get an `items`
+    schema when every element infers identically: one sample can show a shape
+    but cannot prove which parts of it are stable. Values that don't map to a
+    JSON type produce `{}` (unconstrained), which renders as `Any`. Object keys
+    that fail `_is_safe_schema_key` are dropped; an object whose keys all drop
+    infers as `{}` so the capture site skips caching it. Nesting past
+    `_INFER_MAX_DEPTH` collapses to an untyped object/array, and a dict that
+    looks like a lookup map rather than a record (`_INFER_MAP_LIKE_MIN_KEYS`+
+    keys, all with the same shape) infers as an untyped object so data-bearing
+    keys stay out of the schema.
+    """
+    if value is None:
+        return {'type': 'null'}
+    if isinstance(value, bool):  # before int: bool is an int subclass
+        return {'type': 'boolean'}
+    if isinstance(value, int):
+        return {'type': 'integer'}
+    if isinstance(value, float):
+        return {'type': 'number'}
+    if isinstance(value, str):
+        return {'type': 'string'}
+    if isinstance(value, dict):
+        if _depth >= _INFER_MAX_DEPTH:
+            return {'type': 'object'}
+        return _infer_object_schema(value, _depth)  # pyright: ignore[reportUnknownArgumentType]
+    if isinstance(value, list):
+        if _depth >= _INFER_MAX_DEPTH:
+            return {'type': 'array'}
+        item_schemas = [_infer_return_schema(item, _depth=_depth + 1) for item in value]  # pyright: ignore[reportUnknownVariableType]
+        if item_schemas and all(s == item_schemas[0] for s in item_schemas[1:]):
+            return {'type': 'array', 'items': item_schemas[0]}
+        return {'type': 'array'}
+    return {}
+
+
+def _tool_identity_key(td: ToolDefinition) -> str:
+    """Cache key for an inferred return schema: tool name plus a parameter-schema digest.
+
+    Keying by bare name would let a later run that exposes a *different* tool
+    under the same name inherit a shape learned from the earlier tool's output
+    (the cache dict outlives runs by design). The parameter schema is the stable
+    part of a tool's identity, so a redefined tool starts fresh instead.
+    """
+    canonical = json.dumps(td.parameters_json_schema, sort_keys=True, separators=(',', ':'), default=str)
+    digest = hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:12]
+    return f'{td.name}:{digest}'
+
+
+async def _record_inferred_return_schema(cache: dict[str, Any], cache_key: str, call: Coroutine[Any, Any, Any]) -> Any:
+    """Await a sandbox tool call and cache the schema inferred from its sandbox-bound result."""
+    serialized = await call
+    schema = _infer_return_schema(serialized)
+    if schema:
+        # Concurrent first calls to one tool can both get here; the first to finish wins.
+        cache.setdefault(cache_key, schema)
+    return serialized
+
+
 def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
     """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
 
@@ -821,6 +930,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     into it and the dispatch path below claims them; `for_run_step` copies share it by reference.
     """
 
+    inferred_return_schemas: dict[str, Any] | None = field(default=None, kw_only=True, repr=False)
+    """Return schemas inferred from first tool results, keyed by tool identity.
+
+    `None` (default) disables inference. The `CodeMode` capability passes its own dict
+    here (see `CodeMode.infer_return_schemas`) so learned shapes survive the fresh
+    instances `for_run` creates and carry over to later runs. Pass an empty dict to
+    enable inference on a standalone toolset. Keys are internal: the tool name plus a
+    digest of its parameter schema, so a later tool that merely reuses a name does not
+    inherit a shape learned from a different tool's output.
+    """
+
     # Shared by `for_run_step` copies so they use the same REPL session and the original entered
     # instance can close it. `for_run` leaves this unset, giving concurrent runs isolated state.
     _run_state: MontyRunState | None = field(default=None, init=False, repr=False, compare=False)
@@ -1051,6 +1171,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 metadata['speculation'] = summary
         return tool_return
 
+    def _learn_return_schema(
+        self, tool_def: ToolDefinition, call: Coroutine[Any, Any, Any]
+    ) -> Coroutine[Any, Any, Any]:
+        """Wrap a sandbox tool call so its first successful result records an inferred return schema.
+
+        Returns `call` unchanged when inference is off, the tool declares a return schema, or a
+        shape is already cached, so the common path adds no extra coroutine.
+        """
+        cache = self.inferred_return_schemas
+        if cache is None or tool_def.return_schema is not None:
+            return call
+        cache_key = _tool_identity_key(tool_def)
+        if cache_key in cache:
+            return call
+        return _record_inferred_return_schema(cache, cache_key, call)
+
     @staticmethod
     def _as_run_code_tool(tool: ToolsetTool[AgentDepsT]) -> _RunCodeTool[AgentDepsT] | None:
         return tool if isinstance(tool, _RunCodeTool) else None
@@ -1119,11 +1255,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             original_name = sanitized_to_original.get(sandbox_name, sandbox_name)
             tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
             call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
+            tool_def = tool.wrapped_tools[original_name].tool_def
             if speculation is not None:
                 claimed = speculation.claim(execution.parent_tool_call_id, sandbox_name, kwargs)
                 if claimed is not None:
-                    return speculation.adopt(ctx, execution, claimed, call_part)
-            return run_tool_call(sandbox_name, call_part)
+                    return self._learn_return_schema(tool_def, speculation.adopt(ctx, execution, claimed, call_part))
+            return self._learn_return_schema(tool_def, run_tool_call(sandbox_name, call_part))
 
         async def run_tool_call(sandbox_name: str, call_part: ToolCallPart) -> Any:
             """Run a single tool call dispatched from inside the sandbox.
@@ -1329,8 +1466,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     stacklevel=2,
                 )
                 continue
-            if td.return_schema is None and name not in self._warned_deferred:
-                missing_return_schema.append(name)
+            # A tool with no return schema renders as `-> Any`. With inference enabled, substitute
+            # the shape captured from the tool's first successful result, and skip the warning:
+            # the signature corrects itself after that first call.
+            if td.return_schema is None:
+                if self.inferred_return_schemas is not None:
+                    inferred = self.inferred_return_schemas.get(_tool_identity_key(td))
+                    if inferred is not None:
+                        td = replace(td, return_schema=inferred)
+                elif name not in self._warned_deferred:
+                    missing_return_schema.append(name)
 
             if safe_name != name:
                 sanitized_to_original[safe_name] = name

@@ -205,12 +205,37 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     keeps the system prompt shorter and is the better choice.
     """
 
+    infer_return_schemas: bool = False
+    """Infer a return schema for sandboxed tools that don't declare one.
+
+    Many MCP tools ship no `outputSchema`, so their sandbox signature renders as
+    `-> Any` and the model has to guess response shapes, which costs retries and
+    tokens. With this flag on, the shape of each such tool's first successful
+    result is captured and substituted into later renders of the signature (and
+    into the sandbox type-check stubs) in place of `Any`. Learned shapes persist
+    across runs of the same capability instance.
+
+    Off by default because an updated signature changes `run_code`'s description,
+    which lives in the prompt-cache-keyed tool-definitions block, so the cache
+    prefix is busted once per learned tool. With `dynamic_catalog=True` the
+    catalog lives in dynamic instructions instead, where an update is cache-cheap.
+
+    Inferred schemas are best-effort: they come from a single sample, so variants
+    that sample didn't show (optional fields, error shapes, mixed-type arrays)
+    are not captured.
+    """
+
     speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
     """Aggregate launch/adopt/evict counters across this instance's runs, when `speculate` is set."""
 
     _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False)
 
     _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
+
+    # Shared across `for_run` copies and passed by reference into every
+    # `CodeModeToolset` this capability builds, so shapes learned in one run
+    # improve signatures in later runs.
+    _inferred_return_schemas: dict[str, Any] = field(default_factory=dict[str, Any], init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
@@ -234,6 +259,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         # fresh (intended), and the stats object is rebound so callers holding this instance
         # observe counters accumulated by its per-run clones.
         clone.speculation_stats = self.speculation_stats
+        clone._inferred_return_schemas = self._inferred_return_schemas
         if self.speculate is not None:
             allowlist = 'declared' if isinstance(self.speculate, str) else frozenset(self.speculate)
             clone._speculation = SpeculationCoordinator(
@@ -267,6 +293,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 monty_sandbox_url=self.monty_sandbox_url,
                 capability=self,
                 speculation=self._speculation,
+                inferred_return_schemas=self._inferred_return_schemas if self.infer_return_schemas else None,
             )
         return CodeModeToolset(
             wrapped=toolset,
@@ -280,6 +307,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             monty_sandbox_url=self.monty_sandbox_url,
             capability=self,
             speculation=self._speculation,
+            inferred_return_schemas=self._inferred_return_schemas if self.infer_return_schemas else None,
         )
 
     @property
