@@ -10,8 +10,9 @@ A decision model answers typed questions about a text rather than writing text: 
 
 A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: behind a [`FallbackModel`](overview.md#fallback-model), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed.
 
-Pydantic AI supports two decision model backends out of the box:
+Pydantic AI supports the following decision model backends:
 
+- OpenAI's `/v1/decisions` API, through [`OpenAIDecisionsModel`](openai.md#decisions-api), as `openai-decisions:gpt-6-luna`. This requires Decisions API access, the `openai` optional group and `OPENAI_API_KEY`.
 - TypeSafe's Jev, through [`TypeSafeModel`](typesafe.md), as `typesafe:jev-latest`.
 - Any other decision model behind the same `/v1/systemone` API as Jev, such as [Contrastive Language Models](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) (CLM), [Laya](https://huggingface.co/convaiinnovations/laya), or the models [Ollama](system-one.md#ollama) runs locally, through [`SystemOneModel`](system-one.md), as `system-one:<model>`.
 

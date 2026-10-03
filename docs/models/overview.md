@@ -13,7 +13,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | Provider and setup | Service | Model selection |
 | --- | --- | --- |
 | [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
-| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
+| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:`, [`openai-decisions:`](openai.md#decisions-api) |
 | [Anthropic](anthropic.md) | Model developer | `anthropic:` |
 | [Google / Gemini API](google.md) | Model developer | `google:` |
 | [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |

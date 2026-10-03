@@ -1832,6 +1832,10 @@ def infer_model(  # noqa: C901
         from .openai_codex import OpenAICodexModel
 
         return OpenAICodexModel(model_name, provider=provider)
+    elif model_kind == 'openai-decisions':
+        from .openai_decisions import OpenAIDecisionsModel
+
+        return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 

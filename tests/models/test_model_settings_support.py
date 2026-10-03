@@ -73,6 +73,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.snowflake import SnowflakeModel
     from pydantic_ai.models.zai import ZaiModel
@@ -502,6 +503,10 @@ def _openai_responses(client: httpx2.AsyncClient) -> Model:
     return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _openai_decisions(client: httpx2.AsyncClient) -> Model:
+    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
+
+
 def _openai_codex(client: httpx2.AsyncClient) -> Model:
     return OpenAICodexModel(
         'gpt-5.6-luna',
@@ -599,6 +604,12 @@ CASES = [
         _needs(openai_available, 'openai'),
     ),
     Case('OpenAIResponsesModel', ('OpenAI',), http_probe(_openai_responses), _needs(openai_available, 'openai')),
+    Case(
+        'OpenAIDecisionsModel',
+        ('OpenAI Decisions',),
+        decision_probe(_openai_decisions),
+        _needs(openai_available, 'openai'),
+    ),
     # `temperature`/`top_p` provoke the reasoning-model sampling warning, which the suite's
     # `filterwarnings = error` would otherwise turn into a request that never sends.
     Case(
