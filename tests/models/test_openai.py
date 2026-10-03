@@ -751,6 +751,24 @@ async def test_usage_unavailable_warning_can_be_promoted_to_error(allow_model_re
             self.recovery_called = True
             return ModelResponse(parts=[TextPart(content='recovered')])
 
+    recovered_capability = RecoveringCapability()
+    error_model = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(
+            openai_client=MockOpenAI.create_mock(
+                APIConnectionError(
+                    message='test connection failure',
+                    request=httpx2.Request('POST', 'http://localhost:11434/v1'),
+                )
+            )
+        ),
+    )
+    recovered_result = await Agent[None, str](
+        error_model, capabilities=[recovered_capability], deps_type=type(None)
+    ).run('hello')
+    assert recovered_result.output == 'recovered'
+    assert recovered_capability.recovery_called is True
+
     capability = RecoveringCapability()
     with warnings.catch_warnings():
         warnings.simplefilter('error', UsageLimitUnavailableWarning)
@@ -6671,15 +6689,17 @@ def chunk_with_usage(
     )
 
 
-async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
-    """Test that continuous_usage_stats replaces usage instead of accumulating.
+@pytest.mark.parametrize('omit_final_usage', [False, True])
+async def test_stream_with_continuous_usage_stats(allow_model_requests: None, omit_final_usage: bool):
+    """Continuous usage replaces earlier counts and survives a usage-less terminal chunk.
 
-    When continuous_usage_stats=True, each chunk contains cumulative usage, not incremental.
-    The final usage should equal the last chunk's usage, not the sum of all chunks.
-    We verify that usage is correctly updated at each step via stream_response.
+    Each reported chunk contains cumulative usage, so the final usage follows the most recent
+    measurement. Omitting usage from the terminal chunk must preserve that preceding measurement.
     """
-    # Simulate cumulative usage: each chunk has higher tokens (cumulative, not incremental)
-    stream = [
+    final_chunk = chunk_with_usage([], finish_reason='stop', completion_tokens=15, prompt_tokens=10, total_tokens=25)
+    if omit_final_usage:
+        final_chunk.usage = None
+    stream: list[chat.ChatCompletionChunk] = [
         chunk_with_usage(
             [ChoiceDelta(content='hello ', role='assistant')],
             completion_tokens=5,
@@ -6688,13 +6708,13 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
         ),
         chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=10, prompt_tokens=10, total_tokens=20),
         chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=15, prompt_tokens=10, total_tokens=25),
-        chunk_with_usage([], finish_reason='stop', completion_tokens=15, prompt_tokens=10, total_tokens=25),
+        final_chunk,
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
+    settings: OpenAIChatModelSettings = {'openai_continuous_usage_stats': True}
     async with agent.run_stream('', model_settings=settings) as result:
         # Verify usage is updated at each step via stream_response
         usage_at_each_step: list[RequestUsage] = []
@@ -6713,8 +6733,6 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
             ]
         )
 
-    # Final usage should be from the last chunk (15 output tokens)
-    # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
     assert result.usage.unmeasured_requests == 0
 
