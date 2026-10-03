@@ -6,9 +6,10 @@ from decimal import Decimal
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai import UsageLimitUnavailableWarning
+from pydantic_ai import Agent, UsageLimitUnavailableWarning
 from pydantic_ai._genai_prices import best_effort_price
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 
@@ -94,3 +95,23 @@ def test_unavailable_usage_warning_requires_token_or_cost_limit() -> None:
         warnings.simplefilter('error', UsageLimitUnavailableWarning)
         for limits in limits_without_token_or_cost:
             limits.check_tokens(usage)
+
+
+@pytest.mark.parametrize('has_marker', [True, False], ids=['explicitly-unmeasured', 'default-usage'])
+async def test_agent_function_model_preserves_explicit_missing_usage(has_marker: bool) -> None:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='world')], usage=RequestUsage(unmeasured_requests=int(has_marker)))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', UsageLimitUnavailableWarning)
+        result = await Agent(FunctionModel(respond)).run('hello', usage_limits=UsageLimits(input_tokens_limit=100))
+
+    unavailable_warnings = [item for item in caught if issubclass(item.category, UsageLimitUnavailableWarning)]
+    assert len(unavailable_warnings) == int(has_marker)
+    assert result.usage.unmeasured_requests == int(has_marker)
+    if has_marker:
+        assert result.usage.input_tokens == 0
+        assert result.usage.output_tokens == 0
+    else:
+        assert result.usage.input_tokens > 0
+        assert result.usage.output_tokens > 0

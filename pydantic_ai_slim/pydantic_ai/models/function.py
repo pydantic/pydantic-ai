@@ -173,7 +173,7 @@ class FunctionModel(Model):
         assert isinstance(response, ModelResponse), response
         response.model_name = self._model_name
         # Add usage data if not already present
-        if not response.usage.has_values():  # pragma: no branch
+        if not response.usage.has_values() and not response.usage.unmeasured_requests:
             response.usage = _estimate_usage(
                 chain(messages, [response]),
                 allow_tool_availability_deltas=self.tool_addition_mode is not None,
