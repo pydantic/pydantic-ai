@@ -19,6 +19,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
+    conversation_id_from_run_id,
 )
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
@@ -509,6 +510,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if not drew_before and not workflow.patched(_STABLE_DEFAULT_RUN_ID_PATCH):
             return None
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     async def wrap_run(
         self,

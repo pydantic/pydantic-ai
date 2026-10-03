@@ -178,6 +178,15 @@ _CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
 """Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
 
 
+def conversation_id_from_run_id(run_id: str) -> str:
+    """Derive a run's default `conversation_id` from its `run_id`.
+
+    For engines whose default `run_id` is replay-stable, so a re-execution of the run gets the same
+    conversation ID without another draw. The derivation is also stable for a caller-supplied `run_id`.
+    """
+    return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
+
+
 class _BoundModelOperations(NamedTuple):
     request: BoundDurableOperation[ModelRequestParams, Any, ModelResponse]
     request_stream: BoundDurableOperation[ModelRequestParams, Any, StreamedActivityResult]
@@ -874,13 +883,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     @abstractmethod
     def in_durable_context(self) -> bool:
         """Whether execution is currently inside this engine's durable container (workflow or flow)."""
-
-    def _default_conversation_id(self, run_id: str) -> str | None:
-        # Derived from the run ID, which is itself replay-stable here (the engine's default, or the
-        # caller's), so a re-execution of the run gets the same conversation ID without another draw.
-        if not self.in_durable_context:
-            return None
-        return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
 
     def _register_toolsets(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Wrap the agent's leaf toolsets in engine wrappers and index them by toolset `id`."""

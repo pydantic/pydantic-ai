@@ -11,7 +11,7 @@ from dbos import DBOS
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, conversation_id_from_run_id
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import ToolsetKind
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
@@ -228,6 +228,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         runs[step] = index + 1
         # The first run at a position keeps the ID it had before concurrent runs were told apart.
         return f'{context.workflow_id}:{step}' if index == 0 else f'{context.workflow_id}:{step}:{index}'
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
