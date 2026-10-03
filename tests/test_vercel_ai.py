@@ -5432,6 +5432,21 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
             id='file-url-media-type-not-inferable',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://e.com/report', 'media_type': None},
+            snapshot(ImageUrl(url='https://e.com/report')),
+            snapshot(
+                {
+                    'url': 'https://e.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': None,
+                    'identifier': '41cafe',
+                }
+            ),
+            id='file-url-media-type-not-inferable-null',
+        ),
+        pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'},
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
@@ -5468,9 +5483,10 @@ async def test_adapter_load_tool_return_completes_documented_file_shapes(
     A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
     the type itself would — including when the client left the key `null` or empty, which is what
     `File.type` gives a browser that cannot tell — and an `uploaded-file` shape needs nothing
-    completed. The dump is asserted for every case because it is the leg the completion protects: a
-    URL with no readable media type is left as the mapping it is, where reconstructing it would raise
-    `Could not infer media type` here. A mapping the type rejects keeps exactly the keys the client
+    completed. The dump is asserted for every case, so every file reconstructed here is proven to dump
+    again. A URL with no readable media type is left as the client sent it: a mapping when `media_type`
+    is absent or empty, and a file with no media type when it is `null`, the value our own dump writes
+    for such a URL. A mapping the type rejects keeps exactly the keys the client
     sent: the completion validates the mapping as it stands, so it never writes a `media_type` into
     something that stays a plain mapping.
     """
@@ -6119,6 +6135,38 @@ async def test_adapter_dump_messages_with_thinking():
             },
         ]
     )
+
+
+@pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
+def test_dump_messages_extensionless_url_round_trips(
+    url_type: type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl],
+) -> None:
+    """A URL whose media type can't be inferred dumps an empty `media_type`, and comes back as itself.
+
+    `FileUIPart.media_type` is a required string, so a URL Pydantic AI can't read a media type out of is
+    dumped with an empty one rather than raising. That value is also what the load side reads the URL's
+    kind from, and an empty one reads as no kind at all, so the kind rides along in `provider_metadata`
+    instead of every URL kind coming back as a document.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[url_type(url='https://example.com/file')])])
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    file_part = next(part for part in ui_messages[0].parts if isinstance(part, FileUIPart))
+    assert file_part.model_dump(exclude_none=True) == {
+        'type': 'file',
+        'media_type': '',
+        'url': 'https://example.com/file',
+        'provider_metadata': {'pydantic_ai': {'kind': url_type.kind}},
+    }
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == [
+        UserPromptPart(content=[url_type(url='https://example.com/file')], timestamp=IsDatetime())
+    ]
+    # URL parts compare without their media type, so pin the whole dumped part rather than the part alone.
+    assert VercelAIAdapter.dump_messages(reloaded)[0].parts[-1] == file_part
 
 
 async def test_adapter_dump_messages_with_files():

@@ -61,7 +61,11 @@ def media_url_to_multimodal(
     item: PydanticAIUrlType,
 ) -> AGUIContentTypes:
     """Convert a media URL to typed multimodal AG-UI input content."""
-    source = InputContentUrlSource(type='url', value=item.url, mime_type=item.media_type or '')
+    try:
+        mime_type = item.media_type
+    except ValueError:
+        mime_type = ''  # read back as `None` below
+    source = InputContentUrlSource(type='url', value=item.url, mime_type=mime_type)
     return _URL_TYPE_MAP[type(item)](source=source, metadata=dump_metadata(item))
 
 
