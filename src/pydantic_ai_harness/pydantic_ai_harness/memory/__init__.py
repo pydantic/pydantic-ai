@@ -48,14 +48,13 @@ __all__ = [
     'PostgresConnection',
     'PostgresMemoryStore',
     'PostgresPool',
-    'PixeltableMemoryStore',
     'SearchableMemoryStore',
     'SqliteMemoryStore',
 ]
 
 
 if TYPE_CHECKING:
-    from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore
+    from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore as PixeltableMemoryStore
 
 
 def __getattr__(name: str) -> Any:

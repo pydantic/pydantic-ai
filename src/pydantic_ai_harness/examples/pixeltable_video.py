@@ -1,5 +1,6 @@
 """Search a training video's transcripts and frame captions, with persistent memory.
 
+Requires Python 3.11+, `pydantic-ai-harness[pixeltable]`, and `pydantic-ai-slim[openai]`.
 Set `OPENAI_API_KEY` and run once with a short expense-policy video containing speech:
 
     python pixeltable_video.py training.mp4
@@ -21,6 +22,7 @@ from pydantic_ai_harness.memory import PixeltableMemoryStore
 
 
 def main(video_path: str) -> None:
+    """Index a training video, then retrieve its policy and recall a saved preference."""
     pxt.create_dir('training', if_exists='ignore')
     videos = pxt.create_table(  # pyright: ignore[reportUnknownMemberType]
         'training.videos', {'title': pxt.String, 'video': pxt.Video}, if_exists='ignore'
@@ -36,9 +38,7 @@ def main(video_path: str) -> None:
     )
     assert segments is not None
     segments.add_computed_column(
-        transcript=openai.transcriptions(
-            segments.audio_segment, model='whisper-1'
-        ).text.astype(pxt.String),
+        transcript=openai.transcriptions(segments.audio_segment, model='whisper-1').text.astype(pxt.String),
         if_exists='ignore',
     )
     segments.add_embedding_index('transcript', embedding=embedding, if_exists='ignore')

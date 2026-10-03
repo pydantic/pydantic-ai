@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import uuid
 from collections.abc import Mapping, Sequence
@@ -49,6 +50,31 @@ from pydantic_ai_harness.memory import (
 
 class Store(MemoryStore, SearchableMemoryStore, Protocol):
     """Combined contract implemented by the bundled stores."""
+
+
+def test_wildcard_import_without_pixeltable() -> None:
+    """A fresh interpreter must import ordinary stores without the Pixeltable extra."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            """
+import sys
+sys.modules['pixeltable'] = None
+namespace = {}
+exec('from pydantic_ai_harness.memory import *', namespace)
+from pydantic_ai_harness.memory import InMemoryStore, Memory, PostgresMemoryStore
+assert namespace['InMemoryStore'] is InMemoryStore
+assert namespace['Memory'] is Memory
+assert namespace['PostgresMemoryStore'] is PostgresMemoryStore
+assert 'PixeltableMemoryStore' not in namespace
+""",
+        ],
+        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 _PIXELTABLE_AVAILABLE = sys.version_info >= (3, 11) and find_spec('pixeltable') is not None

@@ -65,7 +65,7 @@ print(result.output)
 
 ## Video, audio, and images
 
-Download the [video example](https://github.com/pydantic/pydantic-ai/blob/main/examples/pydantic_ai_examples/pixeltable_video.py)
+Download the [video example](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/examples/pixeltable_video.py)
 and run it once with a short expense-policy video containing speech and `OPENAI_API_KEY` set:
 
 ```bash

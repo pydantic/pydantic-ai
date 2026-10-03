@@ -18,7 +18,7 @@ make install                      # or: uv sync --all-extras
 uv run examples/coding_agent.py
 ```
 
-Each example states its default model at the top and reads that provider's API
+The coding and research examples state their default model at the top and read that provider's API
 key from the environment (e.g. `ANTHROPIC_API_KEY`). Set
 `PYDANTIC_AI_MODEL=provider:model` to run against a different model — you'll
 then need that provider's key instead.
@@ -29,7 +29,8 @@ then need that provider's key instead.
 |---|---|---|
 | [`coding_agent.py`](coding_agent.py) | A coding agent for the current repo: `Coder` in a local workspace that passes on `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE` | `anthropic:claude-opus-5-5` |
 | [`research_agent.py`](research_agent.py) | A web-research agent that cites every claim, built from the blocks that make up `Researcher` | `openai:gpt-5.6-sol` |
+| [`pixeltable_video.py`](pixeltable_video.py) | Search stored video transcripts and frame captions with timestamps and persistent memory; see the [Pixeltable guide](../../../docs/harness/pixeltable.md#video-audio-and-images) for setup | `openai:gpt-5.6-sol` |
 
-Every example exposes a `build_agent()` factory (imported by the test suite, and
+The coding and research examples expose a `build_agent()` factory (imported by the test suite, and
 handy for embedding the agent in your own code) and a `main()` that starts an
 interactive session.
