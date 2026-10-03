@@ -291,7 +291,7 @@ def _parse_zai_quota(value: object) -> Quota:
     ):
         return Quota('unknown')
 
-    quota_rows: list[object] = limits
+    quota_rows: list[object] = limits  # pyright: ignore[reportUnknownVariableType]
     windows: dict[int, tuple[float, str, int]] = {}
     for item in quota_rows:
         entry = _mapping(item)
@@ -344,12 +344,18 @@ def _parse_zai_quota(value: object) -> Quota:
 def _fetch_zai_quota(api_key: str) -> Quota:
     headers: dict[str, str] = {'Authorization': api_key, 'Accept': 'application/json'}
     request = urllib.request.Request(ZAI_QUOTA_URL, headers=headers, method='GET')
+    opener = urllib.request.OpenerDirector()
+    opener.add_handler(urllib.request.ProxyHandler())
+    opener.add_handler(urllib.request.HTTPHandler())
+    opener.add_handler(urllib.request.HTTPSHandler())
+    opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
+    opener.add_handler(urllib.request.HTTPErrorProcessor())
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with opener.open(request, timeout=20) as response:
             if response.status != 200:
                 return Quota('unknown')
             payload: object = json.loads(response.read())
-    except (OSError, TimeoutError, urllib.error.URLError, UnicodeDecodeError, json.JSONDecodeError):
+    except (OSError, TimeoutError, urllib.error.URLError, UnicodeDecodeError, ValueError):
         return Quota('unknown')
     return _parse_zai_quota(payload)
 

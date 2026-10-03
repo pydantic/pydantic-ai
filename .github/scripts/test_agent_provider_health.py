@@ -6,6 +6,8 @@ import argparse
 import datetime as dt
 import json
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -256,7 +258,7 @@ def test_zai_quota_unavailable_or_ambiguous_is_unknown(payload: object) -> None:
 
 def test_zai_quota_probe_returns_unknown_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
     response = FakeHTTPResponse(_quota_response(), status=503)
-    monkeypatch.setattr(health.urllib.request, 'urlopen', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
     assert _fetch_zai_quota('private-zai-fixture-key').status == 'unknown'
 
@@ -265,17 +267,77 @@ def test_zai_quota_probe_returns_unknown_on_http_error(monkeypatch: pytest.Monke
 def test_zai_quota_probe_returns_unknown_on_transport_error(
     error: OSError | health.urllib.error.URLError, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def open_url(*_args: object, **_kwargs: object) -> FakeHTTPResponse:
+    def open_url(
+        _opener: health.urllib.request.OpenerDirector, *_args: object, **_kwargs: object
+    ) -> FakeHTTPResponse:
         raise error
 
-    monkeypatch.setattr(health.urllib.request, 'urlopen', open_url)
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
 
     assert _fetch_zai_quota('private-zai-fixture-key').status == 'unknown'
 
 
 def test_zai_quota_probe_returns_unknown_on_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     response = FakeHTTPResponse(b'{')
-    monkeypatch.setattr(health.urllib.request, 'urlopen', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    assert _fetch_zai_quota('private-zai-fixture-key').status == 'unknown'
+
+
+def test_zai_quota_probe_does_not_forward_authorization_on_cross_origin_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_authorization: list[str | None] = []
+    target_authorization: list[str | None] = []
+
+    class QuotaHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            target_authorization.append(self.headers.get('Authorization'))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(_quota_response()).encode())
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    target_server = ThreadingHTTPServer(('127.0.0.1', 0), QuotaHandler)
+    target_thread = threading.Thread(target=target_server.serve_forever, daemon=True)
+    target_thread.start()
+    try:
+        class RedirectHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                source_authorization.append(self.headers.get('Authorization'))
+                self.send_response(302)
+                self.send_header('Location', f'http://127.0.0.1:{target_server.server_address[1]}/quota')
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+        source_server = ThreadingHTTPServer(('127.0.0.1', 0), RedirectHandler)
+        source_thread = threading.Thread(target=source_server.serve_forever, daemon=True)
+        source_thread.start()
+        try:
+            monkeypatch.setattr(health, 'ZAI_QUOTA_URL', f'http://127.0.0.1:{source_server.server_address[1]}/quota')
+            quota = _fetch_zai_quota('dummy-zai-fixture-key')
+        finally:
+            source_server.shutdown()
+            source_thread.join()
+            source_server.server_close()
+    finally:
+        target_server.shutdown()
+        target_thread.join()
+        target_server.server_close()
+
+    assert source_authorization == ['dummy-zai-fixture-key']
+    assert target_authorization == []
+    assert quota.status == 'unknown'
+
+
+def test_zai_quota_probe_returns_unknown_on_oversized_json_integer(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = FakeHTTPResponse(b'{"code":' + b'9' * 5000 + b'}')
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: response)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
     assert _fetch_zai_quota('private-zai-fixture-key').status == 'unknown'
 
@@ -285,7 +347,7 @@ def test_check_writes_blocked_artifact_for_out_of_range_zai_reset(
 ) -> None:
     """An unrepresentable provider reset time blocks the gate without losing its artifact."""
     payload = _quota_response(interval_reset=10**1000)
-    monkeypatch.setattr(health.urllib.request, 'urlopen', lambda *_args, **_kwargs: FakeHTTPResponse(payload))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', lambda *_args, **_kwargs: FakeHTTPResponse(payload))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: FakeGitHub())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     secret = 'zai-key-private-fixture'
     monkeypatch.setenv('ZAI_API_KEY', secret)
@@ -806,12 +868,14 @@ def test_check_command_reads_zai_quota_and_writes_secret_free_artifact(
     """Trusted check reads the quota endpoint with raw auth and emits secret-free state."""
     requests: list[health.urllib.request.Request] = []
 
-    def open_url(request: health.urllib.request.Request, *, timeout: int) -> FakeHTTPResponse:
+    def open_url(
+        _opener: health.urllib.request.OpenerDirector, request: health.urllib.request.Request, *, timeout: int
+    ) -> FakeHTTPResponse:
         requests.append(request)
         assert timeout == 20
         return FakeHTTPResponse(payload)
 
-    monkeypatch.setattr(health.urllib.request, 'urlopen', open_url)
+    monkeypatch.setattr(health.urllib.request.OpenerDirector, 'open', open_url)
     client = FakeGitHub()
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     key = 'private-zai-fixture-key'
