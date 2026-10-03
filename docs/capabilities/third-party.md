@@ -1,5 +1,5 @@
 ---
-description: "Find community capability packages for Pydantic AI, covering todos, context management, subagents, guardrails, sandboxing, Agent Skills, SQL analytics and RAG."
+description: "Find community capability packages for Pydantic AI, covering todos, context management, subagents, guardrails, human approval, sandboxing, Agent Skills, SQL analytics and RAG."
 ---
 
 # Third-Party Capabilities
@@ -31,6 +31,12 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/guardrails/) provides input and output guardrails that validate or block requests and responses, and Pydantic AI enforces usage, token, and request limits via [`UsageLimits`](../agent.md#usage-limits). As a community alternative bundling several ready-made shields, including USD cost tracking:
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
+
+## Human-in-the-Loop Approval {#human-in-the-loop-approval}
+
+Pydantic AI supports [human-in-the-loop tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) natively, and [`HandleDeferredToolCalls`](handle-deferred-tool-calls.md) resolves approvals inside the run with a handler you write. As a community package that sends those approvals to a person's phone:
+
+* [`pushary-pydantic-ai`](https://github.com/Pushary/pushary-pydantic-ai) - `PusharyApprovals` resolves `requires_approval` tool calls by asking a specific end user on their phone, then continues the run: approve runs the tool, while deny or no answer returns a `ToolDenied` the model can read. Rules on the Pushary account can allow or deny first without paging anyone. The same capability answers the model's `ask_human` questions (yes/no, a choice, or free text) from `pushary_tool()`. The person is resolved per run from trusted deps, never from tool input, and the approver sees the tool's full arguments. The phone wait is declared as a durable operation, so under [durable execution](../durable_execution/overview.md) it runs outside workflow code. For waits of hours, `create_reviews` and `resolve_reviews` let the run end with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] and resume later. The package calls the hosted Pushary API, which requires a paid plan.
 
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
