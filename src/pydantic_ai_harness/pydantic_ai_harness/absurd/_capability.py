@@ -4,7 +4,7 @@ from __future__ import annotations
 
 try:
     import absurd_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `absurd-sdk` package to use the Absurd durability capability, '
         'you can use the `absurd` optional group -- `pip install "pydantic-ai-harness[absurd]"`'
