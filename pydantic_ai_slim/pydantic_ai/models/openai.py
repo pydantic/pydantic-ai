@@ -3587,9 +3587,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(item, NativeToolCallPart):
                         if from_same_provider and item.tool_name == ToolSearchTool.kind and item.tool_call_id:
                             call_id, status, _ = _tool_search_replay_details(item)
+                            search_args = item.args_as_dict() or {}
+                            if 'queries' in search_args:
+                                # Hosted tool search takes `paths`; we store them canonically as `queries`.
+                                search_args = {'paths': search_args['queries']}
                             tool_search_call = responses.response_input_item_param.ToolSearchCall(
                                 call_id=call_id,
-                                arguments=item.args_as_dict() or {},
+                                arguments=search_args,
                                 type='tool_search_call',
                                 execution='server',
                                 status=status,
