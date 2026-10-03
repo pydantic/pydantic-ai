@@ -11,14 +11,35 @@ their queries and retrieve stored text and timestamps.
 
 import sys
 
-import pixeltable as pxt
+try:
+    import pixeltable as pxt
+except ImportError as exc:
+    raise ImportError('Install "pydantic-ai-harness[pixeltable]" on Python 3.11+.') from exc
+
 from pixeltable.functions import openai
 from pixeltable.functions.audio import audio_splitter
 from pixeltable.functions.video import extract_audio, frame_iterator
 
 from pydantic_ai import Agent
+from pydantic_ai.models import Model
 from pydantic_ai_harness import Memory, Pixeltable
 from pydantic_ai_harness.memory import PixeltableMemoryStore
+
+
+def build_agent(model: Model | str = 'openai:gpt-5.6-sol') -> Agent[None, str]:
+    """Build an agent over stored training material with persistent memory."""
+    return Agent(
+        model,
+        instructions=(
+            'Answer from retrieved training material. Cite the title and segment_start/segment_end '
+            'for transcripts, or frame_attrs.time for frame captions; all times are in seconds. '
+            'Say when the retrieved material does not answer the question.'
+        ),
+        capabilities=[
+            Pixeltable(['training.segments', 'training.frames']),
+            Memory(PixeltableMemoryStore(table_name='training.memory')),
+        ],
+    )
 
 
 def main(video_path: str) -> None:
@@ -73,18 +94,7 @@ def main(video_path: str) -> None:
     frames.add_embedding_index('caption', embedding=embedding, if_exists='ignore')
 
     videos.insert([{'title': 'Expense policy', 'video': video_path}])  # pyright: ignore[reportUnknownMemberType]
-    agent = Agent(
-        'openai:gpt-5.6-sol',
-        instructions=(
-            'Answer from retrieved training material. Cite the title and segment_start/segment_end '
-            'for transcripts, or frame_attrs.time for frame captions; all times are in seconds. '
-            'Say when the retrieved material does not answer the question.'
-        ),
-        capabilities=[
-            Pixeltable(['training.segments', 'training.frames']),
-            Memory(PixeltableMemoryStore(table_name='training.memory')),
-        ],
-    )
+    agent = build_agent()
     print(
         agent.run_sync(
             'What is the meal reimbursement limit? Cite the audio segment. Remember that I prefer visual examples.'
