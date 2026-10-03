@@ -5712,6 +5712,20 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
     assert part.content == {'discovered_tools': [{'name': 'foo'}]}
 
 
+def test_synthesize_local_leaves_a_failed_tool_search_return_a_base_part() -> None:
+    """A tool-search return that isn't a success keeps its `tool_kind` but its content is an error,
+    so the request-side promotion leaves it a base `ToolReturnPart` unchanged."""
+    failed = ToolReturnPart(
+        tool_name='search_tools', content='search failed', tool_call_id='c1', tool_kind='tool-search', outcome='failed'
+    )
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['a']}, tool_call_id='c1')]),
+        ModelRequest(parts=[failed]),
+    ]
+    translated = synthesize_local_tool_search_messages(history)
+    assert translated[1].parts == [failed]
+
+
 async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
     """`ToolSearch(parameter_description=...)` flows through to the local `search_tools`
     function tool's `queries` parameter description on the wire — verifies the
@@ -6296,10 +6310,8 @@ def test_discriminator_unknown_tool_kind_falls_through_to_part_kind() -> None:
     doesn't contain `(part_kind, 'unknown-kind')`, so the discriminator returns the bare
     `part_kind` rather than a typed-subclass tag.
 
-    Calls the discriminator directly because constructing a valid ModelMessage with
-    `tool_kind='unknown-kind'` would fail Pydantic's `ToolPartKind` Literal validation
-    upstream — the registry-miss branch is internal logic, not a deserialization path
-    that any well-formed input would take.
+    Calls the discriminator directly; the deserialization path for unregistered kinds is
+    covered in `tests/test_typed_tool_parts.py`.
     """
 
     return_raw = {

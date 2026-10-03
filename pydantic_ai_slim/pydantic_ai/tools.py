@@ -698,27 +698,22 @@ class ToolDefinition:
     the wire; that's `defer_loading`'s question.
     """
 
-    # Implementation note for new typed native tools: registering a new tool_kind value
-    # requires (1) extending the ToolPartKind Literal in messages.py, (2) defining
-    # the typed subclass + narrower under pydantic_ai/<your_native_tool>.py and registering
-    # in _TOOL_CALL_NARROWERS / _NATIVE_CALL_NARROWERS / _TOOL_RETURN_NARROWERS /
-    # _NATIVE_RETURN_NARROWERS, (3) adding the (part_kind, tool_kind) → Tag entries
-    # in messages.py's _TYPED_PART_TAGS and _TYPED_PART_TAGS_BY_TYPE registries, and
-    # (4) extending the ModelResponsePart / ModelRequestPart Annotated unions with
-    # the new typed subclasses.
     tool_kind: ToolPartKind | None = None
-    """Discriminator for a cross-provider typed call/return shape (e.g. `'tool-search'`).
+    """What this tool is, independent of its name (e.g. `'tool-search'`), for tools with typed parts.
 
-    Set by the framework when a tool emits parts that should be promoted to a typed
-    subclass (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
-    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]). Leave as
-    `None` for user-defined function tools — they go through the standard
-    [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] /
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] shapes.
+    The tool's call and return parts carry it and are promoted to the typed subclasses
+    registered for it (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
+    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]), so code can
+    recognize the tool with `isinstance` even when it has been renamed or prefixed. The kind
+    must be registered by a typed tool part (see
+    [Typed tool parts](../tools-advanced.md#typed-tool-parts)); a run whose tools include an
+    unregistered kind raises `UserError`, while a stored definition with one still loads. Leave as
+    `None` for tools that have no typed parts.
 
-    To detect a tool-search part regardless of execution path (native server-side vs.
-    local fallback), check `part.tool_kind == 'tool-search'` — this works across both
-    call/return and both server/local variants.
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its outcome
+    and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed or
+    denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Distinct from [`kind`][pydantic_ai.tools.ToolDefinition.kind], which is about invocation
     semantics (`'function'` / `'output'` / `'external'` / `'unapproved'`).

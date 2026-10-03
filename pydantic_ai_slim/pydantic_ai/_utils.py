@@ -779,15 +779,16 @@ def declares_dataclass_fields(cls: type) -> bool:
     Annotations are inspected without being evaluated (see [`own_annotations`][]), so a `ClassVar`
     that can't be resolved yet is still recognized from the way it was written.
     """
-    for annotation in own_annotations(cls).values():
-        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
-            continue
-        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
-        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
-        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
-            continue
+    return any(not is_classvar_annotation(annotation) for annotation in own_annotations(cls).values())
+
+
+def is_classvar_annotation(annotation: Any) -> bool:
+    """Whether an annotation from [`own_annotations`][] declares a `ClassVar`, evaluated or not."""
+    if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
         return True
-    return False
+    # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+    text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+    return text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()) is not None
 
 
 def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:

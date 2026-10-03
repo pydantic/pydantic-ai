@@ -470,7 +470,7 @@ async def test_deferred_output_json_schema():
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'tool_kind': {
                             'anyOf': [
-                                {'enum': ['tool-search', 'capability-load'], 'type': 'string'},
+                                {'type': 'string'},
                                 {'type': 'null'},
                             ],
                             'default': None,
@@ -588,7 +588,7 @@ async def test_deferred_output_json_schema():
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'tool_kind': {
                             'anyOf': [
-                                {'enum': ['tool-search', 'capability-load'], 'type': 'string'},
+                                {'type': 'string'},
                                 {'type': 'null'},
                             ],
                             'default': None,
