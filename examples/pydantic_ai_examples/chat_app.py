@@ -160,15 +160,19 @@ class Database:
     async def connect(
         cls, file: Path = THIS_DIR / '.chat_app_messages.sqlite'
     ) -> AsyncGenerator[Database]:
-        with logfire.span('connect to DB'):
-            loop = asyncio.get_running_loop()
-            executor = ThreadPoolExecutor(max_workers=1)
-            con = await loop.run_in_executor(executor, cls._connect, file)
-            slf = cls(con, loop, executor)
+        loop = asyncio.get_running_loop()
+        executor = ThreadPoolExecutor(max_workers=1)
         try:
-            yield slf
+            with logfire.span('connect to DB'):
+                con = await loop.run_in_executor(executor, cls._connect, file)
+                slf = cls(con, loop, executor)
+            try:
+                yield slf
+            finally:
+                await slf._asyncify(con.close)
         finally:
-            await slf._asyncify(con.close)
+            # The executor runs con.close above, so shut it down after the connection is closed.
+            executor.shutdown()
 
     @staticmethod
     def _connect(file: Path) -> sqlite3.Connection:
