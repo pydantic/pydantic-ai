@@ -142,7 +142,7 @@ Key restrictions:
 - Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler; `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
-- Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
+- Filesystem I/O requires `workspace_files=True`, an `os_access` handler, or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
 
 The sandbox constrains the model-generated Python, not the implementation of the tools it calls.
@@ -150,6 +150,15 @@ Wrapped tools retain their normal host and network access, so expose only tools 
 input validation appropriate for model-generated calls.
 
 When a generated example keeps failing, check these restrictions before changing the rest of the agent.
+
+## Workspace Files
+
+`CodeMode(workspace_files=True)` routes sandboxed `pathlib` and `open()` calls to the run's workspace, so
+`run_code` sees the same files as `Shell` and `FileSystem`, including in a remote sandbox. Relative paths
+resolve against the workspace's working directory. The run fails at its start without a workspace;
+`Path.rename` raises `OSError` in the sandbox. Paths under a `mount` still reach the host, and `os_access`
+still answers environment and clock calls but no longer sees file calls. Prefer this over `mount` whenever
+the agent has a workspace.
 
 ## Host Access: `mount` and `os_access`
 
@@ -171,7 +180,7 @@ CodeMode(os_access=OSAccess(environ={'API_BASE': 'https://api.example.com'}))
 
 - `mount` takes a `MountDir` or a list of them; `host_path` must already exist (`MountDir` raises `TypeError` otherwise). The default `mode='overlay'` is copy-on-write: writes are visible only within the current `run_code` call and never reach the host. Use `mode='read-write'` when writes must persist (including across `run_code` calls), `mode='read-only'` to forbid them.
 - `os_access` takes an `AbstractOS` (e.g. `OSAccess`, isolated in-memory filesystem and env, host clock) or a keyword-argument callback `def handler(*, name, args, kwargs, **_)` (may be `async`). Return any value (including `None`) to answer the call; return `pydantic_monty.NOT_HANDLED` to refuse it (raises in the sandbox and burns a retry). The positional `(name, args, kwargs)` form is deprecated.
-- Mounts are directories on the machine running the agent, not the run's workspace. With a remote sandbox such as `ModalSandbox`, `FileSystem` and `Shell` act in the sandbox while mounted `pathlib` code still touches the host -- for files the model shares with its commands, sandbox the workspace tools (`FileSystem`) instead of mounting.
+- Mounts are directories on the machine running the agent, not the run's workspace. With a remote sandbox such as `ModalSandbox`, `FileSystem` and `Shell` act in the sandbox while mounted `pathlib` code still touches the host -- for files the model shares with its commands, use `workspace_files=True` instead of mounting.
 
 ## Other Options
 
@@ -183,6 +192,7 @@ CodeMode(
     max_tool_calls: int = 100,
     os_access: CodeModeOS | None = None,
     mount: CodeModeMount | None = None,
+    workspace_files: bool = False,         # sandbox pathlib/open() use the run's workspace
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
