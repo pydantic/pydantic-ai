@@ -509,7 +509,8 @@ def synthesize_local_tool_search_messages(
                     and part.tool_kind == 'tool-search'
                 ):
                     promoted = ToolReturnPart.narrow_type(part)
-                    if isinstance(promoted, ToolSearchReturnPart):  # pragma: no branch
+                    # A return that isn't a success keeps its `tool_kind` but stays a base part.
+                    if isinstance(promoted, ToolSearchReturnPart):
                         new_request_parts.append(promoted)
                         request_changed = True
                         continue

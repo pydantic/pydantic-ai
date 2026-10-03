@@ -5713,6 +5713,20 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
     assert part.content == {'discovered_tools': [{'name': 'foo'}]}
 
 
+def test_synthesize_local_leaves_a_failed_tool_search_return_a_base_part() -> None:
+    """A tool-search return that isn't a success keeps its `tool_kind` but its content is an error,
+    so the request-side promotion leaves it a base `ToolReturnPart` unchanged."""
+    failed = ToolReturnPart(
+        tool_name='search_tools', content='search failed', tool_call_id='c1', tool_kind='tool-search', outcome='failed'
+    )
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['a']}, tool_call_id='c1')]),
+        ModelRequest(parts=[failed]),
+    ]
+    translated = synthesize_local_tool_search_messages(history)
+    assert translated[1].parts == [failed]
+
+
 async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
     """`ToolSearch(parameter_description=...)` flows through to the local `search_tools`
     function tool's `queries` parameter description on the wire — verifies the
