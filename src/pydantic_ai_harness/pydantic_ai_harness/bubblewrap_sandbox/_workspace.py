@@ -153,6 +153,21 @@ pwd -P
 """
 """`$HOME` as a canonical absolute path, using only shell builtins."""
 
+_CANONICAL_ZDOTDIR = r"""case "$ZDOTDIR" in
+  '') exit 0 ;;
+  /*) ;;
+  *) exit 1 ;;
+esac
+cd -P -- "$ZDOTDIR" || exit 1
+pwd -P
+"""
+"""Canonical `$ZDOTDIR` if set and absolute, empty if unset, or exit 1 if relative.
+
+`ZDOTDIR` overrides `$HOME` for zsh startup files, so `sshd_config SetEnv` can direct zsh to read
+`<ZDOTDIR>/.zshenv` from the writable working directory before `bwrap` starts. This resolves it the
+same way `_CANONICAL_HOME` resolves `$HOME`, so `_login_path_mounts` can protect it.
+"""
+
 _PROBE_TIMEOUT = 30.0
 """Seconds to wait for the check that `bwrap` can start a sandbox at all."""
 
@@ -324,6 +339,15 @@ class BubblewrapWorkspace(WrapperWorkspace):
                 "bubblewrap could not read the host account's home directory, so it cannot keep its "
                 'login files out of the writable sandbox'
             )
+        # ZDOTDIR overrides $HOME for zsh startup files. If set via sshd_config SetEnv to a directory inside
+        # the writable working directory, zsh would execute <ZDOTDIR>/.zshenv before bwrap starts.
+        zdotdir_reported = await self.wrapped.run(['/bin/sh', '-c', _CANONICAL_ZDOTDIR], timeout=_PROBE_TIMEOUT)
+        zdotdir = zdotdir_reported.stdout.removesuffix('\n')
+        if zdotdir_reported.exit_code != 0:
+            raise WorkspaceUnavailableError(
+                'bubblewrap found a relative ZDOTDIR, which zsh would resolve against the working directory; '
+                'this cannot be made safe inside the sandbox'
+            )
         root = posixpath.normpath(working_dir)
         # Path to kind, as `_ENSURE_LOGIN_PATHS` takes them: `p` for a parent pinned in place by binding it onto
         # itself, `d` for a protected directory, `f` for a protected file.
@@ -337,6 +361,15 @@ class BubblewrapWorkspace(WrapperWorkspace):
             while parent != root and _contains(root, parent):
                 kinds.setdefault(parent, 'p')
                 parent = posixpath.dirname(parent)
+        # Protect ZDOTDIR/.zshenv if ZDOTDIR is set and inside the working directory.
+        if zdotdir and zdotdir != home:
+            zshenv_path = posixpath.join(zdotdir, '.zshenv')
+            if _contains(root, zshenv_path):
+                kinds[zshenv_path] = 'f'
+                parent = posixpath.dirname(zshenv_path)
+                while parent != root and _contains(root, parent):
+                    kinds.setdefault(parent, 'p')
+                    parent = posixpath.dirname(parent)
         # Sorted, a parent comes before what's inside it, both to be created and to be mounted.
         paths = sorted(kinds)
         if paths:

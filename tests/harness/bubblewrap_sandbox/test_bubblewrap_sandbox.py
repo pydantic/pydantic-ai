@@ -298,6 +298,61 @@ async def test_a_relative_home_directory_is_unavailable(tmp_path: Path) -> None:
         await BubblewrapWorkspace(Workspace(backend)).run(['true'])
 
 
+async def test_zdotdir_inside_the_working_dir_is_mounted_read_only(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """ZDOTDIR overrides HOME for zsh startup, so sshd_config SetEnv could escape the sandbox through it."""
+    home = tmp_path.parent / 'home'
+    home.mkdir(exist_ok=True)
+    zdotdir = tmp_path / 'zsh'
+    zdotdir.mkdir()
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)})
+    workspace = BubblewrapWorkspace(Workspace(backend))
+
+    await workspace.run(['true'])
+
+    resolved = str(zdotdir.resolve())
+    # The ZDOTDIR directory is a parent mount so it cannot be renamed aside.
+    assert tools.bwrap_calls[0].count(f'--bind {resolved} {resolved}') == 1
+    # The .zshenv inside it is read-only.
+    assert tools.bwrap_calls[0].count(f'--ro-bind {resolved}/.zshenv {resolved}/.zshenv') == 1
+
+
+async def test_zdotdir_same_as_home_uses_standard_protection(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """When ZDOTDIR equals HOME, no extra mounts are needed since HOME protection already covers it."""
+    home = tmp_path / 'home'
+    home.mkdir()
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': str(home)})
+    workspace = BubblewrapWorkspace(Workspace(backend))
+
+    await workspace.run(['true'])
+
+    resolved = str(home.resolve())
+    # Only one .zshenv mount (from HOME protection), not two.
+    assert tools.bwrap_calls[0].count(f'--ro-bind {resolved}/.zshenv {resolved}/.zshenv') == 1
+
+
+async def test_zdotdir_outside_working_dir_needs_no_extra_protection(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """A ZDOTDIR outside the writable directory cannot be planted by a sandboxed command."""
+    home = tmp_path.parent / 'home'
+    home.mkdir(exist_ok=True)
+    zdotdir = tmp_path.parent / 'zsh'
+    zdotdir.mkdir(exist_ok=True)
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)})
+    workspace = BubblewrapWorkspace(Workspace(backend))
+
+    await workspace.run(['true'])
+
+    # No mounts for ZDOTDIR since it's outside the working directory.
+    assert str(zdotdir.resolve()) not in tools.bwrap_calls[0]
+
+
+async def test_a_relative_zdotdir_is_unavailable(tmp_path: Path) -> None:
+    """A relative ZDOTDIR would resolve against the working directory, allowing a sandbox escape."""
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(tmp_path.parent / 'home'), 'ZDOTDIR': 'relative'})
+
+    with pytest.raises(WorkspaceUnavailableError, match='relative ZDOTDIR'):
+        await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+
 async def test_a_planted_mkdir_on_path_is_not_used(tools: FakeRemoteTools, tmp_path: Path) -> None:
     """Creating `~/.ssh` is `/bin/mkdir`, not whatever `PATH` finds inside the workspace."""
     home = tmp_path / 'home'
@@ -565,6 +620,23 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
         assert (home / '.zshenv').read_text() == ''
         assert not (home / '.config' / 'fish' / 'config.fish').exists()
         assert not (home / '.ssh' / 'rc').exists()
+
+    async def test_commands_cannot_write_to_zdotdir_zshenv(self, tmp_path: Path) -> None:
+        """ZDOTDIR override from sshd_config SetEnv cannot escape the sandbox through zsh startup."""
+        home = tmp_path / 'home'
+        home.mkdir()
+        zdotdir = tmp_path / 'zsh'
+        zdotdir.mkdir()
+        workspace = BubblewrapWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)}))
+        )
+
+        attack = await workspace.run(f'echo touch pwned >> {zdotdir}/.zshenv', shell=True)
+        normal = await workspace.run('printf ok > notes.txt', shell=True)
+
+        assert attack.exit_code != 0
+        assert normal.exit_code == 0
+        assert (zdotdir / '.zshenv').read_text() == ''
 
     async def test_host_daemon_sockets_are_hidden(self, tmp_path: Path) -> None:
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
