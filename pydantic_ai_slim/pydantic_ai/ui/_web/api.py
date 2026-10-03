@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -103,6 +104,7 @@ def validate_request_options(
 def create_api_app(
     agent: Agent[AgentDepsT, OutputDataT],
     models: ModelsParam = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     native_tools: Sequence[AbstractNativeTool] | None = None,
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
@@ -122,6 +124,7 @@ def create_api_app(
             - A sequence of model names/instances (e.g., `['openai:gpt-5', Model(...)]`)
             - A dict mapping display labels to model names/instances
             If not provided, the UI will have no model options.
+        toolsets: Optional sequence of toolsets to make available to the agent.
         native_tools: Optional list of additional native tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.
         deps: Optional dependencies to use for all requests.
@@ -236,6 +239,7 @@ def create_api_app(
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
+            toolsets=toolsets,
         )
         return streaming_response
 

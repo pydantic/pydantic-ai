@@ -33,6 +33,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
+    _running_count: int = field(init=False, default=0)
 
     @property
     def id(self) -> str | None:
@@ -53,16 +54,20 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         return replace(self, toolsets=new_toolsets)
 
     async def __aenter__(self) -> Self:
-        async with AsyncExitStack() as exit_stack:
-            for toolset in self.toolsets:
-                await exit_stack.enter_async_context(toolset)
-            self._exit_stack = exit_stack.pop_all()
+        if self._running_count == 0:
+            async with AsyncExitStack() as exit_stack:
+                for toolset in self.toolsets:
+                    await exit_stack.enter_async_context(toolset)
+                self._exit_stack = exit_stack.pop_all()
+        self._running_count += 1
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if self._exit_stack is not None:
+        self._running_count -= 1
+        if self._running_count == 0 and self._exit_stack is not None:
             await self._exit_stack.aclose()
             self._exit_stack = None
+        return None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         toolsets_tools = await gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))

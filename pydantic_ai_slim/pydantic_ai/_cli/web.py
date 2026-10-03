@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui._web import create_web_app
 
-from . import SUPPORTED_CLI_TOOL_IDS, load_agent
+from . import SUPPORTED_CLI_TOOL_IDS, _load_mcp_toolsets_for_cli, load_agent  # pyright: ignore[reportPrivateUsage]
 
 
 def run_web_command(
     agent_path: str | None = None,
+    mcp_config: str | None = None,
     host: str = '127.0.0.1',
     port: int = 7932,
     models: list[str] = [],
@@ -27,6 +32,7 @@ def run_web_command(
 
     Args:
         agent_path: Agent path in 'module:variable' format. If None, creates generic agent.
+        mcp_config: Path to MCP servers configuration file.
         host: Host to bind the server to.
         port: Port to bind the server to.
         models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-6']).
@@ -49,6 +55,12 @@ def run_web_command(
     else:
         agent = Agent()
 
+    toolsets: Sequence[AbstractToolset[Any]] | None = None
+    if mcp_config is not None:
+        toolsets = _load_mcp_toolsets_for_cli(mcp_config, console)
+        if toolsets is None:
+            return 1
+
     # Use default model if neither agent nor CLI specifies one
     if agent.model is None and not models:
         models = [default_model]
@@ -69,6 +81,7 @@ def run_web_command(
     app = create_web_app(
         agent,
         models=models or None,
+        toolsets=toolsets,
         native_tools=tool_instances,
         instructions=instructions,
         html_source=html_source,
