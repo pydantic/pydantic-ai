@@ -41,7 +41,7 @@ judge = LLMJudge(
 
 ### Probability reporting
 
-Retain each native Boolean distribution in `DecisionModel`'s existing `provider_details['probabilities'][field]` mapping as `{'true': p, 'false': 1 - p}`. Retain existing confidence, choice distributions, and rubric scores. Do not reconstruct raw probability from the rounded confidence value.
+Add previously absent scalar Boolean distributions to `DecisionModel`'s existing `provider_details['probabilities'][field]` mapping as `{'true': p, 'false': 1 - p}`. This adds Boolean field entries to response metadata even when the evaluator's probability metric is disabled; no existing metadata entry is removed or renamed. Retain existing confidence, choice distributions, and rubric scores. Do not reconstruct raw probability from the rounded confidence value.
 
 When requested, `LLMJudge` emits the final selected response's `pass` probability under a separate default name ending in `_probability`. `OutputConfig` can override that name. Preserve the existing score/assertion naming rules and values. A generative fallback has no native probability, so omit this metric for that row; do not substitute its generated score or the rejected primary response's probability. Document that probability aggregates cover only rows with this metric.
 
