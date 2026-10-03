@@ -52,7 +52,8 @@ import logfire
 from anthropic import AsyncAnthropic
 from mcp.shared.exceptions import McpError
 from pydantic import TypeAdapter, ValidationError
-from tenacity import RetryCallState, retry_if_result, stop_after_delay, wait_random_exponential
+from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
+from tenacity.asyncio.retry import retry_if_result
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
@@ -266,14 +267,31 @@ async def _close_rate_limited_response(state: RetryCallState) -> None:
 
 
 def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None) -> AsyncHTTPX2TenacityTransport:
-    """Transport that retries 429 responses, then hands the last one to the SDK as-is.
+    """Transport that retries retryable 429 responses and preserves the final response for the SDK.
 
     Handing back the response rather than raising keeps the SDK's `RateLimitError`,
-    with MiniMax's error body, as what a run that stays rate-limited fails with.
+    with the provider's error body, as what a run that stays rate-limited fails with.
     """
+    non_retryable_codes: set[str] = {'1308', '1309', '1310', '1316', '1317', '1318', '1319', '1320', '1321'}
+    error_body_adapter = TypeAdapter(dict[str, object])
+
+    async def should_retry(response: httpx2.Response) -> bool:
+        if response.status_code != 429:
+            return False
+        try:
+            body = error_body_adapter.validate_json(await response.aread())
+            error = error_body_adapter.validate_python(body.get('error'))
+        except ValidationError:
+            return True
+        code = error.get('code')
+        if isinstance(code, (str, int)) and not isinstance(code, bool) and str(code) in non_retryable_codes:
+            response.headers['x-should-retry'] = 'false'
+            return False
+        return True
+
     return AsyncHTTPX2TenacityTransport(
         RetryConfig(
-            retry=retry_if_result(lambda response: response.status_code == 429),
+            retry=retry_if_result(should_retry),
             wait=wait_random_exponential(multiplier=1, max=16),
             stop=stop_after_delay(RATE_LIMIT_RETRY_SECS),
             before_sleep=_close_rate_limited_response,
