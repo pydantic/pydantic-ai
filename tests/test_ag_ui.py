@@ -2394,6 +2394,60 @@ def test_dump_load_roundtrip_basic() -> None:
     assert reloaded == original
 
 
+@pytest.mark.parametrize(
+    'texts,expected',
+    [
+        pytest.param(['a', 'b'], 'ab', id='plain'),
+        pytest.param(['a', '\n', 'b'], 'a\nb', id='explicit-newline'),
+        pytest.param(['', 'a', '', 'b', ''], 'ab', id='empty-parts'),
+    ],
+)
+def test_dump_messages_concatenates_adjacent_text_parts(texts: list[str], expected: str) -> None:
+    """Adjacent TextParts concatenate with nothing inserted, matching `ModelResponse.text`."""
+    response = ModelResponse(parts=[TextPart(content=text) for text in texts])
+
+    dumped = AGUIAdapter.dump_messages([response])
+
+    assert response.text == expected
+    assert [(type(m).__name__, m.content) for m in dumped] == [('AssistantMessage', expected)]
+
+
+@requires_ag_ui('0.1.11')
+def test_dump_messages_keeps_separated_groups_around_reasoning() -> None:
+    """Text groups separated by a flushed ThinkingPart stay in separate messages, each concatenated."""
+    response = ModelResponse(
+        parts=[TextPart('a'), TextPart('b'), ThinkingPart(content='thinking'), TextPart('c'), TextPart('d')]
+    )
+
+    dumped = AGUIAdapter.dump_messages([response], ag_ui_version='0.1.11')
+
+    assert [(type(m).__name__, m.content) for m in dumped] == [
+        ('AssistantMessage', 'ab'),
+        ('ReasoningMessage', 'thinking'),
+        ('AssistantMessage', 'cd'),
+    ]
+
+
+@pytest.mark.parametrize(
+    'separator',
+    [
+        pytest.param(ThinkingPart(content='thinking'), id='thinking'),
+        pytest.param(FilePart(content=BinaryImage(data=b'image data', media_type='image/png')), id='file'),
+    ],
+)
+def test_dump_messages_text_separated_by_dropped_part(separator: ThinkingPart | FilePart) -> None:
+    """Dropping a non-text part does not make its surrounding text parts adjacent.
+
+    Below ag-ui-protocol 0.1.11 a ThinkingPart is dropped, and a FilePart is dropped without `preserve_file_data`.
+    The separator policy between separated groups is owned by #7713; this pins current behavior.
+    """
+    response = ModelResponse(parts=[TextPart('a'), TextPart('b'), separator, TextPart('c'), TextPart('d')])
+
+    dumped = AGUIAdapter.dump_messages([response], ag_ui_version='0.1.10')
+
+    assert [(type(m).__name__, m.content) for m in dumped] == [('AssistantMessage', 'ab\ncd')]
+
+
 def test_load_dump_preserves_message_id() -> None:
     """An inbound AG-UI message `id` survives `load_messages` -> `dump_messages` instead of being replaced.
 
@@ -3495,15 +3549,18 @@ def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
     """Test round-trip for response with text interleaved around tool calls.
 
     When text appears after tool calls, the flush pattern splits them into
-    separate AssistantMessages to preserve ordering on round-trip.
+    separate AssistantMessages to preserve ordering on round-trip. Adjacent
+    TextParts within each group concatenate.
     """
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do things')]),
         ModelResponse(
             parts=[
-                TextPart(content='Before tools'),
+                TextPart(content='Before '),
+                TextPart(content='tools'),
                 ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
-                TextPart(content='After tools'),
+                TextPart(content='After '),
+                TextPart(content='tools'),
             ]
         ),
     ]

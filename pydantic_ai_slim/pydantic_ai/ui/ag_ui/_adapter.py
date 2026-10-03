@@ -821,11 +821,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             tool_calls_list = []
             tool_messages = []
 
-        for part in msg.parts:
+        for index, part in enumerate(msg.parts):
             if isinstance(part, TextPart):
                 if tool_calls_list:
                     flush()
-                text_content.append(part.content)
+                # Check adjacency in the original parts, not the buffer: a part dropped from the dump still separates text.
+                if index > 0 and isinstance(msg.parts[index - 1], TextPart):
+                    text_content[-1] += part.content
+                else:
+                    text_content.append(part.content)
             elif isinstance(part, ThinkingPart):
                 if use_reasoning:
                     from ag_ui.core import ReasoningMessage
