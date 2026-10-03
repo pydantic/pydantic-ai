@@ -37,8 +37,11 @@ from pydantic_ai_harness.warn_on_cache_busts import (
 )
 
 
-def _usage(*, read: int = 0, write: int = 0) -> RequestUsage:
-    return RequestUsage(input_tokens=10, output_tokens=5, cache_read_tokens=read, cache_write_tokens=write)
+def _usage(*, read: int = 0, write: int = 0, passes: int | None = None) -> RequestUsage:
+    details = {} if passes is None else {'message_iterations': passes}
+    return RequestUsage(
+        input_tokens=10, output_tokens=5, cache_read_tokens=read, cache_write_tokens=write, details=details
+    )
 
 
 def _agent_for_runs(runs: list[list[RequestUsage]], monitor: WarnOnCacheBusts[None]) -> Agent[None, str]:
@@ -609,6 +612,36 @@ async def test_server_tool_response_does_not_clear_the_collapse_latch() -> None:
     busts = [str(w.message) for w in record if issubclass(w.category, CacheBustWarning)]
     assert len(busts) == 1
     assert 'request 2' in busts[0]
+
+
+async def test_reported_single_pass_with_a_native_tool_establishes_the_mark() -> None:
+    """The provider's own pass count wins over the part heuristic.
+
+    Anthropic reports `message_iterations` beside advisor or compaction iterations; an advisor
+    call in a single executor pass is one sampling of the prefix, so its usage is a real mark.
+    """
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=4000)),
+        _server_tool_response(_usage(read=4000, write=4000, passes=1)),  # raises the mark to 8000
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=3000)),  # below half of 8000
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning, match='request 3.*established ~8000'):
+        await agent.run('hi')
+
+
+async def test_reported_multiple_passes_without_a_native_tool_part_keeps_the_mark() -> None:
+    """A reported pass count above one is multi-pass even when no native tool part survived."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=24000, write=600, passes=3)),
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=8200)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        result = await agent.run('hi')
+    assert result.output == 'done'
 
 
 async def test_server_tool_response_as_first_request_establishes_no_mark() -> None:

@@ -126,7 +126,8 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     so a sustained collapse warns once rather than on every subsequent request. A response
     that ran a native tool (web search, code execution, tool search) reports usage summed
     over the several sampling passes of that one API call; it still warns when even that sum
-    falls below the threshold, but it neither raises the mark nor clears the latch.
+    falls below the threshold, but it neither raises the mark nor clears the latch. Where the
+    provider reports its pass count (`usage.details['message_iterations']`) that decides instead.
 
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
     that continues an earlier one via `message_history` -- including history that was
@@ -275,9 +276,14 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
         # request can read back. Such a sum can still prove a collapse (every pass read at least
         # what the first did, so a low total means the first pass read little), but it can neither
         # establish a mark nor prove the cache re-stabilized, so the mark and the latch stand.
-        # Anthropic reports per-pass usage (`usage.iterations`), but pydantic-ai does not surface
-        # the per-pass cache reads yet; the first pass's read would be the mark to use here.
-        multi_pass = any(isinstance(part, NativeToolCallPart) for part in response.parts)
+        # Where the provider's own pass count is surfaced (Anthropic's `message_iterations`, set
+        # beside compaction or advisor iterations) it decides; a response can then run a native
+        # tool such as the advisor in a single executor pass and keep establishing marks.
+        passes = usage.details.get('message_iterations')
+        if passes is None:
+            multi_pass = any(isinstance(part, NativeToolCallPart) for part in response.parts)
+        else:
+            multi_pass = passes > 1
         is_collapse = established >= self.min_prefix_tokens and read < established * self.collapse_ratio
         # Warn on the transition into a collapse only; the latch keeps a sustained collapse -- and a
         # provider that keeps writing an unread cache (read stays low, write stays high) -- to one

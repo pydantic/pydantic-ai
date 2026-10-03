@@ -41,7 +41,9 @@ the number of passes rather than a prefix the next request can read back. Such a
 response still warns when even the summed read falls below the threshold (the first
 pass can have read no more), but a healthy-looking sum proves nothing, so it neither
 raises the mark nor clears the latch, and the healthy request after a round of
-searches is not reported as a collapse.
+searches is not reported as a collapse. Where the provider reports its own pass count
+(`usage.details['message_iterations']`, which Anthropic sets beside compaction or
+advisor iterations) that decides instead of the native tool call.
 
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run
 that continues an earlier one via `message_history` -- including history that was
