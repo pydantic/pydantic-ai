@@ -38,9 +38,10 @@ A response that ran a native tool (web search, code execution, tool search) was
 sampled more than once inside the one API call, and the provider reports a single
 usage summed over every pass, so its `cache_read_tokens` is roughly the prefix times
 the number of passes rather than a prefix the next request can read back. Such a
-response is still judged -- a summed read that falls below the threshold means the
-first pass read little -- but it neither raises the mark nor clears the latch, so the
-healthy request after a round of searches is not reported as a collapse.
+response still warns when even the summed read falls below the threshold (the first
+pass can have read no more), but a healthy-looking sum proves nothing, so it neither
+raises the mark nor clears the latch, and the healthy request after a round of
+searches is not reported as a collapse.
 
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run
 that continues an earlier one via `message_history` -- including history that was

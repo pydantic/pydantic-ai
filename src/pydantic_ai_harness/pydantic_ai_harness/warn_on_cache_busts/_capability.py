@@ -125,8 +125,8 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     and then stays quiet about that collapse until a healthy read-back re-stabilizes the cache,
     so a sustained collapse warns once rather than on every subsequent request. A response
     that ran a native tool (web search, code execution, tool search) reports usage summed
-    over the several sampling passes of that one API call; it can still show a collapse, but
-    it neither raises the mark nor clears the latch.
+    over the several sampling passes of that one API call; it still warns when even that sum
+    falls below the threshold, but it neither raises the mark nor clears the latch.
 
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
     that continues an earlier one via `message_history` -- including history that was
@@ -275,6 +275,8 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
         # request can read back. Such a sum can still prove a collapse (every pass read at least
         # what the first did, so a low total means the first pass read little), but it can neither
         # establish a mark nor prove the cache re-stabilized, so the mark and the latch stand.
+        # Anthropic reports per-pass usage (`usage.iterations`), but pydantic-ai does not surface
+        # the per-pass cache reads yet; the first pass's read would be the mark to use here.
         multi_pass = any(isinstance(part, NativeToolCallPart) for part in response.parts)
         is_collapse = established >= self.min_prefix_tokens and read < established * self.collapse_ratio
         # Warn on the transition into a collapse only; the latch keeps a sustained collapse -- and a

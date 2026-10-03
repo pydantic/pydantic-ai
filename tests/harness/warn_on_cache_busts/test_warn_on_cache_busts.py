@@ -581,7 +581,11 @@ async def test_collapse_after_server_tool_response_still_warns() -> None:
 
 
 async def test_server_tool_response_can_prove_a_collapse() -> None:
-    """A summed read that is still below the threshold means the first pass read little: warn."""
+    """A summed read that is still below the threshold means the first pass read little: warn.
+
+    Pins that a native-tool response is judged, not skipped: every pass read at least what the
+    first did, so a low total is a real collapse even though a high one proves nothing.
+    """
     responses = [
         ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
         _server_tool_response(_usage(read=1000, write=9000), steps=False),
@@ -605,6 +609,33 @@ async def test_server_tool_response_does_not_clear_the_collapse_latch() -> None:
     busts = [str(w.message) for w in record if issubclass(w.category, CacheBustWarning)]
     assert len(busts) == 1
     assert 'request 2' in busts[0]
+
+
+async def test_server_tool_response_as_first_request_establishes_no_mark() -> None:
+    """A conversation whose first response ran a native tool starts without a mark, not from its sum."""
+    responses = [
+        _server_tool_response(_usage(read=0, write=8000)),  # one pass wrote 8000; the sum cannot say which
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=100)),  # no mark yet: silent
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=100)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        result = await agent.run('hi')
+    assert result.output == 'done'
+
+
+async def test_mark_kept_across_a_server_tool_response_still_names_the_earlier_run() -> None:
+    """The kept mark keeps its origin: a collapse after a next-turn native-tool response names the earlier run."""
+    responses = [
+        ModelResponse(parts=[TextPart('first')], usage=_usage(read=0, write=8000)),
+        _server_tool_response(_usage(read=24000, write=600)),  # second run opens with three passes
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=100)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    first = await agent.run('first')
+    with pytest.warns(CacheBustWarning, match='request 2.*an earlier run of this conversation established ~8000'):
+        await agent.run('second', message_history=first.all_messages())
 
 
 def test_invalid_config_rejected() -> None:
