@@ -14,8 +14,6 @@ from pydantic_clai2.plugins._git import remove_checkout
 
 from .test_plugin_loader import Harness
 
-pytestmark = pytest.mark.anyio
-
 
 @pytest.fixture
 def windows_unlink(monkeypatch: pytest.MonkeyPatch) -> None:

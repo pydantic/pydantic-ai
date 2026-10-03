@@ -10,8 +10,6 @@ from pydantic_clai2.plugins._git import git_executable
 
 from .test_plugin_loader import Harness
 
-pytestmark = pytest.mark.anyio
-
 
 def test_windows_git_ignores_working_directory_and_relative_path_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
