@@ -8,6 +8,8 @@ import pytest
 from pydantic_clai2.plugins import _git
 from pydantic_clai2.plugins._git import git_executable
 
+from .test_plugin_loader import Harness
+
 pytestmark = pytest.mark.anyio
 
 
@@ -58,12 +60,11 @@ async def test_missing_windows_git_never_falls_back_to_workspace(
     monkeypatch.chdir(workspace)
     monkeypatch.setenv('PATH', os.pathsep.join(('', '.', str(workspace))))
     monkeypatch.setattr(_git, 'git_executable', lambda: git_executable(windows=True))
+    harness = Harness(tmp_path)
     with pytest.raises(ValueError, match='Git is required'):
-        async with _git.install_git_plugin(
-            'https://example.invalid/plugin.git', plugins_dir=tmp_path / 'plugins', names=[]
-        ):
-            pytest.fail('Git from the working directory must not be used')
-    assert not (tmp_path / 'plugins' / '_git' / 'plugin').exists()
+        await harness.loader.command(['add', 'https://example.invalid/plugin.git'])
+    assert harness.store.plugins() == []
+    assert not (harness.store.plugins_dir / '_git' / 'plugin').exists()
     assert (workspace / 'git.exe').read_text() == 'untrusted'
 
 
