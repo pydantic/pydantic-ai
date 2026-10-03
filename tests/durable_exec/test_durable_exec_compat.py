@@ -618,6 +618,7 @@ def test_model_request_context_projection_payload_golden() -> None:
             'native_tools': [],
             'tool_visibility': None,
             'revealed_tool_names': [],
+            'introduced_tool_names': [],
             'deferred_capability_ids': [],
             'output_mode': 'text',
             'output_object': None,

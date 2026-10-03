@@ -120,6 +120,8 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 
 _(This example is complete, it can be run "as is")_
 
+A tool that joins the run after its first model request, however it got there, is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. See [Tools that appear mid-run](tools-advanced.md#mid-run-tool-additions) for how each provider delivers it.
+
 ### Toolset Instructions
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.

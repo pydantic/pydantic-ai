@@ -120,13 +120,14 @@ def _revealed_deferred_tool_order(
     """Order revealed non-corpus deferred entries at the tail by their first reveal in history.
 
     Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
+    A mid-run newcomer (`introduced_tool_names`) is declared deferred for the same reason and joins them.
     """
     tool_defs = model_request_parameters.tool_defs
     return [
         name
         for name in discovered_tool_names_in_order(messages)
         if name in tool_defs
-        and tool_defs[name].defer_loading
+        and (tool_defs[name].defer_loading or name in model_request_parameters.introduced_tool_names)
         and tool_defs[name].with_native is None
         and model_request_parameters.visibility_of(name) == 'deferred'
     ]

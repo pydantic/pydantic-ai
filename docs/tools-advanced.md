@@ -1031,6 +1031,22 @@ Tool search works on **every model**, but it only *preserves* the cache where th
 
 For [on-demand capabilities](capabilities/on-demand.md#on-demand-capabilities), loading a capability that reveals no new tool definitions — instructions or model settings only — preserves the cache on every provider, even without native tool search. Anthropic excludes deferred entries from its cache key: capability-only runs pre-advertise them from turn one, making the one-time deferred preamble part of the initial prefix, while mixed runs pay that preamble through the searchable corpus and append revealed deferred entries outside the cached prefix. No Anthropic capability reveal introduces the deferred preamble midway through a run. First-party OpenAI Responses appends the reveal as an `additional_tools` input item without changing `tools[]`. Elsewhere the revealed tool enters the tool-definitions prefix, as does a native tool, and as does a deferred `prepare_tools`/`prepare_output_tools` hook that rewrites tool definitions on load. See [Cache implications](capabilities/on-demand.md#cache-implications) for the full breakdown.
 
+#### Tools that appear mid-run {#mid-run-tool-additions}
+
+A tool can also join a run without being searched for or loaded. It might be added to a [`FunctionToolset`](toolsets.md#function-toolset) from inside another tool, returned by a [dynamically built toolset](toolsets.md#dynamically-building-a-toolset), listed by an MCP server after it sends `notifications/tools/list_changed`, or let through by a [`prepare_tools`](#prepare-tools) function. Pydantic AI compares the tools available at each step with the tools the run started with, and records each new one in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The new tool then reaches the model the same way a revealed deferred tool does:
+
+| Provider | How the new tool arrives | Cache prefix |
+|---|---|---|
+| OpenAI Responses | An `additional_tools` input item carrying its definition | **Stable**: `tools[]` is unchanged |
+| Anthropic | A `defer_loading` declaration plus a `tool_addition` block (or a `tool_reference` result on models without mid-conversation tool changes) | **Stable** once the request already declares a deferred tool. Otherwise, on some models (Claude Opus 4.8, for example) the first deferred declaration adds a one-time preamble, which moves the prefix on that request only |
+| Others | Added to `tools[]`, plus a note in the conversation that it's now available | **Breaks** from the tool definitions onward on the request where it appears |
+
+The record lives in the message history, so a retried request or a later run over the same history doesn't announce the tool again. After [compaction](capabilities/compaction.md) summarizes the record away, the tool is announced once more without changing `tools[]`.
+
+Only tools that appear within a single run are detected. A tool that's new to a later run over the same history, such as one unlocked after a [tool approval](deferred-tools.md#human-in-the-loop-tool-approval), is sent in `tools[]` from that run's first request. Tools that disappear, and tools whose definition changes under the same name, are also sent as-is.
+
+Under [durable execution](durable_execution/overview.md), drive mid-run changes from code that runs as part of the workflow, such as a `prepare_tools` function or a dynamically built toolset that reads run state. On Temporal, tools run in activities, which aren't re-executed when the workflow is replayed, so a tool that calls `add_function()` makes a change that replay won't reproduce.
+
 For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
 
 #### Seeing it in a trace

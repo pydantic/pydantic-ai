@@ -468,6 +468,18 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
+    established_tool_names: set[str] | None = dataclasses.field(default=None, repr=False)
+    """Immediately-available function tools the run's `tools` section was established with.
+
+    Set at the run's first model request from that request's tool population, minus any tool history
+    already shows arriving through a `ToolAvailabilityDeltaPart` (a newcomer from an earlier run keeps
+    travelling the way it arrived). A later tool outside this set is a mid-run newcomer: it gets a delta
+    and goes on the tool-addition channel instead of into `tools`. See `_record_tool_population_changes`.
+
+    Not persisted and not needed to be: it is re-derived the same way when a run is revived, and
+    durable replay re-executes the same steps against the same history.
+    """
+
     # Resolved once before the graph starts; never changes during the run.
     workspace: Workspace
     carried_workspace_ref: WorkspaceRef | None = None
@@ -1855,6 +1867,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
+            # Diff the tools this request will actually carry — after the hooks, which may have changed them —
+            # and record newcomers on the outgoing tail, which is the request this step persists.
+            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, messages[-1])
+
             # Instruction parts are request configuration, but the message recording the
             # current step must still reflect what was actually sent.
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
@@ -1963,6 +1979,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 and suspended.state == 'suspended'
             ):
                 raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
+
+            # A continuation completes a turn the provider already has, so nothing is appended to it.
+            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, None)
 
             # A processor may have deliberately rewritten persistent history from the request
             # view, putting the suspended continuation seed back at the tail. Trim the live
@@ -2771,6 +2790,60 @@ def _revealed_tool_names(
     # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
     inactive_capability_ids = deferred_capability_ids - loaded_capability_ids
     return {name for name in discovered if name in owner_by_name and owner_by_name[name] not in inactive_capability_ids}
+
+
+def _record_tool_population_changes(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    parameters: models.ModelRequestParameters,
+    request: _messages.ModelRequest | None,
+) -> models.ModelRequestParameters:
+    """Diff this step's tool population against what the model has been given, and record the difference.
+
+    It runs on the parameters `before_model_request` hooks return, so it compares what requests
+    actually carry, and appends to the outgoing history's last request after history processing; a
+    processor sees the delta from the next step on.
+
+    This is the one place a mid-run change to the set of immediately-available function tools enters
+    history, whatever caused it: a `FunctionToolset.add_function()` call from inside a tool, a dynamic
+    toolset or MCP server returning a different list, a `prepare_tools` hook letting a tool through.
+    Each newcomer is named in a `ToolAvailabilityDeltaPart` appended to this step's request, and
+    marked in `introduced_tool_names` so visibility resolution delivers it on the provider's
+    tool-addition channel rather than rewriting `tools`, the request's first cache section.
+
+    What the model has been given is `established_tool_names` plus whatever history's deltas name,
+    read from the post-compaction window through `discovered_tool_names`. Reading history is what
+    makes this idempotent: a retried request, a revived run, or a durable replay finds the delta it
+    already recorded and doesn't record it again; a compaction that summarized the delta away gets it
+    recorded once more, since the model no longer has it.
+
+    Deferred tools are left to the reveal machinery that already owns them, and a tool that leaves the
+    population is not recorded (removals are https://github.com/pydantic/pydantic-ai/issues/6985).
+    Callability is untouched: `RunContext.is_tool_available` reads the tool's own definition, which
+    this doesn't change.
+
+    `request` is `None` on a continuation, which completes a turn the provider has already seen and so
+    must not grow; newcomers are still marked there, so an earlier delta keeps its channel.
+    """
+    immediate = [tool.name for tool in parameters.function_tools if not tool.defer_loading]
+    discovered = ctx.deps.discovered_tool_names
+    established = ctx.deps.established_tool_names
+    if established is None:
+        established = ctx.deps.established_tool_names = {name for name in immediate if name not in discovered}
+    if not established and not parameters.output_tools and not parameters.native_tools:
+        # Nothing plainly visible has been declared yet, so there is no `tools` section to protect — and
+        # a request whose only tools are deferred is one Anthropic rejects. The first tools to appear
+        # establish it.
+        established.update(immediate)
+    introduced = [name for name in immediate if name not in established]
+    if not introduced:
+        return parameters
+
+    announced = [name for name in introduced if name not in discovered]
+    if announced and request is not None:
+        request.parts = [*request.parts, _messages.ToolAvailabilityDeltaPart(tools_added=announced)]
+        # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
+        discovered.update(announced)
+    return replace(parameters, introduced_tool_names=set(introduced))
 
 
 def _with_outgoing_reveal_state(
