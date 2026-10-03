@@ -92,6 +92,7 @@ from . import (
     ToolVisibility,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _turn_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -333,6 +334,7 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
+_ANTHROPIC_TURN_SCOPED_SYSTEM_BETA = 'mid-conversation-system-clear-at-2026-08-21'
 _ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
 _ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
 _STALE_THINKING_BLOCK_MARKER = 'The block is bound to a different conversation'
@@ -1023,16 +1025,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
+        # Narrowed rather than handled in `_map_message` so `Model.prepare_messages` stays the only place
+        # that knows the `<system>`-tagged fallback: where this is `False`, the mid-conversation parts are
+        # rewritten before the adapter ever sees them.
+        supports_inline_system_prompts = _profile.get('supports_inline_system_prompts', False) and not isinstance(
+            client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS
+        )
         _profile = merge_profile(
             _profile,
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
-                # Narrowed rather than handled in `_map_message` so `Model.prepare_messages` stays the
-                # only place that knows the `<system>`-tagged fallback: where this is `False`, the
-                # mid-conversation parts are rewritten before the adapter ever sees them.
-                supports_inline_system_prompts=_profile.get('supports_inline_system_prompts', False)
-                and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
+                supports_inline_system_prompts=supports_inline_system_prompts,
+                # A turn-scoped entry is a `{'role': 'system'}` entry, so it's only native where the role is.
+                supports_turn_scoped_system_prompts=_profile.get('supports_turn_scoped_system_prompts', False)
+                and supports_inline_system_prompts,
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
             ),
@@ -1264,8 +1271,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
-        self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
-        self._apply_explicit_message_caching(model_settings, anthropic_messages)
+        turn_scoped_texts = _turn_scoped_tail_texts(messages)
+        self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, turn_scoped_texts)
+        self._apply_explicit_message_caching(model_settings, anthropic_messages, turn_scoped_texts)
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -1486,6 +1494,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for name in part.tools_added
         ):
             betas.add('mid-conversation-tool-changes-2026-07-01')
+        # Co-extensive with the renderer in `_map_message`: `clear_at` is a 400 without the beta. A user
+        # who can't use the beta opts out by setting the profile flag to `False`, which falls back to
+        # leaving finished turn-scoped prompts out of the request.
+        if anthropic_profile.get('supports_turn_scoped_system_prompts', False) and any(
+            isinstance(part, SystemPromptPart) and part.scope == 'turn'
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            betas.add(_ANTHROPIC_TURN_SCOPED_SYSTEM_BETA)
 
         return betas, extra_headers
 
@@ -1622,8 +1640,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
-        self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
-        self._apply_explicit_message_caching(model_settings, anthropic_messages)
+        turn_scoped_texts = _turn_scoped_tail_texts(messages)
+        self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, turn_scoped_texts)
+        self._apply_explicit_message_caching(model_settings, anthropic_messages, turn_scoped_texts)
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -2177,6 +2196,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # `prepare_messages` has already rewritten them and none reach this branch — bar the adapter's
         # direct entry points, `count_tokens` and `request`, where hoisting them is the safe reading.
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
+        # Narrowed to transports that serve the role, like the flag above. Where this is `False`,
+        # `prepare_messages` has already left out every turn-scoped part whose turn is over.
+        turn_scoped_system_prompts = self.profile.get('supports_turn_scoped_system_prompts', False)
         # Already narrowed for transports that can't serve the `system` role, so this covers both halves
         # of the gate — and it's the same flag the beta header is added under.
         supports_tool_availability_delta = self.tool_addition_mode == 'by_reference'
@@ -2188,6 +2210,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
                 user_content_params: list[BetaContentBlockParam] = []
                 mid_conversation_system_prompts: list[str] = []
+                turn_scoped_prompts: list[str] = []
                 tool_availability_blocks: list[dict[str, Any]] = []
                 # `CachePoint`s authored after a mid-conversation instruction or a tool availability
                 # change, as the number of user blocks that preceded each one. They can't be placed
@@ -2197,7 +2220,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = []
                 for part_index, request_part in enumerate(m.parts):
                     if isinstance(request_part, SystemPromptPart):
-                        if not inline_system_prompts or part_index < standing_prompt_count:
+                        if request_part.scope == 'turn' and turn_scoped_system_prompts:
+                            # Its own entry, so `clear_at` covers it alone. It needs no cache-point
+                            # bookkeeping: it's never inside a cached prefix, and `cache_control` on it
+                            # is a 400.
+                            turn_scoped_prompts.append(request_part.content)
+                        elif not inline_system_prompts or part_index < standing_prompt_count:
                             system_prompt_parts.append(request_part.content)
                         else:
                             # System-voice parts within one request all precede the same assistant
@@ -2362,6 +2390,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     if system_entry_cache_ttl is not None:
                         self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
                     anthropic_messages.append(BetaMessageParam(role='system', content=system_content_params))
+                if turn_scoped_prompts:
+                    # Sent with every request, current or not: once a later user turn exists the API stops
+                    # rendering it, and leaving it in place is what keeps the cached prefix and the thinking
+                    # blocks bound to it valid. It goes after the request's other system entry so that one
+                    # can still carry the request's cache boundary.
+                    anthropic_messages.append(
+                        BetaMessageParam(
+                            role='system',
+                            content=[BetaTextBlockParam(text=content, type='text') for content in turn_scoped_prompts],
+                            clear_at='next_user_message',
+                        )
+                    )
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[
                     BetaTextBlockParam
@@ -2833,25 +2873,33 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self,
         resolved_ttl: Literal['5m', '1h'] | None,
         anthropic_messages: list[BetaMessageParam],
+        turn_scoped_texts: frozenset[str] = frozenset(),
     ) -> None:
-        """Apply per-block message caching as a fallback for automatic caching on unsupported platforms.
+        """Apply per-block message caching where `anthropic_cache`'s automatic breakpoint can't be relied on.
 
         Bedrock and Vertex do not support the top-level `cache_control` parameter used by
         `anthropic_cache` for automatic caching. As a fallback, this applies per-block
-        `cache_control` to the last content block of the last user message.
+        `cache_control` to the last content block of the last message.
+
+        It's also applied, on every client, when the request ends with turn-scoped text the next request
+        won't send (see `_turn_scoped_tail_texts`). The automatic breakpoint lands on that text, writing a
+        cache entry no later request can read, so an explicit one goes on the last block before it. A
+        native turn-scoped entry needs none of this: automatic caching already skips it.
 
         Args:
             resolved_ttl: The resolved TTL from `_build_automatic_cache_control`, or None
                 if caching is not enabled.
             anthropic_messages: The list of Anthropic message params to apply fallback to.
+            turn_scoped_texts: The texts of the request's trailing turn-scoped blocks.
         """
-        if resolved_ttl and isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS):
-            self._apply_message_cache_control(anthropic_messages, resolved_ttl)
+        if resolved_ttl and (isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS) or turn_scoped_texts):
+            self._apply_message_cache_control(anthropic_messages, resolved_ttl, turn_scoped_texts)
 
     def _apply_explicit_message_caching(
         self,
         model_settings: AnthropicModelSettings,
         anthropic_messages: list[BetaMessageParam],
+        turn_scoped_texts: frozenset[str] = frozenset(),
     ) -> None:
         """Apply per-block message caching when `anthropic_cache_messages` is enabled.
 
@@ -2859,33 +2907,35 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         if cache_messages := model_settings.get('anthropic_cache_messages'):
             ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
-            self._apply_message_cache_control(anthropic_messages, ttl)
+            self._apply_message_cache_control(anthropic_messages, ttl, turn_scoped_texts)
 
     def _apply_message_cache_control(
         self,
         anthropic_messages: list[BetaMessageParam],
         ttl: Literal['5m', '1h'],
+        turn_scoped_texts: frozenset[str] = frozenset(),
     ) -> None:
-        """Apply per-block `cache_control` to the last content block of the last message.
+        """Apply per-block `cache_control` to the last content block the next request will still send.
 
-        If the last block already has `cache_control` (e.g. from an explicit `CachePoint`),
+        That's the last block of the last message, skipping turn-scoped content: a native turn-scoped
+        entry (`cache_control` on one is a 400) and trailing text blocks rendering a turn-scoped prompt
+        on a model that can't clear it. A breakpoint on either would write a cache entry the next request
+        can't read, since the content is cleared or no longer sent by then.
+
+        If the chosen block already has `cache_control` (e.g. from an explicit `CachePoint`),
         it is left unchanged to preserve the user's chosen TTL.
-
-        Assumes `anthropic_messages` is non-empty.
         """
-        last_message = anthropic_messages[-1]
-        content = last_message['content']
-        if isinstance(content, str):  # pragma: no cover
-            last_message['content'] = [
-                BetaTextBlockParam(
-                    type='text',
-                    text=content,
-                    cache_control=self._build_cache_control(ttl),
-                )
-            ]
-        else:
-            content_blocks = cast(list[BetaContentBlockParam], content)
-            self._add_cache_control_to_last_cacheable_param(content_blocks, ttl)
+        nothing_to_cache: list[BetaContentBlockParam] = []
+        lasting_blocks = next(
+            (
+                blocks
+                for message in reversed(anthropic_messages)
+                if message.get('clear_at') != 'next_user_message'
+                and (blocks := _blocks_before_turn_scoped_text(message, turn_scoped_texts))
+            ),
+            nothing_to_cache,
+        )
+        self._add_cache_control_to_last_cacheable_param(lasting_blocks, ttl)
 
     def _add_cache_control_to_last_cacheable_param(
         self, params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m'
@@ -3906,18 +3956,36 @@ def _add_cache_control_param(
 
 
 def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[BetaContentBlockParam]:
-    """The content blocks of the last rendered message, or an empty list if there's nothing to attach to.
+    """The content blocks of the last rendered message that isn't turn-scoped, or an empty list if there's nothing to attach to.
 
     Only used to give a leading `CachePoint` somewhere to land. A `str` content body can't carry
     `cache_control`, and neither can a conversation that hasn't rendered a message yet, so both return
     empty and let the caller raise the error that explains the situation.
     """
-    if not anthropic_messages:
+    # A turn-scoped entry can't carry `cache_control`, and is never part of a cached prefix anyway.
+    message = next((m for m in reversed(anthropic_messages) if m.get('clear_at') != 'next_user_message'), None)
+    if message is None:
         return []
-    content = anthropic_messages[-1]['content']
+    content = message['content']
     # Returned as-is, not copied: the caller attaches `cache_control` by mutating the block in place, so
     # it has to be the list the message actually holds.
     return content if isinstance(content, list) else []
+
+
+def _blocks_before_turn_scoped_text(message: BetaMessageParam, texts: frozenset[str]) -> list[BetaContentBlockParam]:
+    """`message`'s content blocks up to its trailing text blocks carrying one of `texts`.
+
+    The blocks are the message's own, so `cache_control` added to one lands on the wire. A `str`
+    content body is turned into a single text block first, so it can carry one.
+    """
+    content = message['content']
+    if isinstance(content, str):  # pragma: no cover
+        content = message['content'] = [BetaTextBlockParam(type='text', text=content)]
+    blocks = cast(list[BetaContentBlockParam], content)
+    end = len(blocks)
+    while end and is_str_dict(block := blocks[end - 1]) and block.get('type') == 'text' and block.get('text') in texts:
+        end -= 1
+    return blocks[:end]
 
 
 def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901

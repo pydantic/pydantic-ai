@@ -124,6 +124,19 @@ class ModelProfile(TypedDict, total=False):
     only place that knows the `<system>...</system>` fallback.
     """
 
+    supports_turn_scoped_system_prompts: bool
+    """Whether the provider's API keeps a turn-scoped `SystemPromptPart` in the conversation and stops rendering it itself. Default: `False`.
+
+    A [turn-scoped][pydantic_ai.messages.SystemPromptPart.scope] part applies to one model request.
+    When this is `True`, the model adapter sends every such part in the history, and the API stops
+    rendering each one once a later request exists, as Anthropic's `clear_at: 'next_user_message'` does.
+    Sending it unchanged keeps the cached prefix and any reasoning bound to it valid. When `False`,
+    `Model.prepare_messages` leaves a turn-scoped part out of every request after its own, and the part
+    renders like any other mid-conversation `SystemPromptPart` while it's current.
+
+    Only meaningful together with `supports_inline_system_prompts`.
+    """
+
     default_structured_output_mode: StructuredOutputMode
     """The default structured output mode to use for the model. Default: `'tool'`."""
 
