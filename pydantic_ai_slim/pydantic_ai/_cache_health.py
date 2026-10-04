@@ -233,9 +233,21 @@ class CacheHealthDetector:
     def __post_init__(self) -> None:
         self.marks = self.store.get(self.conversation_id)
 
-    def observe(self, request_context: ModelRequestContext, response: ModelResponse) -> CacheHealth | None:
-        """Judge `response` against its cache key's mark and update the mark; `None` when caching isn't in play."""
-        usage = response.usage
+    def observe(
+        self,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+        *,
+        final_segment: ModelResponse | None = None,
+    ) -> CacheHealth | None:
+        """Judge `response` against its cache key's mark and update the mark; `None` when caching isn't in play.
+
+        When `response` merges a continuation chain (Anthropic `pause_turn`, ...), its usage sums every
+        segment's request, which no single later request can read back. Pass the chain's `final_segment`
+        to judge its cache usage instead: its prompt carries the whole prefix, earlier segments included.
+        """
+        measured = final_segment or response
+        usage = measured.usage
         read = usage.cache_read_tokens
         write = usage.cache_write_tokens
         # Keyed on the response: `FallbackModel` resolves the model inside `request()`, so only the
@@ -263,7 +275,7 @@ class CacheHealthDetector:
             collapse = self._classify(request_context, mark, read, now, unreported=unreported, compactions=compactions)
 
         updated_established = established
-        if not unreported and _sums_cache_usage(response):
+        if not unreported and _sums_cache_usage(measured):
             # A summed read can still prove a collapse (every pass read at least what the first did), but
             # a high one proves nothing: it neither raises the mark nor re-arms the alert, and the mark
             # keeps the run that established it. Only the retention clock restarts, since the provider

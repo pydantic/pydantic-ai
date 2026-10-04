@@ -15,6 +15,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelResponse,
+    ModelResponsePart,
     ModelRetry,
     RunContext,
     TextPart,
@@ -79,6 +80,8 @@ class CacheUsage:
     provider_url: str | None = None
     compacts: bool = False
     """Whether the response carries a `CompactionPart`, as when the provider compacted the history."""
+    suspends: bool = False
+    """Whether the response pauses the turn (Anthropic `pause_turn`), so the next usage continues the same request."""
 
 
 class ResponseNameFunctionModel(FunctionModel):
@@ -106,11 +109,12 @@ def cache_spans(
         usage = usages[call_index]
         call_index += 1
         model.set_response_model_name(usage.model_name)
-        parts = (
-            [TextPart('done')]
-            if call_index == len(usages)
-            else [ToolCallPart('continue_run', {}, tool_call_id=f'call-{call_index}')]
-        )
+        if usage.suspends:
+            parts: list[ModelResponsePart] = [TextPart('working')]
+        elif call_index == len(usages):
+            parts = [TextPart('done')]
+        else:
+            parts = [ToolCallPart('continue_run', {}, tool_call_id=f'call-{call_index}')]
         return ModelResponse(
             parts=parts,
             usage=RequestUsage(
@@ -119,6 +123,7 @@ def cache_spans(
                 cache_write_tokens=usage.write,
             ),
             provider_name=usage.provider_name,
+            state='suspended' if usage.suspends else 'complete',
         )
 
     profile = ModelProfile(default_cache_retention=retention) if retention is not None else None
@@ -155,6 +160,31 @@ def test_stable_cache_health() -> None:
         {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 15000},
         {'pydantic_ai.cache.hit_ratio': 0.75, 'pydantic_ai.cache.established_tokens': 15000},
         {'pydantic_ai.cache.hit_ratio': 0.8, 'pydantic_ai.cache.established_tokens': 16000},
+    ]
+    assert all(not span.events for span in spans)
+
+
+def test_continued_request_is_judged_by_its_final_segment() -> None:
+    """A `pause_turn` continuation merges into one response whose usage sums both segments' requests.
+
+    Each segment re-reads the ~14k prefix, so the merged response reports ~29k cached tokens. The mark
+    comes from the final segment instead, whose prompt carries the whole prefix, so the next request
+    reading back that prefix is healthy rather than a ~14k-token collapse.
+    """
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=14000),
+            CacheUsage(read=14000, write=500, suspends=True),
+            CacheUsage(read=14500, write=200),
+            CacheUsage(read=14700),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 14000},
+        {'pydantic_ai.cache.hit_ratio': 0.725, 'pydantic_ai.cache.established_tokens': 14700},
+        {'pydantic_ai.cache.hit_ratio': 0.735, 'pydantic_ai.cache.established_tokens': 14700},
     ]
     assert all(not span.events for span in spans)
 

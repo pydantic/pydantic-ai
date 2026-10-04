@@ -40,6 +40,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
+from pydantic_ai.models._continuation import observe_continuation_segments
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -411,12 +412,17 @@ class Instrumentation(AbstractCapability[Any]):
             captured_response: ModelResponse | None = None
             captured_time_to_first_chunk: float | None = None
 
+            segments: list[ModelResponse] = []
+
             def capture_response(response: ModelResponse, time_to_first_chunk: float | None) -> None:
                 nonlocal captured_response, captured_time_to_first_chunk
                 captured_response = response
                 captured_time_to_first_chunk = time_to_first_chunk
 
-            with model_response_span_capture(request_context, capture_response):
+            with (
+                model_response_span_capture(request_context, capture_response),
+                observe_continuation_segments(segments.append),
+            ):
                 try:
                     response = await handler(request_context)
                 except BaseException:
@@ -433,7 +439,7 @@ class Instrumentation(AbstractCapability[Any]):
                         track_request(prepared_request_context)
                         # The provider served this request even if a later hook rejected the response
                         # (e.g. `after_model_request` raising `ModelRetry`), so its cache usage counts.
-                        self._record_cache_health(request_context, captured_response)
+                        self._record_cache_health(request_context, captured_response, segments)
                     raise
 
                 prepared_request_context = finish(
@@ -443,12 +449,17 @@ class Instrumentation(AbstractCapability[Any]):
                 )
                 # Use the prepared parameters so prompted-output instructions match the model payload.
                 track_request(prepared_request_context)
-                self._record_cache_health(request_context, response)
+                self._record_cache_health(request_context, response, segments)
                 return response
 
-    def _record_cache_health(self, request_context: ModelRequestContext, response: ModelResponse) -> None:
+    def _record_cache_health(
+        self, request_context: ModelRequestContext, response: ModelResponse, segments: list[ModelResponse]
+    ) -> None:
+        # A continuation chain (Anthropic `pause_turn`, ...) is merged into one response whose usage sums
+        # every segment's, so it is judged by its final segment, whose prompt carries the whole prefix.
+        final_segment = segments[-1] if len(segments) > 1 else None
         # Observed even when the span isn't recording, so a sampled-out request still advances the marks.
-        health = self._cache_health.observe(request_context, response)
+        health = self._cache_health.observe(request_context, response, final_segment=final_segment)
         if health is None:
             return
         span = get_current_span()

@@ -91,6 +91,7 @@ from .models._continuation import (
     cancel_suspended_job,
     merge_mode,
     merge_responses,
+    report_continuation_segment,
 )
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -1227,6 +1228,7 @@ async def model_request(
                 raise
 
             new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
+            report_continuation_segment(new_response)
             if response is None:
                 response = new_response
                 if response.state == 'suspended':
