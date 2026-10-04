@@ -21,7 +21,6 @@ from pydantic_ai_harness.tool_output_limits._payload import TruncationStrategy
 if TYPE_CHECKING:
     from pydantic_ai.agent import EventStreamHandler
     from pydantic_ai.models import Model
-    from pydantic_ai.tools import RunContext
 
 _DEFAULT_TRUNCATE_CHARS = 4_000
 _DEFAULT_PREVIEW_CHARS = 1_000
