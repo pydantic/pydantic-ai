@@ -955,10 +955,9 @@ class RealtimeSession:
         # turns whose transcripts finalize out of order still attach their own audio (not a later turn's).
         self._input_audio = bytearray()
         self._input_segments = _InputSegments()
-        # The history length and number of tracked parts when a pass over history for audio to evict last
-        # found none, because what is tracked is still on its way into history (a response in flight, say).
-        # Until either changes, another pass would find none too, so it's skipped.
-        self._fruitless_audio_eviction: tuple[int, int] | None = None
+        # Where in history the next pass for audio to evict starts: eviction goes oldest first, so the messages
+        # before it hold no retained audio any more. A message inserted or removed before it moves it along.
+        self._audio_eviction_start = 0
 
         # The session context is the single owner of the receive pump and background tool tasks.
         # It starts the pump on entry and never tears it down before `close()`: an early `break` can
@@ -1847,6 +1846,8 @@ class RealtimeSession:
             for index, message in enumerate(messages):
                 if message is request:
                     messages.pop(index)
+                    if messages is self._history and index < self._audio_eviction_start:
+                        self._audio_eviction_start -= 1
                     return
 
     async def send_audio(self, data: bytes | AsyncIterable[bytes]) -> None:
@@ -2794,7 +2795,7 @@ class RealtimeSession:
                     if call_order.get(existing_id, position) > position:
                         break
                     insert_at += 1
-                self._history.insert(insert_at, request)
+                self._insert_into_history(insert_at, request)
                 return
         if call_part.tool_call_id in self._tool_calls_awaiting_usage:
             # OpenAI-protocol tool execution starts before `response.done` supplies usage and finalizes
@@ -3054,7 +3055,12 @@ class RealtimeSession:
             _is_tool_result_request(self._history[insert_at]) or _is_user_speech_request(self._history[insert_at])
         ):
             insert_at += 1
-        self._history.insert(insert_at, request)
+        self._insert_into_history(insert_at, request)
+
+    def _insert_into_history(self, index: int, request: ModelRequest) -> None:
+        self._history.insert(index, request)
+        # A turn recorded where it started can carry retained audio, so the next eviction pass must see it.
+        self._audio_eviction_start = min(self._audio_eviction_start, index)
 
     def _flush_finalized_user_prefix(self) -> None:
         """Record finalized user items in provider order, up to the first item still awaiting its final.
@@ -3092,17 +3098,20 @@ class RealtimeSession:
             untracked_input=segments.byte_count + len(self._input_audio),
             untracked_output=len(self._output_audio),
         )
-        recorded_state = (len(self._history), budget.tracked_parts)
-        if excess > 0 and budget.tracked_parts and recorded_state != self._fruitless_audio_eviction:
-            starting_excess = excess
-            for index, message in enumerate(self._history):
-                stripped, freed = budget.strip(message, excess)
+        if excess > 0 and budget.tracked_parts:
+            # Resume where the last pass stopped, so each message is passed over about once however many
+            # passes there are; a pass that finds nothing (the audio over budget is still on its way into
+            # history) leaves it at the end.
+            index = self._audio_eviction_start
+            while index < len(self._history):
+                stripped, freed = budget.strip(self._history[index], excess)
                 if freed:
                     self._replace_recorded_message(index, stripped)
                     excess -= freed
                     if excess <= 0:
                         break
-            self._fruitless_audio_eviction = recorded_state if excess == starting_excess else None
+                index += 1
+            self._audio_eviction_start = index
         while excess > 0 and (evicted := segments.evict_oldest()) is not None:
             excess -= budget.weight(evicted, output=False)
         excess = budget.trim(self._input_audio, excess, output=False)

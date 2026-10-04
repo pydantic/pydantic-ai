@@ -5582,9 +5582,80 @@ async def test_audio_retention_budget_skips_history_while_nothing_there_can_be_e
     async with session:
         await drain_events(session)
 
-    # The answer's first part evicts what history holds; one more search finds nothing left, and the
-    # chunks after it skip history.
-    assert strips == snapshot(12)
+    # The answer's first part evicts what history holds and the search ends there: the chunks after it
+    # start past what was already searched, rather than going over history again each time.
+    assert strips <= len(session.all_messages())
+
+
+async def test_audio_retention_budget_passes_over_history_once_across_many_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each eviction resumes where the last one stopped, so many short turns cost work linear in their number."""
+    strips = 0
+    strip = RetainedAudioBudget.strip
+
+    def counting_strip(self: RetainedAudioBudget, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+        nonlocal strips
+        strips += 1
+        return strip(self, message, excess)
+
+    monkeypatch.setattr(RetainedAudioBudget, 'strip', counting_strip)
+    conn = _ContinuousMicrophoneConnection(
+        [event for turn in range(40) for event in _answered_turn(turn, item_id=f'user-{turn}')]
+    )
+    session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.2)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    messages = session.all_messages()
+    assert len(messages) == 80
+    # Only the last question and answer still fit.
+    assert [part.audio is not None for message in messages for part in message.parts] == [False] * 78 + [True] * 2
+    # Starting every pass from the beginning of history would be about 80 * 80.
+    assert strips <= 3 * len(messages)
+
+
+def _send_image(index: int) -> _UserAction:
+    async def send_image(session: _RealtimeSession) -> None:
+        await session.send(BinaryImage(data=bytes([index]), media_type='image/png'))
+
+    return _UserAction(send_image)
+
+
+async def test_audio_retention_budget_still_evicts_after_an_earlier_message_leaves_history() -> None:
+    """An image evicted from ahead of where audio eviction resumes doesn't make it skip the next answer's audio."""
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _send_image(0),
+            AudioDelta(data=_tenths_of_a_second(100), item_id='answer-0'),
+            ResponseDone(),
+            AudioDelta(data=_tenths_of_a_second(101), item_id='answer-1'),
+            ResponseDone(),
+            # A part finalized mid-response, so the eviction it causes searches all of history.
+            AudioDelta(data=_tenths_of_a_second(102), item_id='answer-2a'),
+            AudioDelta(data=b'\x01\x00', item_id='answer-2b'),
+            ResponseDone(),
+            # Evicts the first image, which history held ahead of the answers.
+            _send_image(1),
+            AudioDelta(data=_tenths_of_a_second(103), item_id='answer-3'),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='output_audio', retain_audio_max_seconds=0.1, retain_images_max=1)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    retained = [
+        part.audio is not None
+        for message in session.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+    # Only the latest answer's audio fits, so the one before it was evicted to make room.
+    assert retained[-1]
+    assert sum(retained) == 1
 
 
 async def test_audio_retention_budget_counts_segments_waiting_for_their_transcript() -> None:
