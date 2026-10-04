@@ -881,4 +881,33 @@ async def test_anthropic_tool_return_document_citations(allow_model_requests: No
 
     result = await agent.run(TOOL_DOCUMENT_PROMPT)
 
-    assert citations_from_messages(result.all_messages()) == snapshot()
+    assert citations_from_messages(result.all_messages()) == snapshot(
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        excerpts=['The return window is thirty days from purchase.'],
+                        provider_details={
+                            'document_index': 0,
+                            'end_char_index': 47,
+                            'start_char_index': 0,
+                            'type': 'char_location',
+                        },
+                    )
+                ]
+            ),
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        excerpts=['Orders ship within two business days.'],
+                        provider_details={
+                            'document_index': 1,
+                            'end_char_index': 37,
+                            'start_char_index': 0,
+                            'type': 'char_location',
+                        },
+                    )
+                ]
+            ),
+        ]
+    )
