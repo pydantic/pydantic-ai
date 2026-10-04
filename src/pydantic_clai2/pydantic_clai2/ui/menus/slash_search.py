@@ -16,6 +16,69 @@ def _typed(key: str) -> bool:
     return len(key) == 1 and key.isprintable()
 
 
+class _SlashSearch:
+    """Translates raw keys for termflow's search, which otherwise filters on every typed key."""
+
+    def __init__(
+        self, *, key_source: Callable[[], str], hotkeys: Mapping[str, KeyHandler], close_key: str | None
+    ) -> None:
+        self.key_source = key_source
+        self.hotkeys = hotkeys
+        self.close_key = close_key
+        self.mode: Literal['browse', 'search', 'filtered'] = 'browse'
+        self.query = ''
+        """Mirrors termflow's query, which its public API does not expose."""
+        self.edited = False
+        """Whether the query was edited; only then has the cursor lost its place in the full list."""
+
+    def build(self, builder: MenuBuilder) -> Menu:
+        for key, handler in self.hotkeys.items():
+            builder.on_key(_HOTKEY + key, handler)
+        self.menu = builder.searchable().key_source(self.read_key).build()
+        return self.menu
+
+    def read_key(self) -> str:
+        key = self.key_source()
+        return self.searching(key) if self.mode == 'search' else self.browsing(key)
+
+    def searching(self, key: str) -> str:
+        if key == Key.ESCAPE:
+            return self.clear()
+        if key == Key.ENTER and self.hotkeys:
+            if not self.query:
+                self.mode = 'browse'
+            elif self.menu.highlighted is not None:
+                self.mode = 'filtered'
+            return ''
+        if key in self.hotkeys and not _typed(key):
+            return _HOTKEY + key
+        if _typed(key):
+            self.query += key
+        elif key == Key.BACKSPACE:
+            self.query = self.query[:-1]
+        self.edited = self.edited or _typed(key) or key == Key.BACKSPACE
+        return key
+
+    def browsing(self, key: str) -> str:
+        if key == Key.ESCAPE and self.mode == 'filtered':
+            return self.clear()
+        if key == '/':
+            self.mode = 'search'
+            return ''
+        if key == self.close_key:
+            return Key.ESCAPE
+        if key in self.hotkeys:
+            return _HOTKEY + key
+        # Termflow's search consumes typed characters; outside a search they do nothing.
+        return '' if _typed(key) or key == Key.BACKSPACE else key
+
+    def clear(self) -> str:
+        self.menu.clear_search()
+        moved = self.edited
+        self.mode, self.query, self.edited = 'browse', '', False
+        return Key.HOME if moved else ''
+
+
 def slash_search(
     builder: MenuBuilder,
     *,
@@ -32,45 +95,5 @@ def slash_search(
     act on them, and the next Esc clears the filter. Otherwise Esc, like `close_key`, closes.
     The footer starts with `/ search`, followed by `footer`.
     """
-    actions = dict(hotkeys or {})
-    mode: Literal['browse', 'search', 'filtered'] = 'browse'
-    queried = False
-    """Whether the search was edited; only then has the cursor lost its place in the full list."""
-
-    def clear() -> str:
-        nonlocal mode, queried
-        mode = 'browse'
-        menu.clear_search()
-        moved, queried = queried, False
-        return Key.HOME if moved else ''
-
-    def read_key() -> str:
-        nonlocal mode, queried
-        key = key_source()
-        if mode == 'search':
-            if key == Key.ESCAPE:
-                return clear()
-            if key == Key.ENTER and actions:
-                if menu.highlighted is not None:
-                    mode = 'filtered'
-                return ''
-            if key in actions and not _typed(key):
-                return _HOTKEY + key
-            queried = queried or _typed(key) or key == Key.BACKSPACE
-            return key
-        if key == Key.ESCAPE and mode == 'filtered':
-            return clear()
-        if key == '/':
-            mode = 'search'
-            return ''
-        if key == close_key:
-            return Key.ESCAPE
-        if key in actions:
-            return _HOTKEY + key
-        # Termflow's search consumes typed characters; outside a search they do nothing.
-        return '' if _typed(key) or key == Key.BACKSPACE else key
-
-    for key, handler in actions.items():
-        builder.on_key(_HOTKEY + key, handler)
-    menu = builder.searchable().footer_hint(f'/ search · {footer}').key_source(read_key).build()
-    return menu
+    search = _SlashSearch(key_source=key_source, hotkeys=dict(hotkeys or {}), close_key=close_key)
+    return search.build(builder.footer_hint(f'/ search · {footer}'))

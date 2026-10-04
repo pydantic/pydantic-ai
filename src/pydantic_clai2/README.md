@@ -1691,7 +1691,7 @@ credentials. Keep tokens out of plugin settings, which are saved as plaintext.
 /plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
-`/plugins configure observability`, or `C` on `observability` in `/plugins`, opens
+`/plugins configure observability`, or `c` on `observability` in `/plugins`, opens
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
@@ -1715,7 +1715,7 @@ values, or secrets.
 ### Setting up where traces go
 
 Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
-`C` on `observability` in `/plugins`):
+`c` on `observability` in `/plugins`):
 
 1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
 2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.

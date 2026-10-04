@@ -138,8 +138,10 @@ summary failure; other exceptions propagate.
 
 Built on termflow's `MenuBuilder` (and `TextInputBuilder` for typed values),
 exactly like Code Puppy's `/agent`, `/mcp`, `/set`, and `/model` menus:
-alternate screen, a `.preview` panel on the right, `.on_key` for single-key
-actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
+alternate screen, a `.preview` panel on the right, `markdown_style()` for
+colours. Single-key actions and the key legend go through `slash_search`'s
+`hotkeys` and `footer` in a searchable menu, `.on_key` and `.footer_hint` in
+one that is not.
 
 - Split it in two: a pure `build_plugins_menu(...)` that returns the menu (so
   tests drive it headless, no terminal), and a thin async runner that owns the

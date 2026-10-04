@@ -268,6 +268,19 @@ def test_hotkeys_act_on_the_kept_matches(
     assert all(entry.loaded is None for entry in loader.entries())
 
 
+@pytest.mark.parametrize('keys', [['/', Key.ENTER], ['/', 'x', Key.BACKSPACE, Key.ENTER]])
+def test_enter_on_an_empty_search_lets_one_esc_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], keys: list[str]
+) -> None:
+    """With nothing to keep, Enter returns to plain hotkeys, so a single Esc closes."""
+    loader = make_loader(tmp_path, 'alpha')
+    result, frames = run_keys(
+        PluginMenu(loader, apply=run_now), [*keys, Key.ESCAPE], monkeypatch=monkeypatch, capsys=capsys
+    )
+    assert result.cancelled
+    assert len(frames) == len(keys) + 1
+
+
 @pytest.mark.parametrize('key', [' ', 'c'])
 def test_configure_from_search(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], key: str
