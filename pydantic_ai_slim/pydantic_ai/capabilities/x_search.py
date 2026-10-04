@@ -165,7 +165,15 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
             # With no native tool and no subagent, the user's tool is the only implementation and the
             # capability passes it nothing.
             unapplied = [
-                name for name, value in (('from_date', self.from_date), ('to_date', self.to_date)) if value is not None
+                name
+                for name, value in (
+                    ('from_date', self.from_date),
+                    ('to_date', self.to_date),
+                    ('enable_image_understanding', self.enable_image_understanding),
+                    ('enable_video_understanding', self.enable_video_understanding),
+                    ('include_output', self.include_output),
+                )
+                if value is not None
             ]
             if unapplied:
                 # user → `__init__` → here → `warn`.

@@ -1051,13 +1051,25 @@ class TestDeclaredNativeAndLocal:
         with pytest.raises(UserError, match='not supported'):
             Agent(model, capabilities=[capability]).run_sync('fetch')
 
-    def test_xsearch_native_false_user_local_warns_for_date_filters(self):
+    def test_xsearch_native_false_user_local_warns_for_native_only_settings(self):
         def my_x_search(query: str) -> str:
             return 'posts'  # pragma: no cover
 
-        with pytest.warns(UserWarning, match=r'`XSearch` ignored setting\(s\): `from_date`, `to_date`'):
+        with pytest.warns(
+            UserWarning,
+            match=(
+                r'`XSearch` ignored setting\(s\): `from_date`, `to_date`, `enable_image_understanding`, '
+                r'`enable_video_understanding`, `include_output`'
+            ),
+        ):
             XSearch[object](
-                native=False, local=my_x_search, from_date=datetime(2026, 1, 1), to_date=datetime(2026, 2, 1)
+                native=False,
+                local=my_x_search,
+                from_date=datetime(2026, 1, 1),
+                to_date=datetime(2026, 2, 1),
+                enable_image_understanding=True,
+                enable_video_understanding=False,
+                include_output=True,
             )
 
     @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
