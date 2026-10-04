@@ -102,9 +102,10 @@ The model first receives a message saying that the tool has started. The message
 When the tool finishes, the model receives the result with the same task ID.
 
 Text and files returned by the tool are sent to the model. Application-only metadata is not sent.
-If a tool fails unexpectedly, the model sees the error type but not the error message, which may
-contain private information. Running out of retries or raising `CancelledError` ends the run. A tool
-can call `ctx.cancel()` to stop the run and the other background tools.
+`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
+other tool exception ends the run with the original exception, as it does for a sequential tool.
+Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`
+to stop the run and the other background tools.
 
 A normal run waits for its background tools to finish. A pending call counts toward
 `tool_calls_limit`. If the run pauses or stops early, unfinished tools are cancelled and their
