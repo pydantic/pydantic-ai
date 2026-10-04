@@ -116,7 +116,6 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
-    from pydantic_ai.durable_exec import DurableRunCancellation
     from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -520,6 +519,11 @@ async def _signal_cancellation_event_stream_handler(
         pass
 
 
+_signal_cancellation_model_activity_config = ActivityConfig(
+    cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+    heartbeat_timeout=timedelta(seconds=1),
+)
+
 _signal_cancellation_agent = Agent(
     FunctionModel(stream_function=_signal_cancellation_stream_model),
     name='signal_cancellation_agent',
@@ -527,25 +531,38 @@ _signal_cancellation_agent = Agent(
     capabilities=[
         TemporalDurability(
             event_stream_handler=_signal_cancellation_event_stream_handler,
-            model_activity_config=ActivityConfig(
-                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
-                heartbeat_timeout=timedelta(seconds=1),
-            ),
+            model_activity_config=_signal_cancellation_model_activity_config,
         )
     ],
 )
+
+_signal_cancellation_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        FunctionModel(stream_function=_signal_cancellation_stream_model),
+        name='signal_cancellation_temporal_agent',
+        deps_type=type(None),
+    ),
+    event_stream_handler=_signal_cancellation_event_stream_handler,
+    model_activity_config=_signal_cancellation_model_activity_config,
+)
+
+_signal_cancellation_agents: dict[str, AbstractAgent[None, str]] = {
+    'capability': _signal_cancellation_agent,
+    'wrapper': _signal_cancellation_temporal_agent,
+}
 
 
 @workflow.defn
 class SignalCancellationWorkflow:
     def __init__(self) -> None:
-        # A fresh handle per workflow execution; it binds to this run's cancellation only.
-        self._cancellation = DurableRunCancellation[None]()
+        # Created in workflow code and fired only from the signal handler below, so the cancellation
+        # lands at the same point in the workflow's history on replay.
+        self._token = CancellationToken()
 
     @workflow.run
-    async def run(self, prompt: str, catch: bool) -> str:
+    async def run(self, prompt: str, catch: bool, agent: str) -> str:
         try:
-            return (await _signal_cancellation_agent.run(prompt, capabilities=[self._cancellation])).output
+            return (await _signal_cancellation_agents[agent].run(prompt, cancellation_token=self._token)).output
         except RunCancelled:
             if not catch:
                 raise
@@ -555,14 +572,14 @@ class SignalCancellationWorkflow:
 
     @workflow.signal
     def cancel(self) -> None:
-        self._cancellation.cancel()
+        self._token.cancel()
 
 
 async def test_temporal_run_cancelled_by_workflow_signal(client: Client) -> None:
-    """An external `@workflow.signal` wired to `DurableRunCancellation.cancel()` cancels the
-    in-flight durable run first-party: the run raises `RunCancelled`, which the workflow catches to
-    complete normally rather than ending as a *Cancelled* workflow. The recorded history replays
-    deterministically."""
+    """A `CancellationToken` created in the workflow and fired from a `@workflow.signal` handler
+    cancels the in-flight durable run first-party: the run raises `RunCancelled`, which the workflow
+    catches to complete normally rather than ending as a *Cancelled* workflow. The recorded history
+    replays deterministically."""
     await _replay_signal_cancellation(await _run_signal_cancellation_workflow(client, catch=True))
 
 
@@ -573,20 +590,52 @@ async def test_temporal_uncaught_run_cancelled_fails_workflow_and_replays(client
     await _replay_signal_cancellation(await _run_signal_cancellation_workflow(client, catch=False))
 
 
-async def _run_signal_cancellation_workflow(client: Client, *, catch: bool) -> WorkflowHistory:
-    global _signal_cancellation_activity_started
+async def test_temporal_agent_run_cancelled_by_workflow_signal(client: Client) -> None:
+    """The deprecated `TemporalAgent` wrapper accepts a signal-fired `CancellationToken` too."""
+    await _replay_signal_cancellation(await _run_signal_cancellation_workflow(client, catch=True, agent='wrapper'))
 
-    _signal_cancellation_activity_started = asyncio.Event()
-    workflow_id = f'{SignalCancellationWorkflow.__name__}-{uuid.uuid4()}'
-    async with Worker(
+
+async def test_temporal_signal_before_run_starts_cancels_run(client: Client) -> None:
+    """A cancel signal delivered with the workflow start fires the token before the run registers
+    with it, so the run is cancelled before it schedules any model activity, and replays."""
+    async with _signal_cancellation_worker(client):
+        handle = await client.start_workflow(
+            SignalCancellationWorkflow.run,
+            args=['cancel me', True, 'capability'],
+            id=f'{SignalCancellationWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            start_signal='cancel',
+        )
+        assert await handle.result() == 'run cancelled'
+        history = await handle.fetch_history()
+
+    assert not any(event.HasField('activity_task_scheduled_event_attributes') for event in history.events)
+    await _replay_signal_cancellation(history)
+
+
+def _signal_cancellation_worker(client: Client) -> Worker:
+    return Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[SignalCancellationWorkflow],
+        activities=_signal_cancellation_temporal_agent.temporal_activities,
         plugins=[AgentPlugin(_signal_cancellation_agent)],
         workflow_runner=UnsandboxedWorkflowRunner(),
-    ):
+    )
+
+
+async def _run_signal_cancellation_workflow(
+    client: Client, *, catch: bool, agent: str = 'capability'
+) -> WorkflowHistory:
+    global _signal_cancellation_activity_started
+
+    _signal_cancellation_activity_started = asyncio.Event()
+    async with _signal_cancellation_worker(client):
         handle = await client.start_workflow(
-            SignalCancellationWorkflow.run, args=['cancel me', catch], id=workflow_id, task_queue=TASK_QUEUE
+            SignalCancellationWorkflow.run,
+            args=['cancel me', catch, agent],
+            id=f'{SignalCancellationWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
         )
         await _signal_cancellation_activity_started.wait()
         await handle.signal(SignalCancellationWorkflow.cancel)
@@ -650,13 +699,6 @@ _capability_migration_agent = Agent(
         )
     ],
 )
-
-
-async def test_temporal_agent_rejects_cancellation_token() -> None:
-    """The wrapper agent rejects `cancellation_token` up front: a token is same-process state
-    that cannot cross the durable execution boundary."""
-    with pytest.raises(UserError, match='cannot cross the durable execution boundary'):
-        await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
 
 
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent

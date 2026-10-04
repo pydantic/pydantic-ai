@@ -301,6 +301,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     # would not add durability, it would take over dispatch from the first without either saying so.
     _one_per_agent: ClassVar[str | None] = 'durable execution engine'
 
+    # Whether a `CancellationToken` may be passed to a run inside the durable container. An engine
+    # opts in only when its container code runs on a deterministic event loop that the engine's own
+    # message handlers (e.g. a Temporal signal) also run on, so a token created and fired there
+    # cancels the run at the same point on replay.
+    _accepts_cancellation_token: ClassVar[bool] = False
+
     @property
     def engine_name(self) -> str:
         """Human-readable engine name used in error messages."""
@@ -834,12 +840,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
-        # — non-deterministic on replay. Reject it here, but only inside the durable container, so a
-        # durable-capable agent used *outside* a workflow keeps accepting tokens like a normal agent.
+        # — non-deterministic on replay. Reject it here unless the engine opts in, but only inside
+        # the durable container, so a durable-capable agent used *outside* a workflow keeps
+        # accepting tokens like a normal agent.
         # The token is attached to the run's controller during `Agent` setup, before this hook fires.
         # Read via `__dict__` so a restricted run-context subclass (e.g. `TemporalRunContext`) whose
         # `__getattribute__` rejects absent fields doesn't raise a misleading error instead.
-        if not self.in_durable_context:
+        if self._accepts_cancellation_token or not self.in_durable_context:
             return
         cancellation = ctx.__dict__.get('_cancellation')
         if cancellation is not None and cancellation.has_token:
