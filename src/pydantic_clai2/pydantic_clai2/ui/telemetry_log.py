@@ -1,8 +1,8 @@
 """Keep telemetry SDK log records out of the interactive terminal.
 
-Logfire and OpenTelemetry report export problems, such as a timed-out request that Logfire retries from disk,
-as `logging` warnings. CLAI configures no logging handlers, so Python's last-resort handler would write them to
-stderr, over the editor. While the interactive session runs they go to a small rotating file instead.
+Logfire and OpenTelemetry report export problems, such as a request to Logfire timing out, through `logging`.
+With no handler configured, Python's last-resort handler writes them to stderr, over the editor. While the
+interactive session runs they go to a small rotating file instead.
 """
 
 import logging
@@ -15,17 +15,19 @@ from rich.console import Console
 
 from pydantic_clai2.ui.rendering import theme
 
-LOGGERS = ('logfire', 'opentelemetry')
-"""The logger hierarchies whose records go to the file instead of the terminal."""
-MAX_BYTES = 1_000_000
-"""The file's size before it rotates; one previous file is kept."""
+_LOGGERS = ('logfire', 'opentelemetry')
+_MAX_BYTES = 1_000_000
 
 
 @contextmanager
 def telemetry_log(path: Path, *, console: Console) -> Iterator[None]:
-    """Send warnings from `LOGGERS` to `path`, and say on exit where to find any this session wrote."""
+    """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if used.
+
+    A logger that already reaches a handler, one the embedding application configured, is left alone: only
+    records that would otherwise fall through to `logging.lastResort` are redirected.
+    """
     # `delay` opens the file on the first record, so a session without problems creates nothing.
-    handler = RotatingFileHandler(path, maxBytes=MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
+    handler = RotatingFileHandler(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
     handler.setLevel(logging.WARNING)
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
     wrote = False
@@ -36,11 +38,11 @@ def telemetry_log(path: Path, *, console: Console) -> Iterator[None]:
         return True
 
     handler.addFilter(note)
-    loggers = [logging.getLogger(name) for name in LOGGERS]
+    loggers = [logger for name in _LOGGERS if not (logger := logging.getLogger(name)).hasHandlers()]
     propagate = [logger.propagate for logger in loggers]
     for logger in loggers:
         logger.addHandler(handler)
-        # Without this a record would still reach the root logger, and `logging.lastResort` when it has no handler.
+        # A record that still propagated would find no handler and reach `logging.lastResort` after all.
         logger.propagate = False
     try:
         yield

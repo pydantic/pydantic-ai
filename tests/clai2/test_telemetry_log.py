@@ -2,7 +2,7 @@
 
 import io
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -18,7 +18,8 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from tests.clai2.test_app_edges import inputs
 
-_EXPORTERS = ('logfire', 'opentelemetry.exporter.otlp.proto.http.metric_exporter')
+_METRICS = 'opentelemetry.exporter.otlp.proto.http.metric_exporter'
+_NOTICE = 'Logfire or OpenTelemetry reported problems, such as failed exports, this session. See {}.\n'
 
 
 class _Exports(AbstractCapability[None]):
@@ -26,25 +27,31 @@ class _Exports(AbstractCapability[None]):
 
     def get_commands(self, context: CommandContext) -> Sequence[Command]:
         def fail(args: list[str]) -> str:
-            logging.getLogger(_EXPORTERS[0]).warning('Currently retrying %s failed export(s) (%s bytes)', 1, 955)
-            logging.getLogger(_EXPORTERS[1]).warning('Failed to export metrics batch code: None, reason: timed out')
-            logging.getLogger(_EXPORTERS[0]).info('Not a problem')
+            logging.getLogger('logfire').warning('Currently retrying %s failed export(s) (%s bytes)', 1, 955)
+            logging.getLogger(_METRICS).error('Failed to export metrics batch code: %s, reason: %s', None, 'timed out')
+            logging.getLogger('logfire').info('Not a problem')
             return 'Failed.'
 
         return [Command(name='fail', description='Log export failures', handler=fail)]
 
 
-async def test_export_warnings_go_to_a_file_not_the_terminal(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+@pytest.fixture
+def unconfigured_logging() -> Iterator[None]:
+    """Logging as the CLI leaves it, with no handler: pytest's own root handlers would hide `logging.lastResort`."""
+    root = logging.getLogger()
+    handlers = root.handlers[:]
+    for handler in handlers:
+        root.removeHandler(handler)
+    try:
+        yield
+    finally:
+        for handler in handlers:
+            root.addHandler(handler)
+
+
+async def _chat_failing_exports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     inputs(monkeypatch, ['/fail', '/exit'])
     output = io.StringIO()
-    caplog.set_level(logging.INFO)
-    loggers = [logging.getLogger(name) for name in ('logfire', 'opentelemetry')]
-    before = [(logger.propagate, list(logger.handlers)) for logger in loggers]
     await chat(
         Agent(TestModel()),
         deps=None,
@@ -53,26 +60,53 @@ async def test_export_warnings_go_to_a_file_not_the_terminal(
         console=Console(file=output, width=1000),
         store=SettingsStore(tmp_path / 'config.db'),
     )
+    return output.getvalue()
+
+
+@pytest.mark.usefixtures('unconfigured_logging')
+async def test_export_problems_go_to_a_file_not_the_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    loggers = [logging.getLogger(name) for name in ('logfire', 'opentelemetry')]
+    before = [(logger.propagate, list(logger.handlers)) for logger in loggers]
+
+    text = await _chat_failing_exports(tmp_path, monkeypatch)
 
     log = tmp_path / 'telemetry.log'
-    lines = log.read_text().splitlines()
-    assert [line.split(' ', 2)[2] for line in lines] == [
+    assert [line.split(' ', 2)[2] for line in log.read_text().splitlines()] == [
         'WARNING logfire: Currently retrying 1 failed export(s) (955 bytes)',
-        'WARNING opentelemetry.exporter.otlp.proto.http.metric_exporter: Failed to export metrics batch code: None, '
-        'reason: timed out',
+        f'ERROR {_METRICS}: Failed to export metrics batch code: None, reason: timed out',
     ]
-    # Nothing propagated to the root logger, so `logging.lastResort` had nothing to write to stderr.
-    assert not [record for record in caplog.records if record.name.startswith(('logfire', 'opentelemetry'))]
+    # Nothing fell through to `logging.lastResort`, which writes to stderr, over the editor.
     assert capsys.readouterr().err == ''
-    text = output.getvalue()
     assert 'Currently retrying' not in text
-    assert text.endswith(
-        f'Logfire or OpenTelemetry reported problems, such as failed exports, this session. See {log}.\n'
-    )
-    # The session leaves logging as it found it.
+    assert text.endswith(_NOTICE.format(log))
+    # The session leaves logging as it found it, so later records reach stderr again.
     assert [(logger.propagate, list(logger.handlers)) for logger in loggers] == before
+    logging.getLogger('logfire').warning('After the session')
+    assert capsys.readouterr().err == 'After the session\n'
 
 
+@pytest.mark.usefixtures('unconfigured_logging')
+async def test_handlers_the_application_configured_still_get_their_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An application embedding `chat()` that handles `logfire` itself keeps those records; the rest are redirected."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    monkeypatch.setattr(logging.getLogger('logfire'), 'handlers', [handler])
+
+    text = await _chat_failing_exports(tmp_path, monkeypatch)
+
+    assert stream.getvalue() == 'Currently retrying 1 failed export(s) (955 bytes)\n'
+    log = tmp_path / 'telemetry.log'
+    assert [line.split(' ', 2)[2] for line in log.read_text().splitlines()] == [
+        f'ERROR {_METRICS}: Failed to export metrics batch code: None, reason: timed out',
+    ]
+    assert text.endswith(_NOTICE.format(log))
+
+
+@pytest.mark.usefixtures('unconfigured_logging')
 async def test_a_session_without_problems_creates_no_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     inputs(monkeypatch, ['/exit'])
     output = io.StringIO()
