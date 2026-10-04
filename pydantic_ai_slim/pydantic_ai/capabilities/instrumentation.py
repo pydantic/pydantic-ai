@@ -456,8 +456,9 @@ class Instrumentation(AbstractCapability[Any]):
         self, request_context: ModelRequestContext, response: ModelResponse, segments: list[ModelResponse]
     ) -> None:
         # A continuation chain (Anthropic `pause_turn`, ...) is merged into one response whose usage sums
-        # every segment's, so it is judged by its final segment, whose prompt carries the whole prefix.
-        final_segment = segments[-1] if len(segments) > 1 else None
+        # every segment's, including a suspended response a resumed run continues from, so it is judged
+        # by the final segment the provider served, whose prompt carries the whole prefix.
+        final_segment = segments[-1] if segments else None
         # Observed even when the span isn't recording, so a sampled-out request still advances the marks.
         health = self._cache_health.observe(request_context, response, final_segment=final_segment)
         if health is None:
