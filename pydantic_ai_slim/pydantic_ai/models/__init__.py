@@ -27,7 +27,13 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._genai_prices import lookup_context_window, preload_pricing_data
-from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
+from .._http import (
+    DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS,
+    DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+    create_async_httpx2_client as create_async_httpx2_client,
+    legacy_httpx,
+)
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -295,6 +301,11 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class _ModelRequestUsageLedger:
+    responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+
+
 @dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
@@ -314,6 +325,22 @@ class ModelRequestContext:
 
     model: Model
     messages: list[ModelMessage]
+    """Messages to send for this model request.
+
+    This is an independently owned shallow list, so top-level mutations and assignments change
+    only the current request. To rewrite the persistent
+    message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
+    instead, or update both explicitly when both effects are intended.
+
+    Messages a `before_model_request` hook appends here with `append`, `extend` or `+=` are also
+    added to the message history, but this is deprecated and emits a warning.
+
+    This is an independent top-level list, not an independent object graph. Retained messages
+    and their parts may be the same objects as those in persistent history. Filtering, reordering,
+    or assigning the outer sequence is request-only, but mutating a contained message or part in
+    place can affect persistent history. Construct replacements down to the level being changed
+    when isolation is required.
+    """
     model_settings: ModelSettings | None
 
     model_request_parameters: ModelRequestParameters
@@ -353,6 +380,23 @@ class ModelRequestContext:
     and non-streaming requests share the same hooks — so this field is how a hook can tell them
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
+
+    _usage_response_ledger: _ModelRequestUsageLedger = field(
+        default_factory=_ModelRequestUsageLedger, repr=False, compare=False
+    )
+
+    @property
+    def _usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The model responses whose usage was counted for this request.
+
+        Empty until the model responds. It includes responses a hook later replaced, and can hold more
+        than one response when a continued response was partly billed before an error hook recovered.
+        Request contexts copied with `dataclasses.replace()` see the same responses.
+
+        Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
+        `SpendLimits`, which pins this package's exact version.
+        """
+        return tuple(self._usage_response_ledger.responses)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -860,6 +904,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
+        # history was authored with, and an announcement opening the first request is not part of it.
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -916,7 +964,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
-            messages = _wrap_non_leading_system_prompts(messages)
+            messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
         return messages
 
@@ -1845,10 +1893,11 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
     providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+    Each call creates a new client instance. A provider that calls this itself, because you didn't pass
+    an `http_client`, closes the client when the provider (or agent) exits. A client you create with it
+    and pass as `http_client` is yours to close.
 
-    The default timeouts match those of OpenAI,
+    The default timeouts and connection pool limits match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
 
     Raises:
@@ -1865,6 +1914,9 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
+        limits=httpx.Limits(
+            max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+        ),
         headers={'User-Agent': get_user_agent()},
     )
 
@@ -2348,12 +2400,14 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
-def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
-    parts those are is `_standing_system_prompt_count`'s
-    question, and it is not simply "everything in the first request".
+    parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
+    in the first request". The caller counts them on the history as authored and passes
+    `standing_prompt_count`, because rendering a `ToolAvailabilityDeltaPart` can put an announcement
+    in front of the first request, where counting again would take it for the standing prompt.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2368,7 +2422,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     new_messages: list[ModelMessage] = list(messages[:first_request_idx])
     changed = False
     for offset, msg in enumerate(messages[first_request_idx:]):
-        start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
+        start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
                 UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
@@ -2446,6 +2500,10 @@ def _legacy_fabricated_tool_search_reveals(
 
     All three confidence signals are required: a framework-prefixed id, direct adjacency to a
     `load_capability` return, and discoveries confined to that capability's current tools.
+
+    This is the one place core identifies its own tools by name rather than by `tool_kind`: these
+    exchanges come from history written by earlier versions, whose parts may lack a `tool_kind`
+    or have it stripped on loading, so the name is the only signal left.
     """
     capability_by_load_call_id = _load_capability_ids_by_call(messages)
     tools_by_capability: dict[str, set[str]] = {}
@@ -2527,7 +2585,11 @@ def _search_return_discovered_names(part: ToolReturnPart) -> list[str] | None:
 def _replace_tool_search_exchanges_with_deltas(
     messages: list[ModelMessage], translated_call_ids: dict[str, list[str]]
 ) -> list[ModelMessage]:
-    """Replace selected search call/return pairs with wire-only availability deltas."""
+    """Replace selected search call/return pairs with wire-only availability deltas.
+
+    Part of the legacy-history path (see `_legacy_fabricated_tool_search_reveals`), so the pair is
+    matched by name: a call id alone could also belong to another tool.
+    """
     transformed: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):
@@ -2584,9 +2646,6 @@ def _announce_tool_availability_delta_messages(
     runs after this — degrades it to `<system>`-tagged user text. Either way it's append-only, so the
     cached prefix ahead of it survives.
     """
-    # If truncation promotes a never-sent delta request to first position, its announcement may
-    # hoist with the standing prompt. All parts still precede the same assistant response, and the
-    # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
     is_first_kept_request = True
@@ -2620,12 +2679,12 @@ def _announce_tool_availability_delta_messages(
             # so the announcements sort to the back. One exception: system prompts opening the
             # history's first request are the agent's standing prompt, which the adapters lift into
             # the provider's dedicated system field based on exactly this position, so they stay at
-            # the front.
-            request = replace(message, parts=replacement_parts)
-            keep = _standing_system_prompt_count(request) if is_first_kept_request else 0
+            # the front. They're counted on the authored parts: an announcement is never part of the
+            # standing prompt, even when its delta opened the request.
+            keep = _standing_system_prompt_count(message) if is_first_kept_request else 0
             head, tail = replacement_parts[:keep], replacement_parts[keep:]
             tail.sort(key=_tool_results_first_sort_key)
-            transformed.append(replace(request, parts=[*head, *tail]))
+            transformed.append(replace(message, parts=[*head, *tail]))
             is_first_kept_request = False
 
     return transformed if changed else messages

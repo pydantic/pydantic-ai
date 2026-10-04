@@ -34,13 +34,14 @@ def _signal_process_group(process: asyncio.subprocess.Process, signum: int) -> N
 
 def _interrupt(process: asyncio.subprocess.Process) -> None:
     """Forward Ctrl-C, which the terminal delivers to CLAI but not to a command in its own session."""
-    if sys.platform != 'win32':  # The Windows console delivers Ctrl-C to every attached process.
+    # The Windows console delivers Ctrl-C to every attached process.
+    if sys.platform != 'win32':  # pragma: no branch
         _signal_process_group(process, signal.SIGINT)
 
 
 async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
     """Kill the shell and its descendants."""
-    if sys.platform == 'win32':
+    if sys.platform == 'win32':  # pragma: no cover
         try:
             killer = await asyncio.create_subprocess_exec(
                 _taskkill_path(),
