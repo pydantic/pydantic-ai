@@ -2084,7 +2084,7 @@ class TestFallbackAttempts:
             return Decimal(response.usage.input_tokens) / 100
 
         guard = SpendLimits[None](budgets=[Budget(window='total')], price=price)
-        result = await Agent(_rejecting_fallback(), capabilities=[guard]).run('hi')
+        result = await Agent(_rejecting_fallback(), deps_type=type(None), capabilities=[guard]).run('hi')
 
         assert result.output == 'ok'
         assert priced == ['gpt-4o-mini', 'gpt-4o']
@@ -2094,7 +2094,9 @@ class TestFallbackAttempts:
     async def test_an_attempt_without_a_price_uses_the_cost_core_calculated(self):
         """`price` declining falls through to the cost core put on the attempt, then to the registry."""
         guard = SpendLimits[None](budgets=[Budget(window='total')], price=_no_price)
-        result = await Agent(_rejecting_fallback(primary_cost=Decimal('0.001')), capabilities=[guard]).run('hi')
+        result = await Agent(
+            _rejecting_fallback(primary_cost=Decimal('0.001')), deps_type=type(None), capabilities=[guard]
+        ).run('hi')
 
         answer = result.all_messages()[-1]
         assert isinstance(answer, ModelResponse)
@@ -2117,7 +2119,7 @@ class TestFallbackAttempts:
         guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens))
 
         with pytest.raises(FallbackExceptionGroup):
-            await Agent(model, capabilities=[guard]).run('hi')
+            await Agent(model, deps_type=type(None), capabilities=[guard]).run('hi')
 
         assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
 
@@ -2131,7 +2133,9 @@ class TestFallbackAttempts:
                 return ModelResponse(parts=[TextPart(content='recovered')])
 
         guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
-        result = await Agent(_rejecting_fallback(reject_all=True), capabilities=[Recover(), guard]).run('hi')
+        result = await Agent(
+            _rejecting_fallback(reject_all=True), deps_type=type(None), capabilities=[Recover(), guard]
+        ).run('hi')
 
         assert result.output == 'recovered'
         assert (await guard.status())[0].spent == Spent(usd=Decimal('2'), tokens=132, requests=2)
@@ -2141,7 +2145,9 @@ class TestFallbackAttempts:
         second = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'), id='second')
 
         with pytest.raises(FallbackExceptionGroup):
-            await Agent(_rejecting_fallback(reject_all=True), capabilities=[first, second]).run('hi')
+            await Agent(_rejecting_fallback(reject_all=True), deps_type=type(None), capabilities=[first, second]).run(
+                'hi'
+            )
 
         for guard in (first, second):
             assert (await guard.status())[0].spent == Spent(usd=Decimal('2'), tokens=132, requests=2)
@@ -2154,7 +2160,7 @@ class TestFallbackAttempts:
             fallback_on=(FallbackExceptionGroup,),
         )
         guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
-        result = await Agent(model, capabilities=[guard]).run('hi')
+        result = await Agent(model, deps_type=type(None), capabilities=[guard]).run('hi')
 
         answer = result.all_messages()[-1]
         assert isinstance(answer, ModelResponse)
@@ -2168,7 +2174,7 @@ class TestFallbackAttempts:
         guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
 
         with pytest.raises(RuntimeError, match='broken'):
-            await Agent(FunctionModel(broken), capabilities=[guard]).run('hi')
+            await Agent(FunctionModel(broken), deps_type=type(None), capabilities=[guard]).run('hi')
 
         assert (await guard.status())[0].spent == Spent()
 
@@ -2181,7 +2187,7 @@ class TestFallbackAttempts:
         guard = SpendLimits[None](budgets=[Budget(window='total')], price=price)
 
         with pytest.raises(FallbackExceptionGroup):
-            await Agent(_rejecting_fallback(reject_all=True), capabilities=[guard]).run('hi')
+            await Agent(_rejecting_fallback(reject_all=True), deps_type=type(None), capabilities=[guard]).run('hi')
 
         assert (await guard.status())[0].spent == Spent(tokens=132, requests=2, unpriced_requests=2)
 
