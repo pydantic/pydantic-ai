@@ -449,15 +449,17 @@ history messages are retained; they do not cap the summary-request payload.
 
 ### Token retention after automatic compaction
 
-> **Compatibility impact:** Earlier versions treated positive `keep_tokens` as an upper-budget target and could retain much less history. It now preserves a minimum original suffix. Applications relying on the smaller result should review their trigger threshold and context headroom, and lower the retention target if needed. Whole-message and tool-pair overshoot must still be allowed; `keep_tokens` is not a strict request-size limit. Message-count mode and `keep_tokens=0` are unchanged.
+For both strategies, `max_tokens` is the trigger and positive `keep_tokens` is the minimum unchanged
+recent suffix. Retention includes the boundary message and required tool dependencies, including named
+retries. Counts use message-part text, not attached `ModelRequest.instructions`. Histories below the
+target stay unchanged. Summaries, receipts, pins, and older user copies do not replace the protected tail.
 
-`max_tokens` determines when compaction runs; a positive `keep_tokens` determines how much original recent history survives. Both `SlidingWindowCompaction` and `SummarizingCompaction` include the whole message that crosses the retention target, extending backward for matching tool calls and tool-specific retry responses.
+> **Compatibility impact:** Positive `keep_tokens` previously acted as an upper budget. Allow headroom
+> for whole-message/tool-dependency overshoot and added context; this is not a request-size limit.
+> Review trigger thresholds and lower the target if needed. Zero-token and message-count modes are unchanged.
 
-For example, automatic compaction with `max_tokens=170_000` may encounter a 190k-token history consisting of 139k older tokens, a recent 48k-token message, and a 3k-token newest tail. With `keep_tokens=50_000`, it retains the 51k-token suffix rather than dropping the boundary-crossing message and keeping only 3k. Summarizing compaction summarizes the older prefix; sliding-window compaction discards it.
-
-Counts use the configured `tokenizer`, or the default character-based estimate, over message-part text including system-prompt parts. Attached `ModelRequest.instructions` do not satisfy the retention target. If the whole history is below the target, compaction leaves it unchanged without a summary call. `keep_tokens=0` retains its existing zero-budget behavior; `None` uses `keep_messages`.
-
-Whole messages and tool dependencies can overshoot the target. Summaries, receipts, reinserted pins, and retained older user turns are additional; they do not displace the protected suffix. Existing receipts inside that suffix remain unchanged. This is not a context-window-fit guarantee: callers must check the remaining request budget and stop, switch models, or explicitly reduce the retention target if necessary. Configure the same retention target on each fallback that must preserve it.
+See the [token-retention guide](https://pydantic.dev/docs/ai/harness/compaction/#token-retention-after-automatic-compaction)
+for the automatic-compaction example, tokenizer accounting, and fallback/budget guidance.
 
 ## Usage accounting
 

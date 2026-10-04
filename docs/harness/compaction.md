@@ -343,7 +343,11 @@ By default `preserve_first_user_message=True` keeps the first user turn (in addi
 
 ### Token retention after automatic compaction
 
-> **Compatibility impact:** Earlier versions treated positive `keep_tokens` as an upper-budget target and could retain much less history. It now preserves a minimum original suffix. Applications relying on the smaller result should review their trigger threshold and context headroom, and lower the retention target if needed. Whole-message and tool-pair overshoot must still be allowed; `keep_tokens` is not a strict request-size limit. Message-count mode and `keep_tokens=0` are unchanged.
+!!! warning "Compatibility impact"
+
+    Positive `keep_tokens` now preserves a minimum original suffix instead of an upper-budget target.
+    Review trigger thresholds and context headroom, and lower the retention target if needed.
+    Message-count mode and `keep_tokens=0` are unchanged.
 
 `max_tokens` determines when compaction runs; a positive `keep_tokens` determines how much original recent history survives. Both `SlidingWindowCompaction` and `SummarizingCompaction` include the whole message that crosses the retention target, extending backward for matching tool calls and tool-specific retry responses.
 
