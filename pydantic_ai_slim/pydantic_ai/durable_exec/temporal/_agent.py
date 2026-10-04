@@ -496,8 +496,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            cancellation_token: Token used to cancel this run. Inside a workflow, create it in workflow code and
-                fire it from a `@workflow.signal` handler so the cancellation is deterministic on replay.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+                Inside a workflow, create it in workflow code and fire it from a `@workflow.signal` handler so
+                the cancellation is deterministic on replay.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -663,8 +665,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            cancellation_token: Token used to cancel this run. Inside a workflow, create it in workflow code and
-                fire it from a `@workflow.signal` handler so the cancellation is deterministic on replay.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -824,8 +826,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            cancellation_token: Token used to cancel this run. Inside a workflow, create it in workflow code and
-                fire it from a `@workflow.signal` handler so the cancellation is deterministic on replay.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1004,8 +1006,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            cancellation_token: Token used to cancel this run. Inside a workflow, create it in workflow code and
-                fire it from a `@workflow.signal` handler so the cancellation is deterministic on replay.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1221,8 +1223,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
-            cancellation_token: Token used to cancel this run. Inside a workflow, create it in workflow code and
-                fire it from a `@workflow.signal` handler so the cancellation is deterministic on replay.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
+                Inside a workflow, create it in workflow code and fire it from a `@workflow.signal` handler so
+                the cancellation is deterministic on replay.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
