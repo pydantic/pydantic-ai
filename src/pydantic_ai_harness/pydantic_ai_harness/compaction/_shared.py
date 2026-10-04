@@ -657,15 +657,57 @@ def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
     return 0  # pragma: no cover
 
 
+def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int:
+    """Expand a suffix to include all original tool calls required by its results."""
+    calls: dict[str, int] = {}
+    dependencies: list[int] = []
+    for index, message in enumerate(messages):
+        earliest = index
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, ToolCallPart) and part.tool_call_id:
+                    # Providers can reuse an ID in later turns; match the nearest prior call.
+                    calls[part.tool_call_id] = index
+        else:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name is not None:
+                    earliest = min(earliest, calls.get(part.tool_call_id, index))
+        dependencies.append(earliest)
+
+    # Dependencies only point backward, so one reverse pass also covers transitive pairs.
+    for index in range(len(messages) - 1, -1, -1):
+        if index < cutoff:
+            break
+        cutoff = min(cutoff, dependencies[index])
+    return cutoff
+
+
 def find_token_cutoff(
     messages: list[ModelMessage],
     target_tokens: int,
     tokenizer: Callable[[str], int] | None = None,
 ) -> int:
-    """Binary-search for a cutoff such that `messages[cutoff:]` fits in *target_tokens*.
+    """Find the shortest original suffix meeting *target_tokens*, including tool dependencies.
 
-    Adjusts the result so that no tool-call pairs are orphaned.
+    Attached instructions do not count toward this message-content floor. A zero target
+    retains the legacy behavior below.
     """
+    if target_tokens > 0:
+        lo, hi = 0, len(messages)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            segments = _collect_message_text(messages[mid:])
+            tokens = (
+                sum(tokenizer(text) for text in segments)
+                if tokenizer is not None
+                else sum(len(text) for text in segments) // _CHARS_PER_TOKEN
+            )
+            if tokens >= target_tokens:
+                lo = mid + 1
+            else:
+                hi = mid
+        return _include_tool_dependencies(messages, max(0, lo - 1))
+
     if not messages or estimate_token_count(messages, tokenizer) <= target_tokens:
         return 0
 
