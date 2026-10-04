@@ -33,6 +33,9 @@ from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from tests.clai2.test_forks import Model
 from tests.clai2.test_logfire import Recorder, close, load_logfire, make_host, operation, recorder as recorder
 
+TEAM: dict[str, JsonValue] = {'name': 'LOGFIRE_TOKEN_TEAM'}
+SIGNED_IN: dict[str, JsonValue] = {'email': 'signed-in@example.com', 'token': TEAM}
+
 
 @pytest.mark.parametrize('ui_events', [False, True])
 @pytest.mark.parametrize('email', [None, 'developer@example.com'])
@@ -40,12 +43,13 @@ from tests.clai2.test_logfire import Recorder, close, load_logfire, make_host, o
 async def test_session_root_groups_turns_tools_and_nested_runs(
     recorder: Recorder, ui_events: bool, email: str | None, multiple_plugins: bool
 ) -> None:
-    previous = load_logfire(make_host(ui_events=ui_events, account_email=email)) if multiple_plugins else None
+    signed_in: dict[str, JsonValue] = {'token': TEAM, 'account': {'email': email, 'token': TEAM} if email else None}
+    previous = load_logfire(make_host(ui_events=ui_events, **signed_in)) if multiple_plugins else None
     plugin = load_logfire(
         PluginHost(
             name='observability',
             console=Console(file=io.StringIO()),
-            settings={'ui_events': ui_events, 'account_email': email},
+            settings={'ui_events': ui_events, **signed_in},
             session_id=lambda: 'session-123',
         )
     )
@@ -124,10 +128,13 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     ('settings', 'email'),
     [
         ({}, None),
-        ({'account_email': 'signed-in@example.com'}, 'signed-in@example.com'),
-        ({'user_tag': 'git-email', 'account_email': 'signed-in@example.com'}, 'developer@example.com'),
+        ({'token': TEAM, 'account': SIGNED_IN}, 'signed-in@example.com'),
+        # The token changed since setup, for example by an older build sharing the settings: the email is stale.
+        ({'account': SIGNED_IN}, None),
+        ({'token': {'name': 'LOGFIRE_TOKEN_OTHER'}, 'account': SIGNED_IN}, None),
+        ({'user_tag': 'git-email', 'token': TEAM, 'account': SIGNED_IN}, 'developer@example.com'),
         ({'user_tag': 'git-email'}, 'developer@example.com'),
-        ({'user_tag': False, 'account_email': 'signed-in@example.com'}, None),
+        ({'user_tag': False, 'token': TEAM, 'account': SIGNED_IN}, None),
     ],
 )
 async def test_user_tag_chooses_the_root_email_and_only_git_email_runs_git(

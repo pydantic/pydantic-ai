@@ -34,6 +34,14 @@ from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
+class LogfireAccount(BaseModel):
+    """The Logfire account that signed in during project setup, and the `/keys` entry that setup saved."""
+
+    model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
+    email: str
+    token: KeyReference
+
+
 class LogfireSettings(BaseModel):
     """Non-secret telemetry options; a token stays in `LOGFIRE_TOKEN`, Logfire's credential file, or `/keys`."""
 
@@ -47,9 +55,10 @@ class LogfireSettings(BaseModel):
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
         'or with git config user.email. Never added to child spans or logs.',
     )
-    account_email: str | None = Field(
+    account: LogfireAccount | None = Field(
         default=None,
-        description='The email of the Logfire account that signed in during project setup.',
+        description='Saved by project setup. Its email tags session roots only while `token` is still its key, '
+        'so a token changed by any CLAI build sharing these settings is never tagged with it.',
     )
     token: KeyReference | None = Field(
         default=None,
@@ -111,7 +120,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
         """Tag the identity settings so older builds sharing the database can ignore them."""
-        requires = {'user_tag': ['logfire-user-tag'], 'account_email': ['logfire-user-tag']}
+        requires = {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
         return cls(host, host.settings(LogfireSettings, requires=requires))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
@@ -165,7 +174,10 @@ async def _user_email(settings: LogfireSettings) -> str | None:
     """The email `user_tag` names; Git is queried only when chosen."""
     if settings.user_tag == 'git-email':
         return await git_email()
-    return settings.account_email if settings.user_tag == 'logfire-account' else None
+    account = settings.account
+    if settings.user_tag == 'logfire-account' and account is not None and account.token == settings.token:
+        return account.email
+    return None
 
 
 def logfire_dir() -> Path:
@@ -306,7 +318,7 @@ class LogfireSource:
     def reset(self, row: FieldRow) -> str:
         """Restore one option's default; the project row forgets the chosen key, server, and sign-in email."""
         data = self.settings.model_dump(mode='json')
-        for key in ('token', 'base_url', 'account_email') if row.key == PROJECT else (row.key,):
+        for key in ('token', 'base_url', 'account') if row.key == PROJECT else (row.key,):
             data.pop(key, None)
         self._host.save_settings(LogfireSettings.model_validate(data))
         return f'Reset {row.label}.'
@@ -335,10 +347,11 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
     if chosen is None:
         return 'Logfire setup cancelled; settings unchanged.'
     # Setting up a project means sending to it, even if sending had been turned off.
+    email = chosen.account_email
     update = {
         'token': chosen.token,
         'base_url': chosen.base_url,
-        'account_email': chosen.account_email,
+        'account': LogfireAccount(email=email, token=chosen.token) if email else None,
         'send_to_logfire': 'if-token-present',
     }
     host.save_settings(config.model_copy(update=update))

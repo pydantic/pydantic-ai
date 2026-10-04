@@ -15,7 +15,7 @@ from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_clai2.builtin_plugins import logfire as logfire_plugin, logfire_setup
-from pydantic_clai2.builtin_plugins.logfire import LogfireSettings
+from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError, https_origin
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, save_key
 from pydantic_clai2.plugins import PluginHost, SessionEnd, load_plugin
@@ -180,7 +180,9 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     assert saved.base_url == US
     assert (saved.service_name, saved.ui_events) == ('mine', True)  # Other settings are kept.
     assert saved.send_to_logfire == 'if-token-present'  # Setting up a project turns sending on.
-    assert saved.account_email == 'mike@example.com'
+    assert saved.account == LogfireAccount(
+        email='mike@example.com', token=KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
+    )
     assert harness.lines == [
         'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123'
     ]
@@ -274,7 +276,7 @@ async def test_an_unknown_account_email_still_sets_up_the_project(account: Answe
     await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
     saved = host.settings(LogfireSettings)
     assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
-    assert saved.account_email is None
+    assert saved.account is None
 
 
 async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatch, configure: Configure) -> None:

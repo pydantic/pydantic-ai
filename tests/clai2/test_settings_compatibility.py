@@ -14,12 +14,15 @@ from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.builtin_plugins.logfire import LogfireSettings, LogfireSource
+from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
 from pydantic_clai2.commands import config_command, plugins_command
 from pydantic_clai2.config import PluginSettings, Settings, features
+from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.model_settings import model_settings_from_json
+from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
@@ -47,7 +50,7 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         loaded = loader.entries()[0].loaded
         assert loaded is not None
         settings = loaded.plugin.host.settings(LogfireSettings)
-        assert (settings.user_tag, settings.account_email) == ('logfire-account', None)  # No identity to tag with.
+        assert (settings.user_tag, settings.account) == ('logfire-account', None)  # No identity to tag with.
         assert store.plugins() == [previous]  # Loading an old declaration does not rewrite it.
         source = LogfireSource(loaded.plugin.host)
         rows = {row.key: row for row in source.rows()}
@@ -59,14 +62,14 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         assert (
             saved.settings['user_tag'] == {None: 'logfire-account', 'git-email': 'git-email', 'false': False}[user_tag]
         )
-        assert saved.settings['account_email'] is None
+        assert saved.settings['account'] is None
         requirements = store.plugin_requirements('observability')
-        assert requirements == {'user_tag': ['logfire-user-tag'], 'account_email': ['logfire-user-tag']}
+        assert requirements == {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account_email')
+            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account')
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -79,6 +82,47 @@ async def test_logfire_user_tag_settings_survive_older_builds(
     finally:
         await loader.close('exit')
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
+def _observability_host(loader: PluginLoader[None]) -> PluginHost[None]:
+    loaded = loader.entries()[0].loaded
+    assert loaded is not None
+    return loaded.plugin.host
+
+
+@pytest.mark.parametrize('older_token', [None, KeyReference(name='LOGFIRE_TOKEN_OTHER')])
+async def test_an_older_build_changing_the_token_retires_the_sign_in_email(
+    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch, older_token: KeyReference | None
+) -> None:
+    loader, store = observability_loader(tmp_path)
+    team = KeyReference(name='LOGFIRE_TOKEN_TEAM')
+    supported = features.SUPPORTED_FEATURES
+    store.save_plugin(
+        PluginSettings(
+            id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'send_to_logfire': False}
+        )
+    )
+    try:
+        await loader.load_all()
+        # This build's project setup saves the token with the account that signed in, then reloads.
+        host = _observability_host(loader)
+        account = LogfireAccount(email='mike@example.com', token=team)
+        host.save_settings(host.settings(LogfireSettings).model_copy(update={'token': team, 'account': account}))
+        await loader.reload('observability')
+        # An older build, which ignores `account`, sets up another project or resets the project row.
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
+        await loader.reload('observability')
+        host = _observability_host(loader)
+        assert host.settings(LogfireSettings).account is None
+        host.save_settings(host.settings(LogfireSettings).model_copy(update={'token': older_token}))
+        [saved] = store.plugins()
+        assert saved.settings['account'] == account.model_dump(mode='json')  # Written back, as unknown settings are.
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', supported)
+        await loader.reload('observability')
+    finally:
+        await loader.close('exit')
+    tags = [(span.attributes or {})['logfire.tags'] for span in recorder.spans() if span.name == 'CLAI session']
+    assert tags == [(), ('mike@example.com',), (), ()]
 
 
 @pytest.mark.parametrize(('version', 'has_model_settings'), [(0, False), (1, False), (1, True)])

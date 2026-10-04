@@ -1749,7 +1749,7 @@ Choose **Logfire project** in the settings menu (`/plugins configure observabili
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
 reloads and the next turn is traced there. The sign-in itself is not kept, only
-your account's email, saved as `account_email` to tag session roots. The
+your account's email, saved with the key name as `account` to tag session roots. The
 URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
 send the token elsewhere, and sending is turned on if it was off. Choose the row
 again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the

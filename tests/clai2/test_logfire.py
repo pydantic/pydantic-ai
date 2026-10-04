@@ -554,7 +554,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'include_content': False,
             'include_binary_content': False,
             'user_tag': 'git-email',
-            'account_email': None,
+            'account': None,
             'token': None,
             'base_url': None,
             'ui_events': True,
@@ -607,7 +607,7 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     host = make_host(
         token={'name': 'LOGFIRE_TOKEN_TEAM'},
         base_url='https://logfire.example.com',
-        account_email='mike@example.com',
+        account={'email': 'mike@example.com', 'token': {'name': 'LOGFIRE_TOKEN_TEAM'}},
         ui_events=True,
     )
     source = LogfireSource(host)
@@ -618,4 +618,4 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     assert hosted.current(hosted.rows()[0]) == 'LOGFIRE_TOKEN_US'
     assert source.reset(project) == 'Reset Logfire project.'
     saved = host.settings(logfire_plugin.LogfireSettings)
-    assert (saved.token, saved.base_url, saved.account_email, saved.ui_events) == (None, None, None, True)
+    assert (saved.token, saved.base_url, saved.account, saved.ui_events) == (None, None, None, True)
