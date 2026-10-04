@@ -601,14 +601,6 @@ class ModelAPIError(AgentRunError):
             'in_stream': self.in_stream,
         }
 
-    def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
-        # Keep what `__init__` set for keys missing from state pickled by an older version.
-        self.body = state.get('body', self.body)
-        self.provider_error_code = state.get('provider_error_code', self.provider_error_code)
-        self.provider_error_type = state.get('provider_error_type', self.provider_error_type)
-        self.retry_after = state.get('retry_after', self.retry_after)
-        self.in_stream = state.get('in_stream', self.in_stream)
-
 
 class ModelRateLimitError(ModelAPIError):
     """Raised when the provider rejected the request because a rate limit was reached.
@@ -680,10 +672,6 @@ class ModelConnectionError(ModelAPIError):
 
     def __getstate__(self) -> dict[str, Any]:
         return {**super().__getstate__(), 'phase': self.phase}
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        super().__setstate__(state)
-        self.phase = state.get('phase')
 
 
 class ModelTimeoutError(ModelConnectionError):
@@ -769,7 +757,7 @@ class ModelHTTPError(ModelAPIError):
     def __getstate__(self) -> dict[str, Any]:
         return {**super().__getstate__(), 'headers': self.headers, 'suggested_model_id': self.suggested_model_id}
 
-    def __setstate__(self, state: dict[str, Any]) -> None:
+    def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         super().__setstate__(state)
         self.headers = state.get('headers')
         self.suggested_model_id = state.get('suggested_model_id')

@@ -587,6 +587,60 @@ def test_model_http_error_unpickles_state_from_before_categories():
     assert restored.in_stream is False
 
 
+def _reduce_model_api_error_before_categories(self: ModelAPIError) -> tuple[Any, ...]:
+    return type(self), (self.model_name, self.message)
+
+
+def _reduce_model_http_error_before_categories(self: ModelHTTPError) -> tuple[Any, ...]:
+    state = {'headers': self.headers, 'suggested_model_id': self.suggested_model_id}
+    return type(self), (self.status_code, self.model_name, self.body), state
+
+
+def test_model_errors_pickled_before_categories_unpickle_with_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Pickles made by `__reduce__` before the error categories get the new attributes' defaults."""
+    http_error = ModelHTTPError(429, 'gpt-4', {'error': 'rate limited'}, headers={'Retry-After': '60'})
+    api_error = ModelAPIError('gpt-4', 'failed')
+    with monkeypatch.context() as patch:
+        patch.setattr(ModelHTTPError, '__reduce__', _reduce_model_http_error_before_categories)
+        patch.setattr(ModelAPIError, '__reduce__', _reduce_model_api_error_before_categories)
+        http_pickle = pickle.dumps(http_error)
+        api_pickle = pickle.dumps(api_error)
+
+    restored_http = pickle.loads(http_pickle)
+    assert restored_http.body == {'error': 'rate limited'}
+    assert restored_http.headers == {'retry-after': '60'}
+    assert restored_http.retry_after == 60.0
+    assert restored_http.should_retry is None
+    assert restored_http.provider_error_code is None
+    assert restored_http.provider_error_type is None
+    assert restored_http.in_stream is False
+
+    restored_api = pickle.loads(api_pickle)
+    assert restored_api.body is None
+    assert restored_api.provider_error_code is None
+    assert restored_api.provider_error_type is None
+    assert restored_api.retry_after is None
+    assert restored_api.in_stream is False
+
+
+class _StatefulConnectionError(ModelConnectionError):
+    extra: int | None = None
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {**super().__getstate__(), 'extra': self.extra}
+
+
+def test_model_error_subclass_state_survives_pickle():
+    """A subclass's own attributes in its pickled state are restored, as `BaseException.__setstate__` does."""
+    error = _StatefulConnectionError('gpt-4', 'reset', phase='read', in_stream=True)
+    error.extra = 5
+    restored = pickle.loads(pickle.dumps(error))
+    assert isinstance(restored, _StatefulConnectionError)
+    assert restored.extra == 5
+    assert restored.phase == 'read'
+    assert restored.in_stream is True
+
+
 def test_model_http_error_unpickles_state_without_retry_after():
     """An error pickled before `retry_after` was stored recomputes it from the headers."""
     exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '60'})
