@@ -5148,6 +5148,23 @@ def test_google_grounding_uses_unique_segment_text_to_find_part():
     }
 
 
+def test_google_grounding_uses_part_index_when_segment_text_repeats():
+    source = WebCitationSource(url='https://example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[
+            GroundingSupport(
+                grounding_chunk_indices=[0],
+                segment=Segment(part_index=1, text='same', start_index=0, end_index=4),
+            )
+        ],
+    )
+
+    assert _map_grounding_citations([Part(text='same'), Part(text='same')], metadata) == {
+        1: [Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=4))]
+    }
+
+
 def test_google_grounding_filters_sources_and_corresponding_confidence_scores():
     first_source = WebCitationSource(url='https://first.example.com')
     second_source = WebCitationSource(url='https://second.example.com')
