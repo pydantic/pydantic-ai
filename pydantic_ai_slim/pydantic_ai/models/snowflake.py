@@ -218,8 +218,13 @@ class SnowflakeModel(OpenAIChatModel):
         # Cortex returns an empty `finish_reason` for Claude models, which would fail validation.
         for choice in response.choices:
             if not choice.finish_reason:
-                choice.finish_reason = 'tool_calls' if choice.message.tool_calls else 'stop'
+                choice.finish_reason = self._missing_finish_reason(choice)
         return _SnowflakeChatCompletion.model_validate(response.model_dump())
+
+    @override
+    def _missing_finish_reason(self, choice: chat_completion.Choice) -> Literal['stop', 'tool_calls']:
+        # Cortex responses from Claude models have no finish reason; as in `SnowflakeStreamedResponse`.
+        return 'tool_calls' if choice.message.tool_calls else 'stop'
 
     @override
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
@@ -266,7 +271,7 @@ class SnowflakeStreamedResponse(OpenAIStreamedResponse):
 
     @override
     def _missing_finish_reason(self) -> FinishReason:
-        # Cortex streams from Claude models have no finish reason; as in `SnowflakeModel._validate_completion`.
+        # Cortex streams from Claude models have no finish reason; as in `SnowflakeModel._missing_finish_reason`.
         return (
             'tool_call' if any(isinstance(part, ToolCallPart) for part in self._parts_manager.get_parts()) else 'stop'
         )

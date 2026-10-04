@@ -4328,6 +4328,37 @@ async def test_openai_chat_stream_skips_unsupported_annotation(allow_model_reque
     ]
 
 
+async def test_openai_chat_stream_annotations_on_text_split_by_reasoning(allow_model_requests: None):
+    """Annotation offsets address the whole message text, so they aren't mapped onto text that reasoning split."""
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        text_chunk('Answer '),
+        # `reasoning_content` is not on the SDK's `ChoiceDelta`; DeepSeek, vLLM and others send it as an extra field.
+        chunk([ChoiceDelta.model_construct(role='assistant', reasoning_content='Check.')]),
+        text_chunk('[1]'),
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])], finish_reason='stop'
+        ),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [
+        TextPart('Answer '),
+        ThinkingPart('Check.', id='reasoning_content', provider_name='openai'),
+        TextPart('[1]', provider_name='openai', provider_details={'annotations': [annotation.model_dump()]}),
+    ]
+
+
 async def test_openai_chat_stream_accumulates_raw_annotation_batches(allow_model_requests: None):
     annotations = [
         chat.chat_completion_message.Annotation(

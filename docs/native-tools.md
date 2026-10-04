@@ -22,6 +22,8 @@ Pydantic AI supports the following native tools:
 
 These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTool`][pydantic_ai.capabilities.NativeTool], and are executed by the model provider's infrastructure.
 
+The calls and results show up in the model's response as [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Text the model writes before a native tool call is treated as commentary rather than output, unless no text follows the last native tool call: some providers, like Google with Gemini 2.5, report the searches that grounded a response after its text.
+
 !!! warning "Provider Support"
     Not all model providers support native tools. If you use a native tool with an unsupported provider, Pydantic AI will raise a [`UserError`][pydantic_ai.exceptions.UserError] when you try to run the agent.
 
@@ -93,7 +95,7 @@ making it ideal for queries that require up-to-date data.
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agent.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
-| Google | ✅ | No parameter support. No [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] is generated when streaming. See [Google tool combinations](#google-tool-combinations). |
+| Google | ✅ | No parameter support. The search sources are the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]'s content, except on Gemini 3 with the Gemini API, where they're under the `sources` key of the last web search return's content, as Gemini doesn't say which search found which source. Gemini 2.5 and Google Cloud report their searches after the text they ground, so the call and return come after the text. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. Search sources surface in `provider_details['annotations']`, but only when a non-native engine ran the search. |
