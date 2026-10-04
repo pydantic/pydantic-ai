@@ -84,7 +84,8 @@ class BaseGoogleProvider(Provider[Client], ABC):
             warn_if_legacy_httpx_client(http_client, consumer='Google providers', stacklevel=3)
         # google-genai's `HttpOptions.timeout` defaults to None, which makes the SDK pass
         # `timeout=None` to httpx and override any timeout on the supplied client. Pin the timeout
-        # here (ms) so requests actually time out.
+        # here (ms) so requests actually time out. The SDK sends it as a scalar, which would set the
+        # connect and pool timeouts too; a client we created caps those at its own (see `_http.py`).
         timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
         timeout_ms = int(timeout_seconds * 1000)
         return HttpOptions(

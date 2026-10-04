@@ -1040,26 +1040,33 @@ async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions()
 def _interrupt_sync_run_once(started: asyncio.Event) -> Generator[None]:
     """Simulate Ctrl-C reaching the caller of a sync method once `started` is set.
 
-    The first `loop.run_until_complete()` drives the loop until `started` is set and then raises
-    `KeyboardInterrupt`, as Python's default `SIGINT` handler would; later calls (the interrupt
-    cleanup) run normally. Patching the loop keeps this in-process: a real signal can't be timed
-    reliably from a test.
+    The `loop.run_until_complete()` call that is driving the loop when `started` is set raises
+    `KeyboardInterrupt`, as Python's default `SIGINT` handler would; earlier calls (e.g. entering a
+    sync stream) complete normally, and later calls (the interrupt cleanup) run normally. Patching
+    the loop keeps this in-process: a real signal can't be timed reliably from a test.
     """
     loop = get_event_loop()
     real_run_until_complete = loop.run_until_complete
-    interrupted = False
+    started_waiter = loop.create_task(started.wait())
 
     def interrupt_once(future: Any) -> Any:
-        nonlocal interrupted
-        if interrupted:
+        if started_waiter.done():
             return real_run_until_complete(future)
-        interrupted = True
-        real_run_until_complete(asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT))
-        raise KeyboardInterrupt
+        future = asyncio.ensure_future(future, loop=loop)
+        real_run_until_complete(
+            asyncio.wait([future, started_waiter], timeout=READINESS_WAIT_TIMEOUT, return_when=asyncio.FIRST_COMPLETED)
+        )
+        if started_waiter.done():
+            raise KeyboardInterrupt
+        assert future.done(), 'the run neither finished nor set `started` in time'
+        return future.result()
 
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(loop, 'run_until_complete', interrupt_once)
-        yield
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(loop, 'run_until_complete', interrupt_once)
+            yield
+    finally:
+        started_waiter.cancel()
 
 
 def _fast_then_slow_tool_agent(started: asyncio.Event) -> Agent[None, str]:
@@ -1141,6 +1148,79 @@ def test_run_stream_sync_keyboard_interrupt_before_final_result_carries_run_stat
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
     assert _tool_returns(cancelled) == ['fast done']
+
+
+def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_state():
+    """Ctrl-C while `run_stream_sync()` streams the final output carries the run state.
+
+    The interrupt tears the stream down by passing the `KeyboardInterrupt` itself into the run's
+    `__aexit__`, so the run attaches its state to that exception rather than to a `CancelledError`.
+    """
+    started = asyncio.Event()
+
+    async def stream_text_after_tool(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls]:
+        if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield {0: DeltaToolCall(name='fast_tool')}
+            return
+        yield 'partial '
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError  # pragma: no cover
+
+    agent = Agent(FunctionModel(stream_function=stream_text_after_tool))
+
+    @agent.tool_plain
+    def fast_tool() -> str:
+        return 'fast done'
+
+    with _interrupt_sync_run_once(started), pytest.raises(KeyboardInterrupt) as exc_info:
+        with agent.run_stream_sync('go') as result:
+            result.get_output()
+
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert cancelled.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='fast_tool', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=50),
+                model_name='function::stream_text_after_tool',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='fast_tool',
+                        content='fast done',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='partial ')],
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
+                model_name='function::stream_text_after_tool',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.timeout()` needs Python 3.11+')

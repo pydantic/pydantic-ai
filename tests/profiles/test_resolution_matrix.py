@@ -154,6 +154,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_responses_requires_function_call_status_none': False,
     'openai_supports_phase': False,
     'openai_supports_prompt_cache_breakpoints': False,
+    'openai_responses_supports_prompt_cache_diagnostics': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
     'anthropic_supports_fast_speed': False,
@@ -387,6 +388,7 @@ def test_openai_gpt_5_6():
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
+            'openai_responses_supports_prompt_cache_diagnostics': True,
         }
     )
 
@@ -426,6 +428,7 @@ def test_openai_gpt_6_astra():
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
             'supported_cache_retentions': ('30m',),
+            'openai_responses_supports_prompt_cache_diagnostics': True,
         }
     )
 

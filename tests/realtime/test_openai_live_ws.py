@@ -23,6 +23,7 @@ from genai_prices import calc_price
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -30,11 +31,15 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     SpeechPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
 from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
@@ -43,6 +48,7 @@ from .conftest import REAL_SDP_OFFER
 from .ws_cassettes import CassetteMessage, RealtimeCassette
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
 
 pytestmark = [
@@ -138,7 +144,7 @@ async def test_audio_in_delegated_tool_round(
     assert session.usage.output_tokens > 0
     assert session.usage.audio_seconds > 0
     # Live reports how full its own context is; the backend's tokens don't measure it.
-    assert session.context_window_used == snapshot(0.01021875)
+    assert session.context_window_used == snapshot(0.0106484375)
     # Each backend response's tokens land on the `ModelResponse` it produced, as in a standard run: the
     # one that asked for the tool on the tool-call response, the continuation on the spoken answer.
     tool_call_response, spoken_reply = messages[1], messages[3]
@@ -152,13 +158,13 @@ async def test_audio_in_delegated_tool_round(
     assert tool_call_response.provider_details == snapshot(
         {
             'delegated_model': 'gpt-5.6-sol',
-            'delegated_response_id': 'resp_0f173858b0a30685006ab4608a48e487d182bd7ed5d3cf7080',
+            'delegated_response_id': 'resp_02967ef4d60b72e3006abc4434f40487d194be2a7080d73332',
         }
     )
     assert spoken_reply.provider_details == snapshot(
         {
             'delegated_model': 'gpt-5.6-sol',
-            'delegated_response_id': 'resp_0f173858b0a30685006ab4608b987087d192b5641ad71a8236',
+            'delegated_response_id': 'resp_02967ef4d60b72e3006abc4436367887d18f682cb59deccc5d',
         }
     )
     for response in (tool_call_response, spoken_reply):
@@ -224,7 +230,7 @@ async def test_text_reaches_the_model_as_context(
     takes effect while audio is flowing — hence the silence on both sides of it. Nobody speaks here:
     the reply is entirely the result of the injected text.
     """
-    provider, _ = openai_live_ws_cassette
+    provider, cassette = openai_live_ws_cassette
     # Relaying injected context takes the model a beat longer than answering, and a turn boundary
     # inferred from silence will cut in if it is too eager — the tradeoff the setting exists for.
     model = OpenAILiveModel(
@@ -254,6 +260,13 @@ async def test_text_reaches_the_model_as_context(
         if isinstance(part, SpeechPart)
     )
     assert 'Friday' in spoken
+    # Closing asked Live to end the session, and the seconds it billed came back with `session.closed`.
+    assert [
+        interaction.data['type']
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage) and interaction.data.get('type', '').startswith('session.clos')
+    ] == ['session.close', 'session.closed']
+    assert session.usage.audio_seconds > 0
 
 
 async def test_history_seeding(
@@ -324,6 +337,81 @@ async def test_an_image_is_described_by_the_backend(
         if isinstance(part, SpeechPart)
     )
     assert 'kiwi' in spoken.lower()
+
+
+@pytest.mark.vcr
+async def test_the_backend_searches_the_web(
+    openai_live_ws_and_http_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+    allow_model_requests: None,
+) -> None:
+    """`WebSearchTool` runs on the delegated backend, and its searches land in history as native parts.
+
+    The backend searches while Live keeps the conversation going, then Live speaks the answer; the
+    searches are recorded on the spoken reply they informed, ahead of the speech, as a standard run
+    records them ahead of its text. The history carries on in a standard run on a Responses model (the
+    HTTP cassette), which OpenAI accepts only because each search is recorded with the reasoning that led
+    to it.
+    """
+    provider, cassette = openai_live_ws_and_http_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    agent = Agent(
+        _BACKEND,
+        instructions='Always search the web before answering, and answer in one short sentence.',
+        capabilities=[WebSearch(native=WebSearchTool(search_context_size='low', allowed_domains=['wikipedia.org']))],
+    )
+
+    pcm = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    reply = messages[1]
+    assert isinstance(reply, ModelResponse)
+    calls = [part for part in reply.parts if isinstance(part, NativeToolCallPart)]
+    returns = [part for part in reply.parts if isinstance(part, NativeToolReturnPart)]
+    assert {part.tool_name for part in [*calls, *returns]} == {'web_search'}
+    assert [part.tool_call_id for part in calls] == [part.tool_call_id for part in returns]
+    assert all(part.provider_name == 'openai' for part in calls)
+    # Each search records what the backend searched for, as on a direct Responses call.
+    assert [part.args for part in calls] == snapshot(
+        [
+            {
+                'type': 'search',
+                'queries': ['site:wikipedia.org Amsterdam population 2025 municipality'],
+                'query': 'site:wikipedia.org Amsterdam population 2025 municipality',
+            }
+        ]
+    )
+    assert [part.content for part in returns] == snapshot([{'status': 'completed'}])
+    # The searches come first, then what Live said with their results.
+    speech = reply.parts[-1]
+    assert isinstance(speech, SpeechPart) and speech.speaker == 'assistant'
+    assert all(not isinstance(part, SpeechPart) for part in reply.parts[:-1])
+    assert 'thirty-six thousand' in (speech.transcript or '')
+    # Each search follows the backend reasoning that led to it, as a direct Responses run records it.
+    assert [type(part).__name__ for part in reply.parts] == snapshot(
+        [
+            'ThinkingPart',
+            'NativeToolCallPart',
+            'NativeToolReturnPart',
+            'SpeechPart',
+        ]
+    )
+    thinking = [part for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking and all(part.id and part.signature and part.provider_name == 'openai' for part in thinking)
+
+    # A text agent on the backend's model picks the conversation up where the call left it.
+    follow_up = await Agent(OpenAIResponsesModel('gpt-5.6-sol', provider=provider)).run(
+        'What number did you just give me? Answer with digits only.', message_history=messages
+    )
+    assert '936' in follow_up.output
 
 
 async def test_an_image_a_tool_returns_reaches_the_backend(
