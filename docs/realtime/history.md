@@ -149,7 +149,10 @@ history stays valid to [hand off](#handing-off-to-a-text-agent) or seed a sessio
 longer than the budget keeps only its most recent audio. Set it to `0` to retain none or `None` to
 remove the bound. Like the image settings, this bounds local history, not provider context: the
 provider still receives all of the audio. Audio in the `message_history` you seed a session with is
-kept as given; the budget covers only the audio the session retains itself.
+kept as given; the budget covers only the audio the session retains itself. Events the session hasn't
+delivered to your app yet, such as a queued [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] or a part
+waiting in a [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] view, keep
+their part's audio until they are consumed.
 
 Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
 Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.
