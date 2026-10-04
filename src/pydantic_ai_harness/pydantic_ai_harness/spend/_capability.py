@@ -17,16 +17,20 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
+from functools import cache, partial
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
+from pydantic import TypeAdapter
+
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
+from pydantic_ai.exceptions import FallbackExceptionGroup, UserError
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
@@ -56,6 +60,15 @@ PriceFunc = Callable[[ModelResponse], Decimal | None]
 
 _RUN_SCOPED_WINDOWS = ('run', 'conversation')
 _UNPRICED_POLICIES = frozenset({'zero', 'raise'})
+_ATTEMPTS_ADAPTER = TypeAdapter(list[ModelRequestAttempt])
+
+_unanswered_attempts: ContextVar[Mapping[int, list[ModelRequestAttempt]]] = ContextVar(
+    'pydantic_ai_harness.spend.unanswered_attempts', default={}
+)
+"""Per `SpendLimits` (by `id`), the attempts of the request it is wrapping that failed with no response to carry them.
+
+Keyed by instance so two `SpendLimits` on one agent each accrue the attempts once.
+"""
 
 
 @dataclass
@@ -296,21 +309,32 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         this sees a response even when a hook nested inside this wrapper rejects or replaces it,
         and never sees a response a hook made up without calling the model (a cache hit or
         `SkipModelRequest`).
+
+        Billed attempts that did not produce the response, such as responses a `FallbackModel`
+        rejected, are accrued too: from `ModelResponse.failed_attempts` ahead of the response that
+        carries them, and from the `FallbackExceptionGroup` that `on_model_request_error` saw when
+        every model failed.
         """
         usage_response_offset = len(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
+        unanswered: list[ModelRequestAttempt] = []
+        unanswered_reset = _unanswered_attempts.set({**_unanswered_attempts.get(), id(self): unanswered})
         response: ModelResponse | None = None
         try:
             response = await handler(request_context)
         finally:
+            _unanswered_attempts.reset(unanswered_reset)
             usage_responses = request_context._usage_responses[usage_response_offset:]  # pyright: ignore[reportPrivateUsage]
-            first_error: Exception | None = None
+            errors: list[Exception | None] = []
             for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset):
-                try:
-                    error = await self._accrue_response(ctx, usage_response, response_index)
-                except Exception as exc:
-                    error = exc
-                if first_error is None:
-                    first_error = error
+                response_token = cache(partial(self._dedup_token, ctx, usage_response, response_index))
+                for billed in _billed_attempts(usage_response.failed_attempts or (), response_token):
+                    errors.append(await self._accrue_safely(ctx, *billed))
+                errors.append(await self._accrue_safely(ctx, usage_response, response_token))
+            if unanswered:
+                unanswered_token = cache(partial(_unanswered_token, ctx, unanswered))
+                for billed in _billed_attempts(unanswered, unanswered_token):
+                    errors.append(await self._accrue_safely(ctx, *billed))
+            first_error = next((error for error in errors if error is not None), None)
             # Only on the success path: pricing-policy and callback errors have never been
             # able to outrank the request's own exception, and a retryable failure such as
             # `ModelRetry` must keep propagating so the run retries instead of dying on a
@@ -320,12 +344,45 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         assert response is not None
         return response
 
-    async def _accrue_response(
-        self, ctx: RunContext[AgentDepsT], response: ModelResponse, response_index: int
+    async def on_model_request_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        request_context: ModelRequestContext,
+        error: Exception,
+    ) -> ModelResponse:
+        """Note the billed attempts of a `FallbackModel` whose every model failed, then re-raise.
+
+        No response reaches the request context, so `wrap_model_request` would see nothing to
+        accrue. Being innermost, this runs before an outer capability's hook can recover from the
+        error and hide it, and the attempts are accrued with the rest when the wrapper finishes.
+        """
+        unanswered = _unanswered_attempts.get().get(id(self))
+        if unanswered is not None and isinstance(error, FallbackExceptionGroup):
+            unanswered.extend(error.attempts)
+        raise error
+
+    async def _accrue_safely(
+        self,
+        ctx: RunContext[AgentDepsT],
+        response: ModelResponse,
+        token: Callable[[], str],
+        known_cost: Decimal | None = None,
     ) -> Exception | None:
-        usd, priced, price_error = self._price_of(response)
+        """Accrue one billed response, returning rather than raising what went wrong.
+
+        One failure must not stop the other responses of the lifecycle from accruing.
+        """
+        try:
+            return await self._accrue_response(ctx, response, token(), known_cost)
+        except Exception as exc:
+            return exc
+
+    async def _accrue_response(
+        self, ctx: RunContext[AgentDepsT], response: ModelResponse, token: str, known_cost: Decimal | None = None
+    ) -> Exception | None:
+        usd, priced, price_error = self._price_of(response, known_cost)
         keyed = await self._keyed(ctx)
-        token = self._dedup_token(ctx, response, response_index)
         entries: dict[str, SpendEntry] = {}
         for budget, key in keyed:
             # Budgets sharing a name, window, and scope share a counter, which is
@@ -611,9 +668,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         from different sources. This also distinguishes responses when a provider repeats an id.
 
         Provider details and metadata are deliberately excluded because providers may put
-        arbitrary non-serializable objects there. Timestamp is excluded because core creates it
-        from the local clock, and the response's run stamp is excluded because core adds it only
-        after this wrapper returns. Length-prefixing prevents boundary collisions.
+        arbitrary non-serializable objects there. Timestamps and attempt durations are excluded
+        because core measures them on the local clock, and the response's run stamp is excluded
+        because core adds it only after this wrapper returns. Length-prefixing prevents boundary
+        collisions.
         """
         stable_response = replace(
             response,
@@ -622,6 +680,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 for part in response.parts
             ],
             timestamp=datetime.min.replace(tzinfo=response.timestamp.tzinfo),
+            failed_attempts=response.failed_attempts and [_stable_attempt(a) for a in response.failed_attempts],
             run_id=None,
             conversation_id=None,
             metadata=None,
@@ -676,13 +735,17 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         now = await self._now()
         return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
 
-    def _price_of(self, response: ModelResponse) -> tuple[Decimal, bool, str | None]:
+    def _price_of(self, response: ModelResponse, known_cost: Decimal | None = None) -> tuple[Decimal, bool, str | None]:
         """What the response cost, whether that number is real, and why it was rejected.
 
         A rejected amount is reported rather than raised so the caller can finish
         accruing the response first. The request happened and its tokens were really
         spent, so dropping them would leave a token ceiling understating what the model
         was asked to do -- the same reasoning `on_unpriced='raise'` already follows.
+
+        `known_cost` is a registry price core already calculated, from a response this
+        one only summarizes: an attempt's `usage.cost` was priced with the provider URL the
+        rejected response carried, which the summary does not. `price` still comes first.
         """
         if self.price is not None:
             try:
@@ -701,6 +764,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     # closes. Corrections belong in the store, not here.
                     return Decimal(0), False, f'returned a negative amount ({supplied})'
                 return supplied, True, None
+        if known_cost is not None:
+            return known_cost, True, None
         if response.model_name:
             try:
                 return response.cost().total_price, True, None
@@ -710,6 +775,43 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 # escape would skip `on_unpriced` and drop the accrual with it.
                 pass
         return Decimal(0), False, None
+
+
+def _billed_attempts(
+    attempts: Sequence[ModelRequestAttempt], token: Callable[[], str]
+) -> Iterator[tuple[ModelResponse, Callable[[], str], Decimal | None]]:
+    """Each attempt the provider billed, as a response to accrue, its replay token, and its known cost.
+
+    The response carries what `price` and the registry read, so a user's `price` prices an attempt the
+    same way it would have priced the response had it been accepted. An attempt's token extends
+    `token`, which identifies what the attempts were recorded on, with its position among them.
+    """
+    for index, attempt in enumerate(attempts):
+        if attempt.usage is None:
+            continue
+        billed = ModelResponse(
+            parts=[],
+            usage=attempt.usage,
+            model_name=attempt.model_name,
+            provider_name=attempt.provider_name,
+            timestamp=attempt.timestamp,
+        )
+        yield billed, partial(_attempt_token, token, index), attempt.usage.cost
+
+
+def _attempt_token(token: Callable[[], str], index: int) -> str:
+    return delimited(token(), 'attempt', str(index))
+
+
+def _unanswered_token(ctx: RunContext[Any], attempts: Sequence[ModelRequestAttempt]) -> str:
+    """Identify attempts that failed with no response to carry them, the way `_dedup_token` identifies a response."""
+    digest = sha256(_ATTEMPTS_ADAPTER.dump_json([_stable_attempt(attempt) for attempt in attempts])).hexdigest()
+    return delimited(ctx.run_id or '', str(ctx.run_step), 'unanswered', digest)
+
+
+def _stable_attempt(attempt: ModelRequestAttempt) -> ModelRequestAttempt:
+    """`attempt` without the local-clock readings that differ when the same request is made again."""
+    return replace(attempt, timestamp=datetime.min.replace(tzinfo=attempt.timestamp.tzinfo), duration=timedelta(0))
 
 
 def _status(budget: Budget[Any], key: str, spent: Spent) -> BudgetStatus:

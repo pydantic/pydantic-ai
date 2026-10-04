@@ -23,9 +23,24 @@ from pydantic_ai.capabilities import (
     CapabilityOrdering,
     WrapModelRequestHandler,
 )
-from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
+    ModelHTTPError,
+    ModelRetry,
+    SkipModelRequest,
+    UsageLimitExceeded,
+    UserError,
+)
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequestAttempt,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -2008,6 +2023,212 @@ class TestIdempotentAccrual:
         await _record(guard, response=_response(provider_name='anthropic', provider_response_id='1'))
 
         assert (await guard.status())[0].spent.requests == 2
+
+
+def _usage_response(input_tokens: int, output_tokens: int, cost: Decimal | None = None) -> ModelResponse:
+    return ModelResponse(
+        parts=[TextPart(content='ok')],
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens, cost=cost),
+    )
+
+
+def _rejecting_fallback(*, reject_all: bool = False, primary_cost: Decimal | None = None) -> FallbackModel:
+    """A `FallbackModel` whose primary's response is rejected, and with `reject_all` its fallback's too."""
+
+    def reject(response: ModelResponse) -> bool:
+        return reject_all or response.model_name == 'gpt-4o-mini'
+
+    return FallbackModel(
+        FunctionModel(lambda messages, info: _usage_response(100, 10, primary_cost), model_name='gpt-4o-mini'),
+        FunctionModel(lambda messages, info: _usage_response(20, 2), model_name='gpt-4o'),
+        fallback_on=reject,
+    )
+
+
+def _reject_any(response: ModelResponse) -> bool:
+    return True
+
+
+def _attempt(
+    model_name: str = 'gpt-4o-mini',
+    *,
+    input_tokens: int = 100,
+    output_tokens: int = 10,
+    at: datetime = _EPOCH,
+    duration: timedelta = timedelta(seconds=1),
+) -> ModelRequestAttempt:
+    return ModelRequestAttempt(
+        model_name=model_name,
+        provider_name='openai',
+        outcome='rejected',
+        timestamp=at,
+        duration=duration,
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+
+
+def _fallback_group(*attempts: ModelRequestAttempt) -> FallbackExceptionGroup:
+    group = FallbackExceptionGroup('All models from FallbackModel failed', [RuntimeError('rejected')])
+    group.attempts = attempts
+    return group
+
+
+class TestFallbackAttempts:
+    """A response a `FallbackModel` rejected was billed, though the agent never acted on it."""
+
+    async def test_a_rejected_response_is_charged_alongside_the_answer(self):
+        priced: list[str | None] = []
+
+        def price(response: ModelResponse) -> Decimal:
+            priced.append(response.model_name)
+            return Decimal(response.usage.input_tokens) / 100
+
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=price)
+        result = await Agent(_rejecting_fallback(), capabilities=[guard]).run('hi')
+
+        assert result.output == 'ok'
+        assert priced == ['gpt-4o-mini', 'gpt-4o']
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('1.2'), tokens=132, requests=2)
+        assert result.usage.input_tokens + result.usage.output_tokens == 132
+
+    async def test_an_attempt_without_a_price_uses_the_cost_core_calculated(self):
+        """`price` declining falls through to the cost core put on the attempt, then to the registry."""
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=_no_price)
+        result = await Agent(_rejecting_fallback(primary_cost=Decimal('0.001')), capabilities=[guard]).run('hi')
+
+        answer = result.all_messages()[-1]
+        assert isinstance(answer, ModelResponse)
+        spent = (await guard.status())[0].spent
+        assert spent.usd == Decimal('0.001') + answer.cost().total_price
+        assert spent.unpriced_requests == 0
+
+    async def test_every_rejected_response_is_charged_when_every_model_fails(self):
+        """An attempt that raised before the provider answered carries no usage and is not charged."""
+
+        def unavailable(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError(status_code=503, model_name='down')
+
+        model = FallbackModel(
+            FunctionModel(unavailable, model_name='down'),
+            FunctionModel(lambda messages, info: _usage_response(100, 10), model_name='gpt-4o-mini'),
+            FunctionModel(lambda messages, info: _usage_response(20, 2), model_name='gpt-4o'),
+            fallback_on=[ModelHTTPError, _reject_any],
+        )
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal(r.usage.input_tokens))
+
+        with pytest.raises(FallbackExceptionGroup):
+            await Agent(model, capabilities=[guard]).run('hi')
+
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
+
+    async def test_rejected_responses_are_charged_when_an_outer_hook_recovers(self):
+        """Recovery by a capability outside `SpendLimits` hides the group from the wrapper, not the charge."""
+
+        class Recover(AbstractCapability[None]):
+            async def on_model_request_error(
+                self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                return ModelResponse(parts=[TextPart(content='recovered')])
+
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        result = await Agent(_rejecting_fallback(reject_all=True), capabilities=[Recover(), guard]).run('hi')
+
+        assert result.output == 'recovered'
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('2'), tokens=132, requests=2)
+
+    async def test_two_spend_limits_each_charge_the_rejected_responses_once(self):
+        first = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'), id='first')
+        second = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'), id='second')
+
+        with pytest.raises(FallbackExceptionGroup):
+            await Agent(_rejecting_fallback(reject_all=True), capabilities=[first, second]).run('hi')
+
+        for guard in (first, second):
+            assert (await guard.status())[0].spent == Spent(usd=Decimal('2'), tokens=132, requests=2)
+
+    async def test_a_nested_fallback_model_charges_each_attempt_once(self):
+        """The outer model records the inner one's attempts once, beside an unbilled attempt for the inner model."""
+        model = FallbackModel(
+            _rejecting_fallback(reject_all=True),
+            FunctionModel(lambda messages, info: _usage_response(1, 1), model_name='gpt-4.1'),
+            fallback_on=(FallbackExceptionGroup,),
+        )
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        result = await Agent(model, capabilities=[guard]).run('hi')
+
+        answer = result.all_messages()[-1]
+        assert isinstance(answer, ModelResponse)
+        assert [attempt.usage is not None for attempt in answer.failed_attempts or []] == [True, True, False]
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('3'), tokens=134, requests=3)
+
+    async def test_an_error_that_is_not_a_fallback_group_charges_nothing(self):
+        def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('broken')
+
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+
+        with pytest.raises(RuntimeError, match='broken'):
+            await Agent(FunctionModel(broken), capabilities=[guard]).run('hi')
+
+        assert (await guard.status())[0].spent == Spent()
+
+    async def test_a_pricing_error_does_not_outrank_the_group(self):
+        """The request's own failure is what the run reports; the attempts are still recorded."""
+
+        def price(response: ModelResponse) -> Decimal:
+            raise ValueError('no rate card')
+
+        guard = SpendLimits[None](budgets=[Budget(window='total')], price=price)
+
+        with pytest.raises(FallbackExceptionGroup):
+            await Agent(_rejecting_fallback(reject_all=True), capabilities=[guard]).run('hi')
+
+        assert (await guard.status())[0].spent == Spent(tokens=132, requests=2, unpriced_requests=2)
+
+    async def test_a_replayed_attempt_is_charged_once(self):
+        """An attempt's token comes from its response's, so a replay accrues neither twice.
+
+        The attempts' timestamps and durations are read from the local clock, so a re-executed
+        request records different ones; they are not part of the replay identity.
+        """
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        answer = _response(provider_response_id='resp-1')
+
+        for offset in range(2):
+            replayed = replace(
+                answer,
+                failed_attempts=[
+                    _attempt(at=_EPOCH + timedelta(minutes=offset), duration=timedelta(seconds=offset + 1)),
+                    _attempt(at=_EPOCH + timedelta(minutes=offset), duration=timedelta(seconds=offset + 1)),
+                ],
+            )
+            await _record(guard, response=replayed)
+
+        assert (await guard.status())[0].spent == Spent(usd=Decimal('3'), tokens=1320, requests=3)
+
+    async def test_a_replayed_unanswered_attempt_is_charged_once(self):
+        """With no response to anchor them, attempts are identified by run position and content."""
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+
+        async def fail(ctx: RunContext[Any], attempts: Sequence[ModelRequestAttempt]) -> None:
+            async def handler(request_context: ModelRequestContext) -> ModelResponse:
+                return await guard.on_model_request_error(
+                    ctx, request_context=request_context, error=_fallback_group(*attempts)
+                )
+
+            request_context: Any = _UsageRequestContext()
+            with pytest.raises(FallbackExceptionGroup):
+                await guard.wrap_model_request(_guard_ctx(guard, ctx), request_context=request_context, handler=handler)
+
+        await fail(_run_ctx(), [_attempt(), _attempt('gpt-4o', at=_EPOCH + timedelta(minutes=1))])
+        assert (await guard.status())[0].spent.requests == 2
+
+        await fail(_run_ctx(), [_attempt(duration=timedelta(seconds=9)), _attempt('gpt-4o')])
+        assert (await guard.status())[0].spent.requests == 2
+
+        await fail(_run_ctx(run_step=1), [_attempt(), _attempt('gpt-4o')])
+        await fail(_run_ctx(), [_attempt(input_tokens=5)])
+        assert (await guard.status())[0].spent.requests == 5
 
 
 class TestDeprecatedStore:
