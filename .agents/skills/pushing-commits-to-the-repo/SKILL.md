@@ -45,9 +45,10 @@ Use one fenced `diff` tree from the public entry point to the changed observable
 
 Assign title, body, and label updates to the same subagent. Reconcile labels whenever the title or body changes.
 
-Reuse the complete label catalog provided for that metadata update. Otherwise, fetch the complete catalog in at most two label-read requests.
-Request only label names and descriptions. Project names and nonempty descriptions before passing the catalog to the subagent.
-Check pagination for completeness. Never fetch labels individually or pass raw label API responses to the subagent.
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog` and give the subagent the printed file path.
+The helper reuses a compact catalog shared across worktrees. A missing catalog costs at most two label-read requests.
+Run the helper with `--refresh` after creating, renaming, or updating repository labels.
+The helper verifies completeness before replacing the catalog. Never fetch labels individually or pass raw label API responses.
 
 Keep the category label aligned with the PR's purpose (`bug`, `feature`, `docs`, `chore`, `refactor`).
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
