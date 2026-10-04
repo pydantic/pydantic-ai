@@ -945,6 +945,15 @@ class TestFormatMessages:
         text = _format_messages(msgs, tool_return_max_chars=None)
         assert text == 'Tool [fn]: ' + 'x' * 600
 
+    def test_turn_scoped_system_prompt_left_out(self):
+        """A turn-scoped prompt was for its own request only; a summary must not carry it forward."""
+        msgs: list[ModelMessage] = [
+            _user('hi'),
+            ModelRequest(parts=[SystemPromptPart('[WarnNearLimits]\nCRITICAL: 1 remaining', scope='turn')]),
+            ModelRequest(parts=[SystemPromptPart('be helpful')]),
+        ]
+        assert _format_messages(msgs) == 'User: hi\nSystem: be helpful'
+
 
 # ---------------------------------------------------------------------------
 # _extract_system_prompts
@@ -977,6 +986,15 @@ class TestExtractSystemPrompts:
         msgs: list[ModelMessage] = [_assistant('hello'), _user('hi')]
         parts = _extract_system_prompts(msgs)
         assert parts == []
+
+    def test_skips_leading_turn_scoped_parts(self):
+        """A turn-scoped prompt left at the front by an earlier cut isn't lifted into the summary."""
+        msgs: list[ModelMessage] = [
+            ModelRequest(parts=[SystemPromptPart('[WarnNearLimits]\nold', scope='turn')]),
+            ModelRequest(parts=[SystemPromptPart('sys1')]),
+            _user('hi'),
+        ]
+        assert [part.content for part in _extract_system_prompts(msgs)] == ['sys1']
 
 
 # ---------------------------------------------------------------------------
@@ -1310,6 +1328,46 @@ class TestWarnNearLimitsTurnScoped:
         rc = _make_request_context(list(messages))
         result = await lw.before_model_request(_make_ctx(messages), rc)
         assert len(result.messages) == len(messages)  # No new warning.
+
+    async def test_summaries_leave_out_earlier_warnings(self):
+        """Warnings stay in history now, but a summary must not turn them into lasting context."""
+        summarized: list[str] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summarized.append(
+                '\n'.join(
+                    str(part.content) for msg in messages for part in msg.parts if isinstance(part, UserPromptPart)
+                )
+            )
+            return ModelResponse(parts=[TextPart('summary')])
+
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) < 6:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{len(seen)}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[
+                WarnNearLimits(max_iterations=10, warning_threshold=0.1),
+                SummarizingCompaction(model=FunctionModel(summarize), max_messages=8, keep_messages=2),
+            ],
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        await agent.run('go')
+
+        assert summarized
+        assert all('Tool [step]' in text for text in summarized)
+        assert not any('[WarnNearLimits]' in text for text in summarized)
+        # Compaction doesn't cost the model its current warning: the last request still carries one.
+        assert len(_warning_lines(seen[-1])) == 1
 
     async def test_each_warning_is_sent_with_its_own_request_and_kept_in_history(self):
         seen: list[list[ModelMessage]] = []
