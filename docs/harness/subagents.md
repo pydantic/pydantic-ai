@@ -441,7 +441,7 @@ Pass `step_store` to checkpoint through `StepPersistence` and recover a process-
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool
 calls the interruption left unanswered with an `interrupted` tool return, so the child
-is told they did not complete rather than having them replayed.
+sees they did not complete.
 
 Managed children with `forward_usage=True` share live usage accounting and inherit
 parent ceilings. A per-child budget is converted to an absolute ceiling at launch;

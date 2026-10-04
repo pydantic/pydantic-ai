@@ -509,7 +509,7 @@ async def test_resume_closes_out_tool_calls_interrupted_by_process_exit(tmp_path
         await delegate(owner, conversation_id='parent')
         (record,) = owner.records.values()
         record.messages = [
-            ModelRequest(parts=[UserPromptPart('inspect')]),
+            ModelRequest(parts=[UserPromptPart('start')]),
             ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='slow')]),
         ]
     path = tmp_path / f'{record.id}.json'
