@@ -23,7 +23,18 @@ from cassetter import Cassette
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
@@ -55,6 +66,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
     )
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -255,6 +267,111 @@ async def test_openai_chat_cache_point_first_content_raises(allow_model_requests
         await Agent(model).run([CachePoint(), 'This should fail.'])
 
     assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+def _history_ending_in(*tail: ModelMessage) -> list[ModelMessage]:
+    """A tool call answered by a tool return, then `tail`: the shape a capability's tail reminder follows."""
+    return [
+        ModelRequest(parts=[UserPromptPart('Look it up.')]),
+        ModelResponse(parts=[ToolCallPart('lookup', {'n': 1}, tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'result 1', tool_call_id='call_1')]),
+        *tail,
+    ]
+
+
+async def test_openai_chat_leading_cache_point_attaches_to_previous_message(allow_model_requests: None):
+    """A `CachePoint` opening a user message after a tool result marks the tool result instead of raising.
+
+    That is where a tail reminder (`SystemReminders`, `Planning`) puts its breakpoint once a tool loop
+    is underway; the request used to fail with `CachePoint cannot be the first content in a user message`.
+    """
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        _history_ending_in(ModelRequest(parts=[UserPromptPart([CachePoint(), 'Stay focused.'])])),
+        None,
+        ModelRequestParameters(),
+    )
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert messages[2:] == snapshot(
+        [
+            {
+                'role': 'tool',
+                'tool_call_id': 'call_1',
+                'content': [{'type': 'text', 'text': 'result 1', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Stay focused.'}]},
+        ]
+    )
+
+
+async def test_openai_chat_leading_cache_point_skips_messages_without_content(allow_model_requests: None):
+    """An assistant turn holding only tool calls can't carry the marker, so the one before it does."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart(['Look it up.'])]),
+            ModelResponse(parts=[ToolCallPart('lookup', {'n': 1}, tool_call_id='call_1')]),
+            ModelRequest(parts=[UserPromptPart([CachePoint()])]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert [message['role'] for message in messages] == ['user', 'assistant']
+    assert messages[0]['content'] == snapshot(
+        [{'type': 'text', 'text': 'Look it up.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}]
+    )
+
+
+async def test_openai_chat_leading_cache_point_with_merged_system_messages(allow_model_requests: None):
+    """A leading `CachePoint` after system prompts marks the merged system message, which must still be joined as text."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_supports_prompt_cache_breakpoints=True, openai_chat_supports_multiple_system_messages=False
+        ),
+    )
+
+    await model.request(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart('First.'), SystemPromptPart('Second.'), UserPromptPart([CachePoint(), 'Hi.'])],
+                instructions='Be brief.',
+            )
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': """\
+First.
+
+Second.
+
+Be brief.\
+""",
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'Hi.', 'type': 'text'}]},
+        ]
+    )
 
 
 async def test_openai_chat_cache_point_filtered_without_support(allow_model_requests: None):
@@ -479,6 +596,82 @@ async def test_openai_responses_cache_point_first_content_raises(allow_model_req
         await Agent(model).run([CachePoint(), 'This should fail.'])
 
     assert get_mock_responses_kwargs(mock_client) == []
+
+
+async def test_openai_responses_leading_cache_point_attaches_to_previous_item(allow_model_requests: None):
+    """The Responses counterpart: the breakpoint lands on the `function_call_output` before the reminder."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        _history_ending_in(
+            ModelRequest(parts=[UserPromptPart([CachePoint(), 'Stay focused.'])]),
+            ModelResponse(parts=[ToolCallPart('lookup', {'n': 2}, tool_call_id='call_2')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart('lookup', 'result 2', tool_call_id='call_2'),
+                    UserPromptPart([CachePoint()]),
+                ]
+            ),
+        ),
+        None,
+        ModelRequestParameters(),
+    )
+
+    request_input = get_mock_responses_kwargs(mock_client)[0]['input']
+    assert request_input[2:] == snapshot(
+        [
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_1',
+                'output': [{'type': 'input_text', 'text': 'result 1', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
+            },
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Stay focused.'}]},
+            {'name': 'lookup', 'arguments': '{"n":2}', 'call_id': 'call_2', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_2',
+                'output': [{'type': 'input_text', 'text': 'result 2', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
+            },
+        ]
+    )
+
+
+async def test_openai_responses_leading_cache_point_skips_assistant_output(allow_model_requests: None):
+    """Assistant output (`output_text`) can't carry a breakpoint, so a leading `CachePoint` after it marks the user input before."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart('Question.')]),
+            ModelResponse(parts=[TextPart('Sent as output.', id='msg_1')], provider_name='openai'),
+            ModelResponse(parts=[TextPart('Sent as a string.')]),
+            ModelRequest(parts=[UserPromptPart([CachePoint(), 'Follow-up.'])]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'Question.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+                ],
+            },
+            {
+                'role': 'assistant',
+                'id': 'msg_1',
+                'content': [{'text': 'Sent as output.', 'type': 'output_text', 'annotations': []}],
+                'type': 'message',
+                'status': 'completed',
+            },
+            {'role': 'assistant', 'content': 'Sent as a string.'},
+            {'role': 'user', 'content': [{'text': 'Follow-up.', 'type': 'input_text'}]},
+        ]
+    )
 
 
 async def test_openai_responses_cache_point_filtered_without_support(allow_model_requests: None):
