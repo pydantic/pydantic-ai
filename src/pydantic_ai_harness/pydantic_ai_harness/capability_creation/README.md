@@ -29,8 +29,8 @@ agent cannot author that extension during a run and make it available to the nex
   async lifecycle hooks are not run -- they need a live `RunContext`.
 - `list_authored_capabilities()` -- list authored capabilities with status and any
   validation error.
-- `disable_authored_capability(name)` -- stop a capability from being injected on the
-  next run.
+- `disable_authored_capability(name)` -- mark a capability disabled, so `load_active()`
+  skips it.
 
 A "hook" is not a standalone object in pydantic-ai -- it is a method on a capability. So
 authoring a hook means authoring a capability that overrides one lifecycle method.
@@ -67,9 +67,12 @@ that only exist once the run's toolset and capability chain are assembled at run
 
 ### Integration contract
 
+The successful `author_capability` result tells the model the capability does not take effect
+in the current run. Writing and validating a capability does not schedule or inject it automatically.
+
 The orchestrator drives the loop, so it owns the one-line contract: thread the store's
 active capabilities into each run. With `agent.run(..., capabilities=...)`, the authored
-capability is live on the very next loop iteration -- no process restart.
+capability is live on the very next loop iteration -- no process restart:
 
 ```python
 from pathlib import Path
@@ -100,6 +103,17 @@ validation error -- the surface a UI can read to show what the agent has authore
 
 Capability names must be lowercase letters, digits, and underscores, starting with a
 letter; reusing a name replaces the previous capability of that name.
+
+## Durable execution
+
+Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/), each authoring, listing, and disabling
+call to the store is recorded, so a recovered run reuses the result instead of
+writing the authored module and manifest again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the store call runs as its own step.
+
+The records are named after the capability's `id`, which defaults to
+`capability_creation`, so durable execution needs no configuration.
 
 ## Trust boundary
 

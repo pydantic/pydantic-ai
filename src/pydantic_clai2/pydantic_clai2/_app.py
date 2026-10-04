@@ -27,7 +27,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
-from pydantic_clai2.cli.self_update import Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -68,6 +68,7 @@ from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.menus.model_picker import model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
+from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
 from pydantic_clai2.ui.menus.task_menu import open_tasks
@@ -76,7 +77,7 @@ from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, Promp
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.rendering import theme
@@ -236,6 +237,9 @@ async def chat(
                     with transcript.capture(console):
                         await shell.loader.close(reason)
             if not shell.reload_requested:
+                if (executable := shell.updates.relaunch) is not None:
+                    summary = shell.session.summary
+                    raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
                 return
             shell.reload_requested = False
             if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
@@ -264,7 +268,7 @@ async def chat(
                         load_plugins=load_plugins,
                     )
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
                 with transcript.capture(console):
                     console.print(
                         f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
@@ -812,12 +816,23 @@ class _Shell(Generic[DepsT, OutputT]):
 
     async def _run_mid_turn(self, text: str) -> None:
         if self.plugins_busy(text):
-            return
+            # `/plugins` is not a `during_turn` command, so `run_now` never hands it over.
+            return  # pragma: no cover
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
             with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
                 await _execute_command(self.commands, text, console=self.console, status=self.status)
+
+    async def _rewind(self) -> None:
+        assert self.editor is not None
+        async with self.forks.busy(), self._released():
+            try:
+                notice = await rewind(self.session, self.editor)
+            except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
+                self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
+            else:
+                self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
@@ -837,6 +852,9 @@ class _Shell(Generic[DepsT, OutputT]):
                 else:
                     assert self.prompt is not None
                     text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+            except PromptRewind:
+                await self._rewind()
+                continue
             except PromptWakeup:
                 if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
                     continue
@@ -961,7 +979,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if headless:
             try:
                 result = await self.session.prompt(None if automated else start.text)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- report a failed headless turn to the CLI.
                 return TurnEnd(text=start.text, outcome='failed', error=exc)
             return TurnEnd(text=start.text, outcome='completed', result=result)
         # Menus open mid-turn only after this turn has captured its settings; session changes
@@ -1021,7 +1039,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
         if not is_silent(result):
             console.print(result, markup=False)
             console.print()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
     _reset_status(text, status)
@@ -1112,7 +1130,7 @@ async def _run_prompt(
     except asyncio.CancelledError:
         await renderer.abort()
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- interactive boundary reports plugin/provider failures.
         await renderer.finish()
         console.print(f'{type(exc).__name__}: {error_message(exc)}', style=theme.color(theme.ERROR), markup=False)
         console.print(
