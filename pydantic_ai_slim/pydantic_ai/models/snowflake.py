@@ -157,15 +157,15 @@ def _drop_empty_moderation_stub(data: dict[str, Any]) -> dict[str, Any]:
 
     The stub looks like `{'input': {'type': '', 'results': None, ...}, 'output': {...}}`, which matches neither
     variant of the OpenAI SDK's strict `moderation` union. It is only dropped when a side is that placeholder
-    (empty `type` and no `results`), so real moderation results still reach `provider_details` and any other
+    (`type` is `''` and `results` is `None`), so real moderation results still reach `provider_details` and any other
     malformed field is still rejected.
     """
     moderation = data.get('moderation')
     if not isinstance(moderation, dict):
         return data
-    sides = cast(dict[str, Any], moderation).values()
-    if any(isinstance(side, dict) and not side.get('type') and not side.get('results') for side in sides):  # pyright: ignore[reportUnknownMemberType]
-        return {key: value for key, value in data.items() if key != 'moderation'}
+    for side in cast(dict[str, Any], moderation).values():
+        if isinstance(side, dict) and side.get('type') == '' and side.get('results') is None:  # pyright: ignore[reportUnknownMemberType]
+            return {key: value for key, value in data.items() if key != 'moderation'}
     return data
 
 
