@@ -212,14 +212,15 @@ An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`.
 
 While a turn is running, `/set`, `/model`, `/theme`, and `/spinner` typed
-without arguments open their menu right away instead of queueing. The turn keeps running: its output is held while the menu is open
+without arguments open their menu right away instead of queueing.
+The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
 running turn ends. With arguments, these commands queue like any other.
 
 ## Models and their settings
 
-`/model` selects from models you have already added, or chooses **Add a model...**
+`/model` selects from models you have already added. Choose **Add a model...**
 to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
 not yet in your list is added and selected; CLAI does not check that it exists, so a
 mistyped name fails on the next prompt with the provider's error. Model names are

@@ -551,8 +551,11 @@ not currently receive CommandContext through PluginHost; do not invent host.cont
 ## Custom models and providers
 
 A model identifier accepted by an existing core provider can be selected with
-/model add PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
-catalog. `/model` and its Tab suggestions select only previously added models.
+/model PROVIDER:NAME (or /model add PROVIDER:NAME, /set model PROVIDER:NAME) even
+if it is absent from the catalog. A name not yet saved is added and selected
+without checking that it exists; a wrong name fails on the next prompt with the
+provider's error. Bare `/model` picks from previously added models, and its Tab
+suggestions are the `add` and `settings` subcommands plus saved models.
 In `/model`, Ctrl+D or Delete removes a saved model and its per-model settings
 after confirmation. The current model and saved default are protected; select
 another model or change the default with `/set model NAME` first. Provider
