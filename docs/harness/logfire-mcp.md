@@ -95,11 +95,11 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 The default endpoint is Logfire's US region. Set `url=LOGFIRE_EU_MCP_URL` for EU data, or pass the MCP URL of a self-hosted Logfire. The API key's scopes decide which projects and actions are allowed.
 
-The capability adds short guidance to the agent's instructions: the current UTC time, a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, and that Logfire links should be created only when asked for. `include_instructions=False` turns this off, along with the server's own instructions.
+The capability adds short guidance to the agent's instructions: the current UTC hour (to the hour rather than the second, so the instructions stay the same across requests and don't miss the prompt cache), a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, and that Logfire links should be created only when asked for. `include_instructions=False` turns this off, along with the server's own instructions.
 
 ## Tool selection and approval
 
-`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, this can leave none. The credential is still what controls access.
+`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, the agent gets none and emits an `MCPReadOnlyNoToolsWarning`. The credential is still what controls access.
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 

@@ -100,7 +100,10 @@ returns untouched.
 Every action takes an optional `then`, applied when the action cannot run: a `Spill` whose
 store errors (for example, the workspace is read-only), a `Truncate` / `Summarize` on a binary
 payload, a `Summarize` whose model call raises. `then` chains, so
-`Summarize(then=Spill(then=Truncate()))` degrades summarize -> spill -> truncate.
+`Summarize(then=Spill(then=Truncate()))` degrades summarize -> spill -> truncate. Store and
+summarizer exceptions that would otherwise fall back silently are logged at `WARNING` on the
+`pydantic_ai_harness.tool_output_limits` logger, with the exception type and traceback, before
+the fallback runs.
 
 ### Per-tool overrides and filtering
 
@@ -305,8 +308,21 @@ store = LocalFileStore(cleanup_after=timedelta(hours=6))  # default: None = keep
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ToolOutputLimits(store=store)])
 ```
 
-`LocalFileStore` keeps its directory owner-only. Set `cleanup_after` to delete spills older than
-that age.
+### `LocalFileStore` security model
+
+The local store root is stable so a later agent or run by the same user can read a spill. Its
+security does not come from per-instance isolation:
+
+- Without `base_dir`, the root is `pyai_harness_overflow-<euid>` under the system temp directory.
+- The root itself cannot be a symlink. Before each read or write on POSIX, it must also be owned
+  by the current user. Group and other permission bits are removed (`0700`). A symlinked or
+  foreign-owned root raises `PermissionError`; for a write, the band's `then` fallback runs.
+  Windows has no uid, so it uses the unsuffixed `pyai_harness_overflow` root and skips the
+  ownership check.
+- `read` resolves the target and rejects any path that escapes the root. Handle segments are
+  sanitized so a crafted handle cannot traverse out.
+
+Set `cleanup_after` to delete spills older than that age.
 
 Any other backend (a blob store, a durable engine's storage) implements the `OverflowStore`
 protocol and is passed as `store=...`:

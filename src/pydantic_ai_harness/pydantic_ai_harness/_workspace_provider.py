@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import posixpath
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import anyio
-import sniffio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
+
+# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
+try:
+    import sniffio as _sniffio
+except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
+    _sniffio = None
 
 
 def safe_credential_reason(error: Exception) -> str:
@@ -25,6 +31,26 @@ def safe_credential_reason(error: Exception) -> str:
     if 'missing' in message or 'not configured' in message:
         return 'Credential missing'
     return 'Credentials rejected'
+
+
+def running_on_asyncio() -> bool:
+    """Whether the caller runs on asyncio rather than Trio.
+
+    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
+    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
+    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
+    only guest mode would be misread, as AnyIO would misread it too.
+    """
+    if _sniffio is None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+    try:
+        return _sniffio.current_async_library() == 'asyncio'
+    except _sniffio.AsyncLibraryNotFoundError:
+        return False
 
 
 # asyncio holds only weak references to tasks, so a detached stop needs a strong one until it ends.
@@ -43,7 +69,7 @@ async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float =
             # Preserve the command timeout/cancellation if a provider's stop request fails.
             pass
 
-    if sniffio.current_async_library() == 'asyncio':
+    if running_on_asyncio():
 
         async def bounded_stop() -> None:
             with anyio.move_on_after(grace, shield=True):
@@ -57,8 +83,23 @@ async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float =
         child.add_done_callback(_pending_stops.discard)
         # The child already bounds itself by `grace`; the margin lets its cleanup (e.g. a
         # provider's "may still be running" log) finish before we return, instead of racing it.
-        with anyio.move_on_after(grace + _STOP_SETTLE, shield=True):
-            await asyncio.shield(child)
+        try:
+            with anyio.move_on_after(grace + _STOP_SETTLE, shield=True):
+                await asyncio.shield(child)
+        except asyncio.CancelledError:
+            # A native cancel thrown into this wait takes as `__context__` the exception each frame the
+            # throw resumes is handling, here the cancellation that started this stop. AnyIO cancel scopes
+            # follow `__context__` and would claim it as their own. Re-raised from a step that resumed
+            # normally, it keeps no such context. The shield stops the caller's cancelled scope from
+            # cancelling every checkpoint; a repeated native cancel folds into this one.
+            with anyio.CancelScope(shield=True):
+                while True:
+                    try:
+                        await asyncio.sleep(0)
+                    except asyncio.CancelledError:
+                        continue
+                    break
+            raise
     else:
         with anyio.move_on_after(grace, shield=True):
             async with anyio.create_task_group() as group:
@@ -73,17 +114,13 @@ async def command_deadline(
     output: Callable[[], tuple[str, str]] = lambda: ('', ''),
 ) -> AsyncGenerator[None, None]:
     """Bound only the command phase, after sandbox acquisition; stop on timeout or cancellation."""
-    stopped = False
     with anyio.move_on_after(timeout) as scope:
         try:
             yield
         except BaseException:
             await stop_shielded(stop)
-            stopped = True
             raise
     if scope.cancelled_caught:
-        if not stopped:
-            await stop_shielded(stop)
         stdout, stderr = output()
         raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
 
@@ -136,3 +173,9 @@ def check_integer(name: str, value: int | None, *, minimum: int = 1, optional: b
     if (type(value) is int and value >= minimum) or (value is None and optional):
         return
     raise UserError(f'{name} must be an integer of at least {minimum}{" or None" if optional else ""}, got {value!r}.')
+
+
+def check_timeout(timeout: float | None) -> None:
+    """Raise `ValueError` unless a command `timeout` is a positive finite number or `None`, as core's backends do."""
+    if timeout is not None and (not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')

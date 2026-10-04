@@ -17,7 +17,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 
 try:
     from stackone_defender import DefenseResult, PromptDefense
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'stackone-defender is required for PromptInjectionDefender (Python 3.11 or newer). '
         'Install it with: uv add "pydantic-ai-harness[prompt-injection-defender]"'

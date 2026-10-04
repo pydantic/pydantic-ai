@@ -140,7 +140,7 @@ try:
     )
 
     PlaywrightError = _PlaywrightError
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'playwright is required for PlaywrightBrowser. '
         'Install it with: pip install "pydantic-ai-harness[playwright]"\n'
@@ -419,7 +419,7 @@ def is_blocked_address(host: str) -> bool:
     `PlaywrightBrowserSession.decide` resolving it first and passing the answers
     to `refuse`.
     Neither is rebinding-proof, since Chromium resolves the name again before it
-    connects (https://github.com/pydantic/pydantic-ai-harness/issues/415).
+    connects (https://github.com/pydantic/pydantic-ai/issues/9204).
     A trailing dot is stripped so the fully-qualified spelling gets the same
     verdict, and an IPv4-mapped IPv6 literal is classified by its embedded IPv4
     address. The named category flags are checked alongside `is_global` because
@@ -517,10 +517,12 @@ def _scroll_position(reported: object) -> str:
     has no way to tell that repeating it is pointless.
     """
     if not isinstance(reported, str):
-        return ''  # pragma: no cover -- `evaluate` returns what the expression built
+        return ''
     parts = reported.split('|')
     if len(parts) != 3 or not all(part.lstrip('-').isdigit() for part in parts):
-        return ''  # pragma: no cover -- same
+        # The test pages report whole numbers; a browser with subpixel scrolling can report a
+        # fractional `scrollY`, which this does not parse.
+        return ''  # pragma: no cover
     before, after, furthest = (int(part) for part in parts)
     if furthest == 0:
         return 'The page has nothing to scroll.'

@@ -263,6 +263,30 @@ The repair is deterministic and idempotent: repairing the same history always pr
 
 Tool calls that can still receive a real result are left alone: when the history ends on a `ModelResponse` with tool calls, running without a new `user_prompt` executes them, and [deferred tool calls](deferred-tools.md) are matched to their `deferred_tool_results` — including when a 'complete' `ModelRequest` with the already-executed results follows the response. Repair of that live frontier only happens when the interruption is evident: a final response with [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] or a trailing request with [`state='interrupted'`][pydantic_ai.messages.ModelRequest.state] (e.g. from a [cancelled stream](output.md#cancelling-streams) or a crash during tool execution) whose tool calls will never be executed.
 
+The one case the repair leaves to you is a new user prompt on top of a history whose final response still has unanswered tool calls: those calls can still be answered — by resuming the run, or with `deferred_tool_results` — so Pydantic AI raises rather than abandon them. When you do mean to abandon them, [`repair_messages`][pydantic_ai.messages.repair_messages] runs the same pipeline on demand and closes them out:
+
+```python {title="repairing_a_stored_history.py"}
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    repair_messages,
+)
+
+stored: list[ModelMessage] = [
+    ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='c1')])
+]
+
+runnable = repair_messages(stored)
+closed_out = runnable[-1].parts[-1]
+assert isinstance(closed_out, ToolReturnPart)
+print(closed_out.content)
+#> The tool call was interrupted before a result was produced.
+```
+
+`runnable` can now be passed as `message_history=` alongside a new prompt. It is also what to reach for outside a run — in a store, a UI, or a capability that wants to record a history it knows a later run can pick up. Pass `repair_last_response=False` to leave the live frontier alone and repair only the rest.
+
 This pipeline handles regular, locally-executed tool calls only. Provider-native tool parts — produced and resolved by the provider inline — are left untouched and repaired by each model's own serializer instead. Some other provider-invalid histories are also out of scope and may be rejected: duplicate tool results for one call, and provider-specific ordering rules beyond call/result pairing — where one of those rules is known and verified, the model's own serializer normalizes the request for it instead.
 
 ### Correlating runs with `run_id` and `conversation_id`
@@ -396,6 +420,11 @@ _(This example is complete, it can be run "as is")_
     preserves them — and because the mapping is carried through as-is, a multi-modal item nested
     underneath one comes back as a plain dict there, while the JSON round-trip stringifies the key
     and restores the item. Use string keys in a tool return if you need both.
+
+    Raw `bytes` returned by a tool are the one value that does not survive: `ToolReturnPart.content`
+    is typed `Any`, so they are written as a base64 string and reload as a `str` rather than as
+    `bytes`. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent] for binary data and it
+    round-trips exactly, in this adapter and in any model of your own.
 
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
@@ -749,7 +778,8 @@ can still enqueue there. `'asap'` messages are drained in `before_model_request`
 same end-of-run point if anything arrived during the final step. Both fire however
 you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
 [`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
-loop all deliver enqueued messages.
+loop all deliver enqueued messages. A `wrap_model_request` hook that short-circuits without
+calling its handler skips `before_model_request`, so it also skips that request-time drain.
 
 !!! info "Limitations"
     - Inside a [Temporal](durable_execution/temporal.md) workflow, tools run in
@@ -858,8 +888,8 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 # result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
 ```
 
-!!! warning "Be careful when slicing the message history"
-    When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
+!!! note "What slicing costs"
+    A slice that separates a tool call from its result no longer reaches the provider that way: the repair described in [Making histories provider-valid](#making-histories-provider-valid) runs on whatever the processor returns. It is silent, though, and it resolves the break in the only ways it can — a result whose call was sliced away is dropped, and a call whose result was sliced away is answered with a synthesized "interrupted" return. Both change what the model sees. Slice on message boundaries that keep each call with its result when the exchange matters.
 
 #### `RunContext` parameter
 
@@ -974,6 +1004,73 @@ Treat `None` as unknown, not as an empty context window. It is returned before t
 [Instructions](agent.md#instructions) are sent with every request rather than stored in the history, so compaction can't drop them. If you use [`system_prompt`](agent.md#system-prompts) instead, add [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
 
 Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
+
+#### Scheduling maintenance into cache-cold windows
+
+History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
+
+Providers publish retention windows for their prompt caches. Pydantic AI records the documented default at the provider layer as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]: 5 minutes for Anthropic, 30 minutes for OpenAI's GPT-5.6 and later. Where a provider's retention depends on account configuration rather than the model — as OpenAI's does for earlier models, where the default hinges on whether the organization has zero data retention enabled — the default is left unset, and the outlook is `'unknown'` unless you pass `retention=` yourself. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
+
+```python {title="cache_cold_maintenance.py"}
+from datetime import datetime, timedelta, timezone
+
+from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.profiles import prompt_cache_outlook
+
+profile = AnthropicModel('claude-sonnet-4-6').profile
+
+now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+history = [
+    ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=now - timedelta(minutes=30)),
+    ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now - timedelta(minutes=30)),
+]
+
+# The last exchange was 30 minutes ago, well past Anthropic's 5-minute default.
+outlook = prompt_cache_outlook(history, profile=profile, now=now)
+print(outlook)
+#> cold
+```
+
+A `'cold'` outlook is the signal to flush pending maintenance for free; `'warm'` means the mutation would sacrifice a live cache hit, so defer it if it can wait; `'unknown'` (no documented retention, or a history without timestamps) should be treated like `'warm'` — never mutate on a guess.
+
+Retention you request through model settings, such as `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'`, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
+
+```python {title="cache_cold_hook.py"}
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+from pydantic_ai.profiles import prompt_cache_outlook
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def compact_when_cold(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+    messages = request_context.messages
+    model = request_context.model
+    outlook = prompt_cache_outlook(
+        messages,
+        profile=model.profile,
+        retention=model.resolve_cache_retention(request_context.model_settings),
+    )
+    over_budget = ctx.usage.total_tokens > 100_000
+    if len(messages) > 10 and (over_budget or outlook == 'cold'):
+        # Expensive: replace with your real summarization/pruning pass.
+        request_context.messages = messages[:1] + messages[-4:]
+    return request_context
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    model_settings=AnthropicModelSettings(anthropic_cache='1h'),  # (1)!
+    capabilities=[hooks],
+)
+```
+
+1. With the 1-hour cache requested, the outlook only turns `'cold'` after an hour of idleness rather than Anthropic's default 5 minutes.
+
+`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports them. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
 
 ### Testing History Processors
 
