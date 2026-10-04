@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability
+import anyio.to_thread
+
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai_harness.capability_creation._store import CapabilityStore
-from pydantic_ai_harness.capability_creation._toolset import CapabilityCreationToolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._durable import RetryRequest
+from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore
+from pydantic_ai_harness.capability_creation._toolset import CapabilityCreationOperations, CapabilityCreationToolset
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -62,6 +67,10 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     (`LocalWorkspace`) and writable: next to a sandbox, the model's code would
     escape the sandbox, and a read-only workspace promises the model changes
     nothing.
+
+    Each store read and write runs as a durable operation, so under durable
+    execution a recovered run reuses the recorded result instead of writing
+    the authored module and manifest again.
     """
 
     directory: Path
@@ -73,6 +82,15 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     guidance: str | None = None
     """Static system-prompt guidance on authoring. Cache-stable. Leave `None` for the
     default, or set `''` to omit guidance entirely."""
+
+    _: KW_ONLY
+    id: str | None = 'capability_creation'
+    """Stable identity for durable execution, which records each store read and write under it."""
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     @property
     def store(self) -> CapabilityStore:
@@ -96,7 +114,26 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Toolset providing the authoring tools over this capability's store."""
-        return CapabilityCreationToolset[AgentDepsT](self.store)
+        return CapabilityCreationToolset[AgentDepsT](
+            self.store,
+            id=self.id,
+            operations=CapabilityCreationOperations(write=self._write, list_all=self._list_all, disable=self._disable),
+        )
+
+    @durable_operation('write')
+    async def _write(self, name: str, code: str) -> AuthoredCapability | RetryRequest:
+        try:
+            return await anyio.to_thread.run_sync(self.store.write, name, code)
+        except ValueError as exc:
+            return RetryRequest(str(exc))
+
+    @durable_operation('list_all')
+    async def _list_all(self) -> list[AuthoredCapability]:
+        return await anyio.to_thread.run_sync(self.store.list_all)
+
+    @durable_operation('disable')
+    async def _disable(self, name: str) -> bool:
+        return await anyio.to_thread.run_sync(self.store.disable, name)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
