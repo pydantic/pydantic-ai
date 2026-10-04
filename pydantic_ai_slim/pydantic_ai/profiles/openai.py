@@ -687,6 +687,13 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 self.is_strict_compatible = False
 
         schema_type = schema.get('type')
+        if isinstance(schema_type, list):
+            # JSON Schema allows `type` to be a list, e.g. `["null", "object"]` for nullable models.
+            # The object/array handling below only matches a string `type`, so list-valued types
+            # would skip the `additionalProperties` and `items` checks entirely and be sent with
+            # `strict: true` without the required strict-mode treatment.
+            if self.strict is None and ('object' in schema_type or 'array' in schema_type):
+                self.is_strict_compatible = False
         if 'oneOf' in schema:
             # OpenAI does not support oneOf in strict mode
             if self.strict is True:

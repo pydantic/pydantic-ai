@@ -6437,6 +6437,52 @@ def test_transformer_untyped_array_explicit_strict_raises():
         OpenAIJsonSchemaTransformer(schema, strict=True).walk()
 
 
+@pytest.mark.parametrize(
+    'list_type_schema',
+    [
+        pytest.param({'type': ['null', 'object'], 'properties': {'x': {'type': 'string'}}, 'required': ['x']}, id='nullable-object'),
+        pytest.param({'type': ['object', 'null']}, id='object-first'),
+        pytest.param({'type': ['null', 'array'], 'items': {'type': 'string'}}, id='nullable-array'),
+    ],
+)
+def test_transformer_list_typed_object_or_array_not_strict_compatible(list_type_schema: dict[str, Any]):
+    """A list-valued `type` containing `object` or `array` isn't strict-compatible.
+
+    Go's `jsonschema-go` (official MCP SDK) emits `["null", "object"]` for pointer structs and
+    `["null", "array"]` for slices. The object/array strict checks below only match a string
+    `type`, so without this the schema is sent with `strict: true` while its nested objects
+    never get `additionalProperties: false`.
+    See https://github.com/pydantic/pydantic-ai/issues/9642
+    """
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': list_type_schema},
+        'required': ['value'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+@pytest.mark.parametrize(
+    'list_type_schema',
+    [
+        pytest.param({'type': ['null', 'string']}, id='nullable-string'),
+        pytest.param({'type': ['string', 'integer']}, id='string-or-integer'),
+    ],
+)
+def test_transformer_list_typed_scalar_strict_compatible(list_type_schema: dict[str, Any]):
+    """A list-valued `type` over scalar types stays strict-compatible."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': list_type_schema},
+        'required': ['value'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is True
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,
