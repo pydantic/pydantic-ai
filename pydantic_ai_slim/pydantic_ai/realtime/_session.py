@@ -2425,7 +2425,6 @@ class RealtimeSession:
         """Finalize the current assistant response's parts into a `ModelResponse` in history."""
         response: ModelResponse | None = None
         # The chat span's input is the history the response replied to, captured before we append it.
-        # The span's input is the conversation as this session has it ahead of the response, as in a run.
         input_messages = self._own_messages()
         # Native tool parts (web grounding / code execution) lead the response (call+return, then
         # speech), matching the classic `GoogleModel`, which prepends them ahead of the assistant's text.
@@ -4016,6 +4015,9 @@ class RealtimeSession:
         if self._core is None:
             return
         self._core.apply(item)
+        if isinstance(item, AudioSent):
+            # A microphone chunk: it neither settles anything owed nor changes what history holds back.
+            return
         self._core_advanced(self._core)
 
     def _core_advanced(self, core: SessionCore) -> None:
