@@ -16,7 +16,7 @@ import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
@@ -2432,6 +2432,68 @@ class TestPublicPath:
         # the outer agent's capabilities never see a request made by a separate `Agent`.
         assert summary.models == ['summarizer']
         assert outer.models == ['test']
+
+    async def test_whitespace_only_summary_is_retried(self):
+        summaries = iter(['  \n\n ', '  the summary\n'])
+        retries: list[str] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            retries.extend(str(p.content) for m in messages for p in m.parts if isinstance(p, RetryPromptPart))
+            return ModelResponse(parts=[TextPart(content=next(summaries))])
+
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                )
+            ],
+        )
+
+        await agent.run('next', message_history=history)
+
+        assert retries == ['The summary was empty. Write the summary of the conversation.']
+        first = sent[-1][0]
+        assert isinstance(first, ModelRequest)
+        assert [(p.part_kind, getattr(p, 'content', None)) for p in first.parts] == [
+            ('system-prompt', f'{_SUMMARY_PREFIX}the summary'),
+            ('user-prompt', 'next'),
+        ]
+
+    async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content=' \n')])
+
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+            sent.append(messages)  # the run must fail before this request
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        history: list[ModelMessage] = []
+        for i in range(5):
+            history += [_user(f'q{i}'), _assistant(f'a{i}')]
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[
+                SummarizingCompaction(
+                    FunctionModel(summarize), max_messages=4, keep_messages=1, preserve_first_user_message=False
+                )
+            ],
+        )
+
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+            await agent.run('next', message_history=history)
+        assert sent == []
 
     async def test_capabilities_wired_into_agent(self):
 
