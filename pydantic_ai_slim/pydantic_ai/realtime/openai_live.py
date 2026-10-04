@@ -850,6 +850,9 @@ class OpenAILiveConnection(RealtimeConnection):
             for report in unclaimed:
                 yield report
             return
+        if self._idle_audio_task is not None:
+            # Silence after `session.close` would only be billed: Live answers it without audio flowing.
+            await _utils.cancel_and_drain(self._idle_audio_task)
         await self._send_event({'type': 'session.close'})
         while not self._session_end.ended:
             read = self._recv_task if self._recv_task is not None else self._start_read()

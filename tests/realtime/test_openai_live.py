@@ -2801,6 +2801,21 @@ class _LiveSink(OpenAILiveConnection):
         super().__init__(ws)  # pyright: ignore[reportArgumentType]
 
 
+async def test_ending_the_session_stops_the_idle_pump_first() -> None:
+    """Silence after `session.close` would only be billed, so the pump stops before it is sent."""
+    ws = _FakeWebSocket([], closed_seconds=4)
+    connection = OpenAILiveConnection(ws, idle_audio=True)  # pyright: ignore[reportArgumentType]
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    pump = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
+    assert pump is not None
+
+    await _ended(connection)
+
+    assert pump.done()
+    assert [json.loads(frame)['type'] for frame in ws.sent][-1:] == ['session.close']
+    await connection.aclose()
+
+
 async def test_ending_the_session_reads_every_frame_until_session_closed() -> None:
     """Frames still arriving are handled as ever; only session-scoped usage is returned, the backend's has no reply left."""
     usage_frame = json.dumps({'type': 'session.usage.updated', 'event_id': 'e', 'usage': {'seconds': 3}})
