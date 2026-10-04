@@ -634,7 +634,8 @@ class TestWarnNearLimits:
         last = result.messages[-1]
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
+        assert isinstance(text, SystemPromptPart)
+        assert text.scope == 'turn'
         assert isinstance(text.content, str)
         assert 'URGENT' in text.content
         assert '[WarnNearLimits]' in text.content
@@ -648,7 +649,8 @@ class TestWarnNearLimits:
         last = result.messages[-1]
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
+        assert isinstance(text, SystemPromptPart)
+        assert text.scope == 'turn'
         assert isinstance(text.content, str)
         assert 'CRITICAL' in text.content
 
@@ -698,7 +700,8 @@ class TestWarnNearLimits:
         last = result.messages[-1]
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
+        assert isinstance(text, SystemPromptPart)
+        assert text.scope == 'turn'
         assert isinstance(text.content, str)
         # Iterations should come before total_tokens.
         assert text.content.index('Iterations') < text.content.index('Total tokens')
@@ -942,6 +945,15 @@ class TestFormatMessages:
         text = _format_messages(msgs, tool_return_max_chars=None)
         assert text == 'Tool [fn]: ' + 'x' * 600
 
+    def test_turn_scoped_system_prompt_left_out(self):
+        """A turn-scoped prompt was for its own request only; a summary must not carry it forward."""
+        msgs: list[ModelMessage] = [
+            _user('hi'),
+            ModelRequest(parts=[SystemPromptPart('[WarnNearLimits]\nCRITICAL: 1 remaining', scope='turn')]),
+            ModelRequest(parts=[SystemPromptPart('be helpful')]),
+        ]
+        assert _format_messages(msgs) == 'User: hi\nSystem: be helpful'
+
 
 # ---------------------------------------------------------------------------
 # _extract_system_prompts
@@ -974,6 +986,15 @@ class TestExtractSystemPrompts:
         msgs: list[ModelMessage] = [_assistant('hello'), _user('hi')]
         parts = _extract_system_prompts(msgs)
         assert parts == []
+
+    def test_skips_leading_turn_scoped_parts(self):
+        """A turn-scoped prompt left at the front by an earlier cut isn't lifted into the summary."""
+        msgs: list[ModelMessage] = [
+            ModelRequest(parts=[SystemPromptPart('[WarnNearLimits]\nold', scope='turn')]),
+            ModelRequest(parts=[SystemPromptPart('sys1')]),
+            _user('hi'),
+        ]
+        assert [part.content for part in _extract_system_prompts(msgs)] == ['sys1']
 
 
 # ---------------------------------------------------------------------------
@@ -1114,7 +1135,8 @@ class TestWarnNearLimitsEdgeCases:
         last = result.messages[-1]
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
+        assert isinstance(text, SystemPromptPart)
+        assert text.scope == 'turn'
         assert isinstance(text.content, str)
         assert 'CRITICAL' in text.content
 
@@ -1128,7 +1150,8 @@ class TestWarnNearLimitsEdgeCases:
         last = result.messages[-1]
         assert isinstance(last, ModelRequest)
         text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
+        assert isinstance(text, SystemPromptPart)
+        assert text.scope == 'turn'
         assert isinstance(text.content, str)
         assert 'CRITICAL' in text.content
 
@@ -1205,6 +1228,186 @@ class TestWarnNearLimitsMarkerDetection:
         # Marker message removed; user and assistant remain.
         assert len(result.messages) == 2
         assert isinstance(result.messages[1], ModelResponse)
+
+
+def _warning_lines(messages: list[ModelMessage]) -> list[str]:
+    """The iteration lines of every limit warning these messages carry, in any voice."""
+    lines: list[str] = []
+    for msg in messages:
+        for part in msg.parts:
+            content = getattr(part, 'content', None)
+            if isinstance(content, str) and '[WarnNearLimits]' in content:
+                lines.extend(line for line in content.splitlines() if line.startswith('- Iterations:'))
+    return lines
+
+
+class TestWarnNearLimitsTurnScoped:
+    """Warnings are turn-scoped system prompts: kept in history, sent only with their own request."""
+
+    async def test_warning_is_a_turn_scoped_request_in_history_and_request(self):
+        lw = WarnNearLimits(max_iterations=10)
+        history: list[ModelMessage] = [_user('hi')]
+        rc = _make_request_context(list(history))
+        ctx = _make_ctx(requests=8)
+        ctx.messages = history
+        result = await lw.before_model_request(ctx, rc)
+        warning = result.messages[-1]
+        assert isinstance(warning, ModelRequest)
+        assert len(warning.parts) == 1
+        part = warning.parts[0]
+        assert isinstance(part, SystemPromptPart)
+        assert part.scope == 'turn'
+        assert part.content.startswith('[WarnNearLimits]\nCRITICAL')
+        # The same request goes into the run's history, so the provider can clear the warning
+        # once its turn is over instead of seeing it deleted from a later request.
+        assert history[-1] is warning
+
+    async def test_keeps_earlier_turn_scoped_warnings_in_the_request(self):
+        """Removing an earlier warning from the request would edit history the provider already saw."""
+        lw = WarnNearLimits(max_iterations=10)
+        earlier = ModelRequest(parts=[SystemPromptPart('[WarnNearLimits]\nURGENT: old', scope='turn')])
+        messages: list[ModelMessage] = [_user('hi'), _assistant('a'), earlier, _tool_return('fn', 'c1')]
+        rc = _make_request_context(list(messages))
+        result = await lw.before_model_request(_make_ctx(requests=1), rc)  # Below threshold.
+        assert result.messages == messages
+
+        # Past the threshold the new warning follows the earlier one, which stays where it was.
+        history = list(messages)
+        rc = _make_request_context(list(messages))
+        ctx = _make_ctx(requests=8)
+        ctx.messages = history
+        result = await lw.before_model_request(ctx, rc)
+        assert result.messages[:-1] == messages
+        assert result.messages[2] is earlier
+        new = result.messages[-1]
+        assert isinstance(new, ModelRequest)
+        assert isinstance(new.parts[0], SystemPromptPart)
+        assert 'Iterations: 8/10' in new.parts[0].content
+        assert history == [*messages, new]
+
+    async def test_still_strips_conversation_scoped_warnings_from_older_histories(self):
+        lw = WarnNearLimits(max_iterations=10)
+        first = _user('hi')
+        legacy = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nold')])
+        rc = _make_request_context([first, legacy])
+        result = await lw.before_model_request(_make_ctx(requests=1), rc)
+        assert result.messages == [first]
+
+    async def test_no_warning_after_a_suspended_response(self):
+        """A provider-resume turn echoes its history verbatim; a warning after it would corrupt it."""
+        lw = WarnNearLimits(max_iterations=10)
+        legacy = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nold')])
+        suspended = ModelResponse(parts=[TextPart(content='partial')], state='suspended')
+        history: list[ModelMessage] = [_user('hi'), legacy, suspended]
+        sent = list(history)
+        rc = _make_request_context(sent)
+        ctx = _make_ctx(requests=9)
+        ctx.messages = history
+        result = await lw.before_model_request(ctx, rc)
+        # Not even a legacy warning is removed: the continuation is echoed exactly as it was.
+        assert result.messages is sent
+        assert sent == [history[0], legacy, suspended]
+        assert history == [history[0], legacy, suspended]
+
+    async def test_warns_after_a_complete_response(self):
+        """Only a suspended response holds the warning back."""
+        lw = WarnNearLimits(max_iterations=10)
+        rc = _make_request_context([_user('hi'), _assistant('done')])
+        result = await lw.before_model_request(_make_ctx(requests=9), rc)
+        assert len(result.messages) == 3
+        warning = result.messages[-1]
+        assert isinstance(warning, ModelRequest)
+        assert isinstance(warning.parts[0], SystemPromptPart)
+        assert warning.parts[0].scope == 'turn'
+
+    async def test_context_estimate_leaves_out_earlier_warnings(self):
+        """An earlier warning isn't sent again, so it doesn't count toward the context limit."""
+        lw = WarnNearLimits(max_context_tokens=100)
+        earlier = ModelRequest(parts=[SystemPromptPart('[WarnNearLimits]\n' + 'x' * 1000, scope='turn')])
+        messages: list[ModelMessage] = [_user('hi'), _assistant('a'), earlier, _tool_return('fn', 'c1')]
+        rc = _make_request_context(list(messages))
+        result = await lw.before_model_request(_make_ctx(messages), rc)
+        assert len(result.messages) == len(messages)  # No new warning.
+
+    async def test_summaries_leave_out_earlier_warnings(self):
+        """Warnings stay in history now, but a summary must not turn them into lasting context."""
+        summarized: list[str] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summarized.append(
+                '\n'.join(
+                    str(part.content) for msg in messages for part in msg.parts if isinstance(part, UserPromptPart)
+                )
+            )
+            return ModelResponse(parts=[TextPart('summary')])
+
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) < 6:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{len(seen)}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[
+                WarnNearLimits(max_iterations=10, warning_threshold=0.1),
+                SummarizingCompaction(model=FunctionModel(summarize), max_messages=8, keep_messages=2),
+            ],
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        await agent.run('go')
+
+        assert summarized
+        assert all('Tool [step]' in text for text in summarized)
+        assert not any('[WarnNearLimits]' in text for text in summarized)
+        # Compaction doesn't cost the model its current warning: the last request still carries one.
+        assert len(_warning_lines(seen[-1])) == 1
+
+    async def test_each_warning_is_sent_with_its_own_request_and_kept_in_history(self):
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) < 4:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{len(seen)}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn), capabilities=[WarnNearLimits(max_iterations=10, warning_threshold=0.1)]
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        result = await agent.run('go')
+
+        # `FunctionModel` can't clear a turn-scoped prompt, so each warning goes out with its own
+        # request only; the first request is below the threshold.
+        assert [_warning_lines(messages) for messages in seen] == [
+            [],
+            ['- Iterations: 1/10 requests used (10%); 9 remaining.'],
+            ['- Iterations: 2/10 requests used (20%); 8 remaining.'],
+            ['- Iterations: 3/10 requests used (30%); 7 remaining.'],
+        ]
+        history = result.all_messages()
+        assert _warning_lines(history) == [
+            '- Iterations: 1/10 requests used (10%); 9 remaining.',
+            '- Iterations: 2/10 requests used (20%); 8 remaining.',
+            '- Iterations: 3/10 requests used (30%); 7 remaining.',
+        ]
+        assert all(
+            part.scope == 'turn'
+            for msg in history
+            for part in msg.parts
+            if isinstance(part, SystemPromptPart) and '[WarnNearLimits]' in part.content
+        )
 
 
 class TestWarnNearLimitsTotalTokensBelowThreshold:

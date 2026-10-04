@@ -168,7 +168,8 @@ agent = Agent(
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
-never edits history; it appends an URGENT then CRITICAL user-turn warning as limits approach. At
+never edits history; it appends an URGENT then CRITICAL warning as limits approach, as a turn-scoped
+system prompt (`SystemPromptPart(scope='turn')`) the model sees for that request only. At
 least one limit is required; `warn_on` may only name configured kinds (`'iterations'`,
 `'context_window'`, `'total_tokens'`).
 

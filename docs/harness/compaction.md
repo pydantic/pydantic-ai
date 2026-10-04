@@ -395,7 +395,7 @@ value orphans recorded operations for in-flight workflows, so keep it fixed once
 
 ## `WarnNearLimits`: warn instead of rewrite
 
-`WarnNearLimits` never edits history. As the run approaches a configured limit, it injects an URGENT (then CRITICAL) warning as a trailing user turn, so the model wraps up rather than having its context rewritten under it. Models tend to pay more attention to user messages than system messages, which is why the warning is a user turn. Previous warnings from this capability are stripped before deciding whether to inject a new one.
+`WarnNearLimits` never edits history. As the run approaches a configured limit, it adds an URGENT (then CRITICAL) warning to the end of each request, so the model wraps up rather than having its context rewritten under it. Each warning is a [turn-scoped system prompt](../message-history.md#turn-scoped-system-prompts): the model sees it for its own request only, with that request's counts, and it stays in the message history, so the cached prefix and the model's earlier reasoning stay valid from one request to the next. Earlier warnings don't count toward `max_context_tokens`, since the model doesn't see them again.
 
 ```python
 from pydantic_ai import Agent

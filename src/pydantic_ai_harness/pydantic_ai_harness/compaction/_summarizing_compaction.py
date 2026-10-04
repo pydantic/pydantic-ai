@@ -197,7 +197,9 @@ def _format_messages(
                 if isinstance(part, UserPromptPart):
                     lines.append(f'User: {_user_prompt_text(part)}')
                 elif isinstance(part, SystemPromptPart) and not (
-                    skip_previous_summary and part.content.startswith(_SUMMARY_PREFIX)
+                    # A turn-scoped prompt (a limit warning, a reminder) was for its own request only;
+                    # summarizing it would turn a stale nudge into lasting context.
+                    part.scope == 'turn' or (skip_previous_summary and part.content.startswith(_SUMMARY_PREFIX))
                 ):
                     lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
@@ -234,6 +236,9 @@ def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPa
         if not isinstance(msg, ModelRequest):
             break
         for part in msg.parts:
+            if isinstance(part, SystemPromptPart) and part.scope == 'turn':
+                # Left at the front by an earlier cut; it was for its own request, so don't lift it.
+                continue
             if isinstance(part, SystemPromptPart) and not part.content.startswith(_SUMMARY_PREFIX):
                 parts.append(part)
             elif is_pinned(part) or is_receipt_part(part):
