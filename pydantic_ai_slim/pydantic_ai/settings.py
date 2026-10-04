@@ -482,7 +482,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents in user prompts, and Web Fetch)
+    * Anthropic (documents, and Web Fetch)
 
     Providers that always return citations ignore this setting.
     """
