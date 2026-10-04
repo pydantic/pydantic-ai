@@ -2847,6 +2847,24 @@ async def test_a_drop_while_continuing_without_a_policy_raises() -> None:
         await _first_events(connection, 2)
 
 
+async def test_a_spoken_turn_without_a_transcript_replays_as_a_marker() -> None:
+    """The fresh Live session sees that the user spoke before the answer, not an answer out of nowhere."""
+    messages = [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'\x02\x03', media_type='audio/wav'))]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Booked for Friday.')]),
+    ]
+    items = await live_module.replay_input_items(messages, provider_name='openai')
+    assert items == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Booked for Friday.'}]},
+        ]
+    )
+
+
 async def test_a_message_too_long_to_replay_alone_is_skipped() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart(content='earlier')]),
