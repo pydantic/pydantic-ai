@@ -482,7 +482,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents in user prompts, and Web Fetch)
+    * Anthropic (documents, and Web Fetch)
     * Bedrock (TXT and PDF documents in user prompts)
     * xAI (inline citations)
 
