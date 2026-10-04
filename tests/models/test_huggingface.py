@@ -651,7 +651,9 @@ async def test_image_as_binary_content_input(
 def test_model_status_error(allow_model_requests: None) -> None:
     error = HfHubHTTPError(
         message='test_error',
-        response=Mock(status_code=500, content={'error': 'test error'}, headers=httpx.Headers({'x-request-id': 'abc'})),
+        response=Mock(
+            status_code=500, content=b'{"error": "test error"}', headers=httpx.Headers({'x-request-id': 'abc'})
+        ),
     )
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
@@ -659,7 +661,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     exc = exc_info.value
-    assert str(exc) == snapshot("status_code: 500, model_name: not_a_model, body: {'error': 'test error'}")
+    assert str(exc) == snapshot('status_code: 500, model_name: not_a_model, body: b\'{"error": "test error"}\'')
     assert exc.headers == {'x-request-id': 'abc'}
 
 

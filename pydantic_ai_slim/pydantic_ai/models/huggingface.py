@@ -110,11 +110,11 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=str(e), in_stream=True) from e
 
 
-def _tgi_error_type(content: object) -> object:
+def _tgi_error_type(content: bytes) -> object:
     """The `error_type` of a Text Generation Inference error body, like `'overloaded'`."""
     try:
-        data: object = json.loads(cast(bytes, content))
-    except (TypeError, ValueError):
+        data: object = json.loads(content)
+    except ValueError:
         return None
     return data.get('error_type') if _utils.is_str_dict(data) else None
 

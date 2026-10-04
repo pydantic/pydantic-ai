@@ -556,7 +556,7 @@ class ModelAPIError(AgentRunError):
     """
 
     in_stream: bool
-    """Whether the provider reported the error inside an already open, successful (HTTP 200) stream.
+    """Whether the provider reported the error inside a response stream that had already started successfully.
 
     Its [`status_code`][pydantic_ai.exceptions.ModelHTTPError.status_code], if any, is then the status the provider
     uses for the same error before a stream opens, rather than the stream's own, and its
