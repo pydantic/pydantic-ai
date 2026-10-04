@@ -274,7 +274,7 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
         # Native tools can sum cache reads across passes, so the sum cannot establish a prefix. A
         # separate tool-use prompt counter leaves cache reads scoped to one prompt; otherwise a
         # native call is a conservative aggregation signal when no pass count is reported.
-        # Iteration counts come from Anthropic's _map_usage_details; 'tool_use_prompt_tokens' comes
+        # Iteration counts come from Anthropic's _extract_usage_details; 'tool_use_prompt_tokens' comes
         # from Google's _usage_metadata_as_usage.
         passes = usage.details.get('message_iterations')
         if passes is None:
