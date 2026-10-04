@@ -1310,3 +1310,36 @@ class TestEndToEnd:
         with pytest.raises(AssertionError, match='no CachePoint'):
             durable_prefix([ModelRequest(parts=[UserPromptPart('no breakpoint')])])
         assert breakpoints([*result_1.all_messages(), *result_2.all_messages()]) == []
+
+
+async def test_plan_tools_update_and_remove_through_the_recorded_store() -> None:
+    turns = iter(
+        [
+            ToolCallPart('write_plan', {'items': [{'id': 'a', 'content': 'Write the migration'}]}),
+            ToolCallPart('update_task_status', {'task_id': 'a', 'status': 'completed'}),
+            ToolCallPart('remove_task', {'task_id': 'a'}),
+        ]
+    )
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        part = next(turns, None)
+        return ModelResponse(parts=[part if part is not None else TextPart('done')])
+
+    store = InMemoryPlanStore()
+    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[Planning[None](store=store)])
+
+    await agent.run('plan')
+
+    assert await store.get_items() == []
+
+
+async def test_standalone_toolset_without_operations_calls_the_store_directly() -> None:
+    store = InMemoryPlanStore()
+    toolset = PlanningToolset[None](Planning[None](store=store))
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    object.__setattr__(ctx, 'emit', AsyncMock())
+    tools = await toolset.get_tools(ctx)
+
+    await toolset.call_tool('write_plan', {'items': [PlanItem(content='step')]}, ctx, tools['write_plan'])
+
+    assert [item.content for item in await store.get_items()] == ['step']
