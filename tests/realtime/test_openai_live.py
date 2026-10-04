@@ -1927,7 +1927,7 @@ def test_a_top_level_error_ends_the_delegation_it_interrupted() -> None:
 
     assert events == [
         # The call's response waits for usage from a terminal that will never come.
-        SessionUsage(RequestUsage()),
+        SessionUsage(RequestUsage(unmeasured_requests=1)),
         RealtimeSessionErrorEvent(
             message=(
                 'The delegated OpenAI Responses backend did not finish '
@@ -2226,6 +2226,58 @@ async def test_backend_missing_usage_survives_realtime_session(
         assert all('1 response(s) omitted usage information' in str(item.message) for item in availability_warnings)
     assert session.usage.requests == 1
     assert session.usage.unmeasured_requests == int(not reported_zero)
+    assert session.usage.input_tokens == 0
+    assert session.usage.output_tokens == 0
+
+
+@pytest.mark.parametrize(
+    ('usage_limits', 'warning_expected'),
+    [
+        pytest.param(UsageLimits(input_tokens_limit=100), True, id='input-token-limit'),
+        pytest.param(UsageLimits(cost_limit=Decimal('1')), True, id='cost-limit'),
+        pytest.param(UsageLimits(request_limit=1), False, id='request-only-limit'),
+    ],
+)
+async def test_failed_handoff_without_usage_is_unmeasured_in_realtime_session(
+    usage_limits: UsageLimits, warning_expected: bool
+) -> None:
+    """An in-flight backend request that fails before usage arrives is counted as unmeasured."""
+    ws = _FakeWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            {'type': 'session.output_transcript.delta', 'delta': 'Done.', 'start_ms': 0, 'end_ms': 1, 'event_id': 'e'},
+            _HANDOFF_INCOMPLETE,
+        )
+    )
+    realtime = Agent().realtime(
+        OpenAILiveModel(
+            'gpt-live-1',
+            provider='openai',
+            settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10),
+        ),
+        usage_limits=usage_limits,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('default', UsageLimitUnavailableWarning)
+        with _patched_connect(ws):
+            async with realtime.session() as session:
+                with anyio.fail_after(5):
+                    async for event in session:  # pragma: no branch
+                        if isinstance(event, RealtimeTurnCompleteEvent):
+                            break
+
+    availability_warnings = [item for item in caught if issubclass(item.category, UsageLimitUnavailableWarning)]
+    if warning_expected:
+        assert len(availability_warnings) == 1
+        assert all('1 response(s) omitted usage information' in str(item.message) for item in availability_warnings)
+    else:
+        assert availability_warnings == []
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert len(responses) == 1
+    assert session.usage.requests == 1
+    assert responses[0].usage.unmeasured_requests == 1
+    assert session.usage.unmeasured_requests == 1
     assert session.usage.input_tokens == 0
     assert session.usage.output_tokens == 0
 

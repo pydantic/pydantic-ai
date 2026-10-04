@@ -1016,7 +1016,7 @@ class OpenAILiveConnection(RealtimeConnection):
             return [RealtimeSessionErrorEvent(message=message, code=code)]
         events: list[RealtimeCodecEvent] = []
         for delegation in in_flight:
-            events.extend(self._response_ended_without_usage())
+            events.extend(self._response_ended_without_usage(unmeasured_requests=1))
             self._settle_delegation(delegation, gave_up=True)
         events.append(
             RealtimeSessionErrorEvent(
