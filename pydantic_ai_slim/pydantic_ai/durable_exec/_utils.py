@@ -103,15 +103,15 @@ Receives a fresh `ModelRequestContext` carrying the segment's messages/settings/
 class DurableModel(WrapperModel):
     """Dispatches each model-request segment through its own durable unit.
 
-    The bundled durability capabilities swap this in for `request_context.model` in
-    `wrap_model_request` and run the innermost handler in workflow/flow code, so the
+    The bundled durability capabilities install this before the wrapped request lifecycle,
+    then repair it in their innermost `before_model_request` hook if an outer hook swaps the model, so the
     continuation loop (Anthropic `pause_turn`, OpenAI background mode) checkpoints every
     suspended segment durably and a failed segment retries alone, while everything else
     (`profile`, `settings`, `continuation_delay`, ...) is answered by the wrapped
     workflow-side model. Everything engine-specific lives in the four executors, each
     running one request / streamed request / cancellation inside the engine's
-    activity, step, or task. Compaction is installed here ahead of #7053, which will make
-    capability hooks observe this wrapper before invoking `compact_messages`.
+    activity, step, or task. Installing it before the before-hook chain also routes model-side
+    compaction through the durable operation.
     """
 
     def __init__(

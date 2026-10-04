@@ -240,6 +240,31 @@ def test_map_delegates_audio_and_transcript_and_tool_calls() -> None:
     )
 
 
+def _error_frame(error_type: str, message: str) -> dict[str, Any]:
+    """An `error` frame shaped as in xAI's realtime schema, whose `code` repeats the `type`."""
+    return {
+        'type': 'error',
+        'event_id': 'event_err01',
+        'error': {'type': error_type, 'code': error_type, 'message': message},
+    }
+
+
+def test_map_max_duration_error_ends_the_session() -> None:
+    # xAI ends a conversation that runs past its maximum duration, so resuming it would hit the same limit.
+    assert map_event(_error_frame('max_duration', 'Maximum conversation duration exceeded.')) == (
+        RealtimeSessionErrorEvent(
+            message='Maximum conversation duration exceeded.',
+            type='max_duration',
+            code='max_duration',
+            recoverable=False,
+        )
+    )
+    # The inactivity `timeout` keeps the session open, as the schema says most errors do.
+    assert map_event(_error_frame('timeout', 'Inactivity timeout.')) == RealtimeSessionErrorEvent(
+        message='Inactivity timeout.', type='timeout', code='timeout', recoverable=True
+    )
+
+
 def test_map_conversation_events() -> None:
     assert map_event({'type': 'conversation.created', 'conversation': {'id': 'conversation-1'}}) == ConversationCreated(
         'conversation-1'
@@ -842,6 +867,38 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     # the re-dial attempted after `good` hung up, which the stand-in refuses.
     assert connect.urls == ['wss://api.x.ai/v1/realtime?model=grok-voice-latest'] * 3
     assert conn.conversation_id == 'conversation-2'
+
+
+async def test_max_duration_error_is_not_reconnected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The close after a `max_duration` error ends the session: a re-dial would resume into the same limit.
+
+    The error already reports why the session ended, so the close isn't reported again.
+    """
+    ended = FakeWebSocket(
+        [
+            _created(),
+            _conversation_created(),
+            _updated(),
+            json.dumps(_error_frame('max_duration', 'Maximum conversation duration exceeded.')),
+        ]
+    )
+    connect = _RecordingConnect([ended, FakeWebSocket([_created(), _conversation_created(), _updated()])])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
+
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
+    async with _connect(model, 'x') as conn:
+        events = [event async for event in conn]
+        assert not conn._can_reconnect  # pyright: ignore[reportPrivateUsage]
+
+    assert events == [
+        RealtimeSessionErrorEvent(
+            message='Maximum conversation duration exceeded.',
+            type='max_duration',
+            code='max_duration',
+            recoverable=False,
+        ),
+    ]
+    assert connect.urls == ['wss://api.x.ai/v1/realtime?model=grok-voice-latest']
 
 
 @pytest.mark.shadow_divergence(reason="synthetic frames: xAI's acknowledgement of the sent text turn isn't scripted")

@@ -62,7 +62,7 @@ except ImportError as _import_error:  # pragma: no cover
 from .._instrumentation import get_instructions
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
-from ..messages import BinaryAudio, ModelMessage
+from ..messages import BinaryAudio, ModelMessage, RealtimeSessionErrorEvent
 from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
@@ -229,7 +229,8 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     merely extends and replacing when xAI revises itself. The shared codec still drops interim
     `.completed` snapshots.
     The other exception is xAI's conversation lifecycle events, which are surfaced as codec control
-    events, so the connection can report the provider's `conversation.id`.
+    events, so the connection can report the provider's `conversation.id`. Finally, xAI's `max_duration`
+    error ends the conversation, so it is reported as non-recoverable.
     """
     event_type = data.get('type')
     if event_type == 'conversation.item.input_audio_transcription.updated':
@@ -251,6 +252,10 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         # replace the accumulated text. Read as an increment it would be *appended* to the snapshots it
         # supersedes, and a revised turn would end up saying everything twice.
         event = replace(event, cumulative=True)
+    elif isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration':
+        # xAI ends a conversation that runs past its maximum duration, so this one error is not one
+        # the session can carry on from: resuming the conversation would only run into the same limit.
+        event = replace(event, recoverable=False)
     return event
 
 

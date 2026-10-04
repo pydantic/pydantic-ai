@@ -1544,6 +1544,9 @@ pip install 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 
+With `uv tool`, extra packages installed using `--with` must be added again after
+`/update`. See [Updating](README.md#updating) for how CLAI installs updates.
+
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
 ```
@@ -2141,6 +2144,10 @@ events, including an explicit window override, and clears the window when unload
 `Transcript` and a detached `Status`, so tests need no special case. The status
 row itself is CLAI's; a plugin adds to it with `get_status_segments`.
 
+The double-Esc rewind menu also uses `commit_messages` between turns. It removes
+the selected prompt and later history, but does not undo plugin state, file
+changes, or other tool side effects. It never replays tools or fires turn hooks.
+
 ### Add to the status row: `get_status_segments()`
 
 Each segment is a function that takes no arguments and returns a short string. It
@@ -2228,7 +2235,10 @@ and hyphens. It cannot be one Pydantic AI or CLAI already runs, aliases included
 `my-service` is never routed to the plugin. When two plugins register one prefix, the later one
 wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
-again.
+again. Users can remove an unused model and its saved settings with **Ctrl+D** or **Delete** in
+`/model`, after confirmation. The current model and saved default are protected;
+select another model or change the default with `/set model NAME` first. Deleting
+a model does not unload its plugin or delete provider credentials.
 
 `/model_settings` offers generic controls (max tokens, temperature, custom
 parameters) for plugin models. When `resolve` returns a model class of a provider

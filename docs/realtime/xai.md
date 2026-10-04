@@ -95,6 +95,11 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
 Grok Voice is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
 through `provider='xai'` or an `XaiProvider`.
 
+## Session length
+
+A conversation that runs past xAI's maximum duration ends with a `max_duration` error, and the
+session raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] instead of reconnecting.
+
 ## Provider-specific quirks
 
 - Grok Voice always speaks: its profile reports `supports_text_output=False`, so `output_modality='text'`
