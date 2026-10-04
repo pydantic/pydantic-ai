@@ -172,7 +172,8 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     snapshot. Otherwise accumulate parts and usage, and use other fields from the new response.
 
     Either way, `provider_details` and `metadata` accumulate across the turn's segments (latest-wins)
-    so turn-scoped data a later segment omits isn't lost — see below.
+    so turn-scoped data a later segment omits isn't lost — see below — and `failed_attempts` are
+    concatenated.
     """
     mode = merge_mode(existing, new)
     if mode == 'replace-same-id':
@@ -202,6 +203,10 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
     if existing.metadata:
         merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
+    # Attempts that failed before an earlier segment (e.g. the models a `FallbackModel` moved on from
+    # before the one that suspended) belong to the turn as a whole, so they are kept in order.
+    if existing.failed_attempts:
+        merged = replace(merged, failed_attempts=[*existing.failed_attempts, *(merged.failed_attempts or [])])
 
     # Pop the transient `replace_previous_response` marker now that it's been honored above, so it
     # doesn't persist into history where it would wrongly force a later legitimate `pause_turn`

@@ -362,6 +362,16 @@ print(response.all_messages())
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
+        failed_attempts=[
+            ModelRequestAttempt(
+                model_name='gpt-5.2',
+                provider_name='openai',
+                outcome='error',
+                error="ModelHTTPError: status_code: 401, model_name: gpt-5.2, body: {'error': 'Invalid API Key'}",
+                timestamp=datetime.datetime(...),
+                duration=datetime.timedelta(...),
+            )
+        ],
     ),
 ]
 """
@@ -466,6 +476,63 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 !!! note
     Validation errors (from [structured output](../output.md#structured-output) or [tool parameters](../tools.md)) do **not** trigger fallback. These errors use the [retry mechanism](../agent.md#reflection-and-self-correction) instead, which re-prompts the same model to try again. This is intentional: validation errors stem from the non-deterministic nature of LLMs and may succeed on retry, whereas API errors (4xx/5xx) generally indicate issues that won't resolve by retrying the same request.
+
+### Failed attempts and usage
+
+The response that answers lists every attempt the `FallbackModel` moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], in order. Each [`ModelRequestAttempt`][pydantic_ai.messages.ModelRequestAttempt] records the model and provider it tried, whether it raised an error (with the error as `'ExceptionType: message'`) or returned a response a [response handler](#response-based-fallback) rejected, when it started and how long it took, and the usage the provider reported for it. An attempt that raised has no usage, as the provider reported none. When every model fails, the same attempts are on the [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup]'s `attempts`.
+
+A rejected response was still generated and billed, so its tokens and cost are added to the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and count towards the token and cost limits in [`UsageLimits`][pydantic_ai.usage.UsageLimits]. They stay on the attempt rather than being folded into the answering response's `usage`, and the rejected response itself is not added to the message history. A fallback attempt isn't a response the agent acted on, so it doesn't count towards [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit].
+
+The rejected responses' usage counts when every model fails, too. If it exceeds a limit, [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] is raised with the `FallbackExceptionGroup` as its `__cause__`.
+
+!!! note
+    The rejected responses' usage is not recorded when a later model raises an error that `fallback_on` doesn't cover, or, under [Temporal](../durable_execution/temporal.md), when every model fails: the exception group reaches the workflow without its attempts.
+
+```python {title="fallback_model_attempts.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
+
+
+def truncated(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[TextPart('The capital of France is')],
+        usage=RequestUsage(input_tokens=60, output_tokens=100),
+        finish_reason='length',
+    )
+
+
+def complete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[TextPart('The capital of France is Paris.')],
+        usage=RequestUsage(input_tokens=60, output_tokens=8),
+    )
+
+
+def was_truncated(response: ModelResponse) -> bool:
+    return response.finish_reason == 'length'
+
+
+fallback_model = FallbackModel(
+    FunctionModel(truncated, model_name='primary'),
+    FunctionModel(complete, model_name='backup'),
+    fallback_on=was_truncated,
+)
+agent = Agent(fallback_model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+print(result.usage)
+#> RunUsage(input_tokens=120, output_tokens=108, requests=1)
+print(result.response.usage)
+#> RequestUsage(input_tokens=60, output_tokens=8)
+for attempt in result.response.failed_attempts or []:
+    print(attempt.model_name, attempt.outcome, attempt.usage)
+    #> primary rejected RequestUsage(input_tokens=60, output_tokens=100)
+```
+
+When the agent is [instrumented](../logfire.md), the model request (`chat`) span describes the model that answered and ends OK. Each attempt the `FallbackModel` moved on from gets its own child span, `model request attempt <model name>`, which ends with an ERROR status, the way a failed tool call gets its own span inside a successful agent run. An error is recorded on that span as an exception, and a response rejected by a [response handler](#response-based-fallback) carries its usage, cost and finish reason instead, as a `chat` span would. Each attempt span names the model it tried in its `gen_ai.provider.name` and `gen_ai.request.model` attributes, and gives its zero-based position among the request's attempts in `pydantic_ai.model_request.attempt`. With [`include_content=False`](../logfire.md#excluding-prompts-and-completions), the exception keeps only its type. The attempt span is created once the attempt has failed, so spans the tried model opens itself, such as a [decision model](decision.md)'s `decide` span, sit beside it under the `chat` span rather than inside it.
 
 ### Response-Based Fallback
 
