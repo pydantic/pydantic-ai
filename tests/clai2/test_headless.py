@@ -162,6 +162,7 @@ def test_cli_alias_and_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         project: ProjectSettings,
         resume: str | None,
         agent: object,
+        **_: object,
     ) -> int:
         assert agent is None
         assert text == 'hello'

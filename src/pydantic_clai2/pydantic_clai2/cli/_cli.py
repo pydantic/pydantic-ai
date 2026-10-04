@@ -5,6 +5,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from uuid import UUID
 
 from pydantic_clai2.ui.rendering.splash import Splash
 
@@ -14,6 +15,17 @@ def run(*, splash: Splash | None = None) -> None:
     parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
     parser.add_argument(
         '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
+    )
+    parser.add_argument(
+        '--session-id',
+        type=_session_id,
+        metavar='UUID',
+        help='Start the new session under this ID, or with --fork-session, save the copy under it',
+    )
+    parser.add_argument(
+        '--fork-session',
+        action='store_true',
+        help='With --resume, continue in a copy of the session under a new ID, leaving the original as it was',
     )
     parser.add_argument(
         '--worktree',
@@ -96,6 +108,8 @@ def run(*, splash: Splash | None = None) -> None:
                         project=project,
                         resume=args.resume,
                         agent=agent,
+                        session_id=args.session_id,
+                        fork_session=args.fork_session,
                     )
                 )
             )
@@ -110,6 +124,8 @@ def run(*, splash: Splash | None = None) -> None:
                 project=project,
                 resume=args.resume,
                 load_plugins=agent is None,
+                session_id=args.session_id,
+                fork_session=args.fork_session,
             )
         )
         offer_worktree_cleanup()
@@ -141,9 +157,29 @@ def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str 
     return argv
 
 
+def _session_id(value: str) -> str:
+    """A session ID is a UUID, as Claude Code's `--session-id` takes, in the form CLAI saves."""
+    try:
+        return str(UUID(value))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f'{value!r} is not a valid UUID') from None
+
+
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    if args.command and (args.resume is not None or args.worktree is not None or args.agent is not None):
-        parser.error('--resume, --worktree, and --agent cannot be combined with config or plugins')
+    if args.command and (
+        args.resume is not None
+        or args.worktree is not None
+        or args.agent is not None
+        or args.session_id is not None
+        or args.fork_session
+    ):
+        parser.error(
+            '--resume, --session-id, --fork-session, --worktree, and --agent cannot be combined with config or plugins'
+        )
+    if args.fork_session and args.resume is None:
+        parser.error('--fork-session requires --resume')
+    if args.session_id is not None and args.resume is not None and not args.fork_session:
+        parser.error('--session-id can only be combined with --resume when --fork-session is given')
     if args.worktree is not None and args.resume is not None:
         parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
     if args.prompt is not None:

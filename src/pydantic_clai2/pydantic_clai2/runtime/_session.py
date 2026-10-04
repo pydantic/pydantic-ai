@@ -247,13 +247,55 @@ class Session(Generic[DepsT, OutputT]):
         if self.on_change is not None:
             await self.on_change(ConversationChanged(conversation_id=identity[0], title=identity[1]))
 
-    async def clear(self) -> None:
-        """Start a new conversation without replacing the agent or plugins."""
+    async def clear(self, conversation_id: str | None = None) -> None:
+        """Start a new conversation without replacing the agent or plugins.
+
+        It is saved under `conversation_id` once its first prompt is, or under a random ID by default.
+        Raises `ValueError` when a saved conversation already uses `conversation_id`.
+        """
+        if conversation_id is not None:
+            await self._ensure_unused(conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
-        self.summary = ConversationSummary(workspace=self.workspace)
+        self.summary = ConversationSummary(id=conversation_id or str(uuid4()), workspace=self.workspace)
         await self._publish()
+
+    async def fork(self, conversation_id: str | None = None) -> str:
+        """Save a copy of this conversation under `conversation_id`, or a random ID, and continue in the copy.
+
+        The original is left as it was saved. Raises `ValueError` when a saved conversation already
+        uses `conversation_id`.
+        """
+        if self._running:
+            raise RuntimeError('Cannot fork a running conversation')
+        if self.conversations is None:
+            raise ValueError('Session persistence is not configured')
+        if conversation_id is not None:
+            await self._ensure_unused(conversation_id)
+        source = self.summary
+        copy = ConversationSummary(
+            id=conversation_id or str(uuid4()),
+            workspace=self.workspace,
+            title=source.title,
+            subtitle=source.subtitle,
+            tags=source.tags,
+            title_source=source.title_source,
+            model=self.model,
+        )
+        self.summary = await self.conversations.save(summary=copy, messages=self._messages)
+        telemetry.record('conversation forked', messages=len(self._messages))
+        await self._publish()
+        return f'Forked {source.title} ({source.id}) into {self.summary.id}.'
+
+    async def _ensure_unused(self, conversation_id: str) -> None:
+        if self.conversations is None:
+            return
+        try:
+            await self.conversations.get(conversation_id=conversation_id)
+        except LookupError:
+            return
+        raise ValueError(f'A saved session already uses the ID {conversation_id}.')
 
     async def renamed(self, *, conversation_id: str, title: str) -> None:
         """Adopt a title already saved for `conversation_id`, if that is this conversation."""

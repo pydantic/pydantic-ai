@@ -172,6 +172,8 @@ async def chat(
     project: ProjectSettings | None = None,
     resume: str | None = None,
     load_plugins: bool = True,
+    session_id: str | None = None,
+    fork_session: bool = False,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -180,6 +182,8 @@ async def chat(
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
+    `resume` restores a saved conversation (`''` opens the browser); `fork_session` then continues in a copy.
+    `session_id` names the new conversation, or the copy.
     """
     console = console or Console()
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
@@ -219,16 +223,18 @@ async def chat(
                         workers.start_soon(shell.sessions.namer.run)
                         try:
                             with transcript.capture(console):
-                                # Restore a named session first, so plugins start with it. The browser
-                                # waits for plugins, whose models may name the sessions it lists.
-                                if resume:
-                                    console.print(await shell.sessions.command([resume]), markup=False)
-                                    resume = None
+                                # Apply launch options first, so plugins start with the conversation they
+                                # name. The browser waits for plugins, whose models may name its sessions.
+                                browse = resume == ''
+                                if not browse and (resume is not None or session_id is not None):
+                                    await _launch(
+                                        shell, console, resume=resume, session_id=session_id, fork=fork_session
+                                    )
                                 await shell.loader.load_all(fresh=fresh)
                                 _report_project_plugins(shell.loader, console)
-                                if resume is not None:
-                                    console.print(await shell.sessions.command([]), markup=False)
-                                    resume = None
+                                if browse:
+                                    await _launch(shell, console, resume='', session_id=session_id, fork=fork_session)
+                                resume = session_id = None
                             warming = warming or warm_imports.start()
                             reason = await shell.run()
                         finally:
@@ -1020,6 +1026,13 @@ class _Shell(Generic[DepsT, OutputT]):
                     self._mid_turn_commands = None
                     send.close()
         return ended
+
+
+async def _launch(
+    shell: '_Shell[DepsT, OutputT]', console: Console, *, resume: str | None, session_id: str | None, fork: bool
+) -> None:
+    if notice := await shell.sessions.start(resume=resume, session_id=session_id, fork=fork):
+        console.print(notice, markup=False)
 
 
 def _report_project(project: ProjectSettings, console: Console) -> None:

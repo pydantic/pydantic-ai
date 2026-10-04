@@ -1647,11 +1647,12 @@ startup or preventing other handlers from running.
 `on_conversation_changed` receives a `ConversationChanged` event after `/new`, `/clear`,
 and `/resume`, when the first prompt of a new conversation gives it a title, and when
 background naming or a rename in the `/resume` browser retitles the current conversation.
-`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID` is restored
-before plugins load, so `on_session_start` already sees that conversation in `host.conversation`;
-a session picked from the `--resume` browser arrives as this event. The event fires once per
-change, never for a background `/fork`, and a name from background naming waits until no turn
-or command is running.
+`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, `--session-id`,
+or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
+conversation in `host.conversation`, and `SessionStart.conversation_chosen` says so; a session
+picked from the `--resume` browser arrives as this event. The event fires once per change,
+never for a background `/fork`, and a name from background naming waits until no turn or
+command is running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2652,4 +2653,4 @@ abort the run. The `ask_user` plugin is skipped even if saved settings enable or
 replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
 printing directly to stdout. `--resume SESSION-ID` restores history without a
-browser or tool replay, before plugins load.
+browser or tool replay, before plugins load, as do `--session-id` and `--fork-session`.

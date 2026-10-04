@@ -81,6 +81,19 @@ class Sessions(Generic[DepsT, OutputT]):
             report += f'\nBackground naming: {saved.summary.naming_tokens:,} tokens (outside retained-history cost).'
         return report
 
+    async def start(self, *, resume: str | None, session_id: str | None = None, fork: bool = False) -> str:
+        """Apply the launch options, before plugins load, and return the notice to show.
+
+        `resume` restores a conversation (`''` opens the browser). With `fork`, a restored one is
+        copied to `session_id`, or a random ID; otherwise `session_id` names the new conversation.
+        """
+        notice = await self.command([resume] if resume else []) if resume is not None else ''
+        if fork and notice:
+            return await self.session.fork(session_id)
+        if session_id is not None:
+            await self.session.clear(session_id)
+        return notice
+
     async def command(self, args: list[str]) -> str:
         """Shared command/startup resolver; loading history never executes pending tools."""
         if len(args) > 1:

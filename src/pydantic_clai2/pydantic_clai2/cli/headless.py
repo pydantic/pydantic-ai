@@ -32,10 +32,13 @@ async def run_headless(
     project: ProjectSettings,
     resume: str | None = None,
     agent: AbstractAgent[None, object] | None = None,
+    session_id: str | None = None,
+    fork_session: bool = False,
 ) -> int:
     """Print only the final answer; preserve sessions and report failures on stderr.
 
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
+    `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
     """
     load_plugins = agent is None
     agent = create_agent() if agent is None else agent
@@ -60,8 +63,8 @@ async def run_headless(
             with shell.screen.bound(no_screen):  # pragma: no branch -- bound never suppresses exceptions.
                 try:
                     # Restore first, so plugins start with the conversation the user asked for.
-                    if resume is not None:
-                        await shell.session.resume(resume)
+                    if resume is not None or session_id is not None:
+                        await shell.sessions.start(resume=resume, session_id=session_id, fork=fork_session)
                     # Skip before activation, even when a saved declaration overrides the built-in.
                     for entry in shell.loader.entries():
                         if entry.declaration.enabled and entry.name != 'ask_user':
