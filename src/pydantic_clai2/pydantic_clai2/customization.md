@@ -176,8 +176,8 @@ holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
 then receives the telemetry), and ui_events (default false: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
 submissions, by name; while include_content is on, a submitted prompt or ! line
-also carries its text, but slash-command arguments never do). /plugins configure observability opens
-a settings menu that edits these options. Its Logfire project row sets token and
+also carries its text, but slash-command arguments never do).
+/plugins configure observability opens a settings menu that edits these options. Its Logfire project row sets token and
 base_url for you, and turns sending on: pick Logfire US, EU, or
 a self-hosted URL, sign in in the browser, and pick a project; its new write
 token is saved in /keys. This explicit option overrides
