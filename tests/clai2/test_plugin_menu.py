@@ -183,36 +183,45 @@ def test_rows_details_and_keys(tmp_path: Path) -> None:
     assert menu.details(MenuItem('stray', value=None)) == ''
     assert menu.details(MenuItem('typed', value=0)) == ''
     assert len(fake.redraws) == 4
-    assert menu.close(fake, alpha).item is alpha
     assert menu.build() is not None
 
 
 def run_keys(
     menu: PluginMenu[None], keys: Sequence[str], *, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> tuple[MenuResult, list[str]]:
+    """Press `keys`; `frames[i]` is the screen shown when key `i` was read, kept when a key repaints nothing."""
     frames: list[str] = []
     inputs = iter(keys)
 
     def read_key() -> str:
-        frames.append(unstyled(capsys.readouterr().out))
+        frames.append(unstyled(capsys.readouterr().out) or (frames[-1] if frames else ''))
         return next(inputs)
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.plugin_menu.menu_key', read_key)
     return menu.build().run(), frames
 
 
+FOOTER = '/ search · space on/off · c configure · r reload · d remove · esc close'
+EMPTY = '(type to filter)'
+
+
 @pytest.mark.parametrize(
     ('keys', 'query', 'name'),
     [
-        (list('coder'), 'coder', 'coDer'),
-        (list('/quiet'), 'quiet', 'quiet'),
-        (list('BETa'), 'BETa', 'beta'),
-        ([*'codex', Key.BACKSPACE, 'r'], 'coder', 'coDer'),
-        ([*'missing', Key.ENTER, '/', *'beta'], 'beta', 'beta'),
-        ([*'coder', '/', *'quiet'], 'quiet', 'quiet'),
-        (['z', Key.BACKSPACE, Key.END], '(type to filter)', None),
-        ([*'beta', Key.BACKSPACE, Key.BACKSPACE, Key.BACKSPACE, Key.BACKSPACE], '(type to filter)', 'alpha'),
-        ([Key.END, '/', Key.DOWN], '(type to filter)', 'beta'),
+        pytest.param(['/', *'coder', Key.ENTER], 'coder', 'coDer', id='letters-filter-ignoring-case'),
+        pytest.param(['/', *'quiet', Key.ENTER], 'quiet', 'quiet', id='q-filters-while-searching'),
+        pytest.param(['/', *'codex', Key.BACKSPACE, 'r', Key.ENTER], 'coder', 'coDer', id='backspace-edits'),
+        pytest.param(['/', 'e', Key.DOWN, Key.ENTER], 'e', 'coDer', id='arrows-move-between-matches'),
+        pytest.param(
+            ['/', *'zz', Key.ENTER, Key.BACKSPACE, Key.BACKSPACE, *'beta', Key.ENTER],
+            'beta',
+            'beta',
+            id='enter-with-no-matches-keeps-searching',
+        ),
+        pytest.param(['/', *'bet', Key.ENTER, '/', 'a', Key.ENTER], 'beta', 'beta', id='slash-resumes-the-query'),
+        pytest.param(['/', *'beta', Key.ENTER, Key.ESCAPE], EMPTY, 'alpha', id='esc-clears-the-kept-filter'),
+        pytest.param(['/', *'zz', Key.ESCAPE], EMPTY, 'alpha', id='esc-leaves-search-with-no-matches'),
+        pytest.param(['x', 'b', Key.BACKSPACE, Key.END], EMPTY, None, id='typing-outside-search-does-nothing'),
     ],
 )
 def test_search_and_navigation(
@@ -223,6 +232,7 @@ def test_search_and_navigation(
     query: str,
     name: str | None,
 ) -> None:
+    """Enter ends a search keeping the matches; a second Enter picks the highlighted row."""
     loader = make_loader(tmp_path, 'alpha', 'beta', 'coDer', 'quiet')
     result, frames = run_keys(
         PluginMenu(loader, apply=run_now), [*keys, Key.ENTER], monkeypatch=monkeypatch, capsys=capsys
@@ -233,23 +243,23 @@ def test_search_and_navigation(
     else:
         assert result.item.value == name
     assert f'search: {query}' in frames[-1]
-    assert '⇧C config · ⇧R reload · ⇧D remove' in frames[-1]
-    if query != '(type to filter)':
+    assert FOOTER in frames[-1]
+    if query != EMPTY:
         assert '○ alpha' not in frames[-1]
     assert all(entry.loaded is None for entry in loader.entries()), 'typing must never run a plugin action'
 
 
-def test_filtered_actions_keep_the_query(
+def test_hotkeys_act_on_the_kept_matches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     loader = make_loader(tmp_path, 'alpha', 'directory')
     result, frames = run_keys(
         PluginMenu(loader, apply=run_now),
-        [*'directory', ' ', 'R', ' ', 'D', 'Q'],
+        ['/', *'directory', Key.ENTER, ' ', 'r', ' ', 'd', 'q'],
         monkeypatch=monkeypatch,
         capsys=capsys,
     )
-    assert result.item is not None and result.item.value == 'directory'
+    assert result.cancelled
     for frame in frames[-5:]:
         assert 'search: directory' in frame and '○ alpha' not in frame
     assert '● directory' in frames[-4] and '● directory' in frames[-3]
@@ -257,45 +267,51 @@ def test_filtered_actions_keep_the_query(
     assert all(entry.loaded is None for entry in loader.entries())
 
 
-@pytest.mark.parametrize('key', [' ', 'C'])
+@pytest.mark.parametrize('key', [' ', 'c'])
 def test_configure_from_search(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], key: str
 ) -> None:
     loader = make_loader(tmp_path, 'alpha', tuned=('tuned',))
-    if key == 'C':
+    if key == 'c':
         run_now(loader.enable('tuned'))
-    result, _ = run_keys(PluginMenu(loader, apply=run_now), [*'tuned', key], monkeypatch=monkeypatch, capsys=capsys)
+    result, _ = run_keys(
+        PluginMenu(loader, apply=run_now), ['/', *'tuned', Key.ENTER, key], monkeypatch=monkeypatch, capsys=capsys
+    )
     assert result.item is not None and result.item.value == Configure('tuned')
 
 
-@pytest.mark.parametrize('key', [Key.ESCAPE, 'ctrl-c', 'Q'])
+@pytest.mark.parametrize('keys', [['ctrl-c'], [Key.ESCAPE, Key.ESCAPE], [Key.ESCAPE, 'q']])
 @pytest.mark.parametrize('names', [(), ('alpha',)])
 def test_no_matches_and_cancel(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    key: str,
+    keys: list[str],
     names: tuple[str, ...],
 ) -> None:
     loader = make_loader(tmp_path, *names)
     result, frames = run_keys(
-        PluginMenu(loader, apply=run_now), [*'/missing', Key.ENTER, key], monkeypatch=monkeypatch, capsys=capsys
+        PluginMenu(loader, apply=run_now), ['/', *'missing', Key.ENTER, *keys], monkeypatch=monkeypatch, capsys=capsys
     )
     assert result.cancelled and result.item is None
-    assert '(no matches)' in frames[-1]
+    assert '(no matches)' in frames[len(frames) - len(keys)]
 
 
+@pytest.mark.parametrize('close', [[Key.ESCAPE, Key.ESCAPE], ['q']])
 def test_removing_the_last_match(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], close: list[str]
 ) -> None:
     loader = make_loader(tmp_path, 'alpha')
     store = SettingsStore(tmp_path / 'config.db')
     store.save_plugin(PluginSettings(id='installed', factory='clai_missing.plugin', enabled=False))
     result, frames = run_keys(
-        PluginMenu(loader, apply=run_now), [*'installed', 'D', 'Q'], monkeypatch=monkeypatch, capsys=capsys
+        PluginMenu(loader, apply=run_now),
+        ['/', *'installed', Key.ENTER, 'd', *close],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
     )
     assert result.cancelled
-    assert 'search: installed' in frames[-1] and '(no matches)' in frames[-1]
+    assert 'search: installed' in frames[-len(close)] and '(no matches)' in frames[-len(close)]
     assert [entry.name for entry in loader.entries()] == ['alpha']
 
 
@@ -402,7 +418,7 @@ def test_configure_key(tmp_path: Path) -> None:
     assert menu.configure(fake, plain) is None
     assert menu.notice == 'plain has no settings menu.'
     menu.toggle(fake, tuned)
-    assert 'settings press Shift+C to configure' in unstyled(menu.details(tuned))
+    assert 'settings press c to configure' in unstyled(menu.details(tuned))
     result = menu.configure(fake, tuned)
     assert result is not None and result.item is not None and result.item.value == Configure('tuned')
 

@@ -1443,9 +1443,9 @@ for `/agent` and `/mcp`:
    ○ audit    off     installed  │
    ○ broken   failed  drop-in    │ source   pydantic_clai2.builtin_plugins.coder
    Save & close                  │ provides 1 capability
-                                 │ settings press Shift+C to configure
+                                 │ settings press c to configure
 
- type or / filter · Space toggle · ⇧C config · ⇧R reload · ⇧D remove · Esc close
+ / search · space on/off · c configure · r reload · d remove · esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -1458,21 +1458,19 @@ paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
 plugin that is off runs no code to describe itself.
 
-Type a plugin name to filter the list. Matching ignores case. Press `/` to clear
-the filter and start again, including when there are no matches. Backspace edits
-the filter; Up and Down move between matches. Space turns the highlighted plugin
-on or off. Use Shift+C to configure it, Shift+R to reload it, and Shift+D to remove
-it (`⇧` in the footer means Shift). Uppercase `C`, `R`, `D`, and `Q` are reserved
-for actions; type their lowercase equivalents to search, including for mixed-case
-plugin names. Lowercase letters always filter, never run these actions. Changes
-apply immediately; there is no pending save step, so the **Save & close** row, Enter,
-Shift+Q, Esc, and Ctrl-C just close. With no matches, Enter does nothing; clear
-the filter or use Shift+Q, Esc, or Ctrl-C to leave.
+Space turns the highlighted plugin on or off; `c` configures it, `r` reloads
+it, and `d` removes it. Press `/` to search: while searching, every key you type
+filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
+Backspace edits the search, and Up and Down move between matches. Enter ends the
+search and keeps the matches, so the keys above act on them; `/` resumes the
+search. Esc leaves the search and clears it, including when nothing matches.
+Changes apply immediately; there is no pending save step, so the **Save & close**
+row, Enter, `q`, Esc (outside a search), and Ctrl-C just close.
 
 Turning a plugin on with Space opens its settings menu straight away when it
 offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
-the details panel. `C` opens the settings menu of a plugin that is already on.
+the details panel. `c` opens the settings menu of a plugin that is already on.
 Turning a plugin off never opens a menu, and a plugin without a settings menu
 just turns on.
 Closing returns to the prompt without printing the plugin list. Use `/plugins list`

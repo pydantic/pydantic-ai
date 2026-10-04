@@ -12,6 +12,7 @@ from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.credential_store import credentials_path
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, picked, save_and_close_item
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import KeyHandler, slash_search
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 _NOTE = (
@@ -75,19 +76,19 @@ def build_keys_menu(*, names: list[str], message: str = '') -> Menu:
             return MenuResult(item=MenuItem(item.label, value=KeyAction(action=kind, name=item.value)))
         return None
 
-    return (
+    builder = (
         MenuBuilder('API keys')
         .style(markdown_style())
         .items(items)
-        .searchable()
         .preview(lambda item: f'{item.label}\n\n{_NOTE}\n\n{message}')
-        .on_key('a', lambda menu, item: MenuResult(item=MenuItem('Add', value=KeyAction(action='add'))))
-        .on_key('r', lambda menu, item: action('rename', item))
-        .on_key('d', lambda menu, item: action('delete', item))
-        .footer_hint('type to filter - Enter replace - A add - R rename - D delete - Esc close')
-        .key_source(menu_key)
-        .build()
     )
+    hotkeys: dict[str, KeyHandler] = {
+        'a': lambda menu, item: MenuResult(item=MenuItem('Add', value=KeyAction(action='add'))),
+        'r': lambda menu, item: action('rename', item),
+        'd': lambda menu, item: action('delete', item),
+    }
+    footer = 'enter replace · a add · r rename · d delete · esc close'
+    return slash_search(builder, footer=footer, key_source=menu_key, hotkeys=hotkeys)
 
 
 def _name(*, runners: Runners) -> str | None:

@@ -1246,8 +1246,9 @@ Theme selection and cancellation are silent.
 `/theme` opens a searchable picker. Its preview shows a sample conversation with
 Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
 input/status area. Each bundled palette paints the sample's foreground and
-background. Browsing does not apply a palette or save a setting. Enter confirms;
-Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
+background. Browsing does not apply a palette or save a setting. Press `/` to
+search the names. Enter confirms; Esc or Ctrl-C keeps your current choice (while
+searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
 status, and diff highlighting. Starting and exiting with this choice leaves your
@@ -1296,9 +1297,11 @@ and `aesthetic`.
 
 `/spinner` opens a searchable picker with an animated preview. `-`/`+` (or
 Left/Right) make the highlighted spinner slower or faster in steps of 0.02 seconds;
-Enter applies it, Esc keeps your current choice. `/spinner NAME [SECONDS]` applies
-by name, ignoring case, and Tab completes the names. The choice is saved as
-`display.spinner` and shows on the next frame, with no restart.
+Enter applies it, Esc keeps your current choice. Press `/` to search the names;
+while searching, `-` and `+` filter, Enter keeps the matches, and Esc clears the
+search. `/spinner NAME [SECONDS]` applies by name, ignoring case, and Tab
+completes the names. The choice is saved as `display.spinner` and shows on the
+next frame, with no restart.
 
 A changed speed, from the picker or `SECONDS`, is saved as that spinner's
 `interval` in `spinners.json` next to CLAI's settings
@@ -1588,12 +1591,11 @@ class Search(Plugin):
 Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
 importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove. Type to filter plugin names, or press `/` to start a fresh
-search. Backspace edits the filter; the arrow keys move between matches. Space
-toggles the highlighted plugin, and Shift+C/R/D configure, reload, and remove it.
-Uppercase C/R/D/Q are reserved for actions; type lowercase letters to find
-mixed-case names. Enter, Esc, or Shift+Q close the menu without printing the plugin list. Use
-`/plugins list` to print it. Plugins are trusted code running as you.
+reload, and remove: Space toggles the highlighted plugin, and `c`, `r`, and `d`
+configure, reload, and remove it. Press `/` to search plugin names; while you
+search, every key you type filters, Enter keeps the matches so the keys act on
+them, and Esc clears the search. Esc or `q` closes the menu without printing the
+plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has every method, event, and rule.
 
@@ -1777,8 +1779,9 @@ The connection is saved in the configured Python keyring backend after selection
 ## Saved API keys
 
 Open `/keys` to browse and manage saved API keys in a full-screen menu.
-Use A to add, Enter to replace a value, R to rename, and D to delete with
-confirmation. Values are masked and are not shown in previews. Changes save
+Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
+confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
+clears the search. Values are masked and are not shown in previews. Changes save
 immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed

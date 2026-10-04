@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Generic, Protocol
 
 from termflow.tui import MenuBuilder, MenuItem
-from termflow.tui.keys import Key
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.terminal import terminal_size
 
@@ -16,11 +15,12 @@ from pydantic_clai2.plugins.describe import describe
 from pydantic_clai2.plugins.loader import PluginEntry, PluginError, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, is_save_and_close, save_and_close_item
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 Apply = Callable[[Coroutine[object, object, object]], None]
-_HINT = 'type or / filter · Space toggle · ⇧C config · ⇧R reload · ⇧D remove · Esc close'
+_HINT = 'space on/off · c configure · r reload · d remove · esc close'
 _RESET = '\x1b[0m'
 _UNDIM = '\x1b[22m'
 """Termflow dims row descriptions; the status word cancels that so its colour reads clearly."""
@@ -131,7 +131,7 @@ class PluginMenu(Generic[DepsT]):
         return None
 
     def reload(self, menu: Redrawable, item: MenuItem) -> None:
-        """Shift+R: re-import and load again."""
+        """R: re-import and load again."""
         entry = self._find(item)
         if entry is not None:
             self._descriptions.pop(entry.name, None)
@@ -139,7 +139,7 @@ class PluginMenu(Generic[DepsT]):
         menu.replace_items(self.items())
 
     def remove(self, menu: Redrawable, item: MenuItem) -> None:
-        """Shift+D: unload and forget."""
+        """D: unload and forget."""
         entry = self._find(item)
         if entry is not None:
             self._descriptions.pop(entry.name, None)
@@ -147,7 +147,7 @@ class PluginMenu(Generic[DepsT]):
         menu.replace_items(self.items())
 
     def configure(self, menu: Redrawable, item: MenuItem) -> MenuResult | None:
-        """Shift+C: open the highlighted plugin's settings menu; stay here when it has none."""
+        """C: open the highlighted plugin's settings menu; stay here when it has none."""
         entry = self._find(item)
         if entry is None:
             return None
@@ -157,38 +157,17 @@ class PluginMenu(Generic[DepsT]):
         menu.replace_items(self.items())
         return None
 
-    def close(self, menu: Redrawable, item: MenuItem) -> MenuResult:
-        """Shift+Q: close; every change was already applied."""
-        return MenuResult(item=item)
-
     def build(self) -> Menu:
         """Wire rows, details, and keys into a termflow menu."""
-
-        def read_key() -> str:
-            key = menu_key()
-            if key == '/':
-                # Key handlers only run with matching rows; slash must also recover from no matches.
-                menu.clear_search()
-                return Key.HOME
-            return Key.ESCAPE if key == 'Q' and menu.highlighted is None else key
-
-        menu = (
+        builder = (
             MenuBuilder('Plugins')
             .style(markdown_style())
             .items(self.items())
-            .searchable()
             .list_width(self._list_width())
             .preview(self.details)
-            .on_key(' ', self.toggle)
-            .on_key('C', self.configure)
-            .on_key('R', self.reload)
-            .on_key('D', self.remove)
-            .on_key('Q', self.close)
-            .footer_hint(_HINT)
-            .key_source(read_key)
-            .build()
         )
-        return menu
+        hotkeys = {' ': self.toggle, 'c': self.configure, 'r': self.reload, 'd': self.remove}
+        return slash_search(builder, footer=_HINT, key_source=menu_key, hotkeys=hotkeys, close_key='q')
 
     def _name_width(self) -> int:
         return max((len(entry.name) for entry in self._loader.entries()), default=0)
@@ -214,7 +193,7 @@ class PluginMenu(Generic[DepsT]):
 
     def _settings_hint(self, entry: PluginEntry[DepsT]) -> str:
         if self._loader.configurable(entry.name):
-            return 'press Shift+C to configure'
+            return 'press c to configure'
         return 'none' if entry.loaded else 'turn on to see'
 
     @staticmethod
