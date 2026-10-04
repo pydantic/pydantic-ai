@@ -5329,9 +5329,7 @@ async def test_a_conversation_id_resolved_late_reaches_the_core_history() -> Non
 async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> None:
     class _FailingAudio(_QueuedWebSocket):
         async def send(self, data: str) -> None:
-            if 'input_audio_buffer.append' in data:
-                raise OSError('gone')
-            await super().send(data)
+            raise OSError('gone')  # (the audio is all this session sends)
 
     ws = _FailingAudio()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
