@@ -59,12 +59,12 @@ except ImportError as _import_error:  # pragma: no cover
 
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
-from ..messages import BinaryAudio, ModelMessage, RealtimeSessionReconnectEvent
+from ..messages import BinaryAudio, ModelMessage, RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
 from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import InputId, LifecycleEvent
+from ._lifecycle import InputId, TaggedEvent
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
@@ -229,6 +229,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     `.completed` snapshots.
     The other exception is xAI's conversation lifecycle events, which are surfaced as codec control
     events so the connection can capture `conversation.id` and the session can suppress resume replay.
+    Finally, xAI's `max_duration` error ends the conversation, so it is reported as non-recoverable.
     """
     event_type = data.get('type')
     if event_type == 'conversation.item.input_audio_transcription.updated':
@@ -250,6 +251,10 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         # replace the accumulated text. Read as an increment it would be *appended* to the snapshots it
         # supersedes, and a revised turn would end up saying everything twice.
         event = replace(event, cumulative=True)
+    elif isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration':
+        # xAI ends a conversation that runs past its maximum duration, so this one error is not one
+        # the session can carry on from: resuming the conversation would only run into the same limit.
+        event = replace(event, recoverable=False)
     return event
 
 
@@ -446,11 +451,19 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await super()._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
             self._audio_is_latest_input = False
         # Audio still in the buffer is committed by the request, and answered by its response.
+        sent_before: list[InputId] | None = None
         if self._audio_uncommitted:
             self._announce_commit()
+            # Whatever went out before the request joins the conversation ahead of the turn it commits.
+            sent_before = self._lifecycle.audio_commit_sent()
         self._audio_uncommitted = self._speech_detected = False
         self._sent_audio.clear()
-        await super()._create_response(input_indexes, answers)
+        try:
+            await super()._create_response(input_indexes, answers)
+        except BaseException:
+            if sent_before is not None:
+                self._lifecycle.audio_commit_failed(sent_before)
+            raise
 
     async def _attempt_reconnect(self) -> bool:
         # The new socket's buffer is empty. A held commit still covers the audio that was in it, so that
@@ -539,14 +552,14 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
                 self._speech_detected = False
         return map_event(data)
 
-    async def _all_events(self) -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
-        async for event, stale in super()._all_events():
-            yield event, stale
-            if isinstance(event, RealtimeSessionReconnectEvent):
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        async for frame in super()._tagged_frames():
+            yield frame
+            if any(isinstance(event, RealtimeSessionReconnectEvent) for event, _ in frame):
                 replayed_items = self._replayed_items[:]
                 self._replayed_items.clear()
-                for replayed_item in replayed_items:
-                    yield replayed_item, False
+                if replayed_items:
+                    yield [(replayed_item, False) for replayed_item in replayed_items]
 
 
 @dataclass(init=False)

@@ -11,7 +11,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
-from weakref import ReferenceType, ref
 
 from typing_extensions import Self, assert_never
 
@@ -58,10 +57,15 @@ if TYPE_CHECKING:
 _CHARS_PER_TOKEN = 4
 """Rough approximation: ~4 characters per token on average."""
 
-_COMPACTION_RECLAIM: ContextVar[tuple[ReferenceType[object], int] | None] = ContextVar(
+_COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
     'pydantic_ai_harness.compaction.reclaim', default=None
 )
-"""Heuristic reclaim from compaction that ran earlier in this request's hook chain."""
+"""`(run_id, run_step, reclaimed)`: heuristic reclaim from compaction earlier in this request's hook chain.
+
+Keyed by the request (`run_step` advances once per model request) rather than by request-context
+identity: strategies return `replace()` copies of the context, so an identity key would have to be
+re-attached at every hop, and a strategy that forgot would silently drop the correction.
+"""
 
 
 def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
@@ -325,21 +329,26 @@ def _tool_schema_text(tool: ToolDefinition) -> str:
     return ''.join((tool.name, tool.description or '', dumps(tool.parameters_json_schema, sort_keys=True)))
 
 
-def record_compaction_reclaim(request_context: ModelRequestContext, before: int, after: int) -> None:
+def reset_compaction_reclaim() -> None:
+    """Start a run without corrections inherited from a previous invocation."""
+    _COMPACTION_RECLAIM.set(None)
+
+
+def record_compaction_reclaim(ctx: RunContext[AgentDepsT], before: int, after: int) -> None:
     """Record a conservative correction for a later usage reporter in this hook chain."""
     previous = _COMPACTION_RECLAIM.get()
     reclaimed = max(before - after, 0)
-    if previous is not None and previous[0]() is request_context:
-        reclaimed += previous[1]
-    _COMPACTION_RECLAIM.set((ref(request_context), reclaimed))
+    if previous is not None and previous[:2] == (ctx.run_id, ctx.run_step):
+        reclaimed += previous[2]
+    _COMPACTION_RECLAIM.set((ctx.run_id, ctx.run_step, reclaimed))
 
 
-def get_compaction_reclaim(request_context: ModelRequestContext) -> int:
-    """Return the reclaim recorded for *request_context*, if it is still current."""
+def get_compaction_reclaim(ctx: RunContext[AgentDepsT]) -> int:
+    """Return the reclaim recorded for this request, or 0 for one left over from another."""
     previous = _COMPACTION_RECLAIM.get()
-    if previous is None or previous[0]() is not request_context:
+    if previous is None or previous[:2] != (ctx.run_id, ctx.run_step):
         return 0
-    return previous[1]
+    return previous[2]
 
 
 def exceeds(
@@ -672,7 +681,7 @@ def find_token_cutoff(
             lo = mid + 1
 
     if candidate >= len(messages):
-        candidate = max(0, len(messages) - 1)  # pragma: no cover
+        candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
     for idx in range(candidate, -1, -1):

@@ -564,6 +564,11 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
             ),
             ModelResponse(
                 parts=[
+                    FilePart(
+                        content=IsInstance(BinaryImage),
+                        provider_name='google',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['', 'current 5-day weather forecast for Mexico City and what to wear']},
@@ -592,11 +597,6 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google',
-                    ),
-                    FilePart(
-                        content=IsInstance(BinaryImage),
-                        provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(

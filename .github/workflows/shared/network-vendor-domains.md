@@ -27,7 +27,7 @@ network:
     - console.anthropic.com
     - docs.anthropic.com
     - platform.claude.com
-    - api.minimax.io
+    - api.z.ai
 
     # OpenAI-compatible ecosystem
     - api.openai.com

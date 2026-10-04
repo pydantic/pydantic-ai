@@ -7,7 +7,7 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 | Name | Where | Runs when |
 |------|-------|-----------|
-| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. MiniMax engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
+| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
 | `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
 
 `douwebot` requests changes when a completed review finds a blocking issue. It approves when a completed review finds no blocking issues, including reviews with non-blocking suggestions. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
@@ -158,34 +158,23 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
 
-## MiniMax provider health
+## Z.AI provider health
 
-Every MiniMax workflow must import `shared/provider-health.md` and include
+Every Z.AI-backed workflow must import `shared/provider-health.md` and include
 `needs.provider_health.outputs.ready == 'true'` in its top-level gate. Keep its
 existing eligibility and security conditions. Reference
 `${{ needs.provider_health.outputs.ready }}` in the prompt body so gh-aw hoists
 the custom job before activation; after compilation, verify `activation.needs`
 includes `provider_health` and that `provider_health` does not depend on `activation`.
 If a workflow has a local engine config, forward the same workflow, event, and
-stable task-key values that `shared/engine-minimax.md` forwards.
+stable task-key values that `shared/engine-zai.md` forwards.
 
 The provider-health job checks out the default branch and runs outside the agent
-container. Keep `MINIMAX_API_KEY` scoped to that job. It writes a decision summary
+container. Keep `ZAI_API_KEY` scoped to that job. It writes a decision summary
 and the `provider-health` artifact on blocked decisions. A blocked gate must skip
 inference without emitting a passing review or other fabricated agent result. The
 non-model provider-health monitor owns incident issue creation and recovery; do not
 enable gh-aw's generic failure-as-issue reporting for these workflows.
-
-## Provider-health operator recovery
-
-For subscription credentials, set the repository variable `MINIMAX_QUOTA_RESOURCE`
-to the exact `model_name` of the subscription row verified for the account. The
-health check evaluates that row's interval and weekly quota. If the variable is
-missing, the row is absent, or either quota response is malformed, health is
-`unknown` and MiniMax workflows remain gated. A plan lookup that returns MiniMax
-status `2062` means no active subscription row was found; the controller checks the
-native account-balance endpoint instead and does not require `MINIMAX_QUOTA_RESOURCE`
-for that pay-as-you-go fallback.
 
 The controller keeps one assigned operational incident for a matching failure
 scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
@@ -193,19 +182,26 @@ in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow fr
 starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
+The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
+with the raw `ZAI_API_KEY` value in the `Authorization` header. Both
+`TOKENS_LIMIT` windows must be valid: unit `3` / number `5` is the 5-hour
+window, and unit `6` / number `1` is the weekly window. `percentage` is the
+percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
+epoch milliseconds. A missing or malformed required window makes health unknown
+and keeps agent workflows gated. No quota-resource repository variable is needed.
+
 To request manual recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
-open, marked incident and never closes other incidents in the same run. It closes the
-named incident only when a fresh quota check is healthy; for rate-limit or quota
-incidents, any recorded reset time must also have elapsed. A scheduled run automatically
-closes only provider rate-limit or quota-exhaustion incidents that include a known,
-elapsed reset time and pass a fresh healthy quota check. Unknown quota, missing reset
-time, credentials/configuration incidents, and workflow/task incidents need operator
+open, marked incident whose provider key matches the currently configured provider.
+It never closes another incident in the same run. A fresh health check must pass
+before the controller closes the named incident. A scheduled run automatically closes
+only provider rate-limit or quota-exhaustion incidents with a known, elapsed reset time
+after a fresh healthy check. Unknown or malformed quota, missing reset time,
+credentials/configuration incidents, and workflow/task incidents need operator
 attention rather than automatic recovery.
 
-The health controller never enables a disabled agent workflow. Keep manually disabled
-workflows disabled until the guard fix is merged and a fresh provider-health check is
-healthy; then re-enable the specific workflow deliberately.
+The health controller never enables a disabled agent workflow. After a fresh healthy
+provider-health check, an operator may deliberately enable a disabled workflow.
 
 ## Policy guard
 
@@ -214,7 +210,8 @@ healthy; then re-enable the specific workflow deliberately.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a MiniMax source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, or a monitor that accepts unlisted workflows or itself | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, or a monitor that accepts unlisted workflows or itself | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. |
+| `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
 | `prompt-path-outside-workspace` | prompt text pointing at `/tmp/gh-aw/...` | Outside the agent's file-tool root — `Read` rejects it and the agent burns turns rediscovering the file. Stage context under `$GITHUB_WORKSPACE`. |

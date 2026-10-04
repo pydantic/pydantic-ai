@@ -35,6 +35,7 @@ from pydantic_ai.agent.abstract import (
     _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.conversation import Conversation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -201,6 +202,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             user_prompt: str | Sequence[_messages.UserContent] | None = None,
             *,
             output_type: OutputSpec[RunOutputDataT] | None = None,
+            conversation: Conversation | None = None,
             message_history: Sequence[_messages.ModelMessage] | None = None,
             deferred_tool_results: DeferredToolResults | None = None,
             conversation_id: str | None = None,
@@ -224,6 +226,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 return await super(WrapperAgent, self).run(
                     user_prompt,
                     output_type=output_type,
+                    conversation=conversation,
                     message_history=message_history,
                     deferred_tool_results=deferred_tool_results,
                     conversation_id=conversation_id,
@@ -255,6 +258,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             user_prompt: str | Sequence[_messages.UserContent] | None = None,
             *,
             output_type: OutputSpec[RunOutputDataT] | None = None,
+            conversation: Conversation | None = None,
             message_history: Sequence[_messages.ModelMessage] | None = None,
             deferred_tool_results: DeferredToolResults | None = None,
             conversation_id: str | None = None,
@@ -278,6 +282,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 return super(DBOSAgent, self).run_sync(  # pyright: ignore[reportDeprecated]
                     user_prompt,
                     output_type=output_type,
+                    conversation=conversation,
                     message_history=message_history,
                     deferred_tool_results=deferred_tool_results,
                     conversation_id=conversation_id,
@@ -390,6 +395,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -417,6 +423,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -443,6 +450,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -484,6 +492,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
@@ -520,6 +530,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         return await self.dbos_wrapped_run_workflow(
             user_prompt,
             output_type=output_type,
+            conversation=conversation,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
@@ -546,6 +557,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -573,6 +585,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -599,6 +612,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -642,6 +656,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
@@ -680,6 +696,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         return self.dbos_wrapped_run_sync_workflow(
             user_prompt,
             output_type=output_type,
+            conversation=conversation,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
@@ -706,6 +723,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -733,6 +751,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -760,6 +779,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -798,6 +818,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
@@ -835,6 +857,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         async with super().run_stream(
             user_prompt,
             output_type=output_type,
+            conversation=conversation,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
@@ -862,6 +885,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -888,6 +912,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -913,6 +938,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -971,6 +997,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
@@ -1016,6 +1044,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -1042,6 +1071,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -1068,6 +1098,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -1157,6 +1188,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
@@ -1196,6 +1229,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             async with super().iter(
                 user_prompt=user_prompt,
                 output_type=output_type,
+                conversation=conversation,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=conversation_id,
