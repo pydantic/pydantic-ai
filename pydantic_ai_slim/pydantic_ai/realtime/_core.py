@@ -453,13 +453,23 @@ class SessionCore:
                 self._input_audio.extend(command.data)
                 self._bound_retained_audio()
         elif isinstance(command, AudioUnsent):
-            if command.data and self._input_audio.endswith(command.data):
-                del self._input_audio[-len(command.data) :]
+            self._take_back_audio(command.data)
         else:
             self._input_audio.clear()
             # A turn the user was saying that hadn't joined the conversation never will now.
             for turn_id in [turn_id for turn_id, turn in self._turns.items() if not turn.ended]:
                 self._drop_turn(turn_id)
+
+    def _take_back_audio(self, data: bytes) -> None:
+        """Take back audio that never went out, if it is still the latest: in the buffer, or cut for a turn since."""
+        if not data:
+            return
+        if self._input_audio.endswith(data):
+            del self._input_audio[-len(data) :]
+        elif self._waiting_turn_audio and (turn := next(reversed(self._waiting_turn_audio.values()))).audio:
+            if turn.audio.endswith(data):
+                turn.audio = turn.audio[: -len(data)]
+                self._waiting_turn_audio_bytes -= len(data)
 
     def _input_sent(self, command: InputSent) -> None:
         if command.request is not None:
@@ -800,10 +810,15 @@ class SessionCore:
             turn.audio = b''
             excess -= budget.weight(evicted, output=False)
         excess = budget.trim(self._input_audio, excess, output=False)
-        for response in self._open_audio.values():
+        for response in list(self._open_audio.values()):
+            if excess <= 0:
+                break
             before = len(response.open_audio)
             excess = budget.trim(response.open_audio, excess, output=True)
             self._open_audio_bytes -= before - len(response.open_audio)
+            if not response.open_audio:
+                # Emptied: audio that comes in for it later is the newest, so it goes to the back.
+                del self._open_audio[response.id]
 
     def _evict_recorded_audio(self, excess: int) -> int:
         """Strip the audio of recorded messages, oldest first, resuming at `_eviction_cursor`; the excess left."""

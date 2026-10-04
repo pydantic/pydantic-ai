@@ -950,3 +950,47 @@ def test_retained_audio_eviction_passes_over_what_is_not_recorded() -> None:
     assert _retained(session_core) == [('user', 'Question 5.', True), ('assistant', 'Answer 6.', False)]
     # It resumes at the turn, which is recorded now.
     assert session_core._eviction_cursor == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_input_audio_cut_for_a_turn_before_its_send_failed_is_taken_back_from_the_turn() -> None:
+    session_core = feed(
+        core(retain_input_audio=True),
+        AudioSent(data=b'\x01\x00'),
+        AudioSent(data=b'\x02\x00'),
+        RealtimeInputSpeechStartEvent(item_id='u1'),
+        UserTurnStarted(turn_id='u1'),
+        # The speech end cuts the turn's audio while the last chunk is still on its way, and its send then fails.
+        RealtimeInputSpeechEndEvent(item_id='u1'),
+        AudioUnsent(data=b'\x02\x00'),
+        AudioUnsent(data=b'\x09\x00'),
+        UserTurnEnded(turn_id='u1'),
+        InputTranscript('Hi.', item_id='u1', is_final=True),
+    )
+    [request] = session_core.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.audio is not None
+    assert part.audio.data[44:] == b'\x01\x00'
+
+
+def test_retained_audio_trims_the_oldest_audio_coming_in_first() -> None:
+    """A response whose incoming audio was emptied counts as newest when more comes in for it."""
+    session_core = feed(
+        core(retain_output_audio=True, retain_audio_max_seconds=0.1),
+        started('r1'),
+        started('r2'),
+        AudioDelta(_tenth_of_a_second(1), response_id='r1', item_id='a1'),
+        AudioDelta(_tenth_of_a_second(2), response_id='r2', item_id='a2'),
+        AudioDelta(_tenth_of_a_second(3), response_id='r1', item_id='a1'),
+        said('r1', 'One.', item_id='a1'),
+        said('r2', 'Two.', item_id='a2'),
+        ended('r1'),
+        ended('r2'),
+    )
+    by_transcript = {
+        part.transcript: part.audio.data[44:] if part.audio is not None else None
+        for message in session_core.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    }
+    # r1's first tenth went first, then r2's (older than r1's second): only r1's newest audio fits.
+    assert by_transcript == {'One.': _tenth_of_a_second(3), 'Two.': None}
