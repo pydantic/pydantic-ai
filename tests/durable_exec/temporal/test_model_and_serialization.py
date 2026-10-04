@@ -3084,7 +3084,7 @@ def test_a_subclass_with_plain_reduce_state_crosses_with_it():
     class StatefulModelError(ModelAPIError):
         extra: int | None = None
 
-        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
             return self.__class__, (self.model_name, self.message), {'extra': self.extra}
 
     # Only Pydantic AI's own classes cross, so present this one as one of them.
