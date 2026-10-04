@@ -12,7 +12,7 @@ import json
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -911,12 +911,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
-        if any(
-            isinstance(part, InstructionDeltaPart)
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        ):
+        if _has_instruction_deltas(messages):
             baseline_index = max(
                 (
                     index
@@ -2498,6 +2493,16 @@ def _render_append_parts(parts: list[InstructionPart], *, inline_system: bool) -
         else part
         for part in parts
     ]
+
+
+def _has_instruction_deltas(messages: Iterable[ModelMessage]) -> bool:
+    """Whether any request in `messages` carries an unprojected `InstructionDeltaPart`."""
+    return any(
+        isinstance(part, InstructionDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
 
 
 def _unprojected_instruction_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]

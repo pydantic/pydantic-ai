@@ -44,6 +44,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _has_instruction_deltas,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
@@ -421,12 +422,7 @@ class FunctionStreamedResponse(StreamedResponse):
 
 def _check_instruction_deltas_projected(messages: Iterable[ModelMessage]) -> None:
     """Reject canonical instruction changes before they reach the user's callback, like any adapter would."""
-    if any(
-        isinstance(part, InstructionDeltaPart)
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-    ):
+    if _has_instruction_deltas(messages):
         raise _unprojected_instruction_delta_error()
 
 

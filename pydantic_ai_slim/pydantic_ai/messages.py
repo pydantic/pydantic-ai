@@ -2207,6 +2207,11 @@ class ModelRequest:
 
     The address stays lossless even when loading a source namespace this version does not understand.
 
+    `None` means this request records no baseline. An empty dict is an empty baseline that ends the
+    previous window: deltas recorded before it no longer apply, and append-mode blocks first seen after
+    it are delivered as deltas at the tail rather than in the prefix. Keep the two distinct when
+    transforming stored history, as replacing `{}` with `None` would bring stale deltas back.
+
     Persist with trusted history to continue the same prefix after a restart. Losing this baseline
     or compacting the history starts a fresh window from current server-owned instructions.
     Client-provided baselines are stripped with system prompts by `sanitize_messages`.

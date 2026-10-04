@@ -34,6 +34,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestContext,
+    _has_instruction_deltas,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -2019,12 +2020,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if instructions_target is not None:
                 _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
 
-            if any(
-                isinstance(part, _messages.InstructionDeltaPart)
-                for message in messages
-                if isinstance(message, _messages.ModelRequest)
-                for part in message.parts
-            ):
+            if _has_instruction_deltas(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
