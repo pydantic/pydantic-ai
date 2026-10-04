@@ -34,6 +34,7 @@ from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
+from ._lifecycle import LifecycleStack
 from .abstract import (
     AbstractCapability,
     AgentNode,
@@ -872,37 +873,38 @@ class Hooks(AbstractCapability[AgentDepsT]):
     # These dispatch to registered hook functions in self._registry.
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        for entry in self._get('before_run'):
-            await _call_entry(entry, 'before_run', ctx)
+        stack = LifecycleStack(self._get('before_run'))
+        await stack.notify(lambda entry: _call_entry(entry, 'before_run', ctx))
 
     async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-        for entry in self._get('after_run'):
-            result = await _call_entry(entry, 'after_run', ctx, result=result)
-        return result
+        stack = LifecycleStack(self._get('after_run'))
+        return await stack.forward(result, lambda entry, value: _call_entry(entry, 'after_run', ctx, result=value))
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        entries = self._get('wrap_run')
-        if not entries:
-            return await handler()
-        chain: Callable[..., Any] = handler
-        for entry in reversed(entries):
-            chain = _make_wrap_link(entry, 'wrap_run', ctx, {}, chain, None)
+        stack = LifecycleStack(self._get('wrap_run'))
+        chain = stack.wrap(
+            handler,
+            lambda entry, inner: _make_wrap_link(entry, 'wrap_run', ctx, {}, inner, None),
+        )
         return await chain()
 
     async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
-        for entry in self._get('on_run_error'):
-            try:
-                return await _call_entry(entry, 'on_run_error', ctx, error=error)
-            except BaseException as new_error:
-                error = new_error
-        raise error
+        stack = LifecycleStack(self._get('on_run_error'))
+        return await stack.recover(
+            error,
+            lambda entry, current: _call_entry(entry, 'on_run_error', ctx, error=current),
+            BaseException,
+            reverse=False,
+        )
 
     async def before_node_run(
         self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT]
     ) -> AgentNode[AgentDepsT]:
-        for entry in self._get('before_node_run'):
-            node = await _call_entry(entry, 'before_node_run', ctx, node=node)
-        return node
+        stack = LifecycleStack(self._get('before_node_run'))
+        return await stack.forward(
+            node,
+            lambda entry, value: _call_entry(entry, 'before_node_run', ctx, node=value),
+        )
 
     async def after_node_run(
         self,
@@ -911,9 +913,11 @@ class Hooks(AbstractCapability[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        for entry in self._get('after_node_run'):
-            result = await _call_entry(entry, 'after_node_run', ctx, node=node, result=result)
-        return result
+        stack = LifecycleStack(self._get('after_node_run'))
+        return await stack.forward(
+            result,
+            lambda entry, value: _call_entry(entry, 'after_node_run', ctx, node=node, result=value),
+        )
 
     async def wrap_node_run(
         self,
@@ -922,49 +926,43 @@ class Hooks(AbstractCapability[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         handler: WrapNodeRunHandler[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        entries = self._get('wrap_node_run')
-        if not entries:
-            return await handler(node)
-        chain: Callable[..., Any] = handler
-        for entry in reversed(entries):
-            chain = _make_wrap_link(entry, 'wrap_node_run', ctx, {}, chain, 'node')
+        stack = LifecycleStack(self._get('wrap_node_run'))
+        chain = stack.wrap(
+            handler,
+            lambda entry, inner: _make_wrap_link(entry, 'wrap_node_run', ctx, {}, inner, 'node'),
+        )
         return await chain(node)
 
     async def on_node_run_error(
         self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT], error: Exception
     ) -> NodeResult[AgentDepsT]:
-        for entry in self._get('on_node_run_error'):
-            try:
-                return await _call_entry(entry, 'on_node_run_error', ctx, node=node, error=error)
-            except Exception as new_error:
-                error = new_error
-        raise error
+        stack = LifecycleStack(self._get('on_node_run_error'))
+        return await stack.recover(
+            error,
+            lambda entry, current: _call_entry(entry, 'on_node_run_error', ctx, node=node, error=current),
+            Exception,
+            reverse=False,
+        )
 
     async def wrap_run_event_stream(
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
-        wrapped_streams = [stream]
-        # First, wrap with per-event callbacks (innermost)
         event_entries = self._get('_on_event')
         if event_entries:
             stream = _event_callback_stream(ctx, stream, event_entries)
-            wrapped_streams.append(stream)
-        # Then chain explicit stream wrappers (outermost)
-        for entry in reversed(self._get('wrap_run_event_stream')):
-            stream = entry.func(ctx, stream=stream)
-            wrapped_streams.append(stream)
-        try:
-            async for event in stream:
+        stack = LifecycleStack(self._get('wrap_run_event_stream'))
+        async with stack.stream(stream, lambda entry, source: entry.func(ctx, stream=source)) as wrapped:
+            async for event in wrapped:
                 yield event
-        finally:
-            await _utils.aclose_all(reversed(wrapped_streams))
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        for entry in self._get('before_model_request'):
-            request_context = await _call_entry(entry, 'before_model_request', ctx, request_context)
-        return request_context
+        stack = LifecycleStack(self._get('before_model_request'))
+        return await stack.forward(
+            request_context,
+            lambda entry, value: _call_entry(entry, 'before_model_request', ctx, value),
+        )
 
     async def after_model_request(
         self,
@@ -973,11 +971,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        for entry in self._get('after_model_request'):
-            response = await _call_entry(
-                entry, 'after_model_request', ctx, request_context=request_context, response=response
-            )
-        return response
+        stack = LifecycleStack(self._get('after_model_request'))
+        return await stack.forward(
+            response,
+            lambda entry, value: _call_entry(
+                entry, 'after_model_request', ctx, request_context=request_context, response=value
+            ),
+        )
 
     async def wrap_model_request(
         self,
@@ -986,51 +986,60 @@ class Hooks(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        entries = self._get('wrap_model_request')
-        if not entries:
-            return await handler(request_context)
-        chain: Callable[..., Any] = handler
-        for entry in reversed(entries):
-            chain = _make_wrap_link(entry, 'wrap_model_request', ctx, {}, chain, 'request_context')
+        stack = LifecycleStack(self._get('wrap_model_request'))
+        chain = stack.wrap(
+            handler,
+            lambda entry, inner: _make_wrap_link(entry, 'wrap_model_request', ctx, {}, inner, 'request_context'),
+        )
         return await chain(request_context)
 
     async def on_model_request_error(
         self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, error: Exception
     ) -> ModelResponse:
-        for entry in self._get('on_model_request_error'):
-            try:
-                return await _call_entry(
-                    entry, 'on_model_request_error', ctx, request_context=request_context, error=error
-                )
-            except Exception as new_error:
-                error = new_error
-        raise error
+        stack = LifecycleStack(self._get('on_model_request_error'))
+        return await stack.recover(
+            error,
+            lambda entry, current: _call_entry(
+                entry, 'on_model_request_error', ctx, request_context=request_context, error=current
+            ),
+            Exception,
+            reverse=False,
+        )
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        for entry in self._get('prepare_tools'):
-            tool_defs = await _call_entry(entry, 'prepare_tools', ctx, tool_defs)
-        return tool_defs
+        stack = LifecycleStack(self._get('prepare_tools'))
+        return await stack.forward(tool_defs, lambda entry, value: _call_entry(entry, 'prepare_tools', ctx, value))
 
     async def prepare_output_tools(
         self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
     ) -> list[ToolDefinition]:
-        for entry in self._get('prepare_output_tools'):
-            tool_defs = await _call_entry(entry, 'prepare_output_tools', ctx, tool_defs)
-        return tool_defs
+        stack = LifecycleStack(self._get('prepare_output_tools'))
+        return await stack.forward(
+            tool_defs,
+            lambda entry, value: _call_entry(entry, 'prepare_output_tools', ctx, value),
+        )
 
     async def before_tool_validate(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
     ) -> RawToolArgs:
-        for entry in _filter_tool_entries(self._get('before_tool_validate'), call=call):
-            args = await _call_entry(entry, 'before_tool_validate', ctx, call=call, tool_def=tool_def, args=args)
-        return args
+        stack = LifecycleStack(_filter_tool_entries(self._get('before_tool_validate'), call=call))
+        return await stack.forward(
+            args,
+            lambda entry, value: _call_entry(
+                entry, 'before_tool_validate', ctx, call=call, tool_def=tool_def, args=value
+            ),
+        )
 
     async def after_tool_validate(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
     ) -> ValidatedToolArgs:
-        for entry in _filter_tool_entries(self._get('after_tool_validate'), call=call):
-            args = await _call_entry(entry, 'after_tool_validate', ctx, call=call, tool_def=tool_def, args=args)
-        return args
+        stack = LifecycleStack(_filter_tool_entries(self._get('after_tool_validate'), call=call))
+        return await stack.forward(
+            args,
+            lambda entry, value: _call_entry(
+                entry, 'after_tool_validate', ctx, call=call, tool_def=tool_def, args=value
+            ),
+        )
 
     async def wrap_tool_validate(
         self,
@@ -1042,13 +1051,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
         entries = _filter_tool_entries(self._get('wrap_tool_validate'), call=call)
-        if not entries:
-            return await handler(args)
-        chain: Callable[..., Any] = handler
-        for entry in reversed(entries):
-            chain = _make_wrap_link(
-                entry, 'wrap_tool_validate', ctx, {'call': call, 'tool_def': tool_def}, chain, 'args'
-            )
+        stack = LifecycleStack(entries)
+        chain = stack.wrap(
+            handler,
+            lambda entry, inner: _make_wrap_link(
+                entry, 'wrap_tool_validate', ctx, {'call': call, 'tool_def': tool_def}, inner, 'args'
+            ),
+        )
         return await chain(args)
 
     async def on_tool_validate_error(
@@ -1060,21 +1069,26 @@ class Hooks(AbstractCapability[AgentDepsT]):
         args: RawToolArgs,
         error: ValidationError | ModelRetry,
     ) -> ValidatedToolArgs:
-        for entry in _filter_tool_entries(self._get('on_tool_validate_error'), call=call):
-            try:
-                return await _call_entry(
-                    entry, 'on_tool_validate_error', ctx, call=call, tool_def=tool_def, args=args, error=error
-                )
-            except (ValidationError, ModelRetry) as new_error:
-                error = new_error
-        raise error
+        stack = LifecycleStack(_filter_tool_entries(self._get('on_tool_validate_error'), call=call))
+        return await stack.recover(
+            error,
+            lambda entry, current: _call_entry(
+                entry, 'on_tool_validate_error', ctx, call=call, tool_def=tool_def, args=args, error=current
+            ),
+            (ValidationError, ModelRetry),
+            reverse=False,
+        )
 
     async def before_tool_execute(
         self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
     ) -> ValidatedToolArgs:
-        for entry in _filter_tool_entries(self._get('before_tool_execute'), call=call):
-            args = await _call_entry(entry, 'before_tool_execute', ctx, call=call, tool_def=tool_def, args=args)
-        return args
+        stack = LifecycleStack(_filter_tool_entries(self._get('before_tool_execute'), call=call))
+        return await stack.forward(
+            args,
+            lambda entry, value: _call_entry(
+                entry, 'before_tool_execute', ctx, call=call, tool_def=tool_def, args=value
+            ),
+        )
 
     async def after_tool_execute(
         self,
@@ -1085,11 +1099,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         args: ValidatedToolArgs,
         result: Any,
     ) -> Any:
-        for entry in _filter_tool_entries(self._get('after_tool_execute'), call=call):
-            result = await _call_entry(
-                entry, 'after_tool_execute', ctx, call=call, tool_def=tool_def, args=args, result=result
-            )
-        return result
+        stack = LifecycleStack(_filter_tool_entries(self._get('after_tool_execute'), call=call))
+        return await stack.forward(
+            result,
+            lambda entry, value: _call_entry(
+                entry, 'after_tool_execute', ctx, call=call, tool_def=tool_def, args=args, result=value
+            ),
+        )
 
     async def wrap_tool_execute(
         self,
@@ -1101,13 +1117,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         handler: WrapToolExecuteHandler,
     ) -> Any:
         entries = _filter_tool_entries(self._get('wrap_tool_execute'), call=call)
-        if not entries:
-            return await handler(args)
-        chain: Callable[..., Any] = handler
-        for entry in reversed(entries):
-            chain = _make_wrap_link(
-                entry, 'wrap_tool_execute', ctx, {'call': call, 'tool_def': tool_def}, chain, 'args'
-            )
+        stack = LifecycleStack(entries)
+        chain = stack.wrap(
+            handler,
+            lambda entry, inner: _make_wrap_link(
+                entry, 'wrap_tool_execute', ctx, {'call': call, 'tool_def': tool_def}, inner, 'args'
+            ),
+        )
         return await chain(args)
 
     async def on_tool_execute_error(
@@ -1119,23 +1135,26 @@ class Hooks(AbstractCapability[AgentDepsT]):
         args: ValidatedToolArgs,
         error: Exception,
     ) -> Any:
-        for entry in _filter_tool_entries(self._get('on_tool_execute_error'), call=call):
-            try:
-                return await _call_entry(
-                    entry, 'on_tool_execute_error', ctx, call=call, tool_def=tool_def, args=args, error=error
-                )
-            except Exception as new_error:
-                error = new_error
-        raise error
+        stack = LifecycleStack(_filter_tool_entries(self._get('on_tool_execute_error'), call=call))
+        return await stack.recover(
+            error,
+            lambda entry, current: _call_entry(
+                entry, 'on_tool_execute_error', ctx, call=call, tool_def=tool_def, args=args, error=current
+            ),
+            Exception,
+            reverse=False,
+        )
 
     async def before_output_validate(
         self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: RawOutput
     ) -> RawOutput:
-        for entry in self._get('before_output_validate'):
-            output = await _call_entry(
-                entry, 'before_output_validate', ctx, output_context=output_context, output=output
-            )
-        return output
+        stack = LifecycleStack(self._get('before_output_validate'))
+        return await stack.forward(
+            output,
+            lambda entry, value: _call_entry(
+                entry, 'before_output_validate', ctx, output_context=output_context, output=value
+            ),
+        )
 
     async def after_output_validate(
         self,
@@ -1144,11 +1163,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        for entry in self._get('after_output_validate'):
-            output = await _call_entry(
-                entry, 'after_output_validate', ctx, output_context=output_context, output=output
-            )
-        return output
+        stack = LifecycleStack(self._get('after_output_validate'))
+        return await stack.forward(
+            output,
+            lambda entry, value: _call_entry(
+                entry, 'after_output_validate', ctx, output_context=output_context, output=value
+            ),
+        )
 
     async def wrap_output_validate(
         self,
@@ -1158,14 +1179,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         output: RawOutput,
         handler: WrapOutputValidateHandler,
     ) -> Any:
-        entries = self._get('wrap_output_validate')
-        if not entries:
-            return await handler(output)
-        chain: Callable[..., Any] = handler
-        for entry in reversed(entries):
-            chain = _make_wrap_link(
-                entry, 'wrap_output_validate', ctx, {'output_context': output_context}, chain, 'output'
-            )
+        stack = LifecycleStack(self._get('wrap_output_validate'))
+        chain = stack.wrap(
+            handler,
+            lambda entry, inner: _make_wrap_link(
+                entry, 'wrap_output_validate', ctx, {'output_context': output_context}, inner, 'output'
+            ),
+        )
         return await chain(output)
 
     async def on_output_validate_error(
@@ -1176,41 +1196,42 @@ class Hooks(AbstractCapability[AgentDepsT]):
         output: RawOutput,
         error: ValidationError | ModelRetry,
     ) -> Any:
-        for entry in self._get('on_output_validate_error'):
-            try:
-                return await _call_entry(
-                    entry,
-                    'on_output_validate_error',
-                    ctx,
-                    output_context=output_context,
-                    output=output,
-                    error=error,
-                )
-            except (ValidationError, ModelRetry) as new_error:
-                error = new_error
-        raise error
+        stack = LifecycleStack(self._get('on_output_validate_error'))
+        return await stack.recover(
+            error,
+            lambda entry, current: _call_entry(
+                entry,
+                'on_output_validate_error',
+                ctx,
+                output_context=output_context,
+                output=output,
+                error=current,
+            ),
+            (ValidationError, ModelRetry),
+            reverse=False,
+        )
 
     async def before_output_process(
         self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: Any
     ) -> Any:
-        for entry in self._get('before_output_process'):
-            output = await _call_entry(
-                entry, 'before_output_process', ctx, output_context=output_context, output=output
-            )
-        return output
+        stack = LifecycleStack(self._get('before_output_process'))
+        return await stack.forward(
+            output,
+            lambda entry, value: _call_entry(
+                entry, 'before_output_process', ctx, output_context=output_context, output=value
+            ),
+        )
 
     async def after_output_process(
         self, ctx: RunContext[AgentDepsT], *, output_context: OutputContext, output: Any
     ) -> Any:
-        for entry in self._get('after_output_process'):
-            output = await _call_entry(
-                entry,
-                'after_output_process',
-                ctx,
-                output_context=output_context,
-                output=output,
-            )
-        return output
+        stack = LifecycleStack(self._get('after_output_process'))
+        return await stack.forward(
+            output,
+            lambda entry, value: _call_entry(
+                entry, 'after_output_process', ctx, output_context=output_context, output=value
+            ),
+        )
 
     async def wrap_output_process(
         self,
@@ -1220,14 +1241,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         output: Any,
         handler: WrapOutputProcessHandler,
     ) -> Any:
-        entries = self._get('wrap_output_process')
-        if not entries:
-            return await handler(output)
-        chain: Callable[..., Any] = handler
-        for entry in reversed(entries):
-            chain = _make_wrap_link(
-                entry, 'wrap_output_process', ctx, {'output_context': output_context}, chain, 'output'
-            )
+        stack = LifecycleStack(self._get('wrap_output_process'))
+        chain = stack.wrap(
+            handler,
+            lambda entry, inner: _make_wrap_link(
+                entry, 'wrap_output_process', ctx, {'output_context': output_context}, inner, 'output'
+            ),
+        )
         return await chain(output)
 
     async def on_output_process_error(
@@ -1238,14 +1258,15 @@ class Hooks(AbstractCapability[AgentDepsT]):
         output: Any,
         error: Exception,
     ) -> Any:
-        for entry in self._get('on_output_process_error'):
-            try:
-                return await _call_entry(
-                    entry, 'on_output_process_error', ctx, output_context=output_context, output=output, error=error
-                )
-            except Exception as new_error:
-                error = new_error
-        raise error
+        stack = LifecycleStack(self._get('on_output_process_error'))
+        return await stack.recover(
+            error,
+            lambda entry, current: _call_entry(
+                entry, 'on_output_process_error', ctx, output_context=output_context, output=output, error=current
+            ),
+            Exception,
+            reverse=False,
+        )
 
     async def handle_deferred_tool_calls(
         self,
@@ -1253,20 +1274,11 @@ class Hooks(AbstractCapability[AgentDepsT]):
         *,
         requests: DeferredToolRequests,
     ) -> DeferredToolResults | None:
-        accumulated = DeferredToolResults()
-        remaining = requests
-        any_handled = False
-        for entry in self._get('handle_deferred_tool_calls'):
-            result = await _call_entry(entry, 'handle_deferred_tool_calls', ctx, requests=remaining)
-            if result is None or not (result.approvals or result.calls):
-                continue
-            any_handled = True
-            accumulated.update(result)
-            remaining_or_none = remaining.remaining(result)
-            if remaining_or_none is None:
-                break
-            remaining = remaining_or_none
-        return accumulated if any_handled else None
+        stack = LifecycleStack(self._get('handle_deferred_tool_calls'))
+        return await stack.settle_deferred(
+            requests,
+            lambda entry, remaining: _call_entry(entry, 'handle_deferred_tool_calls', ctx, requests=remaining),
+        )
 
 
 # --- Wrap chain helper ---
