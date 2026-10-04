@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -17,6 +17,8 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponsePart,
     ModelRetry,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RunContext,
     TextPart,
     ToolCallPart,
@@ -82,6 +84,9 @@ class CacheUsage:
     """Whether the response carries a `CompactionPart`, as when the provider compacted the history."""
     suspends: bool = False
     """Whether the response pauses the turn (Anthropic `pause_turn`), so the next usage continues the same request."""
+    native_tool: bool = False
+    """Whether the response ran a native tool (web search), whose cache usage may be summed over several passes."""
+    details: Mapping[str, int] = field(default_factory=dict[str, int])
 
 
 class ResponseNameFunctionModel(FunctionModel):
@@ -115,12 +120,21 @@ def cache_spans(
             parts = [TextPart('done')]
         else:
             parts = [ToolCallPart('continue_run', {}, tool_call_id=f'call-{call_index}')]
+        if usage.native_tool:
+            parts = [
+                NativeToolCallPart(
+                    'web_search', {'query': 'x'}, tool_call_id=f'srv-{call_index}', provider_name='test'
+                ),
+                NativeToolReturnPart('web_search', 'results', tool_call_id=f'srv-{call_index}', provider_name='test'),
+                *parts,
+            ]
         return ModelResponse(
             parts=parts,
             usage=RequestUsage(
                 input_tokens=usage.input_tokens,
                 cache_read_tokens=usage.read,
                 cache_write_tokens=usage.write,
+                details=dict(usage.details),
             ),
             provider_name=usage.provider_name,
             state='suspended' if usage.suspends else 'complete',
@@ -187,6 +201,65 @@ def test_continued_request_is_judged_by_its_final_segment() -> None:
         {'pydantic_ai.cache.hit_ratio': 0.735, 'pydantic_ai.cache.established_tokens': 14700},
     ]
     assert all(not span.events for span in spans)
+
+
+def test_native_tool_response_does_not_raise_the_mark() -> None:
+    """A native tool's cache reads may be summed over its passes, so they're judged but don't set the mark.
+
+    Four passes over the ~8k prefix report ~33k cached tokens; raising the mark to that would make the
+    next, healthy request look like a collapse.
+    """
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=8000),
+            CacheUsage(read=32800, write=600, input_tokens=40000, native_tool=True),
+            CacheUsage(read=8400),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 8000},
+        {'pydantic_ai.cache.hit_ratio': 0.82, 'pydantic_ai.cache.established_tokens': 8000},
+        {'pydantic_ai.cache.hit_ratio': 0.42, 'pydantic_ai.cache.established_tokens': 8400},
+    ]
+    assert all(not span.events for span in spans)
+
+
+def test_native_tool_response_with_compaction_pass_does_not_raise_the_mark() -> None:
+    """A reported single main-model pass plus a compaction pass is still summed usage."""
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=8000),
+            CacheUsage(read=20000, native_tool=True, details={'message_iterations': 1, 'compaction_iterations': 1}),
+            CacheUsage(read=8000),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert [cache_attributes(span)['pydantic_ai.cache.established_tokens'] for span in spans] == [8000, 8000, 8000]
+    assert all('pydantic_ai.cache.collapsed' not in cache_attributes(span) for span in spans)
+
+
+def test_native_tool_response_with_separate_tool_use_prompt_count_sets_the_mark() -> None:
+    """Gemini counts tool-use prompt tokens apart from cache reads, so its cache reads are an ordinary prefix."""
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=8000),
+            CacheUsage(read=12000, native_tool=True, details={'tool_use_prompt_tokens': 24000}),
+            CacheUsage(read=5000),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert cache_attributes(spans[1])['pydantic_ai.cache.established_tokens'] == 12000
+    assert cache_attributes(spans[2]) == {
+        'pydantic_ai.cache.hit_ratio': 0.25,
+        'pydantic_ai.cache.established_tokens': 5000,
+        'pydantic_ai.cache.collapsed': True,
+        'pydantic_ai.cache.missed_tokens': 7000,
+        'pydantic_ai.cache.collapse_reason': 'unexpected',
+    }
 
 
 def test_response_rejected_by_a_later_hook_still_counts() -> None:
