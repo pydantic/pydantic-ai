@@ -778,7 +778,7 @@ async def test_document_citations(
 
 
 NativeCitationReplayProvider = Literal[
-    'anthropic-messages', 'anthropic-document', 'bedrock-converse', 'openai-responses'
+    'anthropic-messages', 'anthropic-document', 'anthropic-tool-document', 'bedrock-converse', 'openai-responses'
 ]
 
 
@@ -788,6 +788,7 @@ NativeCitationReplayProvider = Literal[
     [
         pytest.param('anthropic-messages', id='anthropic-messages'),
         pytest.param('anthropic-document', id='anthropic-document'),
+        pytest.param('anthropic-tool-document', id='anthropic-tool-document'),
         pytest.param('bedrock-converse', id='bedrock-converse'),
         pytest.param('openai-responses', id='openai-responses'),
     ],
@@ -803,6 +804,7 @@ async def test_native_citation_replay_after_persisted_history(
     available = {
         'anthropic-messages': anthropic_available,
         'anthropic-document': anthropic_available,
+        'anthropic-tool-document': anthropic_available,
         'bedrock-converse': bedrock_available,
         'openai-responses': openai_available,
     }[provider]
@@ -810,7 +812,7 @@ async def test_native_citation_replay_after_persisted_history(
         pytest.skip(f'{provider} dependencies not installed')
     agent: Agent[None, str]
     first_prompt: str | list[str | BinaryContent]
-    if provider in ('anthropic-messages', 'anthropic-document'):
+    if provider in ('anthropic-messages', 'anthropic-document', 'anthropic-tool-document'):
         model = AnthropicModel(
             'claude-sonnet-4-5',
             provider=AnthropicProvider(api_key=anthropic_api_key),
@@ -819,6 +821,9 @@ async def test_native_citation_replay_after_persisted_history(
         if provider == 'anthropic-messages':
             agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
             first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
+        elif provider == 'anthropic-tool-document':
+            agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(include_citations=True))
+            first_prompt = TOOL_DOCUMENT_PROMPT
         else:
             agent = Agent(model, model_settings=ModelSettings(include_citations=True))
             first_prompt = [
