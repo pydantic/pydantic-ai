@@ -126,9 +126,10 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     so a sustained collapse warns once rather than on every subsequent request. Native tool
     responses may sum cache reads across internal model calls. The monitor can still warn on a
     low total, but keeps the earlier prefix and waits for an ordinary request to confirm recovery.
-    If the provider reports one call to the main model and no compaction, the response updates the
-    prefix and confirms recovery normally. Gemini responses with separate tool-use prompt accounting
-    do the same.
+    If the provider reports one call to the main model and no compaction, the response uses normal
+    cache accounting. Gemini responses with separate tool-use prompt accounting do the same. These
+    responses can establish a larger prefix, and a healthy cache read confirms recovery so a later
+    collapse can warn again.
 
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
     that continues an earlier one via `message_history` -- including history that was
