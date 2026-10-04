@@ -200,6 +200,52 @@ A later <context> element with the same id replaces this one and stays in effect
         assert current[: len(previous)] == previous
 
 
+@pytest.mark.parametrize('rewrite', ['request-only-trailing-request', 'request-only-copy-of-tail'])
+async def test_instruction_updates_persist_when_a_hook_ends_the_request_in_a_request_only_message(rewrite: str):
+    """A baseline recorded only on a request-only tail would never reach history, so every step would rewrite the prefix."""
+    prefixes: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prefixes.append(info.instructions)
+        if len(prefixes) < 3:
+            return ModelResponse(parts=[ToolCallPart('bump', {}, tool_call_id=f'call-{len(prefixes)}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def add_reminder(ctx: RunContext[State], request: ModelRequestContext) -> ModelRequestContext:
+        *head, tail = request.messages
+        assert isinstance(tail, ModelRequest)
+        reminder = UserPromptPart('Hook context.')
+        if rewrite == 'request-only-trailing-request':
+            request.messages = [*head, tail, ModelRequest(parts=[reminder])]
+        else:
+            request.messages = [*head, replace(tail, parts=[*tail.parts, reminder])]
+        return request
+
+    agent = Agent(FunctionModel(model_fn), deps_type=State, capabilities=[Hooks(before_model_request=add_reminder)])
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    @agent.tool_plain
+    def bump() -> str:
+        deps.value = f'{deps.value}+'
+        return 'bumped'
+
+    deps = State('A')
+    result = await agent.run('Continue.', deps=deps)
+
+    assert prefixes == [prefixes[0]] * 3
+    assert [
+        (
+            message.instruction_baseline is not None,
+            [part.content for part in message.parts if isinstance(part, InstructionDeltaPart)],
+        )
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+    ] == snapshot([(True, []), (False, ['A+']), (False, ['A++'])])
+
+
 @pytest.mark.parametrize('case', SOURCE_CASES, ids=lambda case: case.source)
 @pytest.mark.parametrize('stream', [False, True])
 async def test_instruction_updates_survive_fresh_agent_and_serialized_history(case: SourceCase, stream: bool):

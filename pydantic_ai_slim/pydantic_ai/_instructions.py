@@ -180,15 +180,8 @@ def normalize_toolset_instruction_parts(
     return parts
 
 
-def update_instruction_history(
-    messages: Sequence[ModelMessage], instructions: list[InstructionPart] | None
-) -> list[InstructionPart] | None:
-    """Preserve the initial prefix and append changed instruction blocks to the outgoing request.
-
-    Run after history processing: only a baseline that survived processing can anchor the prefix.
-    Canonical records stay in history, independently of the provider's rendering of them.
-    """
-    current = instructions or []
+def _normalize_append_parts(current: list[InstructionPart]) -> list[InstructionPart]:
+    """Downgrade append-mode blocks without a unique identity to `'rewrite'`, and strip the others."""
     counts = Counter(part.id for part in current)
     normalized: list[InstructionPart] = []
     for part in current:
@@ -198,11 +191,17 @@ def update_instruction_history(
                 "`on_change='append'` without a unique instruction identity; rewriting its prefix. "
                 'Declare a unique `name` and an owning capability/toolset `id` where applicable.',
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
             part = replace(part, on_change='rewrite')
         normalized.append(replace(part, content=part.content.strip()) if part.on_change == 'append' else part)
+    return normalized
 
+
+def _recorded_instruction_state(
+    messages: Sequence[ModelMessage],
+) -> tuple[dict[str, InstructionBaselineEntry] | None, dict[str, str | None]]:
+    """The latest baseline in the post-compaction window, and each block's value after the deltas since."""
     baseline: dict[str, InstructionBaselineEntry] | None = None
     effective: dict[str, str | None] = {}
     for message in post_compaction_window(messages):
@@ -215,12 +214,29 @@ def update_instruction_history(
             effective.update(
                 (part.id, part.content) for part in message.parts if isinstance(part, InstructionDeltaPart)
             )
+    return baseline, effective
 
-    target = messages[-1]
-    assert isinstance(target, ModelRequest)
+
+def update_instruction_history(
+    messages: Sequence[ModelMessage],
+    instructions: list[InstructionPart] | None,
+    targets: Sequence[ModelRequest],
+) -> list[InstructionPart] | None:
+    """Preserve the initial prefix and append changed instruction blocks to the outgoing request.
+
+    Run after history processing: only a baseline that survived processing can anchor the prefix.
+    Canonical records stay in history, independently of the provider's rendering of them. The baseline
+    and deltas are read from `messages` and recorded on each of `targets`: the requests that both this
+    request and the persisted history carry.
+    """
+    normalized = _normalize_append_parts(instructions or [])
+
+    baseline, effective = _recorded_instruction_state(messages)
+
     if instructions is None:
         # Unset parts preserve the recorded request text and end the structured append window.
-        target.instruction_baseline = {} if baseline is not None else None
+        for target in targets:
+            target.instruction_baseline = {} if baseline is not None else None
         return None
     if any(str(part.id) in effective and part.on_change != 'append' for part in normalized) or (
         baseline is not None and any(entry.part.id is None for entry in baseline.values())
@@ -231,7 +247,8 @@ def update_instruction_history(
         # Rebaseline the window so its old deltas cannot override the rewritten prefix.
         baseline = None
         effective.clear()
-        target.instruction_baseline = {}
+        for target in targets:
+            target.instruction_baseline = {}
     if baseline is None:
         if not any(part.on_change == 'append' for part in normalized):
             # `normalized`, not `instructions`: a block downgraded to `'rewrite'` above must not be
@@ -242,7 +259,8 @@ def update_instruction_history(
             for index, part in enumerate(normalized)
             if part.on_change == 'append'
         }
-        target.instruction_baseline = baseline
+        for target in targets:
+            target.instruction_baseline = baseline
     else:
         current_parts: dict[str, list[InstructionPart]] = {}
         for part in normalized:
@@ -257,7 +275,8 @@ def update_instruction_history(
             if effective.get(instruction_id) != current_values.get(instruction_id)
         ]
         if changes:
-            target.parts = [*target.parts, *changes]
+            for target in targets:
+                target.parts = [*target.parts, *changes]
 
     # Non-opted-in instructions keep their current values. Initial append blocks retain their
     # positions, including withdrawn ones; blocks first seen later are delivered only at the tail.
@@ -270,6 +289,7 @@ def update_instruction_history(
     for entry in sorted(baseline.values(), key=lambda entry: entry.index):
         prefix.insert(entry.index, entry.part)
     prefix = [part for part in prefix if part.content]
-    target.instructions = InstructionPart.join(prefix)
-    target.instruction_parts = prefix
+    for target in targets:
+        target.instructions = InstructionPart.join(prefix)
+        target.instruction_parts = prefix
     return prefix

@@ -1881,7 +1881,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # anchor the prefix.
             model_request_parameters = replace(
                 model_request_parameters,
-                instruction_parts=update_instruction_history(messages, model_request_parameters.instruction_parts),
+                instruction_parts=update_instruction_history(
+                    messages, model_request_parameters.instruction_parts, _history_recording_targets(ctx, messages)
+                ),
             )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
 
@@ -2832,6 +2834,28 @@ def _with_outgoing_reveal_state(
             loaded_capability_ids=parse_loaded_capabilities(messages),
         ),
     )
+
+
+def _history_recording_targets(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], messages: list[_messages.ModelMessage]
+) -> list[_messages.ModelRequest]:
+    """The requests to record this step's history state on, so it is both sent now and persisted.
+
+    That is normally the outgoing tail, which is also the persisted tail. A `before_model_request` hook can
+    end the request in a message that exists only in the request (`request_context.messages = [*messages,
+    reminder]`), though, or swap the persisted tail for a copy. State recorded only on that tail would never
+    reach history and would be recorded again on every step, so it goes on the persisted tail instead when
+    the request still carries it, and on both when it doesn't.
+    """
+    outgoing = messages[-1]
+    assert isinstance(outgoing, _messages.ModelRequest)
+    history = ctx.state.message_history
+    persisted = history[-1] if history else None
+    if not isinstance(persisted, _messages.ModelRequest) or persisted is outgoing:
+        return [outgoing]
+    if any(message is persisted for message in messages):
+        return [persisted]
+    return [outgoing, persisted]
 
 
 def build_validation_context(
