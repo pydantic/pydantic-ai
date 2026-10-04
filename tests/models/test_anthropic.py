@@ -13684,6 +13684,116 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
 
 @pytest.mark.vcr()
 @pytest.mark.parametrize(
+    'cache,expected_ttl,expected_usage',
+    [
+        pytest.param(
+            True,
+            '5m',
+            snapshot(
+                (
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 4,
+                            'cache_creation_input_tokens': 7836,
+                            'cache_read_input_tokens': 0,
+                        },
+                        output_tokens=4,
+                        cache_write_tokens=7836,
+                        input_tokens=7838,
+                        cost=Decimal('0.019634'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 4,
+                            'cache_creation_input_tokens': 0,
+                            'cache_read_input_tokens': 7836,
+                        },
+                        cache_read_tokens=7836,
+                        output_tokens=4,
+                        input_tokens=7838,
+                        cost=Decimal('0.0016112'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='default',
+        ),
+        pytest.param(
+            '1h',
+            '1h',
+            snapshot(
+                (
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 5,
+                            'cache_creation_input_tokens': 7839,
+                            'cache_read_input_tokens': 0,
+                            'ephemeral_1h_input_tokens': 7839,
+                        },
+                        cache_write_1h_tokens=7839,
+                        input_tokens=7841,
+                        output_tokens=5,
+                        cache_write_tokens=7839,
+                        cost=Decimal('0.031410'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 5,
+                            'cache_creation_input_tokens': 0,
+                            'cache_read_input_tokens': 7839,
+                        },
+                        cache_read_tokens=7839,
+                        output_tokens=5,
+                        input_tokens=7841,
+                        cost=Decimal('0.0016218'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
+async def test_unified_cache_writes_then_reads_real_api(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    cache: Literal[True, '1h'],
+    expected_ttl: str,
+    expected_usage: tuple[RunUsage, RunUsage],
+):
+    """The unified `cache` setting turns on Anthropic's automatic caching, with the requested TTL.
+
+    The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
+    """
+    model = anthropic_model('claude-sonnet-5', capture=True)
+    agent = Agent(
+        model,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a concise Python assistant (cache setting: {cache!r}). '
+        + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=cache),
+    )
+    prompt = 'Name one Python web framework, in one word.'
+
+    first = await agent.run(prompt)
+    second = await agent.run(prompt)
+
+    # A single top-level `cache_control` and no per-block breakpoints: the API places the breakpoint itself.
+    assert [cache_breakpoints(body) for body in request_capture.bodies('/v1/messages')] == [
+        ({'type': 'ephemeral', 'ttl': expected_ttl}, [])
+    ] * 2
+    assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
     'stream,expected_usage',
     [
         pytest.param(

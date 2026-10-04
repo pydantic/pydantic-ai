@@ -4322,6 +4322,99 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
 
 
 @pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'cache,expected_cache_point,expected_usage',
+    [
+        pytest.param(
+            True,
+            # No `ttl`, matching what `bedrock_cache_instructions=True` sends.
+            {'cachePoint': {'type': 'default'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_tokens=8172,
+                        output_tokens=5,
+                        input_tokens=8259,
+                        cost=Decimal('0.0227194'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        output_tokens=5,
+                        input_tokens=8259,
+                        cache_read_tokens=8172,
+                        cost=Decimal('0.00204424'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='default',
+        ),
+        pytest.param(
+            '1h',
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_tokens=8175,
+                        output_tokens=5,
+                        input_tokens=8262,
+                        cost=Decimal('0.02272765'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        output_tokens=5,
+                        input_tokens=8262,
+                        cache_read_tokens=8175,
+                        cost=Decimal('0.0020449'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
+async def test_unified_cache_writes_then_reads_real_api(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    cache: Literal[True, '1h'],
+    expected_cache_point: dict[str, Any],
+    expected_usage: tuple[RunUsage, RunUsage],
+):
+    """The unified `cache` setting places cache points after the tool definitions and the instructions,
+    with the requested TTL, and Bedrock accepts them.
+
+    The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-5', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a concise Python assistant (cache setting: {cache!r}). '
+        + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=cache),
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Sunny in {city}'
+
+    prompt = 'Name one Python web framework, in one word.'
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await agent.run(prompt)
+        second = await agent.run(prompt)
+
+    assert [
+        {
+            'system': [block for block in body['system'] if 'cachePoint' in block],
+            'tools': [tool for tool in body['toolConfig']['tools'] if 'cachePoint' in tool],
+        }
+        for body in sent_requests
+    ] == [{'system': [expected_cache_point], 'tools': [expected_cache_point]}] * 2
+    assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
 async def test_bedrock_cache_messages_with_document_as_last_content(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
