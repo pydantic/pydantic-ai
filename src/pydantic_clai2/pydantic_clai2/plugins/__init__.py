@@ -65,6 +65,16 @@ class Conversation(Protocol):
         """The model the next run uses; `None` when nothing has been chosen yet."""
         ...
 
+    async def resume(self, conversation_id: str) -> str:
+        """Switch to a saved conversation, as `/resume ID` does, and return the notice to show.
+
+        Only restores the saved history: nothing runs and no tool is replayed. Call it between
+        turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a
+        run, `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
+        directory or still running in another process. `on_conversation_changed` follows.
+        """
+        ...
+
 
 class Transcript:
     """An in-memory `Conversation` for hosts built outside the shell, such as in a plugin's tests."""
@@ -103,6 +113,10 @@ class Transcript:
     async def resolved_model(self) -> Model | str | None:
         """The `model` given at construction."""
         return self.model
+
+    async def resume(self, conversation_id: str) -> str:
+        """An in-memory transcript has no saved conversations to switch to."""
+        raise LookupError(f'No saved session: {conversation_id}')
 
 
 @dataclass(kw_only=True)

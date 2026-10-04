@@ -22,7 +22,7 @@ from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import ConversationChanged, Plugin, SessionStart, Transcript
+from pydantic_clai2.plugins import ConversationChanged, Plugin, PluginHost, SessionStart, Transcript, load_plugin
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionName
 from pydantic_clai2.runtime.sessions import Sessions
@@ -238,3 +238,32 @@ async def test_headless_resume_precedes_plugins(tmp_path: Path, monkeypatch: pyt
         == 0
     )
     assert Recorder.seen == [('start', saved.conversation_id, 'earlier work')]
+
+
+class Resumer(Plugin):
+    """Restores a known conversation as soon as it loads."""
+
+    target: ClassVar[str] = ''
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        Recorder.seen.append(('resumed', self.target, await self.host.conversation.resume(self.target)))
+
+
+async def test_plugin_resumes_a_saved_conversation(tmp_path: Path) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    await saved.prompt('earlier work')
+    session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    events = recording(session)
+    host = PluginHost(name='resumer', console=Console(file=StringIO()), settings={}, conversation=session)
+    Resumer.target = saved.conversation_id
+    loaded = load_plugin(Resumer, host)
+    await loaded.dispatch(SessionStart(agent=session.agent, settings=Settings()))
+    assert Recorder.seen == [('resumed', saved.conversation_id, f'Resumed earlier work ({saved.conversation_id}).')]
+    assert session.messages == saved.messages
+    assert events == [ConversationChanged(conversation_id=saved.conversation_id, title='earlier work')]
+
+
+async def test_transcript_has_nothing_to_resume() -> None:
+    with pytest.raises(LookupError, match='No saved session: missing'):
+        await Transcript().resume('missing')
