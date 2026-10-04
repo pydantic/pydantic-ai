@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable, Iterable, Iterator
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Generic
+
+from pydantic import BaseModel
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -298,6 +301,97 @@ def render_summary(items: list[PlanItem]) -> str:
     return summary
 
 
+async def resolve_run_store(
+    ctx: RunContext[AgentDepsT], capability: Planning[AgentDepsT], toolset: PlanningToolset[AgentDepsT]
+) -> PlanStore:
+    """Resolve the store through the run's copy of the capability, which shares `toolset`.
+
+    The copy holds the store `for_run` resolved once for the run. A durable worker's tree holds
+    the construction-time capability instead, so the store is resolved for this call without
+    caching it there, where it would leak into later runs. A toolset used outside such a tree
+    keeps `capability`'s store.
+    """
+    from pydantic_ai_harness.planning._capability import Planning
+
+    run_capability: Planning[AgentDepsT] | None = None
+
+    def select(candidate: AbstractCapability[AgentDepsT]) -> None:
+        nonlocal run_capability
+        # A wrapper such as `prefix_tools()` may be visited in place of the `Planning` it wraps.
+        while isinstance(candidate, WrapperCapability):
+            candidate = candidate.wrapped
+        if isinstance(candidate, Planning) and candidate.get_toolset() is toolset:
+            run_capability = candidate
+
+    if ctx.root_capability is not None:
+        ctx.root_capability.apply(select)
+    if run_capability is None:
+        return capability.resolve_store(ctx)
+    if run_capability is capability:
+        run_capability = await run_capability.for_run(ctx)
+    return run_capability.resolve_store(ctx)
+
+
+class PlanItemUpdate(BaseModel):
+    """The fields `PlanStore.update_item` changes; `None` leaves a field as it is."""
+
+    content: str | None = None
+    status: TaskStatus | None = None
+    active_form: str | None = None
+    parent_id: str | None = None
+    depends_on: list[str] | None = None
+
+
+@dataclass(frozen=True)
+class PlanStoreOperations(Generic[AgentDepsT]):
+    """The durable operations a `Planning` capability runs each plan store call through."""
+
+    get_items: Callable[[RunContext[AgentDepsT]], Awaitable[list[PlanItem]]]
+    set_items: Callable[[RunContext[AgentDepsT], list[PlanItem]], Awaitable[None]]
+    get_item: Callable[[RunContext[AgentDepsT], str], Awaitable[PlanItem | None]]
+    add_item: Callable[[RunContext[AgentDepsT], PlanItem], Awaitable[PlanItem]]
+    update_item: Callable[[RunContext[AgentDepsT], str, PlanItemUpdate], Awaitable[PlanItem | None]]
+    remove_item: Callable[[RunContext[AgentDepsT], str], Awaitable[bool]]
+
+
+@dataclass(frozen=True)
+class _RecordedPlanStore(Generic[AgentDepsT]):
+    """A `PlanStore` for one tool call that runs each store call as a durable operation."""
+
+    operations: PlanStoreOperations[AgentDepsT]
+    ctx: RunContext[AgentDepsT]
+
+    async def get_items(self) -> list[PlanItem]:
+        return await self.operations.get_items(self.ctx)
+
+    async def set_items(self, items: list[PlanItem]) -> None:
+        await self.operations.set_items(self.ctx, items)
+
+    async def get_item(self, item_id: str) -> PlanItem | None:
+        return await self.operations.get_item(self.ctx, item_id)
+
+    async def add_item(self, item: PlanItem) -> PlanItem:
+        return await self.operations.add_item(self.ctx, item)
+
+    async def update_item(
+        self,
+        item_id: str,
+        *,
+        content: str | None = None,
+        status: TaskStatus | None = None,
+        active_form: str | None = None,
+        parent_id: str | None = None,
+        depends_on: list[str] | None = None,
+    ) -> PlanItem | None:
+        update = PlanItemUpdate(
+            content=content, status=status, active_form=active_form, parent_id=parent_id, depends_on=depends_on
+        )
+        return await self.operations.update_item(self.ctx, item_id, update)
+
+    async def remove_item(self, item_id: str) -> bool:
+        return await self.operations.remove_item(self.ctx, item_id)
+
+
 class PlanningToolset(FunctionToolset[AgentDepsT]):
     """Plan tools registered against a `Planning` capability's resolved store.
 
@@ -307,9 +401,12 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     and `get_available_tasks` are added and the `blocked` status becomes valid.
     """
 
-    def __init__(self, capability: Planning[AgentDepsT]) -> None:
+    def __init__(
+        self, capability: Planning[AgentDepsT], *, operations: PlanStoreOperations[AgentDepsT] | None = None
+    ) -> None:
         super().__init__(id='planning')
         self._capability = capability
+        self._operations = operations
         self._subtasks = capability.enable_subtasks
         descriptions = capability.descriptions or {}
         offered = available_tool_names(subtasks=self._subtasks)
@@ -372,32 +469,10 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             )
 
     async def _resolve(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
-        """Resolve the store through the run's copy of the capability, which shares this toolset.
-
-        The copy holds the store `for_run` resolved once for the run. A durable worker's tree holds
-        the construction-time capability instead, so the store is resolved for this call without
-        caching it there, where it would leak into later runs. A toolset used outside such a tree
-        keeps its capability's store.
-        """
-        from pydantic_ai_harness.planning._capability import Planning
-
-        run_capability: Planning[AgentDepsT] | None = None
-
-        def select(capability: AbstractCapability[AgentDepsT]) -> None:
-            nonlocal run_capability
-            # A wrapper such as `prefix_tools()` may be visited in place of the `Planning` it wraps.
-            while isinstance(capability, WrapperCapability):
-                capability = capability.wrapped
-            if isinstance(capability, Planning) and capability.get_toolset() is self:
-                run_capability = capability
-
-        if ctx.root_capability is not None:
-            ctx.root_capability.apply(select)
-        if run_capability is None:
-            return self._capability.resolve_store(ctx)
-        if run_capability is self._capability:
-            run_capability = await run_capability.for_run(ctx)
-        return run_capability.resolve_store(ctx)
+        """The store for this call: through the capability's durable operations when it passed them."""
+        if self._operations is not None:
+            return _RecordedPlanStore(self._operations, ctx)
+        return await resolve_run_store(ctx, self._capability, self)
 
     def _valid_status(self, status: TaskStatus) -> bool:
         return self._subtasks or status is not TaskStatus.blocked
@@ -457,10 +532,13 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         store = await self._resolve(ctx)
         before = await store.get_items()
         await store.set_items(new_items)
-        await self._emit_changes(ctx, before, await store.get_items())
-        in_progress = sum(1 for item in new_items if item.status is TaskStatus.in_progress)
+        # Render what the store holds rather than `new_items`: on a durable replay, steps given no
+        # `id` are assigned fresh ones here, while the store's recorded result keeps the original ids.
+        after = await store.get_items()
+        await self._emit_changes(ctx, before, after)
+        in_progress = sum(1 for item in after if item.status is TaskStatus.in_progress)
         note = '' if in_progress <= 1 else _MULTI_IN_PROGRESS_NOTE
-        return f'Plan updated: {len(new_items)} step(s).\n\n{render_plan(new_items)}{note}'
+        return f'Plan updated: {len(after)} step(s).\n\n{render_plan(after)}{note}'
 
     async def read_plan(self, ctx: RunContext[AgentDepsT]) -> str:
         """Read the current plan."""
