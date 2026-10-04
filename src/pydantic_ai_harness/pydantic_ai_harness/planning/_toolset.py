@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic
 
 from pydantic import BaseModel
@@ -479,6 +479,18 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
                 name='get_available_tasks',
                 description=descriptions.get('get_available_tasks', GET_AVAILABLE_TASKS_DESCRIPTION),
             )
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        """Run plan tools one at a time in durable workflow code, where their store calls are recorded steps.
+
+        A plan tool makes several store calls with awaits between them, so two run concurrently would
+        interleave their steps by timing, and a replay could record them in a different order than the
+        run did. Outside a durable workflow they keep running alongside other tools.
+        """
+        tools = await super().get_tools(ctx)
+        if self._operations is None or not ctx.in_durable_context:
+            return tools
+        return {name: replace(tool, tool_def=replace(tool.tool_def, sequential=True)) for name, tool in tools.items()}
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

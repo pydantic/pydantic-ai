@@ -11,6 +11,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     CachePoint,
     ModelMessage,
@@ -91,6 +92,25 @@ async def test_plan_read_dispatches_as_durable_operation() -> None:
     bound = RecordingDurability.from_agent(agent)
     assert bound is not None
     assert 'planning__capability__planning.read_plan' in {name for name, _ in bound.calls}
+
+
+@pytest.mark.parametrize('durable', [False, True])
+async def test_plan_tools_run_one_at_a_time_only_in_durable_workflow_code(durable: bool) -> None:
+    """Concurrent plan tools would interleave their recorded store steps by timing, which a replay can't repeat."""
+    sequential: dict[str, bool] = {}
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sequential.update({tool.name: tool.sequential for tool in info.function_tools})
+        return ModelResponse(parts=[TextPart('done')])
+
+    capabilities: list[AbstractCapability[None]] = [Planning[None]()]
+    if durable:
+        capabilities.append(RecordingDurability())
+    agent = Agent(FunctionModel(respond), name='sequential_plan', deps_type=type(None), capabilities=capabilities)
+
+    await agent.run('plan')
+
+    assert sequential and set(sequential.values()) == {durable}
 
 
 class FunctionToolsetRejectingDurability(RecordingDurability):

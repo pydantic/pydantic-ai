@@ -151,7 +151,8 @@ The plan is never injected into the system prompt or instructions. Static usage 
 With a durable-execution capability attached, every plan store call is a journaled capability
 operation: the plan read used to build that reminder, and each read and write the plan tools make.
 Replay reuses the recorded result instead of calling the store again, so recovering a run doesn't
-append a step to a persistent store a second time.
+append a step to a persistent store a second time. In durable workflow code, the plan tools run one at
+a time, so their recorded store calls keep the same order on replay.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
 Engines that run tools and capability operations in a separate worker, like Temporal, don't
