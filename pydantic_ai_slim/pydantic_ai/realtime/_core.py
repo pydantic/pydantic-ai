@@ -120,6 +120,13 @@ class AudioSent:
 
 
 @dataclass(frozen=True, kw_only=True)
+class AudioUnsent:
+    """The input audio just reported as sent never went out: it is taken back, if it is still the latest."""
+
+    data: bytes
+
+
+@dataclass(frozen=True, kw_only=True)
 class AudioCleared:
     """The caller discarded the buffered input audio."""
 
@@ -181,6 +188,7 @@ Command: TypeAlias = (
     InputSent
     | InputWithdrawn
     | AudioSent
+    | AudioUnsent
     | AudioCleared
     | ToolReturned
     | ToolCallRefused
@@ -414,15 +422,8 @@ class SessionCore:
             self._input_sent(command)
         elif isinstance(command, InputWithdrawn):
             self._withdraw(command.input_ids)
-        elif isinstance(command, AudioSent):
-            if self._retain_input:
-                self._input_audio.extend(command.data)
-                self._bound_retained_audio()
-        elif isinstance(command, AudioCleared):
-            self._input_audio.clear()
-            # A turn the user was saying that hadn't joined the conversation never will now.
-            for turn_id in [turn_id for turn_id, turn in self._turns.items() if not turn.ended]:
-                self._drop_turn(turn_id)
+        elif isinstance(command, (AudioSent, AudioUnsent, AudioCleared)):
+            self._input_audio_command(command)
         elif isinstance(command, ToolReturned):
             self._returns[command.tool_call_id] = command.request
             self._settled_calls.add(command.tool_call_id)
@@ -445,6 +446,20 @@ class SessionCore:
             self._close()
         else:
             assert_never(command)
+
+    def _input_audio_command(self, command: AudioSent | AudioUnsent | AudioCleared) -> None:
+        if isinstance(command, AudioSent):
+            if self._retain_input:
+                self._input_audio.extend(command.data)
+                self._bound_retained_audio()
+        elif isinstance(command, AudioUnsent):
+            if command.data and self._input_audio.endswith(command.data):
+                del self._input_audio[-len(command.data) :]
+        else:
+            self._input_audio.clear()
+            # A turn the user was saying that hadn't joined the conversation never will now.
+            for turn_id in [turn_id for turn_id, turn in self._turns.items() if not turn.ended]:
+                self._drop_turn(turn_id)
 
     def _input_sent(self, command: InputSent) -> None:
         if command.request is not None:
@@ -847,14 +862,14 @@ class SessionCore:
         self._settled_calls.update(self._call_response)
 
     def set_conversation_id(self, conversation_id: str) -> None:
-        """The conversation id the session resolved late: what the core records from now on, and has recorded, carries it.
-
-        Inputs and tool returns are the session's own requests, which it stamps itself.
-        """
+        """The conversation id the session resolved late: what the core records from now on, and has recorded, carries it."""
         self._conversation_id = conversation_id
+        recorded: list[ModelMessage] = [*(input_.request for input_ in self._inputs.values()), *self._returns.values()]
         for entry in self._placed:
             if not isinstance(entry, _Input) and entry.message is not None:
-                entry.message.conversation_id = entry.message.conversation_id or conversation_id
+                recorded.append(entry.message)
+        for message in recorded:
+            message.conversation_id = message.conversation_id or conversation_id
 
     # --- what the session reads ---------------------------------------------------------------------
 

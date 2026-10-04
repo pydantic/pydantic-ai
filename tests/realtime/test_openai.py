@@ -5288,3 +5288,62 @@ async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
         *([('user', transcript)] if transcript else []),
         ('assistant', 'Sunny.'),
     ]
+
+
+@pytest.mark.anyio
+async def test_a_conversation_id_resolved_late_reaches_the_core_history() -> None:
+    """`RealtimeSession.conversation` mints the id late; the replies the session core recorded before carry it too."""
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    frames: list[dict[str, Any]] = [
+        {
+            'type': 'response.created',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+        },
+        {
+            'type': 'response.output_audio_transcript.delta',
+            'response_id': 'resp_1',
+            'item_id': 'item_a1',
+            'delta': 'Hello.',
+        },
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+        },
+    ]
+    async with session:
+        await session.send('Hi.')
+        for frame in frames:
+            ws.push(frame)
+        await session.wait_for_reply()
+        conversation = session.conversation
+
+    assert conversation.conversation_id is not None
+    assert [message.conversation_id for message in conversation.messages] == [conversation.conversation_id] * 2
+
+
+@pytest.mark.anyio
+async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> None:
+    class _FailingAudio(_QueuedWebSocket):
+        async def send(self, data: str) -> None:
+            if 'input_audio_buffer.append' in data:
+                raise OSError('gone')
+            await super().send(data)
+
+    ws = _FailingAudio()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+    async with session:
+        with pytest.raises(RealtimeError):
+            await session.send_audio(b'\x01\x00' * 100)
+        core = session._core  # pyright: ignore[reportPrivateUsage]
+        assert core is not None
+        assert not core._input_audio  # pyright: ignore[reportPrivateUsage]

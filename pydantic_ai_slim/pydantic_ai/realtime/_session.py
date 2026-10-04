@@ -86,6 +86,7 @@ from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._core import (
     AudioCleared,
     AudioSent,
+    AudioUnsent,
     Closed,
     CoreInput,
     ExchangeAbandoned,
@@ -1979,26 +1980,14 @@ class RealtimeSession:
         user_turn_was_active = self._user_turn_active
         audio_was_uncommitted = self._audio_uncommitted
         self._held_commit.has_audio = True
-        # Without input transcription, a provider that reports speech boundaries opens each turn itself,
-        # at speech start. Audio alone is then no turn: an always-on microphone streams silence between
-        # utterances, and taking it for one would record a phantom turn per response and one at close.
-        audio_opens_turn = self._input_transcription_enabled or not self._provider_segments_input
-        if audio_opens_turn and not self._anonymous_user_turn_awaiting_answer:
-            if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
-                for event in self._finalize_user():
-                    self._publish_taps(event)
-                    self._queue_put(event)
-            if not self._user_turn_active:
-                # Audio starting is the earliest sign of a user turn, and the only one on a provider that
-                # reports no speech boundaries, so it's where the turn's place in history is reserved.
-                self._open_user_turn_anchor()
-            self._user_turn_active = True
+        self._open_user_turn_for_audio()
         previous_length: int | None = None
         if self._retain_input:
             # Buffer the raw input so the finalized user turn can retain it. A per-item speech-stopped
             # boundary later cuts this into that turn's own segment (see `_segment_input_audio`); only the
             # exact split at the boundary is approximate (see `audio_retention`).
             previous_length = len(self._input_audio)
+        chunk: bytes | None = None
         try:
             # The extend lives inside the try so a chunk that is not bytes-like (possible since
             # `send_audio` accepts an async iterable of chunks) rolls the user-turn state back below
@@ -2008,13 +1997,18 @@ class RealtimeSession:
             if self._retain_input:
                 self._input_audio.extend(data)
             self._audio_uncommitted = True
+            if self._core is not None:
+                # Before the send, as for this session's own buffer: the pump can end the turn while it goes out.
+                chunk = bytes(data)
+                self._apply_core(AudioSent(data=chunk))
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
-            self._apply_core(AudioSent(data=bytes(data)))
         except BaseException as e:
             self._user_turn_active = user_turn_was_active
             self._audio_uncommitted = audio_was_uncommitted
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):
                 del self._input_audio[previous_length:]
+            if chunk is not None:
+                self._apply_core(AudioUnsent(data=chunk))
             if (
                 isinstance(e, RealtimeError)
                 and isinstance(e.__cause__, self._connection.transport_errors)
@@ -2029,6 +2023,23 @@ class RealtimeSession:
             raise
         if self._retain_input:
             self._bound_retained_audio()
+
+    def _open_user_turn_for_audio(self) -> None:
+        """Audio is going out: it opens a user turn, if audio opens turns on this connection and none is open."""
+        # Without input transcription, a provider that reports speech boundaries opens each turn itself,
+        # at speech start. Audio alone is then no turn: an always-on microphone streams silence between
+        # utterances, and taking it for one would record a phantom turn per response and one at close.
+        audio_opens_turn = self._input_transcription_enabled or not self._provider_segments_input
+        if audio_opens_turn and not self._anonymous_user_turn_awaiting_answer:
+            if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
+                for event in self._finalize_user():
+                    self._publish_taps(event)
+                    self._queue_put(event)
+            if not self._user_turn_active:
+                # Audio starting is the earliest sign of a user turn, and the only one on a provider that
+                # reports no speech boundaries, so it's where the turn's place in history is reserved.
+                self._open_user_turn_anchor()
+            self._user_turn_active = True
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""

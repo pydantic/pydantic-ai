@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.realtime._core import (
     AudioCleared,
     AudioSent,
+    AudioUnsent,
     Closed,
     CoreInput,
     ExchangeAbandoned,
@@ -771,14 +772,6 @@ class _CountingTurns(OrderedDict[str, Any]):
         type(self).walks += 1
         return super().__iter__()
 
-    def values(self) -> Any:
-        type(self).walks += 1
-        return super().values()
-
-    def items(self) -> Any:
-        type(self).walks += 1
-        return super().items()
-
 
 def test_retained_audio_check_does_not_walk_waiting_turns() -> None:
     session_core = _budget_core(1)
@@ -796,6 +789,8 @@ def test_retained_audio_check_does_not_walk_waiting_turns() -> None:
     feed(session_core, *(InputTranscript(f'Q{turn}.', item_id=f'u{turn}', is_final=True) for turn in range(20)))
 
     assert _CountingTurns.walks == 0
+    _ = list(session_core._waiting_turn_audio)  # pyright: ignore[reportPrivateUsage]
+    assert _CountingTurns.walks == 1, 'the counter sees a walk'
     # A second holds the last nine waiting turns beside the 0.1 s streamed after them.
     assert [audio for _, _, audio in _retained(session_core)] == [turn >= 11 for turn in range(20)]
 
@@ -878,7 +873,80 @@ def test_retained_audio_unbounded_keeps_it_all() -> None:
 
 
 def test_a_conversation_id_resolved_late_reaches_what_the_core_recorded() -> None:
-    session_core = feed(core(), *_answered_turn(0))
+    session_core = feed(
+        core(),
+        *_answered_turn(0),
+        InputSent(input_id=0, request=text_request('Typed.')),
+        InputAdded(input_id=0),
+        started('r9'),
+        ToolCall('call_1', tool_name='lookup', args='{}', response_id='r9'),
+        ended('r9'),
+        ToolReturned(
+            tool_call_id='call_1',
+            request=ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='ok', tool_call_id='call_1')]),
+        ),
+        # Still being said, so not recorded yet.
+        UserTurnStarted(turn_id='u9'),
+        UserTurnEnded(turn_id='u9'),
+    )
     session_core.set_conversation_id('c1')
-    feed(session_core, *_answered_turn(1))
+    feed(session_core, InputTranscript('Late.', item_id='u9', is_final=True), *_answered_turn(1))
     assert {message.conversation_id for message in session_core.all_messages()} == {'c1'}
+
+
+def test_input_audio_that_never_went_out_is_taken_back() -> None:
+    session_core = feed(
+        core(input_transcription_enabled=False, retain_input_audio=True),
+        AudioSent(data=b'\x01\x00'),
+        AudioSent(data=b'\x02\x00'),
+        AudioUnsent(data=b'\x02\x00'),
+        # Not the latest audio (or nothing at all): nothing to take back.
+        AudioUnsent(data=b'\x09\x00'),
+        AudioUnsent(data=b''),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+    )
+    [request] = session_core.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.audio is not None
+    assert part.audio.data[44:] == b'\x01\x00'
+
+
+def test_a_reconnect_replays_a_held_turns_audio_without_counting_it() -> None:
+    """The replay builds the held turn's request with its audio, which isn't retained history, so isn't counted."""
+    session_core = feed(
+        core(retain_input_audio=True, retain_audio_max_seconds=0.1),
+        AudioSent(data=_tenth_of_a_second(1)),
+        RealtimeInputSpeechStartEvent(item_id='u1'),
+        UserTurnStarted(turn_id='u1'),
+        RealtimeInputSpeechEndEvent(item_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+    )
+    [request] = session_core.replayable_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.audio is not None
+    assert session_core._audio_budget.tracked_parts == 0  # pyright: ignore[reportPrivateUsage]
+
+
+def test_retained_audio_eviction_passes_over_what_is_not_recorded() -> None:
+    """A response lost before it said anything records nothing, and a turn waiting for its transcript is come back to."""
+    session_core = feed(
+        _budget_core(0.2),
+        started('r_lost'),
+        ended('r_lost', 'lost'),
+        AudioSent(data=_tenth_of_a_second(5)),
+        RealtimeInputSpeechStartEvent(item_id='u5'),
+        UserTurnStarted(turn_id='u5'),
+        RealtimeInputSpeechEndEvent(item_id='u5'),
+        UserTurnEnded(turn_id='u5'),
+        started('r6'),
+        AudioDelta(_tenth_of_a_second(106), response_id='r6', item_id='a6'),
+        said('r6', 'Answer 6.', item_id='a6'),
+        ended('r6'),
+        # Over budget: the eviction passes the lost response, waits on the turn, and evicts the answer after it.
+        AudioSent(data=_tenth_of_a_second(7)),
+        InputTranscript('Question 5.', item_id='u5', is_final=True),
+    )
+    assert _retained(session_core) == [('user', 'Question 5.', True), ('assistant', 'Answer 6.', False)]
+    # It resumes at the turn, which is recorded now.
+    assert session_core._eviction_cursor == 1  # pyright: ignore[reportPrivateUsage]
