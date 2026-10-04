@@ -355,7 +355,7 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'send_to_logfire': 'if-token-present',
     }
     host.save_settings(config.model_copy(update=update))
-    kept = 'that name and the email you signed in with' if email else 'only that name; Logfire did not share your email'
+    kept = 'only that name and the email you signed in with' if email else 'only that name; Logfire did not share your email'
     return (
         f'Logfire traces now go to {chosen.project.label}. Its write token is saved in /keys as '
         f'{chosen.token.name}; plugin settings keep {kept}.'
