@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeAlias, TypeVar, cast
 
 from pydantic import ValidationError
 
@@ -15,7 +15,7 @@ from pydantic_ai._instructions import (
     normalize_instructions,
     validate_instruction_id_segment,
 )
-from pydantic_ai._utils import aclose_all, gather, replace_no_init
+from pydantic_ai._utils import gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
@@ -32,6 +32,7 @@ from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
+from ._lifecycle import SKIP_LIFECYCLE_ENTRY, LifecycleStack, SkipLifecycleEntry
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
@@ -50,6 +51,16 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
+
+_DepsT = TypeVar('_DepsT')
+_ValueT = TypeVar('_ValueT')
+_ResultT = TypeVar('_ResultT')
+_ErrorT = TypeVar('_ErrorT', bound=BaseException)
+_Params = ParamSpec('_Params')
+
+_GetCapabilityContext: TypeAlias = (
+    'Callable[[AbstractCapability[_DepsT], RunContext[_DepsT]], RunContext[_DepsT] | None]'
+)
 
 
 @dataclass
@@ -480,20 +491,24 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                tool_defs = await capability.prepare_tools(cap_ctx, tool_defs)
-        return tool_defs
+        return await _forward_capabilities(
+            self.capabilities,
+            ctx,
+            tool_defs,
+            lambda capability, cap_ctx, value: capability.prepare_tools(cap_ctx, value),
+        )
 
     async def prepare_output_tools(
         self,
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                tool_defs = await capability.prepare_output_tools(cap_ctx, tool_defs)
-        return tool_defs
+        return await _forward_capabilities(
+            self.capabilities,
+            ctx,
+            tool_defs,
+            lambda capability, cap_ctx, value: capability.prepare_output_tools(cap_ctx, value),
+        )
 
     def _default_run_id(self) -> str | None:
         if self._has_get_workspace:
@@ -508,9 +523,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
     ) -> None:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                await capability.before_run(cap_ctx)
+        await _notify_capabilities(
+            self.capabilities,
+            ctx,
+            lambda capability, cap_ctx: capability.before_run(cap_ctx),
+        )
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
         for capability in self.capabilities:
@@ -522,10 +539,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
-        for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                result = await capability.after_run(cap_ctx, result=result)
-        return result
+        return await _reverse_capabilities(
+            self.capabilities,
+            ctx,
+            result,
+            lambda capability, cap_ctx, value: capability.after_run(cap_ctx, result=value),
+        )
 
     async def wrap_run(
         self,
@@ -533,10 +552,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         handler: Callable[[], Awaitable[AgentRunResult[Any]]],
     ) -> AgentRunResult[Any]:
-        chain = handler
-        for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
-                chain = _make_run_wrap(capability, ctx, chain)
+        chain = _wrap_capabilities(self.capabilities, ctx, handler, _make_run_wrap)
         return await chain()
 
     async def on_run_error(
@@ -545,15 +561,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         error: BaseException,
     ) -> AgentRunResult[Any]:
-        for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_run_error(cap_ctx, error=error)
-            except BaseException as new_error:
-                error = new_error
-        raise error
+        return await _recover_capabilities(
+            self.capabilities,
+            ctx,
+            error,
+            lambda capability, cap_ctx, current: capability.on_run_error(cap_ctx, error=current),
+            BaseException,
+        )
 
     # --- Node run lifecycle hooks ---
 
@@ -563,10 +577,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any]:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                node = await capability.before_node_run(cap_ctx, node=node)
-        return node
+        return await _forward_capabilities(
+            self.capabilities,
+            ctx,
+            node,
+            lambda capability, cap_ctx, value: capability.before_node_run(cap_ctx, node=value),
+        )
 
     async def after_node_run(
         self,
@@ -575,10 +591,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
         result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                result = await capability.after_node_run(cap_ctx, node=node, result=result)
-        return result
+        return await _reverse_capabilities(
+            self.capabilities,
+            ctx,
+            result,
+            lambda capability, cap_ctx, value: capability.after_node_run(cap_ctx, node=node, result=value),
+        )
 
     async def wrap_node_run(
         self,
@@ -590,10 +608,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        chain = handler
-        for capability in reversed(self.capabilities):
-            if capability._has_wrap_node_run and _ctx_for_active_cap(capability, ctx) is not None:
-                chain = _make_node_run_wrap(capability, ctx, chain)
+        chain = _wrap_capabilities(
+            self.capabilities,
+            ctx,
+            handler,
+            _make_node_run_wrap,
+            get_context=lambda capability, run_ctx: (
+                _ctx_for_active_cap(capability, run_ctx) if capability._has_wrap_node_run else None
+            ),
+        )
         return await chain(node)
 
     async def on_node_run_error(
@@ -603,28 +626,35 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
         error: Exception,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        for capability in reversed(self.capabilities):
-            if not capability._has_on_node_run_error:
-                continue
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_node_run_error(cap_ctx, node=node, error=error)
-            except Exception as new_error:
-                error = new_error
-        raise error
+        return await _recover_capabilities(
+            self.capabilities,
+            ctx,
+            error,
+            lambda capability, cap_ctx, current: capability.on_node_run_error(cap_ctx, node=node, error=current),
+            Exception,
+            get_context=lambda capability, run_ctx: (
+                _ctx_for_active_cap(capability, run_ctx) if capability._has_on_node_run_error else None
+            ),
+        )
 
     # --- Event hooks ---
 
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
-        for capability in self.capabilities:
+        def listening_context(
+            capability: AbstractCapability[AgentDepsT], run_ctx: RunContext[AgentDepsT]
+        ) -> RunContext[AgentDepsT] | None:
             # Ask against the event a capability would actually see: an earlier capability's
             # (deprecated) replacement is what `Hooks.on_event` picks up and filters on, so testing
             # the original here would skip a listener registered for the replacement's type.
-            current = ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
-            if capability.listens_to(current) and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                await capability.on_event(cap_ctx, event=event)
+            current = run_ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
+            return _ctx_for_active_cap(capability, run_ctx) if capability.listens_to(current) else None
+
+        await _notify_capabilities(
+            self.capabilities,
+            ctx,
+            lambda capability, cap_ctx: capability.on_event(cap_ctx, event=event),
+            get_context=listening_context,
+        )
         # A `CombinedCapability` subclass can carry marked listeners of its own; dispatch them
         # after the children's, matching the combination order used by the other hooks.
         await super().on_event(ctx, event=event)
@@ -635,16 +665,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        wrapped_streams = [stream]
-        for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                stream = capability.wrap_run_event_stream(cap_ctx, stream=stream)
-                wrapped_streams.append(stream)
-        try:
-            async for event in stream:
+        def wrap(
+            capability: AbstractCapability[AgentDepsT], source: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent] | None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is None:
+                return None
+            return capability.wrap_run_event_stream(cap_ctx, stream=source)
+
+        async with LifecycleStack(self.capabilities).stream(stream, wrap) as wrapped:
+            async for event in wrapped:
                 yield event
-        finally:
-            await aclose_all(reversed(wrapped_streams))
 
     # --- Model request lifecycle hooks ---
 
@@ -653,12 +683,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                messages = request_context.messages
-                request_context = await capability.before_model_request(cap_ctx, request_context)
-                keep_mirroring(messages, request_context)
-        return request_context
+        async def transform(
+            capability: AbstractCapability[AgentDepsT], cap_ctx: RunContext[AgentDepsT], value: ModelRequestContext
+        ) -> ModelRequestContext:
+            messages = value.messages
+            value = await capability.before_model_request(cap_ctx, value)
+            keep_mirroring(messages, value)
+            return value
+
+        return await _forward_capabilities(self.capabilities, ctx, request_context, transform)
 
     async def after_model_request(
         self,
@@ -667,12 +700,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                response = await capability.after_model_request(
-                    cap_ctx, request_context=request_context, response=response
-                )
-        return response
+        return await _reverse_capabilities(
+            self.capabilities,
+            ctx,
+            response,
+            lambda capability, cap_ctx, value: capability.after_model_request(
+                cap_ctx, request_context=request_context, response=value
+            ),
+        )
 
     async def wrap_model_request(
         self,
@@ -681,10 +716,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        chain = handler
-        for capability in reversed(self.capabilities):
-            if capability._has_wrap_model_request and _ctx_for_active_cap(capability, ctx) is not None:
-                chain = _make_model_request_wrap(capability, ctx, chain)
+        chain = _wrap_capabilities(
+            self.capabilities,
+            ctx,
+            handler,
+            _make_model_request_wrap,
+            get_context=lambda capability, run_ctx: (
+                _ctx_for_active_cap(capability, run_ctx) if capability._has_wrap_model_request else None
+            ),
+        )
         return await chain(request_context)
 
     async def on_model_request_error(
@@ -694,17 +734,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        for capability in reversed(self.capabilities):
-            if not capability._has_on_model_request_error:
-                continue
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_model_request_error(cap_ctx, request_context=request_context, error=error)
-            except Exception as new_error:
-                error = new_error
-        raise error
+        return await _recover_capabilities(
+            self.capabilities,
+            ctx,
+            error,
+            lambda capability, cap_ctx, current: capability.on_model_request_error(
+                cap_ctx, request_context=request_context, error=current
+            ),
+            Exception,
+            get_context=lambda capability, run_ctx: (
+                _ctx_for_active_cap(capability, run_ctx) if capability._has_on_model_request_error else None
+            ),
+        )
 
     # --- Tool validate lifecycle hooks ---
 
@@ -716,10 +757,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: str | dict[str, Any],
     ) -> str | dict[str, Any]:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                args = await capability.before_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
-        return args
+        return await _forward_capabilities(
+            self.capabilities,
+            ctx,
+            args,
+            lambda capability, cap_ctx, value: capability.before_tool_validate(
+                cap_ctx, call=call, tool_def=tool_def, args=value
+            ),
+        )
 
     async def after_tool_validate(
         self,
@@ -729,10 +774,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                args = await capability.after_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
-        return args
+        return await _reverse_capabilities(
+            self.capabilities,
+            ctx,
+            args,
+            lambda capability, cap_ctx, value: capability.after_tool_validate(
+                cap_ctx, call=call, tool_def=tool_def, args=value
+            ),
+        )
 
     async def wrap_tool_validate(
         self,
@@ -743,10 +792,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: str | dict[str, Any],
         handler: Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
-        chain = handler
-        for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
-                chain = _make_tool_validate_wrap(capability, ctx, call, tool_def, chain)
+        chain = _wrap_capabilities(
+            self.capabilities,
+            ctx,
+            handler,
+            lambda capability, run_ctx, inner: _make_tool_validate_wrap(capability, run_ctx, call, tool_def, inner),
+        )
         return await chain(args)
 
     async def on_tool_validate_error(
@@ -758,19 +809,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: str | dict[str, Any],
         error: ValidationError | ModelRetry,
     ) -> dict[str, Any]:
-        for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_tool_validate_error(
-                    cap_ctx, call=call, tool_def=tool_def, args=args, error=error
-                )
-            except (ValidationError, ModelRetry) as new_error:
-                error = new_error
-            except Exception:
-                raise
-        raise error
+        return await _recover_capabilities(
+            self.capabilities,
+            ctx,
+            error,
+            lambda capability, cap_ctx, current: capability.on_tool_validate_error(
+                cap_ctx, call=call, tool_def=tool_def, args=args, error=current
+            ),
+            (ValidationError, ModelRetry),
+        )
 
     # --- Tool execute lifecycle hooks ---
 
@@ -782,10 +829,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                args = await capability.before_tool_execute(cap_ctx, call=call, tool_def=tool_def, args=args)
-        return args
+        return await _forward_capabilities(
+            self.capabilities,
+            ctx,
+            args,
+            lambda capability, cap_ctx, value: capability.before_tool_execute(
+                cap_ctx, call=call, tool_def=tool_def, args=value
+            ),
+        )
 
     async def after_tool_execute(
         self,
@@ -796,12 +847,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         result: Any,
     ) -> Any:
-        for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                result = await capability.after_tool_execute(
-                    cap_ctx, call=call, tool_def=tool_def, args=args, result=result
-                )
-        return result
+        return await _reverse_capabilities(
+            self.capabilities,
+            ctx,
+            result,
+            lambda capability, cap_ctx, value: capability.after_tool_execute(
+                cap_ctx, call=call, tool_def=tool_def, args=args, result=value
+            ),
+        )
 
     async def wrap_tool_execute(
         self,
@@ -812,10 +865,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         handler: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> Any:
-        chain = handler
-        for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
-                chain = _make_tool_execute_wrap(capability, ctx, call, tool_def, chain)
+        chain = _wrap_capabilities(
+            self.capabilities,
+            ctx,
+            handler,
+            lambda capability, run_ctx, inner: _make_tool_execute_wrap(capability, run_ctx, call, tool_def, inner),
+        )
         return await chain(args)
 
     async def on_tool_execute_error(
@@ -827,17 +882,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
-        for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_tool_execute_error(
-                    cap_ctx, call=call, tool_def=tool_def, args=args, error=error
-                )
-            except Exception as new_error:
-                error = new_error
-        raise error
+        return await _recover_capabilities(
+            self.capabilities,
+            ctx,
+            error,
+            lambda capability, cap_ctx, current: capability.on_tool_execute_error(
+                cap_ctx, call=call, tool_def=tool_def, args=args, error=current
+            ),
+            Exception,
+        )
 
     # --- Output validate lifecycle hooks ---
 
@@ -848,10 +901,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: RawOutput,
     ) -> RawOutput:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                output = await capability.before_output_validate(cap_ctx, output_context=output_context, output=output)
-        return output
+        return await _forward_capabilities(
+            self.capabilities,
+            ctx,
+            output,
+            lambda capability, cap_ctx, value: capability.before_output_validate(
+                cap_ctx, output_context=output_context, output=value
+            ),
+        )
 
     async def after_output_validate(
         self,
@@ -860,10 +917,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                output = await capability.after_output_validate(cap_ctx, output_context=output_context, output=output)
-        return output
+        return await _reverse_capabilities(
+            self.capabilities,
+            ctx,
+            output,
+            lambda capability, cap_ctx, value: capability.after_output_validate(
+                cap_ctx, output_context=output_context, output=value
+            ),
+        )
 
     async def wrap_output_validate(
         self,
@@ -873,10 +934,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: RawOutput,
         handler: WrapOutputValidateHandler,
     ) -> Any:
-        chain = handler
-        for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
-                chain = _make_output_validate_wrap(capability, ctx, output_context, chain)
+        chain = _wrap_capabilities(
+            self.capabilities,
+            ctx,
+            handler,
+            lambda capability, run_ctx, inner: _make_output_validate_wrap(capability, run_ctx, output_context, inner),
+        )
         return await chain(output)
 
     async def on_output_validate_error(
@@ -887,20 +950,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: RawOutput,
         error: ValidationError | ModelRetry,
     ) -> Any:
-        for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_output_validate_error(
-                    cap_ctx, output_context=output_context, output=output, error=error
-                )
-            except (ValidationError, ModelRetry) as new_error:
-                error = new_error
-            except Exception:  # pragma: no cover
-                # Defensive.
-                raise
-        raise error
+        return await _recover_capabilities(
+            self.capabilities,
+            ctx,
+            error,
+            lambda capability, cap_ctx, current: capability.on_output_validate_error(
+                cap_ctx, output_context=output_context, output=output, error=current
+            ),
+            (ValidationError, ModelRetry),
+        )
 
     # --- Output process lifecycle hooks ---
 
@@ -911,10 +969,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                output = await capability.before_output_process(cap_ctx, output_context=output_context, output=output)
-        return output
+        return await _forward_capabilities(
+            self.capabilities,
+            ctx,
+            output,
+            lambda capability, cap_ctx, value: capability.before_output_process(
+                cap_ctx, output_context=output_context, output=value
+            ),
+        )
 
     async def after_output_process(
         self,
@@ -923,10 +985,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output_context: OutputContext,
         output: Any,
     ) -> Any:
-        for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                output = await capability.after_output_process(cap_ctx, output_context=output_context, output=output)
-        return output
+        return await _reverse_capabilities(
+            self.capabilities,
+            ctx,
+            output,
+            lambda capability, cap_ctx, value: capability.after_output_process(
+                cap_ctx, output_context=output_context, output=value
+            ),
+        )
 
     async def wrap_output_process(
         self,
@@ -936,10 +1002,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: Any,
         handler: WrapOutputProcessHandler,
     ) -> Any:
-        chain = handler
-        for capability in reversed(self.capabilities):
-            if _ctx_for_active_cap(capability, ctx) is not None:
-                chain = _make_output_process_wrap(capability, ctx, output_context, chain)
+        chain = _wrap_capabilities(
+            self.capabilities,
+            ctx,
+            handler,
+            lambda capability, run_ctx, inner: _make_output_process_wrap(capability, run_ctx, output_context, inner),
+        )
         return await chain(output)
 
     async def on_output_process_error(
@@ -950,17 +1018,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         output: Any,
         error: Exception,
     ) -> Any:
-        for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_output_process_error(
-                    cap_ctx, output_context=output_context, output=output, error=error
-                )
-            except Exception as new_error:
-                error = new_error
-        raise error
+        return await _recover_capabilities(
+            self.capabilities,
+            ctx,
+            error,
+            lambda capability, cap_ctx, current: capability.on_output_process_error(
+                cap_ctx, output_context=output_context, output=output, error=current
+            ),
+            Exception,
+        )
 
     async def handle_deferred_tool_calls(
         self,
@@ -968,23 +1034,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         requests: DeferredToolRequests,
     ) -> DeferredToolResults | None:
-        accumulated = DeferredToolResults()
-        remaining = requests
-        any_handled = False
-        for capability in self.capabilities:
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            result = await capability.handle_deferred_tool_calls(cap_ctx, requests=remaining)
-            if result is None or not (result.approvals or result.calls):
-                continue
-            any_handled = True
-            accumulated.update(result)
-            remaining_or_none = remaining.remaining(result)
-            if remaining_or_none is None:
-                break
-            remaining = remaining_or_none
-        return accumulated if any_handled else None
+        async def handle(
+            capability: AbstractCapability[AgentDepsT], remaining: DeferredToolRequests
+        ) -> DeferredToolResults | None:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is None:
+                return None
+            return await capability.handle_deferred_tool_calls(cap_ctx, requests=remaining)
+
+        return await LifecycleStack(self.capabilities).settle_deferred(requests, handle)
 
 
 # --- Composition helpers ---
@@ -1159,3 +1216,95 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
     return capability.id is not None and capability.id in ctx._dispatch_active_capability_ids  # pyright: ignore[reportPrivateUsage]
+
+
+# --- Lifecycle dispatch ---
+# Adapt capabilities to the shared `LifecycleStack`. Each capability's context is resolved when its
+# turn comes, not up front, and `get_context` returning `None` skips it: by default that means a
+# deferred capability that isn't active, and callers narrow it further to capabilities that implement
+# the hook.
+
+
+async def _forward_capabilities(
+    capabilities: Sequence[AbstractCapability[_DepsT]],
+    ctx: RunContext[_DepsT],
+    value: _ValueT,
+    transform: Callable[[AbstractCapability[_DepsT], RunContext[_DepsT], _ValueT], Awaitable[_ValueT]],
+    *,
+    get_context: _GetCapabilityContext[_DepsT] = _ctx_for_active_cap,
+) -> _ValueT:
+    async def apply(capability: AbstractCapability[_DepsT], current: _ValueT) -> _ValueT:
+        if (cap_ctx := get_context(capability, ctx)) is None:
+            return current
+        return await transform(capability, cap_ctx, current)
+
+    return await LifecycleStack(capabilities).forward(value, apply)
+
+
+async def _reverse_capabilities(
+    capabilities: Sequence[AbstractCapability[_DepsT]],
+    ctx: RunContext[_DepsT],
+    value: _ValueT,
+    transform: Callable[[AbstractCapability[_DepsT], RunContext[_DepsT], _ValueT], Awaitable[_ValueT]],
+    *,
+    get_context: _GetCapabilityContext[_DepsT] = _ctx_for_active_cap,
+) -> _ValueT:
+    async def apply(capability: AbstractCapability[_DepsT], current: _ValueT) -> _ValueT:
+        if (cap_ctx := get_context(capability, ctx)) is None:
+            return current
+        return await transform(capability, cap_ctx, current)
+
+    return await LifecycleStack(capabilities).reverse(value, apply)
+
+
+async def _notify_capabilities(
+    capabilities: Sequence[AbstractCapability[_DepsT]],
+    ctx: RunContext[_DepsT],
+    notify: Callable[[AbstractCapability[_DepsT], RunContext[_DepsT]], Awaitable[None]],
+    *,
+    get_context: _GetCapabilityContext[_DepsT] = _ctx_for_active_cap,
+) -> None:
+    async def apply(capability: AbstractCapability[_DepsT]) -> None:
+        if (cap_ctx := get_context(capability, ctx)) is not None:
+            await notify(capability, cap_ctx)
+
+    await LifecycleStack(capabilities).notify(apply)
+
+
+def _wrap_capabilities(
+    capabilities: Sequence[AbstractCapability[_DepsT]],
+    ctx: RunContext[_DepsT],
+    handler: Callable[_Params, Awaitable[_ResultT]],
+    wrap: Callable[
+        [AbstractCapability[_DepsT], RunContext[_DepsT], Callable[_Params, Awaitable[_ResultT]]],
+        Callable[_Params, Awaitable[_ResultT]],
+    ],
+    *,
+    get_context: _GetCapabilityContext[_DepsT] = _ctx_for_active_cap,
+) -> Callable[_Params, Awaitable[_ResultT]]:
+    # A wrap link receives the run's own context and derives the capability's when it is called.
+    def apply(
+        capability: AbstractCapability[_DepsT], inner: Callable[_Params, Awaitable[_ResultT]]
+    ) -> Callable[_Params, Awaitable[_ResultT]]:
+        if get_context(capability, ctx) is None:
+            return inner
+        return wrap(capability, ctx, inner)
+
+    return LifecycleStack(capabilities).wrap(handler, apply)
+
+
+async def _recover_capabilities(
+    capabilities: Sequence[AbstractCapability[_DepsT]],
+    ctx: RunContext[_DepsT],
+    error: _ErrorT,
+    recover: Callable[[AbstractCapability[_DepsT], RunContext[_DepsT], _ErrorT], Awaitable[_ResultT]],
+    caught: type[_ErrorT] | tuple[type[_ErrorT], ...],
+    *,
+    get_context: _GetCapabilityContext[_DepsT] = _ctx_for_active_cap,
+) -> _ResultT:
+    async def apply(capability: AbstractCapability[_DepsT], current: _ErrorT) -> _ResultT | SkipLifecycleEntry:
+        if (cap_ctx := get_context(capability, ctx)) is None:
+            return SKIP_LIFECYCLE_ENTRY
+        return await recover(capability, cap_ctx, current)
+
+    return await LifecycleStack(capabilities).recover(error, apply, caught)
