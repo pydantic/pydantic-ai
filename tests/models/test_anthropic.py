@@ -16208,3 +16208,69 @@ async def test_anthropic_enum_member_docstrings_reach_the_wire(
             },
         }
     )
+
+
+_ANTHROPIC_MESSAGE_START = (
+    'event: message_start\ndata: {"type": "message_start", "message": {"id": "msg_1", "type": "message", '
+    '"role": "assistant", "model": "claude-sonnet-4-5", "content": [], "stop_reason": null, "stop_sequence": null, '
+    '"usage": {"input_tokens": 1, "output_tokens": 1}}}\n\n'
+)
+
+
+@pytest.mark.parametrize(
+    ('call', 'content', 'content_type'),
+    [
+        pytest.param('request', b'   ', 'application/json', id='request'),
+        pytest.param(
+            'stream',
+            (
+                _ANTHROPIC_MESSAGE_START
+                + 'event: content_block_start\ndata: {"type": "content_block_start", "index": 0, '
+                '"content_block": {"type": "text", "text": ""}}\n\n'
+                'event: content_block_delta\ndata: {"type": "content_block_delta", "index": 0, '
+                '"delta": {"type": "text_delta", "text": "Hello"}}\n\n'
+                'event: content_block_delta\ndata: {not json\n\n'
+            ).encode(),
+            'text/event-stream',
+            id='stream',
+        ),
+        pytest.param(
+            'stream',
+            b'event: content_block_start\ndata: {not json\n\n',
+            'text/event-stream',
+            id='stream-first-event',
+        ),
+        pytest.param('count_tokens', b'   ', 'application/json', id='count_tokens'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, call: str, content: bytes, content_type: str
+) -> None:
+    """A 200 response body, or a streamed event, that can't be decoded as JSON surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    async with AsyncAnthropic(
+        api_key='test',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
+            elif call == 'stream':
+                async with Agent(model).run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
+                await Agent(model).run('Hello', model_settings={'max_tokens': 1024})
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
