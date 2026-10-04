@@ -41,11 +41,23 @@ Use one fenced `diff` tree from the public entry point to the changed observable
 - Keep the shared caller prefix unmarked. Mark only diverging nodes, relevant arguments, or results.
 - Target 12 content lines inside the fence. Never exceed 20; collapse secondary branches instead.
 
-Apply a label — the repo triages and filters by them. Fetch the real list first with
-`gh label list --limit 100`, because the set changes and a guessed label silently fails to
-apply. Pick the one naming what the PR *is* (`bug`, `feature`, `docs`, `chore`, `refactor`) and
-add a topic label (`anthropic`, `MCP`, `evals`, …) where one fits:
-`gh pr edit <number> --add-label <label>`.
+### Keep labels current with the title and body
+
+Assign title, body, and label updates to the same subagent. Reconcile labels whenever the title or body changes.
+
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog` and give the subagent the printed file path.
+The checked-in catalog supplies clones and worktrees without label-read requests.
+Run the helper with `--refresh` after creating, renaming, or updating repository labels.
+Commit refreshed catalog changes.
+The helper uses at most two requests and verifies completeness before replacing the catalog.
+Never fetch labels individually or pass raw label API responses.
+
+Keep the category label aligned with the PR's purpose (`bug`, `feature`, `docs`, `chore`, `refactor`).
+Add existing topic labels for every subject materially covered by the final title, body, and diff.
+Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
+Remove topic labels only when the final scope no longer supports those labels.
+Preserve size, package, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
+Apply label additions and removals in a batch with the title/body update. Verify the resulting metadata.
 
 Labelling needs triage permission on the repo (Pydantic team members and their agents). If it
 fails, quote the actual error rather than concluding you lack permission. Size labels are
@@ -116,9 +128,9 @@ before handing the PR back or requesting merge:
 Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
 
 1. Dispatch a fresh subagent that has not worked on the PR.
-2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, and body.
-3. Ask it to check only the title and body against this section and the root `AGENTS.md`.
-4. Require either `current` or an exact replacement title and body.
-5. Apply every correction. Code changes restart the post-push loop; metadata-only changes do not.
+2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
+3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
+4. Require either `current` or exact corrections: replacement title/body and label additions/removals.
+5. Apply every correction. Committed changes restart the post-push loop; GitHub metadata-only changes do not.
 6. After a replacement, repeat the check with another fresh subagent.
 7. Hand the PR back only after the check reports `current`.

@@ -33,6 +33,8 @@ An agent that runs for many turns accumulates history: tool outputs, file reads,
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
+Compaction updates persistent run history and replaces the current request view. List request-only injectors such as `Memory` after compaction so they apply to the compacted request. Earlier request-only edits are discarded, even when `ClampOversizedMessages` has nothing to shorten.
+
 ## Triggers
 
 Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded.

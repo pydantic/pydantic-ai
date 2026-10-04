@@ -61,6 +61,8 @@ from ..messages import (
     ModelRequestPart,
     ModelResponsePart,
     MultiModalContent,
+    PartEndEvent,
+    PartStartEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
     RetryPromptPart,
@@ -78,10 +80,14 @@ from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
 from ..models.openai import (
     OpenAIResponsesModel,
     _map_api_errors as map_openai_api_errors,  # pyright: ignore[reportPrivateUsage]
+    _map_reasoning_item as map_reasoning_item,  # pyright: ignore[reportPrivateUsage]
     _map_usage as map_openai_usage,  # pyright: ignore[reportPrivateUsage]
+    _map_web_search_tool_call as map_web_search_tool_call,  # pyright: ignore[reportPrivateUsage]
+    _map_web_search_tool_param as map_web_search_tool_param,  # pyright: ignore[reportPrivateUsage]
     _resolve_openai_thinking_effort,  # pyright: ignore[reportPrivateUsage]
     _uploaded_file_to_response_content,  # pyright: ignore[reportPrivateUsage]
 )
+from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles.openai import OpenAIModelProfile, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.gateway import normalize_gateway_provider
@@ -142,11 +148,13 @@ try:
         ResponseErrorEvent,
         ResponseFailedEvent,
         ResponseFunctionToolCall,
+        ResponseFunctionWebSearch,
         ResponseIncompleteEvent,
         ResponseInputFileContentParam,
         ResponseInputImageContentParam,
         ResponseInputTextContentParam,
         ResponseOutputItemDoneEvent,
+        ResponseReasoningItem,
         ResponseStreamEvent,
     )
     from openai.types.shared import ReasoningEffort
@@ -628,6 +636,11 @@ class OpenAILiveConnection(RealtimeConnection):
         # Calls asked for and not answered yet, which a replacement session wouldn't know.
         self._open_calls: set[str] = set()
         self._reported_seconds = 0.0
+        # Numbers the native tool parts this connection reports; the session maps them to its own indexes.
+        self._native_part_index = 0
+        # The backend's reasoning since its last other output item, per delegation. A search replays into
+        # the Responses API only with the reasoning item that led to it, so that is recorded with it.
+        self._pending_reasoning: dict[str | None, list[ResponseReasoningItem]] = {}
 
     @property
     def model_name(self) -> str | None:
@@ -1171,6 +1184,7 @@ class OpenAILiveConnection(RealtimeConnection):
             ]
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
+            self._pending_reasoning.pop(delegation_id, None)
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
             if delegation is not None:
                 if not events:
@@ -1179,7 +1193,15 @@ class OpenAILiveConnection(RealtimeConnection):
             if not isinstance(event, ResponseCompletedEvent):
                 events.append(_delegation_stopped(event))
             return events
-        if not isinstance(event, ResponseOutputItemDoneEvent) or not isinstance(event.item, ResponseFunctionToolCall):
+        if not isinstance(event, ResponseOutputItemDoneEvent):
+            return []
+        if isinstance(event.item, ResponseReasoningItem):
+            self._pending_reasoning.setdefault(delegation_id, []).append(event.item)
+            return []
+        reasoning = self._pending_reasoning.pop(delegation_id, [])
+        if isinstance(event.item, ResponseFunctionWebSearch):
+            return self._map_web_search(event.item, reasoning)
+        if not isinstance(event.item, ResponseFunctionToolCall):
             return []
         call = event.item
         self._open_calls.add(call.call_id)
@@ -1202,6 +1224,29 @@ class OpenAILiveConnection(RealtimeConnection):
                 response_usage_follows=delegation is not None,
             ),
         ]
+
+    def _map_web_search(
+        self, item: ResponseFunctionWebSearch, reasoning: list[ResponseReasoningItem]
+    ) -> list[RealtimeCodecEvent]:
+        """Record a search the backend ran with the native `web_search` tool, as a standard run would.
+
+        The call and its result arrive together, once the search is done, so both parts start and end
+        here. The session folds them into the response they belong to, ahead of what is spoken. The
+        reasoning that led to the search goes first, as `ThinkingPart`s: OpenAI refuses to replay a search
+        without it, so without them this history couldn't be continued by an `OpenAIResponsesModel` agent.
+        """
+        parts: list[ModelResponsePart] = [
+            thinking
+            for reasoning_item in reasoning
+            for thinking in map_reasoning_item(reasoning_item, self._provider_name)
+        ]
+        parts.extend(map_web_search_tool_call(item, self._provider_name))
+        events: list[RealtimeCodecEvent] = []
+        for part in parts:
+            index = self._native_part_index
+            self._native_part_index += 1
+            events.extend((PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)))
+        return events
 
     @staticmethod
     def _response_ended_without_usage() -> list[RealtimeCodecEvent]:
@@ -1532,6 +1577,11 @@ class OpenAILiveModel(RealtimeModel):
             )
         self._provider = provider
 
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Web search, which the delegated backend runs: the only native tool Live lets it have."""
+        return frozenset({WebSearchTool})
+
     @property
     def client(self) -> AsyncOpenAI:
         """The underlying [`AsyncOpenAI`](https://github.com/openai/openai-python) client from the provider."""
@@ -1580,6 +1630,7 @@ class OpenAILiveModel(RealtimeModel):
         tools: list[ToolDefinition] | None,
         messages: Sequence[ModelMessage],
         settings: OpenAILiveModelSettings,
+        native_tools: Sequence[AbstractNativeTool],
     ) -> dict[str, Any]:
         delegation_settings = settings.get('openai_live_delegation', OpenAILiveResponsesDelegation())
         backend_instructions = '\n\n'.join(
@@ -1598,8 +1649,12 @@ class OpenAILiveModel(RealtimeModel):
                 'be set: the backend would apply it to every response, including the one after the tool '
                 "results, and never answer. Use `'auto'`, `'none'`, or `ToolOrOutput` to limit the tools instead."
             )
-        if advertised_tools:
-            responses['tools'] = [tool_def_to_live(tool) for tool in advertised_tools]
+        # The backend runs native tools too, so they go to it rather than to the Live model. Web search
+        # takes the same options as on a direct Responses call, and Live passes them through unchecked.
+        backend_tools = [tool_def_to_live(tool) for tool in advertised_tools]
+        backend_tools += [map_web_search_tool_param(tool) for tool in native_tools if isinstance(tool, WebSearchTool)]
+        if backend_tools:
+            responses['tools'] = backend_tools
         if tool_choice is not None:
             # The backend takes the same forms as the Realtime API. A restriction is applied by trimming
             # the advertised tools above, leaving its mode to send.
@@ -1711,8 +1766,13 @@ class OpenAILiveModel(RealtimeModel):
         """
         settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
         self._reject_unsupported(settings)
+        # `RealtimeModel.answer_webrtc_offer` carries no native tools, so a browser call has no web search yet.
         session_config = self._session_config(
-            instructions=instructions or '', tools=list(tools) if tools else None, messages=[], settings=settings
+            instructions=instructions or '',
+            tools=list(tools) if tools else None,
+            native_tools=[],
+            messages=[],
+            settings=settings,
         )
         # WebRTC negotiates the audio format on the media transport, and Live rejects one set here.
         del session_config['audio']['format']
@@ -1809,6 +1869,7 @@ class OpenAILiveModel(RealtimeModel):
             tools=model_request_parameters.function_tools,
             messages=messages,
             settings=settings,
+            native_tools=model_request_parameters.native_tools,
         )
 
         cm: AbstractAsyncContextManager[ClientConnection] | None = None

@@ -21,7 +21,7 @@ import warnings
 from dataclasses import dataclass, field, replace
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelResponse, NativeToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -123,7 +123,13 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     response's `(provider_name, model_name)`. When a later request for the same key reads back
     fewer than `collapse_ratio` of that established prefix, it emits a `CacheBustWarning` once
     and then stays quiet about that collapse until a healthy read-back re-stabilizes the cache,
-    so a sustained collapse warns once rather than on every subsequent request.
+    so a sustained collapse warns once rather than on every subsequent request. Native tool
+    responses may sum cache reads across internal model calls. The monitor can still warn on a
+    low total, but keeps the earlier prefix and waits for an ordinary request to confirm recovery.
+    If the provider reports one call to the main model and no compaction, the response uses normal
+    cache accounting. Gemini responses with separate tool-use prompt accounting do the same. These
+    responses can establish a larger prefix, and a healthy cache read confirms recovery so a later
+    collapse can warn again.
 
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
     that continues an earlier one via `message_history` -- including history that was
@@ -266,6 +272,19 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
             established, prev_seen, prev_run, collapsed = 0, now, ctx.run_id, False
         else:
             established, prev_seen, prev_run, collapsed = entry.prefix, entry.seen_at, entry.run_id, entry.collapsed
+        # Native tools can sum cache reads across passes, so the sum cannot establish a prefix. A
+        # separate tool-use prompt counter leaves cache reads scoped to one prompt; otherwise a
+        # native call is a conservative aggregation signal when no pass count is reported.
+        # Iteration counts come from Anthropic's _extract_usage_details; 'tool_use_prompt_tokens' comes
+        # from Google's _usage_metadata_as_usage.
+        passes = usage.details.get('message_iterations')
+        if passes is None:
+            aggregated_cache_usage = 'tool_use_prompt_tokens' not in usage.details and any(
+                isinstance(part, NativeToolCallPart) for part in response.parts
+            )
+        else:
+            # Compaction contributes to cache totals; advisor usage is excluded.
+            aggregated_cache_usage = passes + usage.details.get('compaction_iterations', 0) > 1
         is_collapse = established >= self.min_prefix_tokens and read < established * self.collapse_ratio
         # Warn on the transition into a collapse only; the latch keeps a sustained collapse -- and a
         # provider that keeps writing an unread cache (read stays low, write stays high) -- to one
@@ -289,9 +308,12 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
                 CacheBustWarning,
                 stacklevel=2,
             )
-        conversation.keys[key] = _KeyState(
-            max(established, read + usage.cache_write_tokens), now, ctx.run_id, is_collapse
-        )
+        if aggregated_cache_usage:
+            conversation.keys[key] = _KeyState(established, now, prev_run, collapsed or is_collapse)
+        else:
+            conversation.keys[key] = _KeyState(
+                max(established, read + usage.cache_write_tokens), now, ctx.run_id, is_collapse
+            )
         conversation.seen_at = now
         if state.conversation_id is not None:
             # The sweep may have dropped this conversation while the run sat in a long tool call;

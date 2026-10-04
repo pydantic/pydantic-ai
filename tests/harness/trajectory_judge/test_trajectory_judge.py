@@ -774,6 +774,30 @@ class TestTranscript:
         transcript = seen[0].split('<trajectory>\n', 1)[1].rsplit('\n</trajectory>', 1)[0]
         assert transcript == '[...]\nuser: Fix the login bug only.\nassistant: recent-marker'
 
+    async def test_without_a_run_id_the_whole_history_is_this_run(self) -> None:
+        """A context with no `run_id` cannot tell earlier runs apart, so the pinned request is the first prompt."""
+        seen: list[str] = []
+        done = asyncio.Event()
+        cap = TrajectoryJudge(model=_steer_model(seen=seen), every=1, window=100, on_verdict=lambda _: done.set())
+        ctx = _ctx()
+        ctx.run_id = None
+        run_cap = await cap.for_run(ctx)
+
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Write the release notes.')], run_id='run-1'),
+            ModelResponse(parts=[TextPart('o' * 1000)], run_id='run-1'),
+            ModelRequest(parts=[UserPromptPart('Fix the login bug only.')], run_id='run-2'),
+        ]
+        await run_cap.after_model_request(
+            ctx, request_context=_request_context(messages), response=_text_response('recent-marker')
+        )
+        await asyncio.wait_for(done.wait(), timeout=_WAIT)
+
+        transcript = seen[0].split('<trajectory>\n', 1)[1].rsplit('\n</trajectory>', 1)[0]
+        assert transcript.startswith('user: Write the release notes.\n[...]\nooo')
+        assert transcript.endswith('ooo\nuser: Fix the login bug only.\nassistant: recent-marker')
+        assert len(transcript) == 100 * 4
+
     async def test_earlier_runs_stay_in_order_when_they_fit(self) -> None:
         seen: list[str] = []
         done = asyncio.Event()
