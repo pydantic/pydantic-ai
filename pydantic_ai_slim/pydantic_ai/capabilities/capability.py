@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal, overload
+from typing import Any, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
@@ -15,7 +15,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
-from pydantic_ai.messages import CapabilityInstructionSource, InstructionId
+from pydantic_ai.messages import CapabilityInstructionSource, InstructionChangePolicy, InstructionId
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -328,7 +328,7 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None, on_change: Literal['rewrite', 'append'] = 'rewrite'
+        self, /, *, name: str | None = None, on_change: InstructionChangePolicy = 'rewrite'
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -337,7 +337,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         /,
         *,
         name: str | None = None,
-        on_change: Literal['rewrite', 'append'] = 'rewrite',
+        on_change: InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 

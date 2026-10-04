@@ -2350,7 +2350,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None, on_change: Literal['rewrite', 'append'] = 'rewrite'
+        self, /, *, name: str | None = None, on_change: _messages.InstructionChangePolicy = 'rewrite'
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -2359,7 +2359,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
-        on_change: Literal['rewrite', 'append'] = 'rewrite',
+        on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function.
 

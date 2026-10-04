@@ -4,13 +4,14 @@ import warnings
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, replace
-from typing import Generic, Literal
+from typing import Generic
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     InstructionBaselineEntry,
+    InstructionChangePolicy,
     InstructionDeltaPart,
     InstructionId,
     InstructionPart,
@@ -64,7 +65,7 @@ class SourcedInstruction(Generic[AgentDepsT]):
     name: str | None = None
     id: InstructionId | None = None
     dynamic: bool = False
-    on_change: Literal['rewrite', 'append'] = 'rewrite'
+    on_change: InstructionChangePolicy = 'rewrite'
 
     __repr__ = dataclasses_no_defaults_repr
 

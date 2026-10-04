@@ -1975,6 +1975,10 @@ SerializedInstructionId: TypeAlias = Annotated[
 """An [`InstructionId`][pydantic_ai.messages.InstructionId] that persists as the string it renders to."""
 
 
+InstructionChangePolicy: TypeAlias = Literal['rewrite', 'append']
+"""How changes to an instruction block are delivered; see [`InstructionPart.on_change`][pydantic_ai.messages.InstructionPart.on_change]."""
+
+
 @dataclass(repr=False)
 class InstructionPart:
     """A single instruction part with metadata about its origin.
@@ -1998,7 +2002,7 @@ class InstructionPart:
     or toolset `get_instructions()` methods.
     """
 
-    on_change: Literal['rewrite', 'append'] = 'rewrite'
+    on_change: InstructionChangePolicy = 'rewrite'
     """How changes to this part are delivered.
 
     `'rewrite'` replaces the instruction prefix on each request. `'append'` preserves the initial
