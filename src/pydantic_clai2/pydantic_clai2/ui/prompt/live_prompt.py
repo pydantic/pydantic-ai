@@ -563,8 +563,15 @@ def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:
 
 
 def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]:
-    """What kind of input was submitted, and its length; a registered command's name, never the prompt's words."""
+    """What kind of input was submitted, its length, and, where the sink records content, what was typed.
+
+    A prompt is recorded as `prompt` and a `!` line as `shell_command`. A command records only its registered
+    name, never its arguments: any plugin can add a command, and arguments such as `/plugins add` settings JSON
+    or an MCP server's headers can hold a secret CLAI cannot recognize.
+    """
     if is_command_input(text):
         name = text.split(maxsplit=1)[0].removeprefix('/')
         return {'kind': 'command', 'command': name if name in commands else 'unknown', 'chars': len(text)}
-    return {'kind': 'shell' if shell_command(text) is not None else 'prompt', 'chars': len(text)}
+    if (shell := shell_command(text)) is not None:
+        return {'kind': 'shell', 'chars': len(text), **telemetry.content(shell_command=shell)}
+    return {'kind': 'prompt', 'chars': len(text), **telemetry.content(prompt=text)}

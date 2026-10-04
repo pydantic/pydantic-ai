@@ -1734,8 +1734,11 @@ Two more options choose where telemetry goes and what it covers. `token` names a
 rather than falling back. `ui_events` (default `false`) adds spans and logs in the
 `clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
-clear, and resume. They record names and listed choices, never prompt text, typed
-values, or secrets.
+clear, and resume. They record names and listed choices, never typed values or
+secrets. The one exception: while `include_content` is on, a submitted prompt also
+carries its text as `prompt`, and a `!` line its command as `shell_command`
+(scrubbed as usual), each cut to 64,000 characters. Slash-command arguments are
+never recorded, since they can hold secrets such as `/plugins add` settings.
 
 ### Setting up where traces go
 
