@@ -77,6 +77,18 @@ model's. Marks are kept per key rather than reset, so switching back to an earli
 model still compares against that model's prefix, and its retention window is timed
 from its own previous request, not whatever ran in between.
 
+## Native tool calls
+
+A response that ran a native tool, such as web search or code execution, may report
+cache reads summed over the provider's internal model calls, so the total can be
+several times the prefix the next request reads back. Such a response is still
+judged, so a low total can warn, but it doesn't raise the established prefix or
+confirm that a collapsed cache recovered; the monitor keeps the earlier prefix and
+waits for an ordinary request. A response that reports a single call to the main
+model and no compaction, or Gemini's separate tool-use prompt count, is ordinary
+cache accounting and updates the prefix as usual. Instrumentation's prompt-cache
+health attributes treat these responses the same way.
+
 ## Conversations
 
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run

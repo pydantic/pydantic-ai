@@ -632,17 +632,92 @@ class _OpenAIPromptCacheBreakpoint(TypedDict):
     mode: Literal['explicit']
 
 
+_LEADING_CACHE_POINT_ERROR = (
+    'CachePoint cannot be the first content in a user message - '
+    'there must be previous content to attach the cache breakpoint to.'
+)
+
+
+_CHAT_BREAKPOINT_PART_TYPES = frozenset({'text', 'image_url', 'input_audio', 'file'})
+"""Chat Completions content part types that accept a `prompt_cache_breakpoint`."""
+
+_RESPONSES_BREAKPOINT_PART_TYPES = frozenset({'input_text', 'input_image', 'input_file'})
+"""Responses input content types that accept a `prompt_cache_breakpoint`."""
+
+
 def _add_openai_prompt_cache_breakpoint(
     content: Sequence[ChatCompletionContentPartParam | responses.ResponseInputContentParam],
 ) -> None:
-    if not content:
-        raise UserError(
-            'CachePoint cannot be the first content in a user message - '
-            'there must be previous content to attach the cache breakpoint to.'
-        )
+    """Mark the last content part as a cache breakpoint.
 
+    A `CachePoint` that opens a user message has nothing in that message to attach to. The caller
+    then appends an empty text part for it to sit on, which `_move_leading_cache_breakpoints` moves
+    onto the previous message once the whole request is mapped: "cache everything up to here" means
+    the same there, and it's what Anthropic and Bedrock do.
+    """
     cache_breakpoint: _OpenAIPromptCacheBreakpoint = {'mode': 'explicit'}
     content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
+
+
+def _leading_cache_breakpoint(item: dict[str, Any]) -> _OpenAIPromptCacheBreakpoint | None:
+    """The breakpoint a leading `CachePoint` left on an empty placeholder opening this user message, if any."""
+    content = item.get('content')
+    if item.get('role') != 'user' or not isinstance(content, list) or not content:
+        return None
+    first = cast('dict[str, Any]', content[0])
+    if first.get('type') in ('text', 'input_text') and first.get('text') == '' and 'prompt_cache_breakpoint' in first:
+        return cast(_OpenAIPromptCacheBreakpoint, first['prompt_cache_breakpoint'])
+    return None
+
+
+def _move_leading_cache_breakpoints(
+    items: list[chat.ChatCompletionMessageParam] | list[responses.ResponseInputItemParam],
+    *,
+    text_type: Literal['text', 'input_text'],
+) -> None:
+    """Move the breakpoint a leading `CachePoint` left on an empty placeholder onto the previous item.
+
+    The breakpoint goes on the last content part of the closest earlier item that can carry it: a
+    tool result, a system, user or (on Chat Completions) assistant message, or a function call
+    output. A string body becomes a single text part so it can carry the marker; the text is
+    unchanged. Responses assistant output (`output_text`, `refusal`) can't carry a breakpoint, so
+    those items are skipped. Raises `UserError` when there's no earlier content at all, as Anthropic does.
+    """
+    index = 0
+    while index < len(items):
+        item = cast('dict[str, Any]', items[index])
+        breakpoint_value = _leading_cache_breakpoint(item)
+        if breakpoint_value is not None:
+            if not _attach_cache_breakpoint_before(items, index, breakpoint_value, text_type=text_type):
+                raise UserError(_LEADING_CACHE_POINT_ERROR)
+            content = cast('list[Any]', item['content'])
+            if len(content) == 1:
+                del items[index]
+                continue
+            item['content'] = content[1:]
+        index += 1
+
+
+def _attach_cache_breakpoint_before(
+    items: list[chat.ChatCompletionMessageParam] | list[responses.ResponseInputItemParam],
+    index: int,
+    breakpoint_value: _OpenAIPromptCacheBreakpoint,
+    *,
+    text_type: Literal['text', 'input_text'],
+) -> bool:
+    breakpoint_part_types = _CHAT_BREAKPOINT_PART_TYPES if text_type == 'text' else _RESPONSES_BREAKPOINT_PART_TYPES
+    for previous in reversed(items[:index]):
+        item = cast('dict[str, Any]', previous)
+        key = 'output' if item.get('type') == 'function_call_output' else 'content'
+        body = item.get(key)
+        # A Responses assistant message's text is output (`output_text`), which can't carry a breakpoint.
+        if isinstance(body, str) and body and not (text_type == 'input_text' and item.get('role') == 'assistant'):
+            item[key] = [{'type': text_type, 'text': body, 'prompt_cache_breakpoint': breakpoint_value}]
+            return True
+        if isinstance(body, list) and body and cast('dict[str, Any]', body[-1]).get('type') in breakpoint_part_types:
+            cast('dict[str, Any]', body[-1])['prompt_cache_breakpoint'] = breakpoint_value
+            return True
+    return False
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -1735,6 +1810,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
+        # After instructions are inserted and system messages merged: the breakpoint may land on a system
+        # message, whose string content it turns into a list, and the merge only joins strings.
+        _move_leading_cache_breakpoints(openai_messages, text_type='text')
         return openai_messages
 
     @staticmethod
@@ -1965,6 +2043,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         `cache_control` breakpoint on the preceding part).
         """
         if isinstance(item, CachePoint) and self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            if not content:
+                content.append(ChatCompletionContentPartTextParam(text='', type='text'))
             _add_openai_prompt_cache_breakpoint(content)
         else:
             mapped_item = await self._map_content_item(item)
@@ -3802,6 +3882,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 )
             else:
                 assert_never(message)
+        _move_leading_cache_breakpoints(openai_messages, text_type='input_text')
         instructions = get_instructions(messages, model_request_parameters) or OMIT
         return instructions, openai_messages
 
@@ -3868,6 +3949,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     content.append(self._map_uploaded_file_to_response_content(item))  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, CachePoint):
                     if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+                        if not content:
+                            content.append(responses.ResponseInputTextParam(text='', type='input_text'))
                         _add_openai_prompt_cache_breakpoint(content)
                 elif is_multi_modal_content(item):
                     content.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'user prompts'))  # pyright: ignore[reportArgumentType]
@@ -3986,7 +4069,11 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
-    _vendor_part_id: str = field(default='content', init=False)
+    # Content segments are anonymous; reasoning segments also carry their field identity.
+    _content_generation: int = field(default=0, init=False)
+    _reasoning_generation: int = field(default=0, init=False)
+    _held_text_whitespace: str = field(default='', init=False)
+    _awaiting_text_after_reasoning: bool = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
@@ -4097,6 +4184,18 @@ class OpenAIStreamedResponse(StreamedResponse):
             self._map_thinking_delta(choice), self._map_text_delta(choice), self._map_tool_call_delta(choice)
         )
 
+    def _advance_part_boundary(self, source: Literal['reasoning', 'content', 'tool']) -> None:
+        if source != 'reasoning':
+            self._reasoning_generation += 1
+            self._awaiting_text_after_reasoning = False
+
+        # Keep the content key while it names a ThinkingPart so closing tags retain their context.
+        if source != 'content' and isinstance(
+            self._parts_manager.get_part_by_vendor_id(('content', self._content_generation)), TextPart
+        ):
+            self._content_generation += 1
+            self._awaiting_text_after_reasoning = source == 'reasoning'
+
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps thinking delta content to events.
 
@@ -4127,12 +4226,15 @@ class OpenAIStreamedResponse(StreamedResponse):
                     UserWarning,
                 )
                 continue
-            yield from self._parts_manager.handle_thinking_delta(
-                vendor_part_id=field_name,
+            for event in self._parts_manager.handle_thinking_delta(
+                vendor_part_id=('reasoning', field_name, self._reasoning_generation),
                 id=field_name,
                 content=reasoning,
                 provider_name=self.provider_name,
-            )
+            ):
+                if isinstance(event, PartStartEvent):
+                    self._advance_part_boundary('reasoning')
+                yield event
             break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
@@ -4143,16 +4245,29 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response
         content = choice.delta.content
         if content:
+            emitted = False
             for event in self._parts_manager.handle_text_delta(
-                vendor_part_id=self._vendor_part_id,
+                vendor_part_id=('content', self._content_generation),
                 content=content,
                 thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                 ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
             ):
-                if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
-                    event.part.id = 'content'
-                    event.part.provider_name = self.provider_name
+                emitted = True
+                if isinstance(event, PartStartEvent):
+                    self._advance_part_boundary('content')
+                    if isinstance(event.part, ThinkingPart):
+                        event.part.id = 'content'
+                        event.part.provider_name = self.provider_name
+                    elif isinstance(event.part, TextPart) and self._held_text_whitespace:
+                        event.part.content = self._held_text_whitespace + event.part.content
+                        self._held_text_whitespace = ''
                 yield event
+            if not emitted and content.isspace() and self._awaiting_text_after_reasoning:
+                # `ignore_streamed_leading_whitespace` dropped the whitespace-only start of text right after reasoning
+                # that interrupted a text part. Hold it for the next text part, even across a tool call or `<think>`
+                # part, so the joined text keeps the separator; if no text follows, it stays dropped. Leading
+                # whitespace anywhere else is dropped as usual.
+                self._held_text_whitespace += content
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
@@ -4167,10 +4282,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                 tool_call_id=dtc.id,
             )
             if maybe_event is not None:
-                if isinstance(maybe_event, PartStartEvent) and isinstance(
-                    self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
-                ):
-                    self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
+                if isinstance(maybe_event, PartStartEvent):
+                    self._advance_part_boundary('tool')
                 yield maybe_event
 
     def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:

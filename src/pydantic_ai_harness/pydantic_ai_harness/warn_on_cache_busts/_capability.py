@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Literal
+from functools import partial
+from typing import Any, Literal
 
 from pydantic_ai._cache_health import (
     MIN_MISSED_RATIO,
@@ -113,6 +114,33 @@ class CacheBustWarning(UserWarning):
     missed_tokens: int
     """Previously established tokens that were not read back."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: Literal['unexpected', 'unknown'],
+        established_tokens: int,
+        cache_read_tokens: int,
+        missed_tokens: int,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.established_tokens = established_tokens
+        self.cache_read_tokens = cache_read_tokens
+        self.missed_tokens = missed_tokens
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # `BaseException.__reduce__` rebuilds from `args` alone, which can't supply the keyword-only fields
+        # that `copy` and `pickle` need to call `__init__` again.
+        rebuild = partial(
+            type(self),
+            reason=self.reason,
+            established_tokens=self.established_tokens,
+            cache_read_tokens=self.cache_read_tokens,
+            missed_tokens=self.missed_tokens,
+        )
+        return rebuild, self.args
+
 
 @dataclass
 class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
@@ -123,21 +151,27 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     has established (`cache_read_tokens + cache_write_tokens`, a high-water mark), keyed by the
     response's `(provider_name, provider_url, model_name)`. When a later request for the same
     key falls short of that established prefix by more than `min_missed_ratio` of it and by at
-    least `min_missed_tokens`, the collapse is classified against the provider's cache retention window, and a `CacheBustWarning` is
-    emitted unless the window explains it. The mark then re-baselines to what the collapsing
-    request established, and the warning stays quiet about that collapse until a healthy
-    read-back re-stabilizes the cache, so a sustained collapse warns once rather than on every
-    subsequent request.
+    least `min_missed_tokens`, the collapse is classified against the provider's cache retention
+    window, and a `CacheBustWarning` is emitted unless the window explains it. The mark then
+    re-baselines to what the collapsing request established, and the warning stays quiet about
+    that collapse until a healthy read-back re-stabilizes the cache, so a sustained collapse
+    warns once rather than on every subsequent request.
 
     The retention window is the one the request's settings ask for (such as
     `anthropic_cache='1h'`), as resolved by `Model.resolve_cache_retention()`, or else the
     provider's documented `ModelProfile.default_cache_retention`, extended by any `CachePoint`
     TTLs. A collapse after the window elapsed is a cache expiry (`ttl_expired`), not a moved
     prefix, and doesn't warn; nor does one explained by provider-native compaction
-    (`compacted`), which replaces the history before a `CompactionPart` with its summary. When the provider publishes no retention window the collapse
-    can't be attributed, so it warns with `reason='unknown'`. A response reporting no cache
-    usage at all doesn't warn: it looks the same whether caching was off for that request or
-    the cache fully missed.
+    (`compacted`), which replaces the history before a `CompactionPart` with its summary. When
+    the provider publishes no retention window the collapse can't be attributed, so it warns
+    with `reason='unknown'`. A response reporting no cache usage at all doesn't warn: it looks
+    the same whether caching was off for that request or the cache fully missed.
+
+    A response whose usage sums cache reads over several internal model calls, such as one
+    that ran a native tool like web search, is still judged, so a low total can warn, but it
+    doesn't raise the mark or confirm recovery: its total isn't a prefix the next request can
+    read back. A response that reports a single call to the main model, or Gemini's separate
+    tool-use prompt count, is ordinary cache accounting and updates the mark as usual.
 
     This is the same detector, with the same classification, that Pydantic AI's instrumentation
     uses for its `pydantic_ai.cache.*` span attributes. Its `pydantic_ai.cache.collapse` span
@@ -320,13 +354,12 @@ def _bust_warning(collapse: CacheCollapse, *, step: int, run_id: str | None) -> 
             f'~{collapse.retention.total_seconds():.0f}s cache retention window, so the cacheable prefix moved '
             'between requests.'
         )
-    warning = CacheBustWarning(
+    return CacheBustWarning(
         f'Cache hit collapsed at model request {step}: read {collapse.cache_read_tokens} cached tokens but '
         f'{origin} established ~{previous.established_tokens} (~{collapse.missed_tokens} tokens re-sent uncached). '
-        f'{cause}\n\nTo silence or escalate:\n\n{_SILENCE_HINT}\n'
+        f'{cause}\n\nTo silence or escalate:\n\n{_SILENCE_HINT}\n',
+        reason=reason,
+        established_tokens=previous.established_tokens,
+        cache_read_tokens=collapse.cache_read_tokens,
+        missed_tokens=collapse.missed_tokens,
     )
-    warning.reason = reason
-    warning.established_tokens = previous.established_tokens
-    warning.cache_read_tokens = collapse.cache_read_tokens
-    warning.missed_tokens = collapse.missed_tokens
-    return warning

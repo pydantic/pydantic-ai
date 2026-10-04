@@ -49,6 +49,10 @@ This is the detector Pydantic AI's instrumentation uses for its [prompt-cache he
 
 Keying per provider, endpoint, and model means a mid-run model switch does not warn: a `FallbackModel` failover or a per-step model change uses a different cache key, so the monitor starts a fresh mark for it instead of comparing against the previous model's. Marks are kept per key rather than reset, so switching back to an earlier model still compares against that model's prefix, and its retention window is timed from its own previous request, not whatever ran in between.
 
+## Native tool calls
+
+A response that ran a native tool, such as web search or code execution, may report cache reads summed over the provider's internal model calls, so the total can be several times the prefix the next request reads back. Such a response is still judged, so a low total can warn, but it doesn't raise the established prefix or confirm that a collapsed cache recovered; the monitor keeps the earlier prefix and waits for an ordinary request. A response that reports a single call to the main model and no compaction, or Gemini's separate tool-use prompt count, is ordinary cache accounting and updates the prefix as usual. Instrumentation's prompt-cache health attributes treat these responses the same way.
+
 ## Conversations
 
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run that continues an earlier one via `message_history` -- including history that was serialized and loaded back, which carries the conversation id with it -- is judged against the prefix the earlier run established, so the first request of the next turn is checked against what the previous turn cached. That is where a moved prefix most often hides: history rewritten between turns, or a tool or instruction that differs from one turn to the next. A run that starts a new conversation (no history, or `conversation_id='new'`) starts from a clean mark. The warning says whether the mark it compared against came from this run or from an earlier run of the conversation.
