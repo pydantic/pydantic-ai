@@ -97,6 +97,45 @@ class TestCompactionTokenRetention:
         assert result[-1] is history[-1]
         assert len(result) == 1 + int(isinstance(strategy, SummarizingCompaction))
 
+    @pytest.mark.parametrize('empty', [False, True])
+    async def test_zero_token_history_is_unchanged(self, strategy_type: StrategyType, empty: bool) -> None:
+        history: list[ModelMessage] = [] if empty else [response('a'), response('b')]
+        assert estimate_token_count(history) == 0
+        snapshot = ModelMessagesTypeAdapter.dump_json(history)
+        usage = RunUsage()
+
+        result = await compact_now(
+            strategy_type(max_messages=1, keep_tokens=0), history, model=TestModel(), usage=usage
+        )
+
+        assert result == history
+        assert ModelMessagesTypeAdapter.dump_json(result) == snapshot
+        assert usage.requests == 0
+
+    async def test_zero_token_mode_keeps_a_zero_token_tail(self, strategy_type: StrategyType) -> None:
+        history: list[ModelMessage] = [response('discard'), response('also discard'), response('')]
+        strategy = strategy_type(max_messages=1, keep_tokens=0, tokenizer=len, preserve_first_user_message=False)
+
+        result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
+
+        assert result[-1] is history[-1]
+        assert len(result) == 1 + int(isinstance(strategy, SummarizingCompaction))
+
+    async def test_zero_token_mode_still_preserves_tool_pairs(self, strategy_type: StrategyType) -> None:
+        history: list[ModelMessage] = [
+            response('discard'),
+            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call')]),
+            ModelRequest(parts=[ToolReturnPart('lookup', 'result', tool_call_id='call')]),
+        ]
+        suffix = history[1:]
+        snapshot = ModelMessagesTypeAdapter.dump_json(suffix)
+        strategy = strategy_type(max_messages=1, keep_tokens=0, tokenizer=len, preserve_first_user_message=False)
+
+        result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
+
+        assert_original_suffix(result, suffix, snapshot)
+        assert len(result) == len(suffix) + int(isinstance(strategy, SummarizingCompaction))
+
     @pytest.mark.parametrize('retry', [False, True])
     async def test_reused_tool_id_only_retains_the_latest_call(self, strategy_type: StrategyType, retry: bool) -> None:
         reply = (
@@ -389,6 +428,38 @@ class TestCompactionTokenRetention:
 
 
 class TestSummarizingCompactionTokenRetention:
+    @pytest.mark.parametrize('user_text', ['a', 'nonzero user text'])
+    @pytest.mark.parametrize('keep_messages', [0, 3])
+    async def test_zero_budget_user_copies_keep_legacy_behavior(self, user_text: str, keep_messages: int) -> None:
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('older nonzero request')]),
+            ModelRequest(parts=[UserPromptPart(user_text)]),
+            response('latest response'),
+        ]
+        strategy: SummarizingCompaction[None] = SummarizingCompaction(
+            max_messages=1, keep_tokens=0, keep_messages=keep_messages, keep_user_messages=True
+        )
+
+        result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
+
+        kept_text = [part.content for message in result for part in message.parts if isinstance(part, UserPromptPart)]
+        assert kept_text == (['a'] if keep_messages and user_text == 'a' else [])
+        assert len(result) == 1 + len(kept_text)
+        assert history[-1] not in result
+
+    async def test_message_count_mode_with_no_older_users_keeps_the_tail(self) -> None:
+        history: list[ModelMessage] = [response('discard'), response('recent'), response('newest')]
+        suffix = history[1:]
+        snapshot = ModelMessagesTypeAdapter.dump_json(suffix)
+        strategy: SummarizingCompaction[None] = SummarizingCompaction(
+            max_messages=1, keep_messages=2, keep_user_messages=True
+        )
+
+        result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
+
+        assert_original_suffix(result, suffix, snapshot)
+        assert len(result) == 3
+
     @pytest.mark.parametrize('keep_user_messages', [False, True])
     @pytest.mark.parametrize('receipts', [False, True])
     async def test_only_prefix_is_summarized_and_extras_do_not_trim_suffix(
