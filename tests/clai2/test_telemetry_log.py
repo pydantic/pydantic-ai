@@ -3,6 +3,7 @@
 import io
 import logging
 from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from tests.clai2.test_app_edges import inputs
 
 _METRICS = 'opentelemetry.exporter.otlp.proto.http.metric_exporter'
-_NOTICE = 'Logfire or OpenTelemetry reported problems, such as failed exports, this session. See {}.\n'
+_NOTICE = 'Logfire or OpenTelemetry reported problems, such as failed exports. See {}.\n'
 
 
 class _Exports(AbstractCapability[None]):
@@ -35,22 +36,24 @@ class _Exports(AbstractCapability[None]):
         return [Command(name='fail', description='Log export failures', handler=fail)]
 
 
-@pytest.fixture
+@contextmanager
 def unconfigured_logging() -> Iterator[None]:
-    """Logging as the CLI leaves it, with no handler: pytest's own root handlers would hide `logging.lastResort`."""
+    """Logging as the CLI leaves it, with no handler, inside the test body.
+
+    pytest's own root handlers would hide `logging.lastResort`, and it adds them again for the call phase, so a
+    fixture cannot remove them; restoring the same list before the call phase ends lets pytest remove its own.
+    """
     root = logging.getLogger()
-    handlers = root.handlers[:]
-    for handler in handlers:
-        root.removeHandler(handler)
+    handlers = root.handlers
+    root.handlers = []
     try:
         yield
     finally:
-        for handler in handlers:
-            root.addHandler(handler)
+        root.handlers = handlers
 
 
-async def _chat_failing_exports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    inputs(monkeypatch, ['/fail', '/exit'])
+async def _chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commands: list[str]) -> str:
+    inputs(monkeypatch, [*commands, '/exit'])
     output = io.StringIO()
     await chat(
         Agent(TestModel()),
@@ -63,31 +66,30 @@ async def _chat_failing_exports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     return output.getvalue()
 
 
-@pytest.mark.usefixtures('unconfigured_logging')
 async def test_export_problems_go_to_a_file_not_the_terminal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     loggers = [logging.getLogger(name) for name in ('logfire', 'opentelemetry')]
     before = [(logger.propagate, list(logger.handlers)) for logger in loggers]
 
-    text = await _chat_failing_exports(tmp_path, monkeypatch)
+    with unconfigured_logging():
+        text = await _chat(tmp_path, monkeypatch, ['/fail'])
+        # Nothing fell through to `logging.lastResort`, which writes to stderr, over the editor.
+        assert capsys.readouterr().err == ''
+        # The session leaves logging as it found it, so later records reach stderr again.
+        assert [(logger.propagate, list(logger.handlers)) for logger in loggers] == before
+        logging.getLogger('logfire').warning('After the session')
+        assert capsys.readouterr().err == 'After the session\n'
 
     log = tmp_path / 'telemetry.log'
     assert [line.split(' ', 2)[2] for line in log.read_text().splitlines()] == [
         'WARNING logfire: Currently retrying 1 failed export(s) (955 bytes)',
         f'ERROR {_METRICS}: Failed to export metrics batch code: None, reason: timed out',
     ]
-    # Nothing fell through to `logging.lastResort`, which writes to stderr, over the editor.
-    assert capsys.readouterr().err == ''
     assert 'Currently retrying' not in text
     assert text.endswith(_NOTICE.format(log))
-    # The session leaves logging as it found it, so later records reach stderr again.
-    assert [(logger.propagate, list(logger.handlers)) for logger in loggers] == before
-    logging.getLogger('logfire').warning('After the session')
-    assert capsys.readouterr().err == 'After the session\n'
 
 
-@pytest.mark.usefixtures('unconfigured_logging')
 async def test_handlers_the_application_configured_still_get_their_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -96,7 +98,8 @@ async def test_handlers_the_application_configured_still_get_their_records(
     handler = logging.StreamHandler(stream)
     monkeypatch.setattr(logging.getLogger('logfire'), 'handlers', [handler])
 
-    text = await _chat_failing_exports(tmp_path, monkeypatch)
+    with unconfigured_logging():
+        text = await _chat(tmp_path, monkeypatch, ['/fail'])
 
     assert stream.getvalue() == 'Currently retrying 1 failed export(s) (955 bytes)\n'
     log = tmp_path / 'telemetry.log'
@@ -106,16 +109,19 @@ async def test_handlers_the_application_configured_still_get_their_records(
     assert text.endswith(_NOTICE.format(log))
 
 
-@pytest.mark.usefixtures('unconfigured_logging')
 async def test_a_session_without_problems_creates_no_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    inputs(monkeypatch, ['/exit'])
-    output = io.StringIO()
-    await chat(
-        Agent(TestModel()),
-        deps=None,
-        settings=Settings(model='test'),
-        console=Console(file=output, width=1000),
-        store=SettingsStore(tmp_path / 'config.db'),
-    )
+    with unconfigured_logging():
+        text = await _chat(tmp_path, monkeypatch, [])
     assert not (tmp_path / 'telemetry.log').exists()
-    assert 'Logfire or OpenTelemetry' not in output.getvalue()
+    assert 'Logfire or OpenTelemetry' not in text
+
+
+async def test_an_unwritable_file_stays_quiet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A record the file cannot take is dropped: a logging traceback on stderr would land over the editor."""
+    (tmp_path / 'telemetry.log').mkdir()
+    with unconfigured_logging():
+        text = await _chat(tmp_path, monkeypatch, ['/fail'])
+        assert capsys.readouterr().err == ''
+    assert 'Logfire or OpenTelemetry' not in text

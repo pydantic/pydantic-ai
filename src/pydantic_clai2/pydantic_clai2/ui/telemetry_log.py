@@ -19,25 +19,33 @@ _LOGGERS = ('logfire', 'opentelemetry')
 _MAX_BYTES = 1_000_000
 
 
+class _LogFile(RotatingFileHandler):
+    """A rotating log file that remembers whether it wrote anything and never reports its own failures."""
+
+    wrote = False
+    _failed = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._failed = False
+        super().emit(record)
+        self.wrote = self.wrote or not self._failed
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        # The default prints a traceback to stderr, over the editor; losing the record is the lesser harm.
+        self._failed = True
+
+
 @contextmanager
 def telemetry_log(path: Path, *, console: Console) -> Iterator[None]:
-    """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if used.
+    """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if written.
 
     A logger that already reaches a handler, one the embedding application configured, is left alone: only
     records that would otherwise fall through to `logging.lastResort` are redirected.
     """
     # `delay` opens the file on the first record, so a session without problems creates nothing.
-    handler = RotatingFileHandler(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
+    handler = _LogFile(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
     handler.setLevel(logging.WARNING)
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
-    wrote = False
-
-    def note(record: logging.LogRecord) -> bool:
-        nonlocal wrote
-        wrote = True
-        return True
-
-    handler.addFilter(note)
     loggers = [logger for name in _LOGGERS if not (logger := logging.getLogger(name)).hasHandlers()]
     propagate = [logger.propagate for logger in loggers]
     for logger in loggers:
@@ -51,9 +59,9 @@ def telemetry_log(path: Path, *, console: Console) -> Iterator[None]:
             logger.removeHandler(handler)
             logger.propagate = previous
         handler.close()
-        if wrote:
+        if handler.wrote:
             console.print(
-                f'Logfire or OpenTelemetry reported problems, such as failed exports, this session. See {path}.',
+                f'Logfire or OpenTelemetry reported problems, such as failed exports. See {path}.',
                 style=theme.color(theme.MUTED),
                 markup=False,
             )
