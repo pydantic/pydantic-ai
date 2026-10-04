@@ -1868,8 +1868,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
 
             # Diff the tools this request will actually carry — after the hooks, which may have changed them —
-            # and record newcomers on the outgoing tail, which is the request this step persists.
-            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, messages[-1])
+            # and record newcomers where both this request and the persisted history will carry them.
+            model_request_parameters = _record_tool_population_changes(
+                ctx, model_request_parameters, _history_recording_targets(ctx, messages)
+            )
 
             # Instruction parts are request configuration, but the message recording the
             # current step must still reflect what was actually sent.
@@ -1981,7 +1983,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
 
             # A continuation completes a turn the provider already has, so nothing is appended to it.
-            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, None)
+            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, ())
 
             # A processor may have deliberately rewritten persistent history from the request
             # view, putting the suspended continuation seed back at the tail. Trim the live
@@ -2792,10 +2794,32 @@ def _revealed_tool_names(
     return {name for name in discovered if name in owner_by_name and owner_by_name[name] not in inactive_capability_ids}
 
 
+def _history_recording_targets(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], messages: list[_messages.ModelMessage]
+) -> list[_messages.ModelRequest]:
+    """The requests to record this step's history state on, so it is both sent now and persisted.
+
+    That is normally the outgoing tail, which is also the persisted tail. A `before_model_request` hook can
+    end the request in a message that exists only in the request (`request_context.messages = [*messages,
+    reminder]`), though, or swap the persisted tail for a copy. State recorded only on that tail would never
+    reach history and would be recorded again on every step, so it goes on the persisted tail instead when
+    the request still carries it, and on both when it doesn't.
+    """
+    outgoing = messages[-1]
+    assert isinstance(outgoing, _messages.ModelRequest)
+    history = ctx.state.message_history
+    persisted = history[-1] if history else None
+    if not isinstance(persisted, _messages.ModelRequest) or persisted is outgoing:
+        return [outgoing]
+    if any(message is persisted for message in messages):
+        return [persisted]
+    return [outgoing, persisted]
+
+
 def _record_tool_population_changes(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
     parameters: models.ModelRequestParameters,
-    request: _messages.ModelRequest | None,
+    requests: Sequence[_messages.ModelRequest],
 ) -> models.ModelRequestParameters:
     """Diff this step's tool population against what the model has been given, and record the difference.
 
@@ -2821,8 +2845,9 @@ def _record_tool_population_changes(
     Callability is untouched: `RunContext.is_tool_available` reads the tool's own definition, which
     this doesn't change.
 
-    `request` is `None` on a continuation, which completes a turn the provider has already seen and so
-    must not grow; newcomers are still marked there, so an earlier delta keeps its channel.
+    The delta goes on each of `requests` (see `_history_recording_targets`). They are empty on a
+    continuation, which completes a turn the provider has already seen and so must not grow; newcomers are
+    still marked there, so an earlier delta keeps its channel.
     """
     immediate = [tool.name for tool in parameters.function_tools if not tool.defer_loading]
     discovered = ctx.deps.discovered_tool_names
@@ -2839,8 +2864,10 @@ def _record_tool_population_changes(
         return parameters
 
     announced = [name for name in introduced if name not in discovered]
-    if announced and request is not None:
-        request.parts = [*request.parts, _messages.ToolAvailabilityDeltaPart(tools_added=announced)]
+    if announced and requests:
+        delta = _messages.ToolAvailabilityDeltaPart(tools_added=announced)
+        for request in requests:
+            request.parts = [*request.parts, delta]
         # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
         discovered.update(announced)
     return replace(parameters, introduced_tool_names=set(introduced))

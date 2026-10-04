@@ -307,6 +307,67 @@ async def test_newcomer_is_not_re_announced_on_retry():
     assert _deltas(result.all_messages()) == [['later']]
 
 
+def _with_request_only_reminder(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [*messages, ModelRequest(parts=[UserPromptPart('reminder')])]
+
+
+def _with_copied_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
+    *head, tail = messages
+    assert isinstance(tail, ModelRequest)
+    return [*head, replace(tail, parts=[*tail.parts, UserPromptPart('reminder')])]
+
+
+@pytest.mark.parametrize(
+    'rewrite',
+    [
+        pytest.param(_with_request_only_reminder, id='request-only-trailing-request'),
+        pytest.param(_with_copied_tail, id='request-only-copy-of-tail'),
+    ],
+)
+async def test_newcomer_is_persisted_when_a_hook_ends_the_request_in_a_request_only_message(
+    rewrite: Callable[[list[ModelMessage]], list[ModelMessage]],
+):
+    """A delta recorded only on a request-only tail would never reach history, and be re-announced at the end of every later request."""
+    sent: list[list[tuple[int, list[str]]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(
+            [
+                (index, part.tools_added)
+                for index, message in enumerate(messages)
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, ToolAvailabilityDeltaPart)
+            ]
+        )
+        return _unlock_then_call_later(messages, info)
+
+    class Reminder(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = rewrite(request_context.messages)
+            return request_context
+
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool_plain
+    def unlock() -> str:
+        toolset.add_function(_later, name='later')
+        return 'unlocked'
+
+    agent = Agent(
+        FunctionModel(model_fn, profile={'tool_addition_mode': 'with_definitions'}),
+        toolsets=[toolset],
+        capabilities=[Reminder()],
+    )
+    result = await agent.run('go')
+
+    # The delta stays where it was first sent, so the prefix the next request extends is unchanged.
+    assert sent == [[], [(2, ['later'])], [(2, ['later'])]]
+    assert _deltas(result.all_messages()) == [['later']]
+
+
 async def test_newcomer_is_re_announced_after_compaction_drops_its_delta():
     """Announcements are scoped to the post-compaction window: once the summary replaces the delta, it is recorded again."""
     returned: list[str] = []
