@@ -8,6 +8,7 @@ import difflib
 import weakref
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
+from copy import copy
 from dataclasses import dataclass, field, replace
 from itertools import takewhile
 from pprint import pformat
@@ -31,6 +32,7 @@ from .._tool_execution import (
     cancelled_sub_agent_return,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
+from ..conversation import Conversation
 from ..exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -778,7 +780,7 @@ class RealtimeSession:
         self.usage = usage if usage is not None else RunUsage()
         """Cumulative token usage and tool-call counts for the session, updated as events stream in.
 
-        Pass `usage` to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to accumulate
+        Pass `usage` to [`Agent.realtime`][pydantic_ai.agent.AbstractAgent.realtime] to accumulate
         into a shared [`RunUsage`][pydantic_ai.usage.RunUsage]; otherwise a fresh one is used.
         """
         # `ToolManager` increments `tool_calls` on its context's usage as each call succeeds, and the
@@ -1551,6 +1553,37 @@ class RealtimeSession:
     def new_messages(self) -> list[ModelMessage]:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
         return list(self._history)
+
+    @property
+    def conversation(self) -> Conversation:
+        """This session's [`Conversation`][pydantic_ai.conversation.Conversation], ready to hand to a text run.
+
+        The same bundle [`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation]
+        produces, so a spoken conversation can be continued by
+        [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] and handed back again, carrying its usage
+        rather than restarting the budget each time it changes modality.
+
+        A session opened without a `conversation_id` resolves one here the way
+        [`Agent.realtime`][pydantic_ai.agent.AbstractAgent.realtime] does up front — continuing the
+        conversation its seeded history belongs to, or starting a new one — and keeps it, so every
+        bundle taken from the session and every message it records shares one identity to store the
+        conversation under.
+        """
+        if self._conversation_id is None:
+            self._conversation_id = _agent_graph.resolve_conversation_id(None, self._seeded)
+            # Messages this session recorded before the id existed were stamped with none. Stamp them
+            # now, as they would have been had it been resolved up front, so the bundle agrees with
+            # its own messages. The seeded history is the caller's, and is left as it was given.
+            for message in self._history:
+                message.conversation_id = message.conversation_id or self._conversation_id
+            # The session span was opened before this id existed too, and has to agree for the
+            # session to correlate with the text run that continues it.
+            self._session_instrumentation.set_conversation_id(self._conversation_id)
+        return Conversation(
+            messages=self.all_messages(),
+            usage=copy(self.usage),
+            conversation_id=self._conversation_id,
+        )
 
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
         """Create a request carrying the framework-managed session metadata."""
