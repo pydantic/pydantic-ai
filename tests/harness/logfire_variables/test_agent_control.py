@@ -7,6 +7,8 @@ from typing import Any, cast
 
 import logfire
 import pytest
+from inline_snapshot import snapshot
+from logfire._internal.config import LogfireConfig
 from logfire.agent_control import (
     MAX_MODEL_FACING_TEXT_LENGTH,
     AgentConfig,
@@ -59,6 +61,49 @@ def config_hint(capfire: CaptureLogfire) -> dict[str, Any]:
 
 async def test_empty_config_keeps_code_behavior() -> None:
     result = await Agent(TestModel(), instructions='code', capabilities=[AgentControl('empty')]).run('hello')
+    assert instructions_seen(result.all_messages()) == ['code']
+
+
+async def test_an_instance_that_cannot_read_variables_warns_once() -> None:
+    # This package configures Logfire without an API key, which is the deployment that holds only a
+    # write token: the variable resolves through a no-op provider and the agent runs as written. That
+    # looks identical to "nothing published yet", so it has to say so -- once, not on every run.
+    agent = Agent(TestModel(), instructions='code', capabilities=[AgentControl('no_credential')])
+    with pytest.warns(UserWarning) as caught:
+        await agent.run('hello')
+        await agent.run('hello')
+    assert [str(w.message) for w in caught] == snapshot(
+        [
+            "`AgentControl` cannot read 'agent__no_credential': its Logfire instance has no variable provider, so the agent runs as defined in code and nothing published in Logfire applies. Reading Logfire variables needs an API key with the `project:read_variables` scope (a write token cannot read them), set as `LOGFIRE_API_KEY` or passed as `logfire.configure(api_key=...)`. This capability resolves on the default Logfire instance: if your application configures its own, pass it as `AgentControl(logfire_instance=...)`."
+        ]
+    )
+
+
+async def test_an_unconfigured_instance_warns_that_it_ignores_the_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A host application that configures a Logfire instance of its own leaves the one this capability
+    # resolves on unconfigured, and an unconfigured instance never reads `LOGFIRE_API_KEY`. Nothing is
+    # fetched, so the key is only ever read from the environment here.
+    monkeypatch.setenv('LOGFIRE_API_KEY', 'pylf_v1_us_not_a_real_key')
+    monkeypatch.setenv('LOGFIRE_IGNORE_NO_CONFIG', '1')
+    unconfigured = logfire.Logfire(config=LogfireConfig())
+    agent = Agent(TestModel(), capabilities=[AgentControl('unconfigured', logfire_instance=unconfigured)])
+    with pytest.warns(UserWarning) as caught:
+        await agent.run('hello')
+    assert [str(w.message) for w in caught] == snapshot(
+        [
+            "`AgentControl` cannot read 'agent__unconfigured': its Logfire instance has no variable provider, so the agent runs as defined in code and nothing published in Logfire applies. `LOGFIRE_API_KEY` is set, but this Logfire instance has not been configured, and only a configured instance reads it. Call `logfire.configure()`."
+        ]
+    )
+
+
+async def test_a_provider_with_nothing_published_stays_quiet(capfire: CaptureLogfire) -> None:
+    # An agent nobody has configured yet is the normal state of a new agent, not a misconfiguration.
+    agent = Agent(TestModel(), instructions='code', capabilities=[AgentControl('unpublished')])
+    with variables_provider(capfire, VariablesConfig(variables={})):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            result = await agent.run('hello')
+    assert caught == []
     assert instructions_seen(result.all_messages()) == ['code']
 
 
@@ -225,6 +270,22 @@ async def test_a_dynamic_block_is_not_addressable(capfire: CaptureLogfire, value
     with pytest.warns(UserWarning, match='which the agent recomputes per request'):
         blocks = triples(await run_blocks(capfire, 'blocks_dynamic_refused', value))
     assert blocks == [AGENT_BLOCK, TODAY_BLOCK, TOOLSET_BLOCK]
+
+
+async def test_an_entry_without_instructions_does_not_drop_its_block(capfire: CaptureLogfire) -> None:
+    # `text` is not a key the contract knows, so this entry validates with `instructions` unset --
+    # which the contract reads as `null`, the way a block is dropped. One typo would take the agent's
+    # whole prompt with it. Only an explicit `null` drops a block, so this keeps the code-defined text,
+    # says why, and leaves the rest of the section applied.
+    value = {'instructions': [{'id': 'agent', 'text': 'REMOTE: refund specialist.'}, 'MANAGED: be brief.']}
+    with pytest.warns(UserWarning) as caught:
+        parts = await run_blocks(capfire, 'blocks_typo', value)
+    assert [str(w.message) for w in caught] == snapshot(
+        [
+            'Managed instruction entry for block \'agent\' has no `instructions` key, so it is not applied and the block keeps its code-defined text. Publish `"instructions": null` to drop the block, or the replacement text to replace it; a misspelled key such as `text` reads as a missing one.'
+        ]
+    )
+    assert triples(parts) == [AGENT_BLOCK, ADDED_BRIEF, TODAY_BLOCK, TOOLSET_BLOCK]
 
 
 async def test_an_override_never_moves_the_static_prefix(capfire: CaptureLogfire) -> None:

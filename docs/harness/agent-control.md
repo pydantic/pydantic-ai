@@ -68,7 +68,11 @@ the first run reports the agent to your project so there is nothing to describe 
 
 Agent Control needs a `LOGFIRE_API_KEY` with the `project:read_variables` scope -- a different
 credential from the write token that sends spans. Read-only is all it is: nothing here writes to your
-project's variables. Instrumentation is not optional, though: it is how the agent tells Logfire it
+project's variables. `LOGFIRE_API_KEY` is read by the Logfire instance `logfire.configure()` set up,
+which is the one `AgentControl` resolves on unless you pass `logfire_instance=`: if your application
+configures a `logfire.Logfire` instance of its own, pass that. When the instance has no way to read
+variables, `AgentControl` warns once per process and agent, naming what is missing, and the agent runs
+as written. Instrumentation is not optional, though: it is how the agent tells Logfire it
 exists at all (see [Registration and the baseline](#registration-and-the-baseline)), and without
 spans neither the version that produced a given run nor whether the agent is picking its config up
 makes it back to Logfire.
@@ -201,6 +205,10 @@ Nothing this SDK can't act on costs more than the piece that contains it. A sett
 recognize drops that setting; a malformed tool entry drops that tool; a block it can't apply drops
 that block. The rest of the config still applies, and each drop warns once per process naming what it
 skipped, rather than once per run.
+
+Only an explicit `"instructions": null` removes a block. An entry with an `id` and no `instructions`
+key -- `{"id": "agent", "text": "..."}`, say, with the key misspelled -- is skipped with a warning and
+the block keeps its code-defined text, rather than taking the prompt with it.
 
 A published change can also be perfectly valid and still reach nothing *here*: an instruction block
 this deployment never assembles (or only computes per request), a tool no toolset advertises, a

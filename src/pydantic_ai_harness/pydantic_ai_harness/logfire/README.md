@@ -54,7 +54,11 @@ from `pydantic_ai_harness.logfire`) to read *why* it resolved the way it did (e.
 
 **These capabilities never write to a variable.** They read a value and nothing else, so the
 credential a deployment holds needs `project:read_variables` and nothing more. Creating the variable
-is done in the Logfire UI.
+is done in the Logfire UI. `LOGFIRE_API_KEY` is read by the Logfire instance `logfire.configure()` set
+up, which is the one these capabilities resolve on unless you pass `logfire_instance=`: if your
+application configures a `logfire.Logfire` instance of its own, pass that. When the instance has no way
+to read variables, `AgentControl` warns once per process and agent, naming what is missing, and the
+agent runs as written.
 
 `AgentControl` is the one that does not need you to create it there first. It emits one
 `agent_control_config_hint` span carrying the name of the variable the config belongs in and an
@@ -417,7 +421,9 @@ there when you want to publish a value from code; nothing in this package restat
 
 - `instructions` is a list of blocks, and each entry either **adds** text or **swaps out** one of the
   blocks the agent already assembles. An entry with no `id` adds; an entry with an `id` replaces that
-  block's text, or drops it with `null`. A bare string is the shorthand for a single added block, so
+  block's text, or drops it with an explicit `null`. An entry with an `id` and no `instructions` key
+  (a misspelled `text`, say) is skipped with a warning and the block keeps its code-defined text.
+  A bare string is the shorthand for a single added block, so
   `"instructions": "Be brief."` still means what it always did. See
   [Where your base prompt lives](#where-your-base-prompt-lives).
   Text supports `{{...}}` runtime placeholders, which pass through verbatim unless

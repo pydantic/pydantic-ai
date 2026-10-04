@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import warnings
 from collections.abc import Callable, Mapping, Sequence
@@ -33,6 +34,7 @@ from logfire.agent_control import (
     AgentSupport,
     ApplyIssue,
     Block,
+    InstructionBlock,
     OnUnmatched,
     Section,
     ToolDef,
@@ -45,6 +47,7 @@ from logfire.agent_control import (
     report_issues,
 )
 from logfire.variables import Variable
+from logfire.variables.abstract import NoOpVariableProvider
 
 from pydantic_ai import AbstractToolset, RunContext, TemplateStr, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, CombinedCapability
@@ -337,6 +340,38 @@ def _blocks(parts: Sequence[InstructionPart]) -> list[Block]:
     return [Block(text=part.content, id=_instruction_key(part), dynamic=part.dynamic) for part in parts]
 
 
+def _without_implicit_drops(config: AgentConfig) -> AgentConfig:
+    """The config without the instruction entries that would drop a block they never asked to drop.
+
+    The contract drops an addressed block when its entry's `instructions` is `None`, and validates an
+    entry whose `instructions` key is missing to that same `None` while ignoring keys it does not know.
+    So `{"id": "agent", "text": "..."}` -- one misspelled key -- removes the agent's whole prompt and
+    says nothing. The stored JSON schema documents an explicit `null` as the way to drop a block, so
+    an explicit `null` is the only thing this takes as one: an entry whose `instructions` was never
+    set is left out with a warning and its block keeps the code-defined text.
+    """
+    instructions = config.instructions
+    if not isinstance(instructions, list):
+        return config
+    kept: list[str | InstructionBlock] = []
+    for entry in instructions:
+        if (
+            isinstance(entry, InstructionBlock)
+            and entry.id is not None
+            and 'instructions' not in entry.model_fields_set
+        ):
+            _warn_dropped(
+                f'Managed instruction entry for block {entry.id!r} has no `instructions` key, so it is not applied '
+                'and the block keeps its code-defined text. Publish `"instructions": null` to drop the block, or '
+                'the replacement text to replace it; a misspelled key such as `text` reads as a missing one.'
+            )
+        else:
+            kept.append(entry)
+    if len(kept) == len(instructions):
+        return config
+    return config.model_copy(update={'instructions': kept})
+
+
 ConfigProvider = Callable[[], 'AgentConfig | None']
 ToolsObserver = Callable[[list['ToolsetTool[Any]']], None]
 IssuePlanner = Callable[[Section, Sequence[ApplyIssue]], None]
@@ -449,7 +484,8 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     `Agent(instructions=...)` sends every block of it twice over.
 
     An entry **with an `id` swaps out** the block Pydantic AI assembled under that key -- replacing its
-    text, or dropping it with `instructions=None`. This is how a managed config reaches text no
+    text, or dropping it with an explicit `instructions=None`; an entry that leaves `instructions` out
+    is skipped with a warning rather than read as a drop. This is how a managed config reaches text no
     capability owns: the agent's own literal, a toolset's, an MCP server's, one `@agent.instructions`
     function out of several. See [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] for
     which blocks have a key at all.
@@ -729,9 +765,48 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         self._planned_issues.set({})
         _report(self.on_unmatched, [issue for issues in planned.values() for issue in issues])
 
+    def _warn_if_unreadable(self, variable: Variable[AgentConfig], resolved: ResolvedVariable[AgentConfig]) -> None:
+        """Warn once per variable when its value could not have been read, as opposed to not published.
+
+        Logfire reports both as `'code_default'`, so the reason alone cannot tell an agent with no
+        config yet from one that will never see the config it has. The provider can:
+        `get_variable_provider()` is what `Variable.get` resolved through, and on a configured instance
+        with an API key it creates the remote provider on first call, so a
+        [`NoOpVariableProvider`][logfire.variables.abstract.NoOpVariableProvider] here means no value
+        could have arrived. The usual cause is a credential: Logfire variables need an API key
+        with `project:read_variables`, which a write token is not, and `LOGFIRE_API_KEY` is only read
+        by a configured instance. With the key in the environment and still no provider, the instance
+        is the one that was never configured, typically because the application configured its own
+        and this capability resolved on the default one.
+        """
+        if resolution_reason(resolved) != 'code_default':
+            return
+        if not isinstance(variable.logfire_instance.config.get_variable_provider(), NoOpVariableProvider):
+            return
+        if os.environ.get('LOGFIRE_API_KEY'):
+            cause = (
+                '`LOGFIRE_API_KEY` is set, but this Logfire instance has not been configured, and only a configured '
+                'instance reads it. Call `logfire.configure()`.'
+            )
+        else:
+            cause = (
+                'Reading Logfire variables needs an API key with the `project:read_variables` scope (a write token '
+                'cannot read them), set as `LOGFIRE_API_KEY` or passed as `logfire.configure(api_key=...)`.'
+            )
+        if self.logfire_instance is None and not isinstance(self.name, Variable):
+            cause += (
+                ' This capability resolves on the default Logfire instance: if your application configures its '
+                'own, pass it as `AgentControl(logfire_instance=...)`.'
+            )
+        _warn_dropped(
+            f'`AgentControl` cannot read {variable.name!r}: its Logfire instance has no variable provider, so the '
+            f'agent runs as defined in code and nothing published in Logfire applies. {cause}'
+        )
+
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Add applied-section baggage inside the base's once-per-run resolution context."""
         resolved = self._selection_resolved.get() or self._resolve(ctx)
+        self._warn_if_unreadable(self._ensure_variable(ctx), resolved)
         with resolved:
             token = self._resolved.set(resolved)
             try:
@@ -813,6 +888,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         config = self._current_config()
         if config is None or not config.instructions:
             return request_context
+        config = _without_implicit_drops(config)
         parameters = request_context.model_request_parameters
         parts = list(parameters.instruction_parts or [])
         blocks = _blocks(parts)
