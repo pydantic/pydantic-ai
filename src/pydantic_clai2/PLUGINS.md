@@ -355,7 +355,7 @@ send. In the interactive shell these records go to `telemetry.log` next to
 `config.db` (rotated at 1 MB, one previous file kept) instead of over the editor,
 and CLAI names that file on exit when the session wrote to it. A logger your own
 application already handles, when embedding `chat()`, is left alone. Headless
-`clai2 -p` leaves them on stderr, apart from the answer on stdout.
+`clai2 -p` still writes them to stderr, separate from the answer on stdout.
 
 Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
 settings, and saved token references. No reconfiguration is needed. Old commands

@@ -72,8 +72,14 @@ async def test_export_problems_go_to_a_file_not_the_terminal(
     loggers = [logging.getLogger(name) for name in ('logfire', 'opentelemetry')]
     before = [(logger.propagate, list(logger.handlers)) for logger in loggers]
 
+    # Even with INFO enabled on the logger, only warnings and errors reach the file, as only they reach `lastResort`.
+    logging.getLogger('logfire').setLevel(logging.INFO)
+    try:
+        with unconfigured_logging():
+            text = await _chat(tmp_path, monkeypatch, ['/fail'])
+    finally:
+        logging.getLogger('logfire').setLevel(logging.NOTSET)
     with unconfigured_logging():
-        text = await _chat(tmp_path, monkeypatch, ['/fail'])
         # Nothing fell through to `logging.lastResort`, which writes to stderr, over the editor.
         assert capsys.readouterr().err == ''
         # The session leaves logging as it found it, so later records reach stderr again.
