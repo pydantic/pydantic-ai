@@ -201,7 +201,7 @@ def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
     capability, and core refuses capability events from it; it emits nothing.
     """
     tool_name = ctx.tool_name
-    if tool_name is None:  # pragma: no cover - a tool call always names its tool
+    if tool_name is None:
         return False
     tool_def = ctx.tools.get(tool_name)
     return tool_def is not None and tool_def.capability_id is not None
@@ -476,7 +476,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if owner is not None and record is not None:
                 event.task_id, event.parent_id = record.id, record.parent_id
                 await owner.notify(record, event)
-            elif emits:
+            # Only called when `emits` holds or an owner exists, and an owner always comes with a record.
+            elif emits:  # pragma: no branch
                 await ctx.emit(event)
 
         if emits:
@@ -598,7 +599,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> None:
         async def observed() -> AsyncIterable[AgentStreamEvent]:
             async for event in events:
-                if owner is not None and record is not None:
+                # Installed only for a record, and a record exists only under the owner that `current` returns.
+                if owner is not None and record is not None:  # pragma: no branch
                     record.messages = child_ctx.messages
                     await owner.notify(record, event)
                 yield event
