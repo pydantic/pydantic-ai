@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeSessionErrorEvent,
     SpeechPart,
@@ -1896,6 +1897,75 @@ async def test_late_transcript_keeps_an_earlier_turn_in_its_place(monkeypatch: p
         'user: And this.',
         'user speech: Second turn.',
         'assistant speech: Answer two.',
+    ]
+
+
+def _spoken_reply(response_id: str, pcm: bytes, transcript: str) -> list[str]:
+    return [
+        _response_frame('response.created', response_id),
+        json.dumps(
+            {
+                'type': 'response.output_audio.delta',
+                'response_id': response_id,
+                'item_id': f'item-{response_id}',
+                'output_index': 0,
+                'content_index': 0,
+                'delta': base64.b64encode(pcm).decode('ascii'),
+            }
+        ),
+        *_reply(response_id, transcript)[1:],
+    ]
+
+
+async def test_retained_audio_eviction_keeps_a_committed_turn_in_its_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A spoken turn goes after what its commit followed, even once the retained-audio budget evicted that answer's audio.
+
+    The second answer arrives before the second turn's transcript and evicts the first answer's audio, which the
+    second commit was placed after.
+    """
+    tenth_of_a_second = b'\x10\x27' * 2400
+    ws = _PhasedWebSocket(
+        [_created(), _updated()],
+        [],
+        [
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}),
+            _user_transcript('item-u1', 'First turn.'),
+            *_spoken_reply('r1', tenth_of_a_second, 'Answer one.'),
+        ],
+        [
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u2'}),
+            *_spoken_reply('r2', tenth_of_a_second, 'Answer two.'),
+            _user_transcript('item-u2', 'Second turn.'),
+        ],
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+
+    async with (
+        Agent()
+        .realtime(_model(rt_xai.XaiRealtimeModelSettings(turn_detection=False)))
+        .session(audio_retention='all', retain_audio_max_seconds=0.2) as session
+    ):
+        for _ in range(2):
+            await session.send_audio(tenth_of_a_second)
+            await session.commit_audio()
+            await session.create_response()
+            ws.advance()
+            await session.wait_for_reply()
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                if event.part.transcript == 'Second turn.':
+                    break
+
+    assert [
+        (part.speaker, part.transcript, part.audio is not None)
+        for message in session.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ] == [
+        ('user', 'First turn.', False),
+        ('assistant', 'Answer one.', False),
+        ('user', 'Second turn.', True),
+        ('assistant', 'Answer two.', True),
     ]
 
 

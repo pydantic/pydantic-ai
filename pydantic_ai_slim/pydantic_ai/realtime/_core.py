@@ -23,6 +23,7 @@ sits directly after the response that called it, as request-response APIs requir
 
 from __future__ import annotations as _annotations
 
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TypeAlias
@@ -67,6 +68,7 @@ from ._lifecycle import (
     UserTurnEnded,
     UserTurnStarted,
 )
+from ._retained_audio import RetainedAudioBudget
 from ._utils import accumulate_transcript, pcm_to_wav, user_transcript_update
 from .codec import (
     AudioDelta,
@@ -269,6 +271,7 @@ class SessionCore:
         input_transcription_enabled: bool = True,
         retain_input_audio: bool = False,
         retain_output_audio: bool = False,
+        retain_audio_max_seconds: float | None = None,
         input_sample_rate: int = 24000,
         output_sample_rate: int = 24000,
         seeded: Sequence[ModelMessage] = (),
@@ -313,6 +316,19 @@ class SessionCore:
         self._settled_calls: set[str] = set()
         """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
         self._input_audio = bytearray()
+        # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
+        # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
+        self._audio_budget = RetainedAudioBudget(
+            retain_audio_max_seconds, input_sample_rate=input_sample_rate, output_sample_rate=output_sample_rate
+        )
+        self._waiting_turn_audio: OrderedDict[str, _UserTurn] = OrderedDict()
+        """Turns with audio cut for them but not recorded yet, oldest first."""
+        self._waiting_turn_audio_bytes = 0
+        self._open_audio: dict[str, _Response] = {}
+        """Responses with output audio coming in for a part, oldest first."""
+        self._open_audio_bytes = 0
+        self._eviction_cursor = 0
+        """Where in `_placed` the next eviction resumes: everything before it is recorded, with no audio left to evict."""
         self._user_speaking = False
         self._speech_segmented = False
         """Whether the provider draws speech-end boundaries, so the retained audio is cut into turns at them."""
@@ -401,11 +417,12 @@ class SessionCore:
         elif isinstance(command, AudioSent):
             if self._retain_input:
                 self._input_audio.extend(command.data)
+                self._bound_retained_audio()
         elif isinstance(command, AudioCleared):
             self._input_audio.clear()
             # A turn the user was saying that hadn't joined the conversation never will now.
             for turn_id in [turn_id for turn_id, turn in self._turns.items() if not turn.ended]:
-                del self._turns[turn_id]
+                self._drop_turn(turn_id)
         elif isinstance(command, ToolReturned):
             self._returns[command.tool_call_id] = command.request
             self._settled_calls.add(command.tool_call_id)
@@ -472,6 +489,9 @@ class SessionCore:
         if isinstance(event, AudioDelta):
             if self._retain_output:
                 response.open_audio.extend(event.data)
+                self._open_audio[response.id] = response
+                self._open_audio_bytes += len(event.data)
+                self._bound_retained_audio()
             return
         response.open_transcript, _ = accumulate_transcript(response.open_transcript, event.text)
         response.open_part = (
@@ -515,11 +535,14 @@ class SessionCore:
                 part = replace(part, transcript=None)
             if self._retain_output and response.open_audio:
                 wav = pcm_to_wav(bytes(response.open_audio), self._output_rate)
-                part = replace(part, audio=BinaryContent(data=wav, media_type=_WAV_MEDIA_TYPE))
+                audio = BinaryContent(data=wav, media_type=_WAV_MEDIA_TYPE)
+                part = replace(part, audio=self._audio_budget.track(audio, len(response.open_audio), output=True))
         response.parts.append(part)
         response.open_part = None
         response.open_part_item = None
         response.open_transcript = ''
+        self._open_audio_bytes -= len(response.open_audio)
+        self._open_audio.pop(response.id, None)
         response.open_audio.clear()
 
     def _tool_call(self, event: ToolCall) -> None:
@@ -630,10 +653,8 @@ class SessionCore:
         self._speech_segmented = True
         if item_id is None or (turn := self._turns.get(item_id)) is None:
             return
-        if self._retain_input and self._input_audio:
-            if turn.audio is None:
-                turn.audio = bytes(self._input_audio)
-                self._input_audio.clear()
+        if self._retain_input and self._input_audio and turn.audio is None:
+            self._cut_turn_audio(turn)
         if turn.speaking:
             turn.speaking = False
             self._turn_said(turn)
@@ -649,9 +670,22 @@ class SessionCore:
             return
         if turn.audio is None and self._retain_input and self._input_audio:
             # Committed by hand, with no speech end to cut it at: the whole buffer is this turn's.
-            turn.audio = bytes(self._input_audio)
-            self._input_audio.clear()
+            self._cut_turn_audio(turn)
         self._turn_said(turn)
+
+    def _cut_turn_audio(self, turn: _UserTurn) -> None:
+        """Give `turn` the input audio retained since the last cut: it waits with the turn until it is recorded."""
+        turn.audio = bytes(self._input_audio)
+        self._input_audio.clear()
+        self._waiting_turn_audio[turn.id] = turn
+        self._waiting_turn_audio_bytes += len(turn.audio)
+
+    def _release_turn_audio(self, turn: _UserTurn) -> None:
+        if self._waiting_turn_audio.pop(turn.id, None) is not None and turn.audio:
+            self._waiting_turn_audio_bytes -= len(turn.audio)
+
+    def _drop_turn(self, turn_id: str) -> None:
+        self._release_turn_audio(self._turns.pop(turn_id))
 
     def _turn_said(self, turn: _UserTurn) -> None:
         """All of a joined turn's audio is in: it is final once transcribed, or at once if nothing transcribes it."""
@@ -668,7 +702,7 @@ class SessionCore:
             turn.speaking = False
             self._transcribed(turn, failed=False)
         else:
-            del self._turns[turn_id]
+            self._drop_turn(turn_id)
 
     def _input_transcript(self, event: InputTranscript) -> None:
         # Only a spoken turn the connection reported transcribes into history: not, say, the empty audio item
@@ -690,14 +724,16 @@ class SessionCore:
             self._build_turn(turn)
 
     def _build_turn(self, turn: _UserTurn) -> None:
-        turn.message = self._turn_request(turn)
+        self._release_turn_audio(turn)
+        turn.message = self._turn_request(turn, retained=True)
 
-    def _turn_request(self, turn: _UserTurn) -> ModelRequest:
-        audio = (
-            BinaryContent(data=pcm_to_wav(turn.audio, self._input_rate), media_type=_WAV_MEDIA_TYPE)
-            if turn.audio
-            else None
-        )
+    def _turn_request(self, turn: _UserTurn, *, retained: bool = False) -> ModelRequest:
+        """The request `turn` records; counted against `retain_audio_max_seconds` when `retained` in history."""
+        audio: BinaryContent | None = None
+        if turn.audio:
+            audio = BinaryContent(data=pcm_to_wav(turn.audio, self._input_rate), media_type=_WAV_MEDIA_TYPE)
+            if retained:
+                audio = self._audio_budget.track(audio, len(turn.audio), output=False)
         part = SpeechPart(speaker='user', transcript=turn.transcript.strip() or None, audio=audio)
         request = ModelRequest(parts=[part])
         fill_run_metadata(request, run_id=self._run_id, conversation_id=self._conversation_id)
@@ -713,13 +749,79 @@ class SessionCore:
         for input_id in input_ids:
             # Dropped altogether, so what it carried (an evicted image, say) isn't kept alive for nothing.
             if (input_ := self._inputs.pop(input_id, None)) is not None and self._unplaced.pop(input_id, None) is None:
-                self._placed.remove(input_)
+                index = self._placed.index(input_)
+                del self._placed[index]
+                if index < self._eviction_cursor:
+                    self._eviction_cursor -= 1
         self._settle(input_ids, 'void')
 
     def _settle(self, input_ids: Sequence[InputId], outcome: _Obligation) -> None:
         for input_id in input_ids:
             if self._obligations.get(input_id) == 'pending':
                 self._obligations[input_id] = outcome
+
+    # --- retained audio -------------------------------------------------------------------------------
+
+    def _bound_retained_audio(self) -> None:
+        """Evict the oldest retained audio until what the core retains fits `retain_audio_max_seconds`.
+
+        As the session does: audio recorded in history goes first, oldest first, each part keeping its transcript;
+        then the audio of turns waiting to be recorded, oldest first; and only then what is still coming in, which
+        keeps its most recent audio. A part not recorded yet is only evicted once it is. Only the local copy is
+        dropped: the provider received all of it.
+        """
+        budget = self._audio_budget
+        excess = budget.excess(
+            untracked_input=self._waiting_turn_audio_bytes + len(self._input_audio),
+            untracked_output=self._open_audio_bytes,
+        )
+        if excess > 0 and budget.tracked_parts:
+            excess = self._evict_recorded_audio(excess)
+        while excess > 0 and self._waiting_turn_audio:
+            _, turn = self._waiting_turn_audio.popitem(last=False)
+            evicted = len(turn.audio or b'')
+            self._waiting_turn_audio_bytes -= evicted
+            # Empty rather than `None`, so no later cut gives the turn audio again.
+            turn.audio = b''
+            excess -= budget.weight(evicted, output=False)
+        excess = budget.trim(self._input_audio, excess, output=False)
+        for response in self._open_audio.values():
+            before = len(response.open_audio)
+            excess = budget.trim(response.open_audio, excess, output=True)
+            self._open_audio_bytes -= before - len(response.open_audio)
+
+    def _evict_recorded_audio(self, excess: int) -> int:
+        """Strip the audio of recorded messages, oldest first, resuming at `_eviction_cursor`; the excess left."""
+        budget = self._audio_budget
+        index = self._eviction_cursor
+        # The cursor only moves past what is recorded and has no audio left to evict: a message still on its way
+        # (a response under way, a turn waiting for its transcript) is come back to once it is recorded.
+        settled = True
+        while index < len(self._placed) and excess > 0:
+            entry = self._placed[index]
+            if isinstance(entry, _Response):
+                if entry.message is not None:
+                    stripped, freed = budget.strip(entry.message, excess)
+                    if freed:
+                        assert isinstance(stripped, ModelResponse)
+                        entry.message = stripped
+                        excess -= freed
+                elif entry.status is None:
+                    settled = False
+            elif isinstance(entry, _UserTurn):
+                if entry.message is not None:
+                    stripped, freed = budget.strip(entry.message, excess)
+                    if freed:
+                        assert isinstance(stripped, ModelRequest)
+                        entry.message = stripped
+                        excess -= freed
+                else:
+                    settled = False
+            index += 1
+            if settled and excess > 0:
+                # Stripped of all its tracked audio (the strip stopped short of the excess), or it had none.
+                self._eviction_cursor = index
+        return excess
 
     def _lose_open_responses(self) -> None:
         for response in [response for response in self._responses.values() if response.status is None]:
@@ -743,6 +845,16 @@ class SessionCore:
             if outcome == 'pending':
                 self._obligations[input_id] = 'void'
         self._settled_calls.update(self._call_response)
+
+    def set_conversation_id(self, conversation_id: str) -> None:
+        """The conversation id the session resolved late: what the core records from now on, and has recorded, carries it.
+
+        Inputs and tool returns are the session's own requests, which it stamps itself.
+        """
+        self._conversation_id = conversation_id
+        for entry in self._placed:
+            if not isinstance(entry, _Input) and entry.message is not None:
+                entry.message.conversation_id = entry.message.conversation_id or conversation_id
 
     # --- what the session reads ---------------------------------------------------------------------
 

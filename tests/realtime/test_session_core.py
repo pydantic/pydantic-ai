@@ -8,9 +8,12 @@ that follows a tool round through to its answer.
 
 from __future__ import annotations as _annotations
 
+from collections import OrderedDict
+from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.messages import (
@@ -54,6 +57,7 @@ from pydantic_ai.realtime._lifecycle import (
     UserTurnEnded,
     UserTurnStarted,
 )
+from pydantic_ai.realtime._retained_audio import RetainedAudioBudget
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     ConversationItemCreated,
@@ -621,3 +625,260 @@ def test_a_turn_still_spoken_when_the_connection_is_replaced_is_over() -> None:
     assert summary(session_core.all_messages()) == snapshot(
         ['{user:None+audio}', 'r1 [assistant:Hm.] complete stop', '{user:None}']
     )
+
+
+# --- retained audio, bounded by `retain_audio_max_seconds` (as `RealtimeSession` bounds it) ---------------
+
+
+def _tenth_of_a_second(value: int) -> bytes:
+    """A tenth of a second of PCM16 at 24 kHz, every byte `value`, so each turn's audio is recognizable."""
+    return bytes([value]) * 4800
+
+
+def _retained(session_core: SessionCore) -> list[tuple[str, str | None, bool]]:
+    """Each recorded speech part as what was said, and whether its audio is still retained."""
+    return [
+        (part.speaker, part.transcript, part.audio is not None)
+        for message in session_core.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ]
+
+
+def _answered_turn(turn: int) -> list[CoreInput]:
+    """A spoken question, transcribed at once, and its spoken answer: a tenth of a second of audio each."""
+    turn_id, response_id = f'u{turn}', f'r{turn}'
+    return [
+        AudioSent(data=_tenth_of_a_second(turn)),
+        RealtimeInputSpeechStartEvent(item_id=turn_id),
+        UserTurnStarted(turn_id=turn_id),
+        RealtimeInputSpeechEndEvent(item_id=turn_id),
+        UserTurnEnded(turn_id=turn_id),
+        InputTranscript(f'Question {turn}.', item_id=turn_id, is_final=True),
+        started(response_id),
+        AudioDelta(_tenth_of_a_second(100 + turn), response_id=response_id, item_id=f'a{turn}'),
+        said(response_id, f'Answer {turn}.', item_id=f'a{turn}'),
+        ended(response_id),
+    ]
+
+
+def _budget_core(max_seconds: float | None, **kwargs: Any) -> SessionCore:
+    return core(retain_input_audio=True, retain_output_audio=True, retain_audio_max_seconds=max_seconds, **kwargs)
+
+
+def test_retained_audio_keeps_the_latest_output_audio() -> None:
+    session_core = feed(
+        core(retain_output_audio=True, retain_audio_max_seconds=0.02),
+        started('r1'),
+        *(AudioDelta(bytes([index]) * 480, response_id='r1') for index in range(5)),
+        said('r1', 'A long answer.'),
+        ended('r1'),
+    )
+    [response] = session_core.all_messages()
+    [part] = response.parts
+    assert isinstance(part, SpeechPart) and part.audio is not None
+    # 20 ms at 24 kHz is 960 bytes: the last two of the five deltas, behind a WAV header.
+    assert part.audio.data[44:] == bytes([3]) * 480 + bytes([4]) * 480
+
+
+def test_retained_audio_keeps_the_latest_audio_of_a_turn_still_coming_in() -> None:
+    session_core = feed(
+        core(input_transcription_enabled=False, retain_input_audio=True, retain_audio_max_seconds=0.01),
+        *(AudioSent(data=bytes([index]) * 240) for index in range(5)),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+    )
+    [request] = session_core.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.audio is not None
+    assert part.audio.data[44:] == bytes([3]) * 240 + bytes([4]) * 240
+
+
+def test_retained_audio_evicts_the_oldest_and_keeps_transcripts_and_snapshots() -> None:
+    session_core = feed(_budget_core(0.3), *_answered_turn(0))
+    snapshot_after_first = session_core.all_messages()
+    feed(session_core, *_answered_turn(1), *_answered_turn(2))
+
+    # Three tenths of a second fit: the latest three, whichever side said them.
+    assert _retained(session_core) == [
+        ('user', 'Question 0.', False),
+        ('assistant', 'Answer 0.', False),
+        ('user', 'Question 1.', False),
+        ('assistant', 'Answer 1.', True),
+        ('user', 'Question 2.', True),
+        ('assistant', 'Answer 2.', True),
+    ]
+    # A snapshot taken before an eviction doesn't change.
+    assert [
+        part.audio is not None
+        for message in snapshot_after_first
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ] == [True, True]
+
+
+def test_retained_audio_counts_turns_waiting_for_their_transcript_and_evicts_the_oldest() -> None:
+    def spoken(turn: int) -> list[CoreInput]:
+        return [
+            AudioSent(data=_tenth_of_a_second(turn)),
+            RealtimeInputSpeechStartEvent(item_id=f'u{turn}'),
+            UserTurnStarted(turn_id=f'u{turn}'),
+            RealtimeInputSpeechEndEvent(item_id=f'u{turn}'),
+            UserTurnEnded(turn_id=f'u{turn}'),
+        ]
+
+    session_core = feed(
+        core(retain_input_audio=True, retain_audio_max_seconds=0.15),
+        *spoken(0),
+        *spoken(1),
+        # A repeated speech end cuts nothing new, for the evicted turn or the other one.
+        AudioSent(data=bytes(960)),
+        RealtimeInputSpeechEndEvent(item_id='u0'),
+        InputTranscript('First.', item_id='u0', is_final=True),
+        InputTranscript('Second.', item_id='u1', is_final=True),
+    )
+    assert _retained(session_core) == [('user', 'First.', False), ('user', 'Second.', True)]
+
+
+def test_retained_audio_drops_a_cleared_or_discarded_turns_waiting_audio() -> None:
+    session_core = feed(
+        core(retain_input_audio=True, retain_audio_max_seconds=0.15),
+        AudioSent(data=_tenth_of_a_second(0)),
+        RealtimeInputSpeechStartEvent(item_id='u0'),
+        UserTurnStarted(turn_id='u0'),
+        RealtimeInputSpeechEndEvent(item_id='u0'),
+        UserTurnDiscarded(turn_id='u0'),
+        AudioSent(data=_tenth_of_a_second(1)),
+        RealtimeInputSpeechStartEvent(item_id='u1'),
+        UserTurnStarted(turn_id='u1'),
+        RealtimeInputSpeechEndEvent(item_id='u1'),
+        AudioCleared(),
+        # Neither counts any more, so this one fits beside nothing else.
+        AudioSent(data=_tenth_of_a_second(2)),
+        UserTurnStarted(turn_id='u2'),
+        UserTurnEnded(turn_id='u2'),
+        InputTranscript('Third.', item_id='u2', is_final=True),
+    )
+    assert _retained(session_core) == [('user', 'Third.', True)]
+
+
+class _CountingTurns(OrderedDict[str, Any]):
+    """Counts every walk over the turns waiting with audio, which checking the budget on each chunk must not need."""
+
+    walks = 0
+
+    def __iter__(self) -> Iterator[str]:
+        type(self).walks += 1
+        return super().__iter__()
+
+    def values(self) -> Any:
+        type(self).walks += 1
+        return super().values()
+
+    def items(self) -> Any:
+        type(self).walks += 1
+        return super().items()
+
+
+def test_retained_audio_check_does_not_walk_waiting_turns() -> None:
+    session_core = _budget_core(1)
+    session_core._waiting_turn_audio = _CountingTurns()  # pyright: ignore[reportPrivateUsage]
+    for turn in range(20):
+        feed(
+            session_core,
+            AudioSent(data=_tenth_of_a_second(turn)),
+            RealtimeInputSpeechStartEvent(item_id=f'u{turn}'),
+            UserTurnStarted(turn_id=f'u{turn}'),
+            RealtimeInputSpeechEndEvent(item_id=f'u{turn}'),
+            UserTurnEnded(turn_id=f'u{turn}'),
+        )
+    feed(session_core, *(AudioSent(data=bytes([index]) * 480) for index in range(10)))
+    feed(session_core, *(InputTranscript(f'Q{turn}.', item_id=f'u{turn}', is_final=True) for turn in range(20)))
+
+    assert _CountingTurns.walks == 0
+    # A second holds the last nine waiting turns beside the 0.1 s streamed after them.
+    assert [audio for _, _, audio in _retained(session_core)] == [turn >= 11 for turn in range(20)]
+
+
+def test_retained_audio_passes_over_history_once_across_many_turns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each eviction resumes where the last one stopped, so many short turns cost work linear in their number."""
+    strips = 0
+    strip = RetainedAudioBudget.strip
+
+    def counting_strip(self: RetainedAudioBudget, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+        nonlocal strips
+        strips += 1
+        return strip(self, message, excess)
+
+    monkeypatch.setattr(RetainedAudioBudget, 'strip', counting_strip)
+    session_core = feed(_budget_core(0.2), *(item for turn in range(40) for item in _answered_turn(turn)))
+
+    messages = session_core.all_messages()
+    assert len(messages) == 80
+    assert [audio for _, _, audio in _retained(session_core)] == [False] * 78 + [True] * 2
+    # Starting every pass from the beginning of history would be about 80 * 80.
+    assert strips <= 3 * len(messages)
+
+
+def test_retained_audio_comes_back_for_a_message_recorded_after_the_eviction_passed_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response under way isn't skipped for good: once it is recorded, its audio is evicted too."""
+    strips = 0
+    strip = RetainedAudioBudget.strip
+
+    def counting_strip(self: RetainedAudioBudget, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+        nonlocal strips
+        strips += 1
+        return strip(self, message, excess)
+
+    session_core = feed(_budget_core(0.2), *_answered_turn(0))
+    monkeypatch.setattr(RetainedAudioBudget, 'strip', counting_strip)
+    feed(
+        session_core,
+        started('r1'),
+        AudioDelta(_tenth_of_a_second(101) * 2, response_id='r1', item_id='a1a'),
+        # A second part closes the first, which the budget then tracks while the response is still under way.
+        AudioDelta(b'\x01\x00', response_id='r1', item_id='a1b'),
+        *(AudioSent(data=bytes(480)) for _ in range(30)),
+    )
+    # The chunks streamed meanwhile don't search history again each time: each recorded message is looked at
+    # about once (the last one evicted from again, once).
+    assert strips <= 3
+    feed(session_core, ended('r1'), *_answered_turn(2))
+    assert [audio for _, _, audio in _retained(session_core)] == [False, False, False, False, True, True]
+
+
+def test_retained_audio_still_evicts_after_an_earlier_message_leaves_history() -> None:
+    """An input withdrawn from ahead of where eviction resumes doesn't make it skip the next answer's audio."""
+
+    def answer(turn: int) -> list[CoreInput]:
+        response_id = f'r{turn}'
+        return [
+            started(response_id),
+            AudioDelta(_tenth_of_a_second(100 + turn), response_id=response_id, item_id=f'a{turn}'),
+            ended(response_id),
+        ]
+
+    session_core = feed(
+        core(retain_output_audio=True, retain_audio_max_seconds=0.1),
+        InputSent(input_id=0, request=text_request('An image, say.')),
+        InputAdded(input_id=0),
+        *answer(0),
+        *answer(1),
+        InputWithdrawn(input_ids=(0,)),
+        *answer(2),
+    )
+    assert [audio for _, _, audio in _retained(session_core)] == [False, False, True]
+
+
+def test_retained_audio_unbounded_keeps_it_all() -> None:
+    session_core = feed(_budget_core(None), *(item for turn in range(3) for item in _answered_turn(turn)))
+    assert all(audio for _, _, audio in _retained(session_core))
+
+
+def test_a_conversation_id_resolved_late_reaches_what_the_core_recorded() -> None:
+    session_core = feed(core(), *_answered_turn(0))
+    session_core.set_conversation_id('c1')
+    feed(session_core, *_answered_turn(1))
+    assert {message.conversation_id for message in session_core.all_messages()} == {'c1'}
