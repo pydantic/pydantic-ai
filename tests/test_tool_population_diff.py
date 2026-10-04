@@ -340,7 +340,7 @@ async def test_newcomer_is_persisted_when_a_hook_ends_the_request_in_a_request_o
                 if isinstance(part, ToolAvailabilityDeltaPart)
             ]
         )
-        return _unlock_then_call_later(messages, info)
+        return _unlock_later_done(messages, info)
 
     class Reminder(AbstractCapability[Any]):
         async def before_model_request(
