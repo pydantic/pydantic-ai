@@ -7,7 +7,7 @@ from cassetter import Cassette
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, ThinkingPart
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.output import NativeOutput
@@ -406,3 +406,109 @@ async def test_snowflake_response_without_finish_reason(
 
     assert response.finish_reason == finish_reason
     assert 'finish_reason' not in (response.provider_details or {})
+
+
+_EMPTY_MODERATION_STUB: dict[str, Any] = {
+    'input': {'type': '', 'results': None, 'model': 'openai-gpt-5.2'},
+    'output': {'type': '', 'results': None, 'model': 'openai-gpt-5.2'},
+}
+
+
+async def test_snowflake_response_with_empty_moderation_stub(allow_model_requests: None):
+    """Cortex sends an empty `moderation` placeholder on every response, which the strict validation rejects."""
+    completion = chat.ChatCompletion.model_construct(
+        id='chatcmpl-123',
+        choices=[
+            Choice.model_construct(
+                finish_reason='stop',
+                index=0,
+                message=chat.ChatCompletionMessage(role='assistant', content='hello'),
+            )
+        ],
+        created=1751234567,
+        model='openai-gpt-5.2',
+        object='chat.completion',
+        moderation=_EMPTY_MODERATION_STUB,
+    )
+    model = SnowflakeModel(
+        'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+    )
+
+    response = await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+
+    assert response.parts[0].content == 'hello'  # type: ignore[union-attr]
+    assert 'moderation' not in (response.provider_details or {})
+
+
+async def test_snowflake_response_keeps_valid_moderation(allow_model_requests: None):
+    """Real moderation results must still reach `provider_details`, ."""
+    completion = chat.ChatCompletion.model_construct(
+        id='chatcmpl-123',
+        choices=[
+            Choice.model_construct(
+                finish_reason='stop',
+                index=0,
+                message=chat.ChatCompletionMessage(role='assistant', content='hello'),
+            )
+        ],
+        created=1751234567,
+        model='openai-gpt-5.2',
+        object='chat.completion',
+        moderation={
+            'input': {'type': 'moderation_results', 'model': 'omni-moderation-latest', 'results': []},
+            'output': {'type': 'moderation_results', 'model': 'omni-moderation-latest', 'results': []},
+        },
+    )
+    model = SnowflakeModel(
+        'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+    )
+
+    response = await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+
+    assert (response.provider_details or {}).get('moderation') == {
+        'input': {'type': 'moderation_results', 'model': 'omni-moderation-latest', 'results': []},
+        'output': {'type': 'moderation_results', 'model': 'omni-moderation-latest', 'results': []},
+    }
+
+
+async def test_snowflake_response_still_rejects_other_malformed_fields(allow_model_requests: None):
+    completion = chat.ChatCompletion.model_construct(
+        id='chatcmpl-123',
+        choices=[
+            Choice.model_construct(
+                finish_reason='bogus', index=0, message=chat.ChatCompletionMessage(role='assistant', content='x')
+            )
+        ],
+        created=1751234567,
+        model='openai-gpt-5.2',
+        object='chat.completion',
+        moderation=_EMPTY_MODERATION_STUB,
+    )
+    model = SnowflakeModel(
+        'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+    )
+
+    with pytest.raises(UnexpectedModelBehavior):
+        await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+
+
+async def test_snowflake_stream_with_empty_moderation_stub(allow_model_requests: None):
+    stream = [
+        chat.ChatCompletionChunk.model_construct(
+            id='chatcmpl-123',
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(role='assistant', content='hello'), finish_reason='stop')],
+            created=1751234567,
+            model='openai-gpt-5.2',
+            object='chat.completion.chunk',
+            moderation=_EMPTY_MODERATION_STUB,
+        )
+    ]
+    model = SnowflakeModel(
+        'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock_stream(stream))
+    )
+
+    async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()) as response:
+        async for _ in response:
+            pass
+
+    assert response.get().parts[0].content == 'hello'  # type: ignore[union-attr]
