@@ -80,6 +80,14 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 default_cache_retention=timedelta(minutes=30)
                 if profile.get('openai_supports_prompt_cache_breakpoints')
                 else None,
+                # Prompt cache diagnostics are documented for GPT-5.6 and later, the models with explicit cache
+                # breakpoints. Earlier models accept the field but always answer `unavailable`. Set here rather than
+                # in `openai_model_profile` because OpenAI-compatible Responses endpoints don't all accept it:
+                # OpenRouter rejects it with a 400.
+                # https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics
+                openai_responses_supports_prompt_cache_diagnostics=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
             ),
         )
 
