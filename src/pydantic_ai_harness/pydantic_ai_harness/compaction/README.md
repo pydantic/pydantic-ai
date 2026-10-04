@@ -454,9 +454,9 @@ recent suffix. Retention includes the boundary message and required tool depende
 retries. Counts use message-part text, not attached `ModelRequest.instructions`. Histories below the
 target stay unchanged. Summaries, receipts, pins, and older user copies do not replace the protected tail.
 
-> **Compatibility impact:** Positive `keep_tokens` previously acted as an upper budget. Allow headroom
-> for whole-message/tool-dependency overshoot and added context; this is not a request-size limit.
-> Review trigger thresholds and lower the target if needed. Zero-token and message-count modes are unchanged.
+Allow headroom for whole-message/tool-dependency overshoot and added context; `keep_tokens` is not a
+request-size limit. A value of `0` sets a zero-token target rather than a minimum-retention floor;
+`None` selects message-count retention with `keep_messages`.
 
 See the [token-retention guide](https://pydantic.dev/docs/ai/harness/compaction/#token-retention-after-automatic-compaction)
 for the automatic-compaction example, tokenizer accounting, and fallback/budget guidance.
@@ -588,7 +588,7 @@ the newest user turns from the summarized prefix alongside the summary. In messa
 existing `keep_messages` tail budget, so at most that many retained user messages and tail
 messages survive together. With a positive `keep_tokens`, the original suffix takes precedence:
 `keep_messages` caps only the additional older user turns, which do not reduce the retained tail.
-The zero-token setting retains its zero-budget behavior.
+With `keep_tokens=0`, retained user copies must fit a zero-token budget.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
 text items of a multi-part prompt; images, audio, and cache points pass through untouched. This

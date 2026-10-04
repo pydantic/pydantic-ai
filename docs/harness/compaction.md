@@ -343,17 +343,11 @@ By default `preserve_first_user_message=True` keeps the first user turn (in addi
 
 ### Token retention after automatic compaction
 
-!!! warning "Compatibility impact"
-
-    Positive `keep_tokens` now preserves a minimum original suffix instead of an upper-budget target.
-    Review trigger thresholds and context headroom, and lower the retention target if needed.
-    Message-count mode and `keep_tokens=0` are unchanged.
-
 `max_tokens` determines when compaction runs; a positive `keep_tokens` determines how much original recent history survives. Both `SlidingWindowCompaction` and `SummarizingCompaction` include the whole message that crosses the retention target, extending backward for matching tool calls and tool-specific retry responses.
 
-For example, automatic compaction with `max_tokens=170_000` may encounter a 190k-token history consisting of 139k older tokens, a recent 48k-token message, and a 3k-token newest tail. With `keep_tokens=50_000`, it retains the 51k-token suffix rather than dropping the boundary-crossing message and keeping only 3k. Summarizing compaction summarizes the older prefix; sliding-window compaction discards it.
+For example, automatic compaction with `max_tokens=170_000` may encounter a 190k-token history consisting of 139k older tokens, a recent 48k-token message, and a 3k-token newest tail. With `keep_tokens=50_000`, it retains the 51k-token suffix, including the message that crosses the target. Summarizing compaction summarizes the older prefix; sliding-window compaction discards it.
 
-Counts use the configured `tokenizer`, or the default character-based estimate, over message-part text including system-prompt parts. Attached `ModelRequest.instructions` do not satisfy the retention target. If the whole history is below the target, compaction leaves it unchanged without a summary call. `keep_tokens=0` retains its existing zero-budget behavior; `None` uses `keep_messages`.
+Counts use the configured `tokenizer`, or the default character-based estimate, over message-part text including system-prompt parts. Attached `ModelRequest.instructions` do not satisfy the retention target. If the whole history is below the target, compaction leaves it unchanged without a summary call. `keep_tokens=0` uses a zero-token target rather than a minimum-retention floor; `None` uses `keep_messages`.
 
 Whole messages and tool dependencies can overshoot the target. Summaries, receipts, reinserted pins, and retained older user turns are additional; they do not displace the protected suffix. Existing receipts inside that suffix remain unchanged. This is not a context-window-fit guarantee: callers must check the remaining request budget and stop, switch models, or explicitly reduce the retention target if necessary. Configure the same retention target on each fallback that must preserve it.
 
@@ -495,7 +489,7 @@ The `Planning` capability does not need pinning: its plan is re-injected ephemer
 
 ## Keeping user messages (`keep_user_messages`)
 
-User turns are the highest signal-per-token content in a conversation, and losing them is the main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves the newest user turns from the summarized prefix alongside the summary. In message-count mode, they consume the existing `keep_messages` tail budget, so at most that many retained user messages and tail messages survive together. With a positive `keep_tokens`, the original suffix takes precedence: `keep_messages` caps only the additional older user turns, which do not reduce the retained tail. The zero-token setting retains its zero-budget behavior. Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit truncation marker when it overruns. The character budget applies per part and is shared across the text items of a multi-part prompt; images, audio, and cache points pass through untouched. This supersedes `preserve_first_user_message`, which keeps only the first turn.
+User turns are the highest signal-per-token content in a conversation, and losing them is the main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves the newest user turns from the summarized prefix alongside the summary. In message-count mode, they consume the existing `keep_messages` tail budget, so at most that many retained user messages and tail messages survive together. With a positive `keep_tokens`, the original suffix takes precedence: `keep_messages` caps only the additional older user turns, which do not reduce the retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token budget. Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit truncation marker when it overruns. The character budget applies per part and is shared across the text items of a multi-part prompt; images, audio, and cache points pass through untouched. This supersedes `preserve_first_user_message`, which keeps only the first turn.
 
 ```python
 from pydantic_ai_harness import SummarizingCompaction
