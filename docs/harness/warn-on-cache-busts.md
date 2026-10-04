@@ -33,6 +33,10 @@ The verdict is cross-provider for free -- pyai normalizes every provider into th
 
 Keying per provider and model means a mid-run model switch does not warn: a `FallbackModel` failover or a per-step model change uses a different cache key, so the monitor starts a fresh mark for it instead of comparing against the previous model's. Marks are kept per key rather than reset, so switching back to an earlier model within its cache TTL still compares against that model's prefix.
 
+After a native tool call, such as web search or code execution, some providers sum cache reads across internal model calls. The monitor can still warn if this total falls below the established prefix's collapse threshold, but it keeps the earlier prefix and waits for an ordinary request to confirm recovery. This avoids a false warning when the next request reads fewer tokens than the summed total.
+
+If the provider reports one call to the main model and no compaction, the response uses normal cache accounting. Gemini responses that count tool-use prompt tokens separately from cache reads do the same. These responses can establish a larger prefix, and a healthy cache read confirms recovery so a later collapse can warn again.
+
 A collapse has two shapes the monitor cannot tell apart, so the warning names both: the cacheable prefix moved, or the provider's cache expired under an unchanged prefix (a gap between requests longer than the cache TTL -- Anthropic's default is 5 minutes, refreshed on each hit). When the gap since the same model's previous request exceeds `cache_ttl_seconds`, the message reports the gap so a long tool or approval pause isn't mistaken for a moved prefix. The gap is timed per model, so switching away and back measures the returning model's own idle time, not whatever ran in between.
 
 ## Conversations
