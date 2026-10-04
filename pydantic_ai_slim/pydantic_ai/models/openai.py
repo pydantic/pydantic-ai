@@ -2153,7 +2153,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             request_context.model_request_parameters,
         )
         response = await self._responses_compact(
-            request_context.messages,
+            list(request_context.messages),
             cast(OpenAIResponsesModelSettings, model_settings or {}),
             model_request_parameters,
             instructions_override=instructions,
@@ -2425,38 +2425,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
-                signature = item.encrypted_content
-                # Handle raw CoT content from gpt-oss models
-                provider_details: dict[str, Any] = {}
-                raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
-                if raw_content:
-                    provider_details['raw_content'] = raw_content
-
-                if item.summary:
-                    for summary in item.summary:
-                        # We use the same id for all summaries so that we can merge them on the round trip.
-                        items.append(
-                            ThinkingPart(
-                                content=summary.text,
-                                id=item.id,
-                                signature=signature,
-                                provider_name=self.system,
-                                provider_details=provider_details or None,
-                            )
-                        )
-                        # We only need to store the signature and raw_content once.
-                        signature = None
-                        provider_details = {}
-                elif signature or provider_details:
-                    items.append(
-                        ThinkingPart(
-                            content='',
-                            id=item.id,
-                            signature=signature,
-                            provider_name=self.system,
-                            provider_details=provider_details or None,
-                        )
-                    )
+                items.extend(_map_reasoning_item(item, self.system))
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputRefusal):
@@ -3130,25 +3099,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         has_image_generating_tool = False
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                web_search_tool = responses.WebSearchToolParam(
-                    type='web_search', search_context_size=tool.search_context_size
-                )
-                if tool.user_location:
-                    web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
-                        type='approximate', **tool.user_location
-                    )
-                filters = responses.web_search_tool_param.Filters()
-                if tool.allowed_domains:
-                    filters['allowed_domains'] = tool.allowed_domains
-                if tool.blocked_domains:
-                    # The OpenAI API supports this field, but the SDK's `Filters` does not include it yet.
-                    cast(dict[str, object], filters)['blocked_domains'] = tool.blocked_domains
-                if filters:
-                    web_search_tool['filters'] = filters
-                if tool.external_web_access is not None:
-                    # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
-                    cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
-                tools.append(web_search_tool)
+                tools.append(_map_web_search_tool_param(tool))
             elif isinstance(tool, FileSearchTool):
                 file_search_tool = cast(
                     responses.FileSearchToolParam,
@@ -4035,7 +3986,11 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
-    _vendor_part_id: str = field(default='content', init=False)
+    # Content segments are anonymous; reasoning segments also carry their field identity.
+    _content_generation: int = field(default=0, init=False)
+    _reasoning_generation: int = field(default=0, init=False)
+    _held_text_whitespace: str = field(default='', init=False)
+    _awaiting_text_after_reasoning: bool = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
@@ -4146,6 +4101,18 @@ class OpenAIStreamedResponse(StreamedResponse):
             self._map_thinking_delta(choice), self._map_text_delta(choice), self._map_tool_call_delta(choice)
         )
 
+    def _advance_part_boundary(self, source: Literal['reasoning', 'content', 'tool']) -> None:
+        if source != 'reasoning':
+            self._reasoning_generation += 1
+            self._awaiting_text_after_reasoning = False
+
+        # Keep the content key while it names a ThinkingPart so closing tags retain their context.
+        if source != 'content' and isinstance(
+            self._parts_manager.get_part_by_vendor_id(('content', self._content_generation)), TextPart
+        ):
+            self._content_generation += 1
+            self._awaiting_text_after_reasoning = source == 'reasoning'
+
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps thinking delta content to events.
 
@@ -4176,12 +4143,15 @@ class OpenAIStreamedResponse(StreamedResponse):
                     UserWarning,
                 )
                 continue
-            yield from self._parts_manager.handle_thinking_delta(
-                vendor_part_id=field_name,
+            for event in self._parts_manager.handle_thinking_delta(
+                vendor_part_id=('reasoning', field_name, self._reasoning_generation),
                 id=field_name,
                 content=reasoning,
                 provider_name=self.provider_name,
-            )
+            ):
+                if isinstance(event, PartStartEvent):
+                    self._advance_part_boundary('reasoning')
+                yield event
             break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
@@ -4192,16 +4162,29 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response
         content = choice.delta.content
         if content:
+            emitted = False
             for event in self._parts_manager.handle_text_delta(
-                vendor_part_id=self._vendor_part_id,
+                vendor_part_id=('content', self._content_generation),
                 content=content,
                 thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                 ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
             ):
-                if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
-                    event.part.id = 'content'
-                    event.part.provider_name = self.provider_name
+                emitted = True
+                if isinstance(event, PartStartEvent):
+                    self._advance_part_boundary('content')
+                    if isinstance(event.part, ThinkingPart):
+                        event.part.id = 'content'
+                        event.part.provider_name = self.provider_name
+                    elif isinstance(event.part, TextPart) and self._held_text_whitespace:
+                        event.part.content = self._held_text_whitespace + event.part.content
+                        self._held_text_whitespace = ''
                 yield event
+            if not emitted and content.isspace() and self._awaiting_text_after_reasoning:
+                # `ignore_streamed_leading_whitespace` dropped the whitespace-only start of text right after reasoning
+                # that interrupted a text part. Hold it for the next text part, even across a tool call or `<think>`
+                # part, so the joined text keeps the separator; if no text follows, it stays dropped. Leading
+                # whitespace anywhere else is dropped as usual.
+                self._held_text_whitespace += content
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
@@ -4216,10 +4199,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                 tool_call_id=dtc.id,
             )
             if maybe_event is not None:
-                if isinstance(maybe_event, PartStartEvent) and isinstance(
-                    self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
-                ):
-                    self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
+                if isinstance(maybe_event, PartStartEvent):
+                    self._advance_part_boundary('tool')
                 yield maybe_event
 
     def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
@@ -5127,11 +5108,11 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         return resolve
 
-    def _should_compact(self, messages: list[ModelMessage]) -> bool:
+    def _should_compact(self, messages: Sequence[ModelMessage]) -> bool:
         if not self.stateless:
             return False
         if self.trigger is not None:
-            return self.trigger(messages)
+            return self.trigger(list(messages))
         if self.message_count_threshold is not None:
             return len(messages) > self.message_count_threshold
         return False  # pragma: no cover
@@ -5169,7 +5150,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         compacted_response = await request_context.model.compact_messages(compact_ctx)
 
         # Replace message history with compaction + last request
-        request_context.messages = [compacted_response, request_context.messages[-1]]
+        messages = [compacted_response, request_context.messages[-1]]
+        request_context.messages = messages.copy()
+        ctx.messages[:] = messages
         return request_context
 
     @classmethod
@@ -5794,6 +5777,65 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolParam:
+    """Map a [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] to a Responses `web_search` tool."""
+    web_search_tool = responses.WebSearchToolParam(type='web_search', search_context_size=tool.search_context_size)
+    if tool.user_location:
+        web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
+            type='approximate', **tool.user_location
+        )
+    filters = responses.web_search_tool_param.Filters()
+    if tool.allowed_domains:
+        filters['allowed_domains'] = tool.allowed_domains
+    if tool.blocked_domains:
+        # The OpenAI API supports this field, but the SDK's `Filters` does not include it yet.
+        cast(dict[str, object], filters)['blocked_domains'] = tool.blocked_domains
+    if filters:
+        web_search_tool['filters'] = filters
+    if tool.external_web_access is not None:
+        # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
+        cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
+    return web_search_tool
+
+
+def _map_reasoning_item(item: responses.ResponseReasoningItem, provider_name: str) -> list[ThinkingPart]:
+    """Map a Responses reasoning item to the `ThinkingPart`s that replay it."""
+    signature = item.encrypted_content
+    # Handle raw CoT content from gpt-oss models
+    provider_details: dict[str, Any] = {}
+    raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
+    if raw_content:
+        provider_details['raw_content'] = raw_content
+
+    parts: list[ThinkingPart] = []
+    if item.summary:
+        for summary in item.summary:
+            # We use the same id for all summaries so that we can merge them on the round trip.
+            parts.append(
+                ThinkingPart(
+                    content=summary.text,
+                    id=item.id,
+                    signature=signature,
+                    provider_name=provider_name,
+                    provider_details=provider_details or None,
+                )
+            )
+            # We only need to store the signature and raw_content once.
+            signature = None
+            provider_details = {}
+    elif signature or provider_details:
+        parts.append(
+            ThinkingPart(
+                content='',
+                id=item.id,
+                signature=signature,
+                provider_name=provider_name,
+                provider_details=provider_details or None,
+            )
+        )
+    return parts
 
 
 def _uploaded_file_to_response_content(
