@@ -69,7 +69,7 @@ async def test_credentials_round_trip() -> None:
     assert await source.load() == credentials
 
 
-@pytest.mark.parametrize('command', ['/login openai-codex', '/login openai-codex'])
+@pytest.mark.parametrize('command', ['/login codex', '/login openai-codex'])
 async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         assert self.redirect_uri == 'http://localhost:1455/auth/callback'
