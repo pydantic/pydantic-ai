@@ -152,6 +152,23 @@ class _SnowflakeChatCompletionChunk(_ChatCompletionChunk):
     choices: list[_SnowflakeChunkChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
+def _drop_empty_moderation_stub(data: dict[str, Any]) -> dict[str, Any]:
+    """Remove the empty `moderation` placeholder that Cortex sends on responses where moderation wasn't requested.
+
+    The stub looks like `{'input': {'type': '', 'results': None, ...}, 'output': {...}}`, which matches neither
+    variant of the OpenAI SDK's strict `moderation` union. It is only dropped when a side is that placeholder
+    (empty `type` and no `results`), so real moderation results still reach `provider_details` and any other
+    malformed field is still rejected.
+    """
+    moderation = data.get('moderation')
+    if not isinstance(moderation, dict):
+        return data
+    sides = cast(dict[str, Any], moderation).values()
+    if any(isinstance(side, dict) and not side.get('type') and not side.get('results') for side in sides):  # pyright: ignore[reportUnknownMemberType]
+        return {key: value for key, value in data.items() if key != 'moderation'}
+    return data
+
+
 @dataclass(init=False)
 class SnowflakeModel(OpenAIChatModel):
     """A model that uses Snowflake Cortex's OpenAI-compatible Chat Completions API.
@@ -219,7 +236,7 @@ class SnowflakeModel(OpenAIChatModel):
         for choice in response.choices:
             if not choice.finish_reason:
                 choice.finish_reason = self._missing_finish_reason(choice)
-        return _SnowflakeChatCompletion.model_validate(response.model_dump())
+        return _SnowflakeChatCompletion.model_validate(_drop_empty_moderation_stub(response.model_dump(warnings=False)))
 
     @override
     def _missing_finish_reason(self, choice: chat_completion.Choice) -> Literal['stop', 'tool_calls']:
@@ -267,7 +284,9 @@ class SnowflakeStreamedResponse(OpenAIStreamedResponse):
     @override
     async def _validate_response(self) -> AsyncIterable[chat.ChatCompletionChunk]:
         async for chunk in self._response:
-            yield _SnowflakeChatCompletionChunk.model_validate(chunk.model_dump())
+            yield _SnowflakeChatCompletionChunk.model_validate(
+                _drop_empty_moderation_stub(chunk.model_dump(warnings=False))
+            )
 
     @override
     def _missing_finish_reason(self) -> FinishReason:
