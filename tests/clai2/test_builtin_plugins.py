@@ -28,6 +28,7 @@ CURATED = {
     'observability',
     'notifications',
     'herdr',
+    'aoe',
     'mcp',
     'day_ai',
     'ordinal',
@@ -43,6 +44,7 @@ CURATED = {
 }
 OPT_IN = {
     'herdr',
+    'aoe',
     'day_ai',
     'github',
     'google_workspace',

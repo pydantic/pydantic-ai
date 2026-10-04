@@ -90,6 +90,22 @@ CLAI2's state, session reference, model/token metadata, and conversation title.
 It starts disabled and does nothing outside herdr. See
 [the plugin guide](PLUGINS.md#herdr-integration) for details and limitations.
 
+## Agent of Empires integration
+
+Run `clai2 plugins enable aoe` once to let [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires)
+(AoE) show CLAI2 sessions as `running`, `waiting`, `idle`, or `error`, reopen a
+restarted session's conversation, and title the session after the conversation.
+Register CLAI2 with AoE as a custom agent:
+
+```toml
+# ~/.config/agent-of-empires/config.toml
+[session.custom_agents]
+clai2 = "clai2"
+```
+
+Then `aoe add --tool clai2 -l`. The plugin does nothing outside an AoE session.
+See [the plugin guide](PLUGINS.md#agent-of-empires-integration) for details and limitations.
+
 ## Desktop notifications
 
 The built-in `notifications` plugin is enabled by default. Interactive sessions
