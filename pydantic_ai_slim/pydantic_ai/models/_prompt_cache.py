@@ -3,10 +3,10 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from ..exceptions import UserError
-from ..settings import CacheRetention, CacheSetting
+from ..settings import CacheRetention
 
 T = TypeVar('T')
 
@@ -14,10 +14,12 @@ CACHE_RETENTION_ORDER: tuple[CacheRetention, ...] = ('5m', '30m', '1h')
 """All retention tiers, shortest first."""
 
 
-def snap_cache_retention(value: CacheSetting, supported: Sequence[CacheRetention]) -> CacheSetting:
+def snap_cache_retention(
+    value: Literal[True] | CacheRetention, supported: Sequence[CacheRetention]
+) -> Literal[True] | CacheRetention:
     """Snap a requested cache retention to the nearest tier the provider supports.
 
-    Booleans and supported retentions pass through unchanged. An unsupported retention snaps
+    `True` and supported retentions pass through unchanged. An unsupported retention snaps
     down to the nearest shorter supported tier, or up to the shortest supported tier when no
     shorter one exists. On a provider with no retention tiers to request, a retention becomes
     `True`: caching with the provider's default retention.

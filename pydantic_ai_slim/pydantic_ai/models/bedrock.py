@@ -100,7 +100,7 @@ from pydantic_ai.profiles.anthropic import (
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from pydantic_ai.settings import CacheRetention, ModelSettings, ThinkingLevel, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -819,7 +819,9 @@ class BedrockConverseModel(Model[BaseClient]):
                 stacklevel=2,
             )
 
-    def _translate_cache(self, model_settings: BedrockModelSettings, cache: CacheSetting) -> BedrockModelSettings:
+    def _translate_cache(
+        self, model_settings: BedrockModelSettings, cache: Literal[True] | CacheRetention
+    ) -> BedrockModelSettings:
         """Map the unified `cache` setting onto Bedrock cache settings.
 
         Only called when no explicit `bedrock_cache_*` setting is present (those take precedence

@@ -92,7 +92,7 @@ from ..profiles import (
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -248,13 +248,13 @@ class ModelRequestParameters:
     after checking that the model's profile supports thinking.
     """
 
-    cache: CacheSetting | None = None
+    cache: Literal[True] | CacheRetention | None = None
     """The resolved unified `cache` setting for this request.
 
     Set by the base `Model.prepare_request()` from the unified `cache` field in `ModelSettings`,
     after checking that the model's profile supports caching and snapping the retention to a
-    supported tier. `None` means the unified setting is unset, unsupported by the model, or
-    overridden by explicit provider-specific cache settings, which take precedence and are not
+    supported tier. `None` means the unified setting is unset, `False`, unsupported by the model,
+    or overridden by explicit provider-specific cache settings, which take precedence and are not
     reflected here.
     """
 
@@ -585,7 +585,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             model_settings = cast(ModelSettings, stripped) if stripped else None
         return model_settings, params
 
-    def _resolved_cache_setting(self, merged_settings: ModelSettings | None) -> CacheSetting | None:
+    def _resolved_cache_setting(self, merged_settings: ModelSettings | None) -> Literal[True] | CacheRetention | None:
         """The unified `cache` value snapped to this model's supported retentions, if caching is supported."""
         if merged_settings and (cache := merged_settings.get('cache')) and self.profile.get('supports_cache', False):
             return snap_cache_retention(cache, self.profile.get('supported_cache_retentions', ('5m',)))

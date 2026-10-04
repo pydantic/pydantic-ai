@@ -83,7 +83,7 @@ from ..profiles.anthropic import (
 from ..providers import Provider, infer_provider
 from ..providers._bedrock_model_names import bedrock_claude_cache_retentions
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheRetention, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
@@ -2798,7 +2798,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         return BetaCacheControlEphemeralParam(type='ephemeral', ttl=ttl)
 
-    def _translate_cache(self, model_settings: AnthropicModelSettings, cache: CacheSetting) -> AnthropicModelSettings:
+    def _translate_cache(
+        self, model_settings: AnthropicModelSettings, cache: Literal[True] | CacheRetention
+    ) -> AnthropicModelSettings:
         """Map the unified `cache` setting onto Anthropic cache settings.
 
         Only called when no explicit `anthropic_cache*` setting is present (those take

@@ -9,7 +9,7 @@ budget helper, the retention resolver, and the Google warning path.
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -62,7 +62,9 @@ def _make_model(
     return FunctionModel(_echo, profile=profile)
 
 
-def _resolve_cache(model: FunctionModel, cache: CacheSetting) -> tuple[ModelSettings | None, CacheSetting | None]:
+def _resolve_cache(
+    model: FunctionModel, cache: CacheSetting
+) -> tuple[ModelSettings | None, Literal[True] | CacheRetention | None]:
     settings, params = model.prepare_request(ModelSettings(cache=cache), ModelRequestParameters())
     return settings, params.cache
 
@@ -78,7 +80,6 @@ class TestSnapCacheRetention:
         ('value', 'supported', 'expected'),
         [
             (True, ('5m', '1h'), True),
-            (False, ('5m', '1h'), False),
             ('5m', ('5m', '1h'), '5m'),
             ('1h', ('5m', '1h'), '1h'),
             ('30m', ('5m', '1h'), '5m'),
@@ -92,7 +93,12 @@ class TestSnapCacheRetention:
             ('1h', (), True),
         ],
     )
-    def test_snap(self, value: CacheSetting, supported: tuple[CacheRetention, ...], expected: CacheSetting):
+    def test_snap(
+        self,
+        value: Literal[True] | CacheRetention,
+        supported: tuple[CacheRetention, ...],
+        expected: Literal[True] | CacheRetention,
+    ):
         assert snap_cache_retention(value, supported) == expected
 
     def test_unknown_retention_raises_user_error(self):
