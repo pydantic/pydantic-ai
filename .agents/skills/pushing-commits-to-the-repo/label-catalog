@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Print the shared label catalog path. Use --refresh after repository labels change.
+# Print the checked-in label catalog path. Use --refresh after repository labels change.
 set -euo pipefail
 
 if [[ $# -gt 1 || (${1:-} != '' && ${1:-} != '--refresh') ]]; then
@@ -7,7 +7,7 @@ if [[ $# -gt 1 || (${1:-} != '' && ${1:-} != '--refresh') ]]; then
   exit 2
 fi
 
-catalog="$(git rev-parse --path-format=absolute --git-common-dir)/pydantic-ai-label-catalog.tsv"
+catalog="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/labels.tsv"
 if [[ -f "$catalog" && ${1:-} != '--refresh' ]]; then
   printf '%s\n' "$catalog"
   exit 0

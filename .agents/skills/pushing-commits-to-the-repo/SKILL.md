@@ -46,9 +46,11 @@ Use one fenced `diff` tree from the public entry point to the changed observable
 Assign title, body, and label updates to the same subagent. Reconcile labels whenever the title or body changes.
 
 Run `.agents/skills/pushing-commits-to-the-repo/label-catalog` and give the subagent the printed file path.
-The helper reuses a compact catalog shared across worktrees. A missing catalog costs at most two label-read requests.
+The checked-in catalog supplies clones and worktrees without label-read requests.
 Run the helper with `--refresh` after creating, renaming, or updating repository labels.
-The helper verifies completeness before replacing the catalog. Never fetch labels individually or pass raw label API responses.
+Commit refreshed catalog changes.
+The helper uses at most two requests and verifies completeness before replacing the catalog.
+Never fetch labels individually or pass raw label API responses.
 
 Keep the category label aligned with the PR's purpose (`bug`, `feature`, `docs`, `chore`, `refactor`).
 Add existing topic labels for every subject materially covered by the final title, body, and diff.
@@ -129,6 +131,6 @@ Run this final metadata check after CI, comments, and any selected `douwebot` re
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
 3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
 4. Require either `current` or exact corrections: replacement title/body and label additions/removals.
-5. Apply every correction. Code changes restart the post-push loop; metadata-only changes do not.
+5. Apply every correction. Committed changes restart the post-push loop; GitHub metadata-only changes do not.
 6. After a replacement, repeat the check with another fresh subagent.
 7. Hand the PR back only after the check reports `current`.
