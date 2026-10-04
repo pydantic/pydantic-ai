@@ -3568,6 +3568,21 @@ class TestDynamicCatalog:
         assert ctx.pending_messages is not None
         assert len(ctx.pending_messages) == 1
 
+    async def test_other_system_prompts_do_not_count_as_announcements(self) -> None:
+        """Only an authored announcement suppresses one: a system prompt naming the tool does not."""
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        ctx.messages.append(ModelRequest(parts=[SystemPromptPart(content='Prefer `weather` for forecasts.')]))
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result={'discovered_tools': [{'name': 'weather'}]},
+        )
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
+
     async def test_announcement_in_visible_history_deduplicates_across_steps(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
