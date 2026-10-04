@@ -3612,6 +3612,43 @@ async def test_anthropic_include_citations_request_setting(allow_model_requests:
     assert web_fetch_tool.get('citations') == ({'enabled': True} if include_citations else None)
 
 
+@pytest.mark.parametrize('include_citations', [False, True])
+async def test_anthropic_include_citations_tool_return_documents(
+    allow_model_requests: None, include_citations: bool
+) -> None:
+    """Anthropic requires citations on all of a request's documents or none, so tool-returned documents get them too."""
+    response = completion_message(
+        [BetaTextBlock(text='The policy allows thirty days.', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the return window?')]),
+        ModelResponse(parts=[ToolCallPart('read_policy', {}, tool_call_id='call-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'read_policy',
+                    [
+                        BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'),
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf'),
+                    ],
+                    tool_call_id='call-1',
+                )
+            ]
+        ),
+    ]
+
+    await Agent(model, model_settings=ModelSettings(include_citations=include_citations)).run(message_history=history)
+
+    tool_result = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][-1]['content'][0]
+    documents = [block for block in tool_result['content'] if block['type'] == 'document']
+    assert [document.get('citations') for document in documents] == (
+        [{'enabled': True}] * 2 if include_citations else [None] * 2
+    )
+
+
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)

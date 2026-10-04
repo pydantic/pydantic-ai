@@ -778,7 +778,7 @@ async def test_document_citations(
 
 
 NativeCitationReplayProvider = Literal[
-    'anthropic-messages', 'anthropic-document', 'bedrock-converse', 'openai-responses'
+    'anthropic-messages', 'anthropic-document', 'anthropic-tool-document', 'bedrock-converse', 'openai-responses'
 ]
 
 
@@ -788,6 +788,7 @@ NativeCitationReplayProvider = Literal[
     [
         pytest.param('anthropic-messages', id='anthropic-messages'),
         pytest.param('anthropic-document', id='anthropic-document'),
+        pytest.param('anthropic-tool-document', id='anthropic-tool-document'),
         pytest.param('bedrock-converse', id='bedrock-converse'),
         pytest.param('openai-responses', id='openai-responses'),
     ],
@@ -803,6 +804,7 @@ async def test_native_citation_replay_after_persisted_history(
     available = {
         'anthropic-messages': anthropic_available,
         'anthropic-document': anthropic_available,
+        'anthropic-tool-document': anthropic_available,
         'bedrock-converse': bedrock_available,
         'openai-responses': openai_available,
     }[provider]
@@ -810,7 +812,7 @@ async def test_native_citation_replay_after_persisted_history(
         pytest.skip(f'{provider} dependencies not installed')
     agent: Agent[None, str]
     first_prompt: str | list[str | BinaryContent]
-    if provider in ('anthropic-messages', 'anthropic-document'):
+    if provider in ('anthropic-messages', 'anthropic-document', 'anthropic-tool-document'):
         model = AnthropicModel(
             'claude-sonnet-4-5',
             provider=AnthropicProvider(api_key=anthropic_api_key),
@@ -819,6 +821,9 @@ async def test_native_citation_replay_after_persisted_history(
         if provider == 'anthropic-messages':
             agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
             first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
+        elif provider == 'anthropic-tool-document':
+            agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(include_citations=True))
+            first_prompt = TOOL_DOCUMENT_PROMPT
         else:
             agent = Agent(model, model_settings=ModelSettings(include_citations=True))
             first_prompt = [
@@ -850,3 +855,30 @@ async def test_native_citation_replay_after_persisted_history(
     history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
     second_result = await agent.run('Continue.', message_history=history)
     assert second_result.output
+
+
+def read_shipping_policy() -> BinaryContent:
+    """Read the shipping policy document."""
+    return BinaryContent(data=b'Orders ship within two business days.', media_type='text/plain')
+
+
+TOOL_DOCUMENT_PROMPT: list[str | BinaryContent] = [
+    'What are the return window and the shipping time? Read the shipping policy first. '
+    'Answer in two sentences and cite the documents.',
+    BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
+]
+
+
+async def test_anthropic_tool_return_document_citations(allow_model_requests: None, anthropic_api_key: str) -> None:
+    """Anthropic accepts citations enabled on documents in both the user prompt and a tool result."""
+    if not anthropic_available():
+        pytest.skip('anthropic dependencies not installed')
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+    )
+    agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(include_citations=True))
+
+    result = await agent.run(TOOL_DOCUMENT_PROMPT)
+
+    assert citations_from_messages(result.all_messages()) == snapshot()

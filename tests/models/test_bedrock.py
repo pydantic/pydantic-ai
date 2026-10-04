@@ -1833,6 +1833,7 @@ def _bedrock_history_with_citations(
     anchor: ContentCitationAnchor | None = ContentCitationAnchor(start=0, end=len('Thirty days.')),
     text: str = 'Thirty days.',
     citation_count: int = 1,
+    title: str | None = 'Document 1',
 ) -> list[ModelMessage]:
     """Message history as it comes back from JSON storage, with a text document and a cited answer."""
     return ModelMessagesTypeAdapter.validate_json(
@@ -1858,7 +1859,7 @@ def _bedrock_history_with_citations(
                                 Citation(
                                     sources=[
                                         DocumentCitationSource(
-                                            title='Document 1',
+                                            title=title,
                                             excerpts=['thirty days'],
                                             provider_details={'location': location},
                                         )
@@ -1921,6 +1922,23 @@ async def test_bedrock_replays_own_citations(
                 {'text': 'Uncited note.'},
             ],
         }
+    )
+
+
+async def test_bedrock_replays_own_citations_without_title(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """History built by hand or loaded from a UI may lack the title Bedrock always sends."""
+    history = _bedrock_history_with_citations('bedrock', title=None)
+
+    answer = await _bedrock_replayed_answer(bedrock_provider, mocker, history)
+    assert answer['content'][0]['citationsContent']['citations'] == snapshot(
+        [
+            {
+                'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
+                'sourceContent': [{'text': 'thirty days'}],
+            }
+        ]
     )
 
 

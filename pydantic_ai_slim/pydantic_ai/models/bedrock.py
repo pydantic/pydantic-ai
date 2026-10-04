@@ -512,8 +512,7 @@ def _map_citations_for_replay(
             'location': {'documentChar': {'documentIndex': index, 'start': start, 'end': end}},
             'sourceContent': [{'text': document_text[start:end]}],
         }
-        if source.title is not None:  # pragma: no branch
-            # Bedrock names every document it cites.
+        if source.title is not None:
             mapped_source['title'] = source.title
         mapped_sources.append(mapped_source)
     return {'citationsContent': {'content': [{'text': text}], 'citations': mapped_sources}}

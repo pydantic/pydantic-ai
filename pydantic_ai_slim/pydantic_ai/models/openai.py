@@ -4392,7 +4392,10 @@ class OpenAIStreamedResponse(StreamedResponse):
             try:
                 annotation = chat_annotation_ta.validate_python(raw_annotation)
             except ValidationError:
-                serialized_annotations.append(raw_annotation)
+                # OpenRouter's stream parses its own annotation types, such as `file`, into models.
+                serialized_annotations.append(
+                    raw_annotation.model_dump(mode='json') if isinstance(raw_annotation, BaseModel) else raw_annotation
+                )
             else:
                 annotations.append(annotation)
                 serialized_annotations.append(chat_annotation_ta.dump_python(annotation, warnings=False))
