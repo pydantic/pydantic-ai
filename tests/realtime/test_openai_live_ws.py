@@ -144,7 +144,7 @@ async def test_audio_in_delegated_tool_round(
     assert session.usage.output_tokens > 0
     assert session.usage.audio_seconds > 0
     # Live reports how full its own context is; the backend's tokens don't measure it.
-    assert session.context_window_used == snapshot(0.01021875)
+    assert session.context_window_used == snapshot(0.0106484375)
     # Each backend response's tokens land on the `ModelResponse` it produced, as in a standard run: the
     # one that asked for the tool on the tool-call response, the continuation on the spoken answer.
     tool_call_response, spoken_reply = messages[1], messages[3]
@@ -158,13 +158,13 @@ async def test_audio_in_delegated_tool_round(
     assert tool_call_response.provider_details == snapshot(
         {
             'delegated_model': 'gpt-5.6-sol',
-            'delegated_response_id': 'resp_0f173858b0a30685006ab4608a48e487d182bd7ed5d3cf7080',
+            'delegated_response_id': 'resp_02967ef4d60b72e3006abc4434f40487d194be2a7080d73332',
         }
     )
     assert spoken_reply.provider_details == snapshot(
         {
             'delegated_model': 'gpt-5.6-sol',
-            'delegated_response_id': 'resp_0f173858b0a30685006ab4608b987087d192b5641ad71a8236',
+            'delegated_response_id': 'resp_02967ef4d60b72e3006abc4436367887d18f682cb59deccc5d',
         }
     )
     for response in (tool_call_response, spoken_reply):
@@ -230,7 +230,7 @@ async def test_text_reaches_the_model_as_context(
     takes effect while audio is flowing — hence the silence on both sides of it. Nobody speaks here:
     the reply is entirely the result of the injected text.
     """
-    provider, _ = openai_live_ws_cassette
+    provider, cassette = openai_live_ws_cassette
     # Relaying injected context takes the model a beat longer than answering, and a turn boundary
     # inferred from silence will cut in if it is too eager — the tradeoff the setting exists for.
     model = OpenAILiveModel(
@@ -260,6 +260,13 @@ async def test_text_reaches_the_model_as_context(
         if isinstance(part, SpeechPart)
     )
     assert 'Friday' in spoken
+    # Closing asked Live to end the session, and the seconds it billed came back with `session.closed`.
+    assert [
+        interaction.data['type']
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage) and interaction.data.get('type', '').startswith('session.clos')
+    ] == ['session.close', 'session.closed']
+    assert session.usage.audio_seconds > 0
 
 
 async def test_a_text_only_session_streams_its_own_silence(
@@ -411,13 +418,12 @@ async def test_the_backend_searches_the_web(
         [
             {
                 'type': 'search',
-                'queries': ['site:en.wikipedia.org/wiki/Amsterdam Amsterdam population 2026'],
-                'query': 'site:en.wikipedia.org/wiki/Amsterdam Amsterdam population 2026',
-            },
-            {'type': 'search', 'queries': ['Amsterdam population'], 'query': 'Amsterdam population'},
+                'queries': ['site:wikipedia.org Amsterdam population 2025 municipality'],
+                'query': 'site:wikipedia.org Amsterdam population 2025 municipality',
+            }
         ]
     )
-    assert [part.content for part in returns] == snapshot([{'status': 'completed'}, {'status': 'completed'}])
+    assert [part.content for part in returns] == snapshot([{'status': 'completed'}])
     # The searches come first, then what Live said with their results.
     speech = reply.parts[-1]
     assert isinstance(speech, SpeechPart) and speech.speaker == 'assistant'
@@ -426,9 +432,6 @@ async def test_the_backend_searches_the_web(
     # Each search follows the backend reasoning that led to it, as a direct Responses run records it.
     assert [type(part).__name__ for part in reply.parts] == snapshot(
         [
-            'ThinkingPart',
-            'NativeToolCallPart',
-            'NativeToolReturnPart',
             'ThinkingPart',
             'NativeToolCallPart',
             'NativeToolReturnPart',
