@@ -3,7 +3,8 @@
 It runs Logfire's own device sign-in (the one behind `logfire auth`), not the MCP OAuth in
 `pydantic_clai2.logfire_oauth`: MCP tokens are issued for the MCP server alone and cannot mint write
 tokens. The user token lives only for the duration of setup. What is kept is a project write token, saved in
-`/keys`, and the plugin settings naming it, so the loader reloads the plugin and traces go to that project.
+`/keys`, and the plugin settings naming it and the signed-in account's email, so the loader reloads the plugin
+and traces go to that project, with session roots tagged with that email.
 """
 
 import platform
@@ -58,6 +59,10 @@ class _UserToken(BaseModel):
     token: str
 
 
+class _Account(BaseModel):
+    email: str
+
+
 class Project(BaseModel):
     """A project the signed-in user can write to."""
 
@@ -92,11 +97,12 @@ class Setup:
 
 @dataclass(frozen=True)
 class Chosen:
-    """What setup produced: the saved key and the Logfire it belongs to."""
+    """What setup produced: the saved key, the Logfire it belongs to, and the account that signed in."""
 
     token: KeyReference
     base_url: str
     project: Project
+    account_email: str
 
 
 async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | None) -> Chosen | None:
@@ -111,6 +117,7 @@ async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | 
     with telemetry.span('logfire setup', destination=_destination(base_url)) as span:
         async with setup.http() as http:
             user_token = await sign_in(http, base_url, setup)
+            account_email = await _account_email(http, base_url, user_token)
             projects = await _projects(http, base_url, user_token)
             if not projects:
                 raise SetupError(f'You cannot write to any project on {base_url} yet. Create one there, then retry.')
@@ -121,11 +128,7 @@ async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | 
             value = await _write_token(http, base_url, user_token, project)
         name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
         span.set('outcome', 'saved')
-    return Chosen(
-        token=KeyReference(name=name),
-        base_url=base_url,
-        project=project,
-    )
+    return Chosen(token=KeyReference(name=name), base_url=base_url, project=project, account_email=account_email)
 
 
 def pick_destination(runners: Runners, *, current: str | None) -> str | None:
@@ -221,6 +224,12 @@ async def sign_in(http: httpx.AsyncClient, base_url: str, setup: Setup) -> str:
         if response.content.strip() not in (b'', b'null'):
             return _parse(_UserToken, response).token
     raise SetupError('The sign-in link expired before it was approved. Run /plugins configure observability to retry.')
+
+
+async def _account_email(http: httpx.AsyncClient, base_url: str, user_token: str) -> str:
+    """The signed-in account's email, as the SDK's `LogfireClient.get_user_information` reads it."""
+    response = await _call(http.get(f'{base_url}/v1/account/me', headers={'Authorization': user_token}))
+    return _parse(_Account, response).email
 
 
 async def _projects(http: httpx.AsyncClient, base_url: str, user_token: str) -> list[Project]:

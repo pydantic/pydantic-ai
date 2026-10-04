@@ -12,6 +12,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -37,18 +38,14 @@ from tests.clai2.test_logfire import Recorder, close, load_logfire, make_host, o
 @pytest.mark.parametrize('email', [None, 'developer@example.com'])
 @pytest.mark.parametrize('multiple_plugins', [False, True])
 async def test_session_root_groups_turns_tools_and_nested_runs(
-    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, ui_events: bool, email: str | None, multiple_plugins: bool
+    recorder: Recorder, ui_events: bool, email: str | None, multiple_plugins: bool
 ) -> None:
-    async def configured_email() -> str | None:
-        return email
-
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.git_email', configured_email)
-    previous = load_logfire(make_host(ui_events=ui_events, include_user_email=True)) if multiple_plugins else None
+    previous = load_logfire(make_host(ui_events=ui_events, account_email=email)) if multiple_plugins else None
     plugin = load_logfire(
         PluginHost(
             name='observability',
             console=Console(file=io.StringIO()),
-            settings={'ui_events': ui_events, 'include_user_email': True},
+            settings={'ui_events': ui_events, 'account_email': email},
             session_id=lambda: 'session-123',
         )
     )
@@ -87,13 +84,15 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     assert root.parent is None
     assert root.context is not None
     assert (root.attributes or {})['agent_session_id'] == 'session-123'
+    assert root.instrumentation_scope is not None and root.instrumentation_scope.name == 'clai2'
     assert (root.attributes or {})['logfire.tags'] == ((email,) if email else ())
+    assert (root.attributes or {}).get('user.email') == email
     assert (root.attributes or {})['reason'] == 'exit'
     children = [span for span in spans if span is not root]
     assert children
     assert all(span.context is not None and span.context.trace_id == root.context.trace_id for span in children)
     assert all(span.parent is not None for span in children)
-    assert all('logfire.tags' not in (span.attributes or {}) for span in children)
+    assert all({'logfire.tags', 'user.email'}.isdisjoint(span.attributes or {}) for span in children)
     if email:
         assert email not in json.dumps([dict(span.attributes or {}) for span in children])
     tools = [span for span in spans if operation(span) == 'execute_tool']
@@ -104,7 +103,7 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     ]
     assert len(nested_runs) == len(tools) == 2
     assert [span.parent for span in nested_runs] == [span.context for span in tools]
-    ui = [span for span in spans if span.instrumentation_scope and span.instrumentation_scope.name == 'clai2 ui']
+    ui = [span for span in children if span.instrumentation_scope and span.instrumentation_scope.name == 'clai2']
     assert bool(ui) is ui_events
     if ui_events:
         commands = [span for span in ui if span.name == 'command']
@@ -119,9 +118,18 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
         assert [span.parent for span in parent_runs] == [span.context for span in commands]
 
 
-@pytest.mark.parametrize('include_email', [None, False, True])
-async def test_email_tag_is_opt_in_and_disabled_skips_git(
-    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, include_email: bool | None
+@pytest.mark.parametrize(
+    ('settings', 'email'),
+    [
+        ({}, None),
+        ({'account_email': 'signed-in@example.com'}, 'signed-in@example.com'),
+        ({'user_tag': 'git-email', 'account_email': 'signed-in@example.com'}, 'developer@example.com'),
+        ({'user_tag': 'git-email'}, 'developer@example.com'),
+        ({'user_tag': False, 'account_email': 'signed-in@example.com'}, None),
+    ],
+)
+async def test_user_tag_chooses_the_root_email_and_only_git_email_runs_git(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch, settings: dict[str, JsonValue], email: str | None
 ) -> None:
     looked_up = False
 
@@ -131,13 +139,13 @@ async def test_email_tag_is_opt_in_and_disabled_skips_git(
         return 'developer@example.com'
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.git_email', configured_email)
-    settings = {} if include_email is None else {'include_user_email': include_email}
     plugin = load_logfire(make_host(**settings))
     await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
     await close(plugin)
-    assert looked_up is (include_email is True)
+    assert looked_up is (settings.get('user_tag') == 'git-email')
     root = next(span for span in recorder.spans() if span.name == 'CLAI session')
-    assert (root.attributes or {})['logfire.tags'] == (('developer@example.com',) if include_email else ())
+    assert (root.attributes or {})['logfire.tags'] == ((email,) if email else ())
+    assert (root.attributes or {}).get('user.email') == email
 
 
 async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: Recorder, tmp_path: Path) -> None:
@@ -248,7 +256,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
     ui = [
         span
         for span in recorder.spans()
-        if span.instrumentation_scope and span.instrumentation_scope.name == 'clai2 ui'
+        if span.name != 'CLAI session' and span.instrumentation_scope and span.instrumentation_scope.name == 'clai2'
     ]
     assert bool(ui) is ui_events
     if ui_events:

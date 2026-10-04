@@ -25,43 +25,55 @@ from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
 
 
-@pytest.mark.parametrize('include_email', [False, True])
-async def test_logfire_email_settings_survive_older_builds(
-    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch, include_email: bool
+@pytest.mark.parametrize('user_tag', [None, 'git-email', 'false'])
+async def test_logfire_user_tag_settings_survive_older_builds(
+    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch, user_tag: str | None
 ) -> None:
     loader, store = observability_loader(tmp_path)
+    # Saved by a build before user tags: set up with a token, but no sign-in email was recorded.
     previous = PluginSettings(
         id='observability',
         factory='pydantic_clai2.builtin_plugins.logfire',
-        settings={'send_to_logfire': False, 'include_content': False, 'service_name': 'shared-project'},
+        settings={
+            'send_to_logfire': False,
+            'include_content': False,
+            'service_name': 'shared-project',
+            'token': {'name': 'LOGFIRE_TOKEN_TEAM'},
+        },
     )
     store.save_plugin(previous)
     try:
         await loader.load_all()
         loaded = loader.entries()[0].loaded
         assert loaded is not None
-        assert not loaded.plugin.host.settings(LogfireSettings).include_user_email
+        settings = loaded.plugin.host.settings(LogfireSettings)
+        assert (settings.user_tag, settings.account_email) == ('logfire-account', None)  # No identity to tag with.
         assert store.plugins() == [previous]  # Loading an old declaration does not rewrite it.
         source = LogfireSource(loaded.plugin.host)
         rows = {row.key: row for row in source.rows()}
-        if include_email:
-            source.apply(rows['include_user_email'], 'true')
+        if user_tag is None:
+            source.apply(rows['service_name'], 'changed-project')  # Even an unrelated edit saves the defaults.
         else:
-            source.apply(rows['service_name'], 'changed-project')  # Even an unrelated edit saves the default.
+            source.apply(rows['user_tag'], user_tag)
         [saved] = store.plugins()
-        assert saved.settings['include_user_email'] is include_email
+        assert (
+            saved.settings['user_tag'] == {None: 'logfire-account', 'git-email': 'git-email', 'false': False}[user_tag]
+        )
+        assert saved.settings['account_email'] is None
         requirements = store.plugin_requirements('observability')
-        assert requirements == {'include_user_email': ['logfire-user-email']}
+        assert requirements == {'user_tag': ['logfire-user-tag'], 'account_email': ['logfire-user-tag']}
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
-        assert old_view.settings == {key: value for key, value in saved.settings.items() if key != 'include_user_email'}
+        assert old_view.settings == {
+            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account_email')
+        }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
         reloaded = loader.entries()[0].loaded
         assert reloaded is not None
         old_settings = reloaded.plugin.host.settings(LogfireSettings)
-        assert not old_settings.include_user_email
+        assert old_settings.user_tag == 'logfire-account'
         assert not old_settings.include_content
         assert store.plugins() == [saved]  # An older build can read without discarding the newer preference.
     finally:

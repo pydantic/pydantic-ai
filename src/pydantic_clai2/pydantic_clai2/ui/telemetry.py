@@ -2,7 +2,7 @@
 
 Nothing is recorded until a sink subscribes. The built-in `observability` plugin subscribes its own instance when
 its `ui_events` setting is on, and unsubscribes before it shuts that instance down. Every span and log uses
-the `clai2 ui` instrumentation scope.
+the `clai2` instrumentation scope, like everything else CLAI emits itself.
 
 Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the plugin loader,
 `/keys`, the prompt editor) rather than individual menus, so a new menu is covered without extra code.
@@ -20,8 +20,8 @@ import logfire
 from opentelemetry.trace import Span, SpanKind, get_current_span, use_span
 
 Attribute = str | int | float | bool
-SCOPE = 'clai2 ui'
-"""The instrumentation scope for UI spans and logs, distinct from agent traces."""
+SCOPE = 'clai2'
+"""The instrumentation scope for everything CLAI emits itself: session roots, UI records, and plugin errors."""
 
 NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'label', 'key_name', 'new_key_name'})
 """Attributes that only ever hold names and listed choices, which `keep_names` exempts from scrubbing."""

@@ -531,11 +531,11 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             pick('service_name'),
             pick('include_content'),
             pick('include_binary_content'),
-            pick('include_user_email'),
+            pick('user_tag'),
             pick('ui_events'),
             MenuResult(cancelled=True),
         ],
-        choices=[pick('false'), pick('false'), pick('false'), pick('true'), pick('true')],
+        choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('true')],
         texts=[typed('my-clai')],
     )
     monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
@@ -545,7 +545,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
         assert loader.configurable('observability')
         assert await loader.command(['configure', 'observability']) == (
             'Saved Send to Logfire.\nSaved Service name.\nSaved Message content.\nSaved Binary content.\n'
-            'Saved User email.\nSaved UI events.'
+            'Saved User tag.\nSaved UI events.'
         )
         [declaration] = store.plugins()
         assert declaration.settings == {
@@ -553,7 +553,8 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'send_to_logfire': False,
             'include_content': False,
             'include_binary_content': False,
-            'include_user_email': True,
+            'user_tag': 'git-email',
+            'account_email': None,
             'token': None,
             'base_url': None,
             'ui_events': True,
@@ -603,7 +604,12 @@ def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyP
 
 
 def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> None:
-    host = make_host(token={'name': 'LOGFIRE_TOKEN_TEAM'}, base_url='https://logfire.example.com', ui_events=True)
+    host = make_host(
+        token={'name': 'LOGFIRE_TOKEN_TEAM'},
+        base_url='https://logfire.example.com',
+        account_email='mike@example.com',
+        ui_events=True,
+    )
     source = LogfireSource(host)
     project = source.rows()[0]
     assert project.note == '', 'a chosen key replaces the environment, so no note about it'
@@ -612,4 +618,4 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     assert hosted.current(hosted.rows()[0]) == 'LOGFIRE_TOKEN_US'
     assert source.reset(project) == 'Reset Logfire project.'
     saved = host.settings(logfire_plugin.LogfireSettings)
-    assert (saved.token, saved.base_url, saved.ui_events) == (None, None, True)
+    assert (saved.token, saved.base_url, saved.account_email, saved.ui_events) == (None, None, None, True)

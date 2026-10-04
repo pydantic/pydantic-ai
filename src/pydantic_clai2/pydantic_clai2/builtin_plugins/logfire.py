@@ -42,9 +42,14 @@ class LogfireSettings(BaseModel):
     send_to_logfire: Literal[False, 'if-token-present'] = 'if-token-present'
     include_content: bool = True
     include_binary_content: bool = True
-    include_user_email: bool = Field(
-        default=False,
-        description='Tag session roots with the email from git config user.email. Never added to child spans or logs.',
+    user_tag: Literal['logfire-account', 'git-email', False] = Field(
+        default='logfire-account',
+        description='Tag session roots with the email of the Logfire account that signed in during project setup, '
+        'or with git config user.email. Never added to child spans or logs.',
+    )
+    account_email: str | None = Field(
+        default=None,
+        description='The email of the Logfire account that signed in during project setup.',
     )
     token: KeyReference | None = Field(
         default=None,
@@ -100,12 +105,14 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             _shutdown(self.instance)
             raise
         self._session_tracing = SessionTracing(instance=self.instance, session_id=lambda: self.host.session_id)
-        self._ui = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
+        # UI records and plugin errors are CLAI's own, so they share the session root's scope.
+        self._clai2 = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
 
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
-        """Tag the opt-in identity setting so older builds sharing the database can ignore it."""
-        return cls(host, host.settings(LogfireSettings, requires={'include_user_email': ['logfire-user-email']}))
+        """Tag the identity settings so older builds sharing the database can ignore them."""
+        requires = {'user_tag': ['logfire-user-tag'], 'account_email': ['logfire-user-tag']}
+        return cls(host, host.settings(LogfireSettings, requires=requires))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._session_tracing, self.instrumentation)
@@ -121,23 +128,23 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
-        self._session_tracing.start(await git_email() if self.settings.include_user_email else None)
+        self._session_tracing.start(await _user_email(self.settings))
         if self.settings.ui_events:
-            self._unsubscribe = telemetry.subscribe(self._ui, root=self._session_tracing.root)
+            self._unsubscribe = telemetry.subscribe(self._clai2, root=self._session_tracing.root)
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
-                self._ui.log('info', 'session started', attributes={'model': model})
+                self._clai2.log('info', 'session started', attributes={'model': model})
 
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         with telemetry.parent_span(self._session_tracing.root()):
-            self.instance.log(
+            self._clai2.log(
                 'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
             )
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         if self.settings.ui_events:
             with telemetry.parent_span(self._session_tracing.root()):
-                self._ui.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
+                self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # Stop receiving UI events before the instance shuts down.
@@ -152,6 +159,13 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                     'Logfire shutdown timed out; some telemetry may not have been sent.',
                     style=theme.color(theme.WARNING),
                 )
+
+
+async def _user_email(settings: LogfireSettings) -> str | None:
+    """The email `user_tag` names; Git is queried only when chosen."""
+    if settings.user_tag == 'git-email':
+        return await git_email()
+    return settings.account_email if settings.user_tag == 'logfire-account' else None
 
 
 def logfire_dir() -> Path:
@@ -186,8 +200,8 @@ _PROJECT_ROW = FieldRow(
     label='Logfire project',
     description=(
         'Enter signs in to Logfire (US, EU, or self-hosted), picks a project, and saves its write token in /keys; '
-        'only the key name is kept here. R goes back to LOGFIRE_TOKEN or the credentials file in '
-        '~/.config/pydantic-clai2/logfire/ (or under $XDG_CONFIG_HOME).'
+        'only the key name and the account email are kept here. R goes back to LOGFIRE_TOKEN or the credentials '
+        'file in ~/.config/pydantic-clai2/logfire/ (or under $XDG_CONFIG_HOME).'
     ),
     default='LOGFIRE_TOKEN or credentials file',
 )
@@ -227,12 +241,12 @@ _ROWS = (
         allow_custom=False,
     ),
     FieldRow(
-        key='include_user_email',
-        label='User email',
-        description=LogfireSettings.model_fields['include_user_email'].description or '',
-        default='false',
-        choices=_BOOLEAN,
-        choice_labels=_INCLUDED,
+        key='user_tag',
+        label='User tag',
+        description=LogfireSettings.model_fields['user_tag'].description or '',
+        default='logfire-account',
+        choices=('logfire-account', 'git-email', 'false'),
+        choice_labels={'logfire-account': 'Logfire sign-in email', 'git-email': 'Git email', 'false': 'off'},
         allow_custom=False,
     ),
     FieldRow(
@@ -290,9 +304,9 @@ class LogfireSource:
         return f'Saved {row.label}.'
 
     def reset(self, row: FieldRow) -> str:
-        """Restore one option's default; the project row forgets the chosen key and server."""
+        """Restore one option's default; the project row forgets the chosen key, server, and sign-in email."""
         data = self.settings.model_dump(mode='json')
-        for key in ('token', 'base_url') if row.key == PROJECT else (row.key,):
+        for key in ('token', 'base_url', 'account_email') if row.key == PROJECT else (row.key,):
             data.pop(key, None)
         self._host.save_settings(LogfireSettings.model_validate(data))
         return f'Reset {row.label}.'
@@ -321,11 +335,16 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
     if chosen is None:
         return 'Logfire setup cancelled; settings unchanged.'
     # Setting up a project means sending to it, even if sending had been turned off.
-    update = {'token': chosen.token, 'base_url': chosen.base_url, 'send_to_logfire': 'if-token-present'}
+    update = {
+        'token': chosen.token,
+        'base_url': chosen.base_url,
+        'account_email': chosen.account_email,
+        'send_to_logfire': 'if-token-present',
+    }
     host.save_settings(config.model_copy(update=update))
     return (
         f'Logfire traces now go to {chosen.project.label}. Its write token is saved in /keys as '
-        f'{chosen.token.name}; plugin settings keep only that name.'
+        f'{chosen.token.name}; plugin settings keep only that name and the email you signed in with.'
     )
 
 

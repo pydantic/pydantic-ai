@@ -93,6 +93,7 @@ async def test_startup_import_errors_reach_configured_logfire(
     assert root.parent is None
     assert all(span.parent == root.context for span in errors)
     assert all('logfire.tags' not in (span.attributes or {}) for span in errors)
+    assert all(span.instrumentation_scope is not None and span.instrumentation_scope.name == 'clai2' for span in errors)
 
 
 @pytest.mark.parametrize('enabled', [False, True])

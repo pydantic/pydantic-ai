@@ -11,7 +11,7 @@ from opentelemetry.trace import Span
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapRunHandler
-from pydantic_clai2.ui.telemetry import parent_span
+from pydantic_clai2.ui.telemetry import SCOPE, parent_span
 
 
 @dataclass(kw_only=True)
@@ -27,6 +27,7 @@ class SessionTracing(AbstractCapability[None]):
     _fallback_id: str = field(default_factory=lambda: str(uuid4()), init=False)
 
     def start(self, email: str | None) -> None:
+        """Open the current conversation's root; `email`, when known, identifies the user on roots only."""
         self._email = email
         self._active = True
         self.root()
@@ -39,7 +40,7 @@ class SessionTracing(AbstractCapability[None]):
         if session_id not in self._roots:
             self._roots[session_id] = (
                 self.instance.config.get_tracer_provider()
-                .get_tracer('clai2')
+                .get_tracer(SCOPE)
                 .start_span(
                     'CLAI session',
                     context=Context(),
@@ -47,6 +48,7 @@ class SessionTracing(AbstractCapability[None]):
                         'agent_session_id': session_id,
                         'logfire.msg': 'CLAI session',
                         'logfire.tags': [self._email] if self._email else [],
+                        **({'user.email': self._email} if self._email else {}),
                     },
                 )
             )
