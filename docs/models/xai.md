@@ -110,12 +110,40 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 from pydantic_ai.providers.xai import XaiProvider
 
-xai_client = AsyncClient(api_key='your-api-key')
-provider = XaiProvider(xai_client=xai_client)
-model = XaiModel('grok-4.3', provider=provider)
-agent = Agent(model)
-...
+
+async def main():
+    async with AsyncClient(api_key='your-api-key') as xai_client:
+        model = XaiModel('grok-4.3', provider=XaiProvider(xai_client=xai_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
 ```
+
+A client you pass as `xai_client` is yours to close, for example with `async with`; Pydantic AI never closes it. Its gRPC channel binds to the event loop it was created in, so create the client inside the event loop that uses it, as above.
+
+## SDK retries {#sdk-retries}
+
+The `xai_sdk.AsyncClient` turns on gRPC's own retries: a request that fails with `UNAVAILABLE` is attempted up to 5 times, with a backoff between 0.1 and 1 second. gRPC also transparently retries an attempt that never reached the server. These retries happen inside the gRPC channel, so Pydantic AI can't see or count them. To keep the retry policy in your own code, pass a client with gRPC retries disabled:
+
+```python
+from xai_sdk import AsyncClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+
+async def main():
+    async with AsyncClient(api_key='your-api-key', channel_options=[('grpc.enable_retries', 0)]) as xai_client:
+        model = XaiModel('grok-4.3', provider=XaiProvider(xai_client=xai_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Image generation
 

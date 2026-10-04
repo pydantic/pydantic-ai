@@ -68,6 +68,7 @@ from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.menus.model_picker import model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
+from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
 from pydantic_clai2.ui.menus.task_menu import open_tasks
@@ -76,7 +77,7 @@ from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, Promp
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.rendering import theme
@@ -815,12 +816,23 @@ class _Shell(Generic[DepsT, OutputT]):
 
     async def _run_mid_turn(self, text: str) -> None:
         if self.plugins_busy(text):
-            return
+            # `/plugins` is not a `during_turn` command, so `run_now` never hands it over.
+            return  # pragma: no cover
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
             with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
                 await _execute_command(self.commands, text, console=self.console, status=self.status)
+
+    async def _rewind(self) -> None:
+        assert self.editor is not None
+        async with self.forks.busy(), self._released():
+            try:
+                notice = await rewind(self.session, self.editor)
+            except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
+                self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
+            else:
+                self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
@@ -840,6 +852,9 @@ class _Shell(Generic[DepsT, OutputT]):
                 else:
                     assert self.prompt is not None
                     text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+            except PromptRewind:
+                await self._rewind()
+                continue
             except PromptWakeup:
                 if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
                     continue

@@ -17,7 +17,7 @@ Provider usage APIs do not close that gap. They are billing and observability pi
 
 ## The solution
 
-`SpendLimits` prices every model response with [`ModelResponse.cost()`](https://pydantic.dev/docs/ai/api/messages/), adds it to each window you configure, and refuses the next request once a window is spent.
+`SpendLimits` prices each model response it records with [`ModelResponse.cost()`](https://pydantic.dev/docs/ai/api/messages/), adds it to each window you configure, and refuses the next request once a window is spent.
 
 ```python
 from decimal import Decimal
@@ -80,9 +80,9 @@ SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id
 
 ## What the gate guarantees
 
-No request **starts** after a budget is exhausted.
+Once a recorded response spends a window, `SpendLimits` refuses the next request.
 
-Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. Three further gaps are worth knowing rather than discovering: a stream the caller abandons part-way never reaches the accounting hook, so its tokens are billed by the provider and invisible here; a capability that answers from a cache without calling a provider is charged the registry price for the response it returns; and a continuation chain (Anthropic `pause_turn`, OpenAI background mode) arrives at the hook as one merged response, which is what Pydantic AI counts as one request too, so its segments are priced on summed usage rather than one at a time -- the difference only shows where pricing is tiered rather than linear. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
+Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller abandons part-way never reaches the accounting hook, so its tokens are billed by the provider and invisible here. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
 
 ## Reading the numbers
 
@@ -101,7 +101,7 @@ async def show(ctx, event):
     print(f'{event.model} cost ${event.usd}')
 ```
 
-`SpendRecordedEvent` is emitted after every response, including one that `on_unpriced='raise'` is about to reject. Its flat payload carries the response usage and serializable budget readings. Under durable execution, orchestration can deliver it again even though the journaled accrual ran only once, so keep a listener that writes an audit record or emits a billing event idempotent.
+`SpendRecordedEvent` is emitted after each response `SpendLimits` records, including one that `on_unpriced='raise'` is about to reject. Its flat payload carries the response usage and serializable budget readings. Under durable execution, orchestration can deliver it again even though the journaled accrual ran only once, so keep a listener that writes an audit record or emits a billing event idempotent.
 
 Migration: `on_spend` remains supported but is deprecated. Move its callback body to a `SpendRecordedEvent` subscription; the same idempotency requirement applies to it.
 
@@ -246,7 +246,7 @@ from pydantic_ai_harness import SpendLimits
 SpendLimits(price=lambda response: Decimal('0.002') if response.model_name == 'internal-7b' else None)
 ```
 
-An amount returned by `price` must be finite and not negative. Anything else -- a credit, a `NaN`, an infinity -- fails the run with `UserError`, because a credit moves a budget away from its ceiling and the other two are a broken pricing function rather than a price. The response is still recorded first: it was billed by the provider whatever the function returned, so its tokens and request count are accrued and `on_spend` fires before the error is raised.
+An amount returned by `price` must be finite and not negative. Anything else -- a credit, a `NaN`, an infinity -- fails the run with `UserError`, because a credit moves a budget away from its ceiling and the other two are a broken pricing function rather than a price. An exception raised by `price` is reported through the same `UserError` path. The response is still recorded first: it was billed by the provider whatever the function returned, so its tokens and request count are accrued and `on_spend` fires before the error is raised. When one lifecycle committed several provider responses, an error pricing or reporting one response is deferred until the remaining responses accrue.
 
 Under durable execution, `price` and each budget's `scope` callable must be deterministic for the same response and run context. Pricing runs in orchestration outside the journaled accrual, so a changed result can make `on_spend` disagree with the recorded counter or turn a successful recovery into a pricing error. Moving it into a durable operation would require the durability backend to serialize the complete provider response, including arbitrary metadata, so the callable remains outside that boundary. A changed scope selects a different store key from the one in the recorded accrual; `SpendLimits` reports that mismatch as a `UserError` naming the determinism requirement.
 
@@ -258,17 +258,7 @@ State lives across runs deliberately, so `for_run` is not overridden: a daily bu
 
 `defer_loading=True` is refused. A deferred capability's hooks do not run until the model loads it, so an exhausted budget would not stop a request and the requests made meanwhile would go uncounted -- a brake the thing being braked decides when to apply.
 
-The accrual happens in `wrap_model_request`, immediately around the provider call, and the capability declares itself innermost so that wrapper sits inside every capability outside the innermost tier. Every `after_model_request` runs outside it, and so does every wrapper except an innermost-tier capability listed after it.
-
-`after_model_request` is the wrong hook for this. It runs once the whole wrap chain has returned, so a capability whose own `wrap_model_request` awaits the response and then raises `ModelRetry` sends the run straight to a fresh request and the rejected one -- generated, billed, kept in history -- is never counted. Ordering cannot reach that case: the rejecting capability need not be innermost, and one listed *before* `SpendLimits` still wraps outside it.
-
-Wrapping also means a request the provider never saw is not charged for. `SkipModelRequest` from an earlier capability's `before_model_request` reaches `after_model_request` with a response the run never paid for, but never reaches the wrapped handler.
-
-What is left is siblings. Pydantic AI orders innermost capabilities against non-innermost ones only, and among themselves the one listed *later* nests further in. `InputGuardrail` and the durability capabilities also declare themselves innermost, so either listed after `SpendLimits` wraps inside it. `InputGuardrail` is the one that can reject a billed response before it is counted. With `InputGuardrail(parallel=True)` what decides is whether the guard blocks, not who wins the race: a blocked prompt is counted in neither outcome, because the guard cancels the call when it settles first and discards the answer when the model does. The second is the under-count -- a response the provider billed that `SpendLimits` never sees. A durability wrapper dispatches rather than rejects, so it does not create that gap and is omitted from the warning. List `SpendLimits` last among your other innermost capabilities where the difference matters. Closing the guardrail case outright needs a way to order innermost capabilities against each other, tracked in [#534](https://github.com/pydantic/pydantic-ai-harness/issues/534).
-
-`SpendLimits` reports that arrangement rather than leaving it to be read here. Before each model request it reads the sorted chain from `RunContext.root_capability` and warns with `SpendCompositionWarning`, naming the capabilities listed after it that bring a `wrap_model_request` of their own. One arrangement reports once, not once per request -- and it is the arrangement that is remembered rather than the fact of having reported, so an agent whose first run was safe is still read on a later run that adds an inner wrapper through `agent.run(capabilities=[...])`. A warning rather than a refusal, and keyed on the ordering rather than on what the capabilities do with it. None of the conditions above is read: `parallel` can be flipped without moving anything in the list, and neither the verdict nor the race is settled at the point the report is made. So it also names a sequential `InputGuardrail` listed after `SpendLimits`, which raises before the request is made and cannot under-count. Reordering silences it, and is what the paragraph above recommends anyway.
-
-Three kinds of capability are left out of that report. A `Hooks` is not named: it defines `wrap_model_request` whether or not a `model_request` hook was registered, and the registry that would say is private ([pydantic-ai#7177](https://github.com/pydantic/pydantic-ai/issues/7177)). A `WrapperCapability` is answered on whatever it wraps, since its own `wrap_model_request` only delegates -- so a wrapper over a real rejector is still named. A durable-execution capability is also left out: its wrapper dispatches work rather than rejecting a response, and core requires that dispatch to be the last wrapper around the model handler. `SpendLimits` crosses that boundary through its own durable operations instead of by reordering the wrapper.
+`SpendLimits` accrues every response the provider billed, even one that a hook nested inside it rejects or replaces, so where you list it among other capabilities doesn't change what it counts. Core merges a successful continuation chain into one response, so `price` and `on_spend` each run once for its combined usage; a continuation that was partly billed before an error hook recovered is accrued response by response. A cached response, or one supplied with `SkipModelRequest`, never reached the provider and is not charged.
 
 **Durable execution.** `SpendLimits` supports Pydantic AI durability capabilities. Its clock read, counter read, and accrual are separate durable operations. Temporal therefore reads the clock in an activity rather than workflow orchestration, and DBOS or Prefect record the same boundary in their own durable units. On replay, the engine returns each operation's recorded result without reading the clock or store again. The response is accrued once, and the window key comes from the original recorded clock value.
 
@@ -366,5 +356,3 @@ Source: [`pydantic_ai_harness/spend/`](https://github.com/pydantic/pydantic-ai/t
 ::: pydantic_ai_harness.spend.UnpricedModelError
 
 ::: pydantic_ai_harness.spend.UnpricedModelWarning
-
-::: pydantic_ai_harness.spend.SpendCompositionWarning
