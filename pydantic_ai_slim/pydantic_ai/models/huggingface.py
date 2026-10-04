@@ -72,13 +72,17 @@ try:
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
-    from huggingface_hub.errors import HfHubHTTPError, TextGenerationError
+    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError, TextGenerationError
 
 except ImportError as _import_error:
     raise ImportError(
         'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
         'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
     ) from _import_error
+
+# Below the guard on purpose: `huggingface_hub` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 @contextmanager
@@ -96,6 +100,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
         # status code to report.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except (httpx.TransportError, InferenceTimeoutError) as e:
+        # `huggingface_hub` doesn't wrap connection errors and read timeouts in its own exceptions.
+        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
 
 
 __all__ = (

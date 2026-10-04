@@ -27,6 +27,7 @@ try:
         HTTPClientError,
     )
     from botocore.model import StructureShape
+    from urllib3.exceptions import HTTPError as Urllib3HTTPError
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock model, '
@@ -169,6 +170,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
     except (HTTPClientError, BotocoreConnectionError) as e:
         # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except Urllib3HTTPError as e:
+        # botocore reads an event stream straight from the urllib3 response, so a connection that breaks off or
+        # times out mid-stream raises the raw urllib3 error rather than a botocore one.
+        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
     except EventStreamParserError as e:
         # botocore's event stream parser raises its own `ParserError`, not a `BotoCoreError`, for a streamed 200 whose
         # body isn't an event stream, e.g. keep-alive whitespace before an upstream failure.
@@ -1805,7 +1810,9 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_response_id: str | None = None
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
-        return (BotoCoreError, ClientError)
+        # botocore reads the event stream straight from the urllib3 response, so tearing it down mid-read can raise a
+        # raw urllib3 error too.
+        return (BotoCoreError, ClientError, Urllib3HTTPError)
 
     async def close_stream(self) -> None:
         await anyio.to_thread.run_sync(self._event_stream.close)

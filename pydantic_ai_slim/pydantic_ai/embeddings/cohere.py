@@ -27,6 +27,10 @@ except ImportError as _import_error:
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
 
+# Below the guard on purpose: `cohere` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
+
 
 @contextmanager
 def _map_api_errors(model_name: str) -> Generator[None]:
@@ -41,6 +45,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
         # Neither `embed()` nor `count_tokens()` exercises this fallback.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e  # pragma: no cover
+    except httpx.TransportError as e:
+        # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
+        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
 
 
 LatestCohereEmbeddingModelNames = Literal[

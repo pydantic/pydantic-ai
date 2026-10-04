@@ -39,7 +39,7 @@ from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
@@ -1259,6 +1259,10 @@ class StreamedResponse(ABC):
                         yield event
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
+                        raise
+                except ModelAPIError as e:
+                    # Adapters map transport errors to `ModelAPIError`, so one caused by `cancel()` arrives wrapped.
+                    if not (self.cancelled and isinstance(e.__cause__, self.get_stream_cancel_errors())):
                         raise
                 else:
                     # Only natural `StopAsyncIteration` on a stream that wasn't

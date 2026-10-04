@@ -28,7 +28,7 @@ import httpx
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -1206,8 +1206,15 @@ async def test_cancel_during_between_segment_sleep_skips_next_request() -> None:
     assert stream.get().state == 'interrupted'
 
 
-async def test_cancel_suppresses_non_httpx_segment_error() -> None:
+@pytest.mark.parametrize(
+    ('wrapped', 'cancel'),
+    [(False, True), (True, True), (True, False)],
+    ids=['raw', 'wrapped-in-model-api-error', 'wrapped-not-cancelled'],
+)
+async def test_cancel_suppresses_non_httpx_segment_error(wrapped: bool, cancel: bool) -> None:
     """`cancel()` tearing down a non-httpx sub-stream suppresses the sub's own transport error type.
+
+    Adapters wrap transport errors in `ModelAPIError`, so the error is suppressed when it arrives as that too.
 
     The composite's cancel-guard defaults to httpx errors only; a sub on a different transport
     (Bedrock botocore, xAI grpc) reports its cancel errors via its own `get_stream_cancel_errors()`.
@@ -1226,7 +1233,10 @@ async def test_cancel_suppresses_non_httpx_segment_error() -> None:
             yield self._events[0]
             # After the first event, `cancel()` tore the connection down; the next pull raises the
             # transport's own (non-httpx) error, exactly what a real botocore/grpc stream does.
-            raise _BotoError('connection torn down')
+            error = _BotoError('connection torn down')
+            if wrapped:
+                raise ModelAPIError('fake', 'connection torn down') from error
+            raise error
 
     class _NonHttpxModel(_FakeModel):
         @asynccontextmanager
@@ -1254,6 +1264,12 @@ async def test_cancel_suppresses_non_httpx_segment_error() -> None:
     iterator = stream.__aiter__()
 
     await iterator.__anext__()  # first segment in flight
+    if not cancel:
+        # Without a `cancel()`, the same error is a real failure and propagates.
+        with pytest.raises(ModelAPIError):
+            async for _ in iterator:
+                pass
+        return
     await stream.cancel()
 
     # Draining resumes the closed segment, which raises the non-httpx error; the guard must suppress it.
