@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Iterator
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 from pydantic import BaseModel
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai_harness.planning._events import (
     PlanCompletedEvent,
     PlanCreatedEvent,
@@ -301,6 +302,17 @@ def render_summary(items: list[PlanItem]) -> str:
     return summary
 
 
+_TOOL_CALL_STORE: ContextVar[PlanStore | None] = ContextVar(
+    'pydantic_ai_harness.planning.tool_call_store', default=None
+)
+"""The store a plan tool call resolved once, for the durable operations it makes to share."""
+
+
+def tool_call_store() -> PlanStore | None:
+    """The store the current plan tool call resolved, if a plan tool call is running."""
+    return _TOOL_CALL_STORE.get()
+
+
 async def resolve_run_store(
     ctx: RunContext[AgentDepsT], capability: Planning[AgentDepsT], toolset: PlanningToolset[AgentDepsT]
 ) -> PlanStore:
@@ -467,6 +479,18 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
                 name='get_available_tasks',
                 description=descriptions.get('get_available_tasks', GET_AVAILABLE_TASKS_DESCRIPTION),
             )
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        """Resolve the run's store once for the call, so each durable operation it makes uses that store."""
+        if self._operations is None:
+            return await super().call_tool(name, tool_args, ctx, tool)
+        token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
+        try:
+            return await super().call_tool(name, tool_args, ctx, tool)
+        finally:
+            _TOOL_CALL_STORE.reset(token)
 
     async def _resolve(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
         """The store for this call: through the capability's durable operations when it passed them."""

@@ -26,6 +26,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanEvent,
@@ -198,6 +199,28 @@ async def test_worker_tree_resolves_store_without_caching_it() -> None:
     await toolset.write_plan(worker_ctx(first), [PlanItem(content='only-first')])
     assert await toolset.read_plan(worker_ctx(second)) == 'No plan yet. Use write_plan to create one.'
     assert [item.content for item in await first.get_items()] == ['only-first']
+
+
+async def test_worker_tree_resolves_the_store_once_per_tool_call() -> None:
+    """Each store call is its own durable operation, and all of one tool call's must use one store."""
+    stores: list[InMemoryPlanStore] = []
+
+    def resolve(ctx: RunContext[None]) -> InMemoryPlanStore:
+        stores.append(InMemoryPlanStore())
+        return stores[-1]
+
+    planning = Planning[None](store_resolver=resolve)
+    toolset = cast(PlanningToolset[None], planning.get_toolset())
+    # A worker's tree: the construction-time capability, with no run copy holding a store.
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), root_capability=planning)
+    object.__setattr__(ctx, 'emit', AsyncMock())
+    tools = await toolset.get_tools(ctx)
+
+    result = await toolset.call_tool('write_plan', {'items': [PlanItem(content='step')]}, ctx, tools['write_plan'])
+
+    assert result.startswith('Plan updated: 1 step(s).')
+    assert len(stores) == 1
+    assert [item.content for item in await stores[0].get_items()] == ['step']
 
 
 # --- Types ------------------------------------------------------------------

@@ -20,6 +20,7 @@ from pydantic_ai_harness.planning._toolset import (
     available_tool_names,
     render_plan,
     resolve_run_store,
+    tool_call_store,
 )
 from pydantic_ai_harness.planning._types import PlanItem
 
@@ -170,9 +171,11 @@ class Planning(AbstractCapability[AgentDepsT]):
         return self._toolset
 
     async def _run_store(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
-        """The run's store: this copy's own when `for_run` resolved it, else found through the run's tree."""
+        """The run's store: this copy's own when `for_run` resolved it, the running plan tool call's, or the tree's."""
         if self._resolved_store is not None:
             return self._resolved_store
+        if (store := tool_call_store()) is not None:
+            return store
         return await resolve_run_store(ctx, self, self._planning_toolset)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
