@@ -353,6 +353,53 @@ cleared. Framework-typed tool results -- core's `search_tools` and `load_capabil
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
 
+### Retaining a minimum amount of original history
+
+`keep_tokens` fits a whole-message tail within a token budget; it is not a minimum.
+For example, a newest tail of 3,000 tokens preceded by a 48,000-token message can
+retain only the 3,000-token tail with `keep_tokens=50_000`.
+
+Set `min_keep_tokens` on `SlidingWindowCompaction` or `SummarizingCompaction` to
+include the message that crosses the minimum instead. That example retains
+51,000 estimated tokens unchanged, extending farther backward if needed to keep
+tool calls with their results. If the available history is smaller than the
+minimum, the strategy returns it unchanged without a summary call.
+
+```python
+from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+
+strategy = FallbackCompaction(
+    fallback_chain=[
+        SummarizingCompaction(max_tokens=170_000, min_keep_tokens=50_000),
+        SlidingWindowCompaction(max_tokens=170_000, min_keep_tokens=50_000),
+    ],
+)
+```
+
+`min_keep_tokens` must be positive and is mutually exclusive with `keep_tokens`.
+It overrides `keep_messages` for selecting the original suffix. With
+`keep_user_messages=True`, `keep_messages` only caps the additional user messages
+copied from the older prefix; those copies do not displace the protected suffix.
+Summaries, reinserted older messages, and new receipts are extra. Existing receipts
+inside the protected suffix remain unchanged rather than being deduplicated.
+
+The floor counts retained message-part text, including `SystemPromptPart` content,
+but excludes attached `ModelRequest.instructions`. Large or changing instructions
+cannot satisfy the message-text minimum. Trigger estimates and `keep_tokens`
+counting are unchanged.
+
+Counts use the configured `tokenizer`, or the default character-based estimate,
+not a provider-reported token count. The floor applies to the input of this
+strategy, not to transformations made by other capabilities. Configure the same
+floor on every fallback that must preserve it.
+
+This is not a context-window fit guarantee: whole messages, tool pairs, summaries,
+and request overhead may exceed the available window. The floor takes precedence
+over reduction; if no prefix can be removed, compaction is a no-op. Callers must
+check the remaining request budget and stop, switch models, or explicitly relax
+the floor rather than assume a compacted request fits. Existing compaction spans
+report before/after counts; this option adds no separate telemetry events.
+
 ## `WarnNearLimits` thresholds
 
 Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) and escalate to CRITICAL

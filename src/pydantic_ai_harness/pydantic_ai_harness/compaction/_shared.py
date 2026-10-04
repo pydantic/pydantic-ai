@@ -68,7 +68,7 @@ re-attached at every hop, and a strategy that forgot would silently drop the cor
 """
 
 
-def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
+def collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
     """Collect all text segments from a sequence of messages, excluding instructions.
 
     Every part that carries text the provider is sent counts, including the ones a run only
@@ -108,7 +108,7 @@ def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
 
 def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
     """Collect all text segments from a sequence of messages, instructions included."""
-    segments = _collect_message_text(messages)
+    segments = collect_message_text(messages)
     segments.extend(_instructions_text(messages))
     return segments
 
@@ -267,7 +267,7 @@ def estimate_context_tokens(
     if anchor := _latest_usage_anchor(messages):
         index, message = anchor
         anchored = message.usage.input_tokens + message.usage.output_tokens
-        segments = _collect_message_text(messages[index + 1 :])
+        segments = collect_message_text(messages[index + 1 :])
         # The anchor paid for the instructions in force when its request was made. When the
         # latest instructions differ (dynamic instructions, or a persisted history resumed
         # under a new prompt), the new set is absent from both the anchor and the message
@@ -600,12 +600,15 @@ def _is_safe_cutoff(
     messages: list[ModelMessage],
     cutoff: int,
     search_range: int = _TOOL_PAIR_SEARCH_RANGE,
+    *,
+    include_tool_retries: bool = False,
 ) -> bool:
     """Return True if cutting at *cutoff* does not orphan any tool-call pair.
 
     A tool-call pair is a `ToolCallPart` in a `ModelResponse` together with
     the corresponding `ToolReturnPart` in a subsequent `ModelRequest`.  Both
-    sides must end up on the same side of the cut.
+    sides must end up on the same side of the cut. With `include_tool_retries`,
+    a tool-specific `RetryPromptPart` also counts as a response to the call.
     """
     if cutoff >= len(messages):
         return True
@@ -631,7 +634,10 @@ def _is_safe_cutoff(
             if not isinstance(later, ModelRequest):
                 continue
             for rpart in later.parts:
-                if isinstance(rpart, ToolReturnPart) and rpart.tool_call_id in call_ids:
+                if (
+                    isinstance(rpart, ToolReturnPart)
+                    or (include_tool_retries and isinstance(rpart, RetryPromptPart) and rpart.tool_name is not None)
+                ) and rpart.tool_call_id in call_ids:
                     call_before = i < cutoff
                     return_before = j < cutoff
                     if call_before != return_before:
@@ -640,10 +646,17 @@ def _is_safe_cutoff(
     return True
 
 
-def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
+def find_safe_cutoff(
+    messages: list[ModelMessage],
+    keep: int,
+    *,
+    search_range: int = _TOOL_PAIR_SEARCH_RANGE,
+    include_tool_retries: bool = False,
+) -> int:
     """Find a cutoff index that keeps *keep* tail messages without splitting tool pairs.
 
     Returns 0 if trimming is unnecessary (fewer messages than *keep*).
+    Set `include_tool_retries` to protect tool-specific retry prompts as well as returns.
     """
     if keep == 0:
         return len(messages)
@@ -652,7 +665,7 @@ def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
 
     target = len(messages) - keep
     for idx in range(target, -1, -1):
-        if _is_safe_cutoff(messages, idx):
+        if _is_safe_cutoff(messages, idx, search_range=search_range, include_tool_retries=include_tool_retries):
             return idx
     return 0  # pragma: no cover
 

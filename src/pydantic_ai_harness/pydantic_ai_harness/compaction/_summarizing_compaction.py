@@ -27,6 +27,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
+from pydantic_ai_harness.compaction._minimum_retention import find_minimum_token_cutoff, validate_min_keep_tokens
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
@@ -383,6 +384,17 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     When `None`, falls back to `keep_messages`.
     """
 
+    min_keep_tokens: int | None = field(default=None, kw_only=True)
+    """Minimum estimated message-text tokens of unchanged, contiguous recent history to retain.
+
+    Counts message parts, including system prompts, but excludes attached `ModelRequest.instructions`.
+    Mutually exclusive with `keep_tokens`; overrides `keep_messages` for suffix selection.
+    Includes the whole message crossing the minimum and any earlier tool-call dependencies.
+    If history is smaller, retains it all without summarizing. Summaries, receipts, and
+    reinserted older user messages are extra and do not consume this minimum.
+    This is a retention floor, not a context-window limit, and can prevent any compaction.
+    """
+
     summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
     """Prompt template for generating summaries.
 
@@ -427,7 +439,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """When `True`, preserve recent summarized user messages (each truncated to
     `keep_user_messages_max_chars`) alongside the summary. Retained messages consume the
     `keep_messages` tail budget, keeping compaction bounded. Supersedes
-    `preserve_first_user_message`.
+    `preserve_first_user_message`. With `min_keep_tokens`, these are extra messages:
+    `keep_messages` caps their count but does not reduce the protected suffix.
     """
 
     keep_user_messages_max_chars: int = 20_000
@@ -461,6 +474,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_messages must be non-negative.')
         if self.keep_tokens is not None and self.keep_tokens < 0:
             raise ValueError('keep_tokens must be non-negative.')
+        validate_min_keep_tokens(self.min_keep_tokens, self.keep_tokens)
         if self.keep_user_messages_max_chars < 1:
             raise ValueError('keep_user_messages_max_chars must be positive.')
         if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
@@ -482,7 +496,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]:
         """Summarize older messages, replacing them with a single summary message."""
-        if self.keep_tokens is not None:
+        if self.min_keep_tokens is not None:
+            cutoff = find_minimum_token_cutoff(messages, self.min_keep_tokens, self.tokenizer)
+        elif self.keep_tokens is not None:
             cutoff = find_token_cutoff(messages, self.keep_tokens, self.tokenizer)
         else:
             cutoff = find_safe_cutoff(messages, self.keep_messages)
@@ -525,7 +541,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                     preserved = (
                         token_tail if estimate_token_count(token_tail, self.tokenizer) <= token_tail_budget else []
                     )
-            if len(preserved) > retained_tail_slots:
+            if self.min_keep_tokens is None and len(preserved) > retained_tail_slots:
                 preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
         elif self.preserve_first_user_message:
             first_user_msg = find_first_user_message(messages)
@@ -535,7 +551,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                     extra = [first_user_msg]
 
         result: list[ModelMessage] = [summary_message, *extra, *preserved]
-        result = reinject_pinned(messages, result)
+        protected_start = len(result) - len(preserved) if self.min_keep_tokens is not None else None
+        result = reinject_pinned(messages, result, before_index=protected_start)
         if self.receipts:
             result = self._insert_receipt(summary_message, to_summarize, result, ctx)
         return result
@@ -618,7 +635,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]:
         """Insert a deterministic receipt right after the summary, de-accumulating old ones."""
-        deduped = [msg for msg in result if not _is_receipt_message(msg)]
+        deduped = (
+            result if self.min_keep_tokens is not None else [msg for msg in result if not _is_receipt_message(msg)]
+        )
         dropped_tokens = estimate_token_count(to_summarize, self.tokenizer)
         handle = discover_transcript_handle(ctx)
         summarizer = _model_family(self.model if self.model is not None else ctx.model)

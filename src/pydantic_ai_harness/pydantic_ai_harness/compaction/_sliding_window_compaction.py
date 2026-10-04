@@ -10,6 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
+from pydantic_ai_harness.compaction._minimum_retention import find_minimum_token_cutoff, validate_min_keep_tokens
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
@@ -94,6 +95,16 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     When `None`, falls back to `keep_messages`.
     """
 
+    min_keep_tokens: int | None = field(default=None, kw_only=True)
+    """Minimum estimated message-text tokens of unchanged, contiguous recent history to retain.
+
+    Counts message parts, including system prompts, but excludes attached `ModelRequest.instructions`.
+    Mutually exclusive with `keep_tokens`; overrides `keep_messages` for suffix selection.
+    Includes the whole message crossing the minimum and any earlier tool-call dependencies.
+    If history is smaller, retains it all. Receipts and reinserted older messages are extra.
+    This is a retention floor, not a context-window limit, and can prevent any trimming.
+    """
+
     tokenizer: Callable[[str], int] | None = None
     """Optional tokenizer for accurate token counting.
 
@@ -124,6 +135,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_messages must be non-negative.')
         if self.keep_tokens is not None and self.keep_tokens < 0:
             raise ValueError('keep_tokens must be non-negative.')
+        validate_min_keep_tokens(self.min_keep_tokens, self.keep_tokens)
 
     async def compact(
         self,
@@ -131,7 +143,9 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]:
         """Drop the oldest messages down to the configured tail."""
-        if self.keep_tokens is not None:
+        if self.min_keep_tokens is not None:
+            cutoff = find_minimum_token_cutoff(messages, self.min_keep_tokens, self.tokenizer)
+        elif self.keep_tokens is not None:
             reservation = self._receipt_token_reservation(messages, ctx) if self.receipts else 0
             cutoff = find_token_cutoff(messages, max(0, self.keep_tokens - reservation), self.tokenizer)
         else:
@@ -143,9 +157,11 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         trimmed = messages[cutoff:]
         if self.preserve_first_user_message:
             trimmed = prepend_first_user_message(messages, cutoff, trimmed)
-        trimmed = reinject_pinned(messages, trimmed)
+        protected_start = len(trimmed) - (len(messages) - cutoff) if self.min_keep_tokens is not None else None
+        trimmed = reinject_pinned(messages, trimmed, before_index=protected_start)
         if self.receipts:
-            trimmed = self._without_receipts(trimmed)
+            if self.min_keep_tokens is None:
+                trimmed = self._without_receipts(trimmed)
             dropped = self._dropped_messages(messages, trimmed)
             trimmed = [self._receipt_message(dropped, ctx), *trimmed]
         return trimmed
