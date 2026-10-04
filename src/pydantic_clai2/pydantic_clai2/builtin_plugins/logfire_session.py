@@ -1,5 +1,6 @@
 """A plugin-owned session root, shared by UI events and agent instrumentation."""
 
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from uuid import uuid4
@@ -25,6 +26,8 @@ class SessionTracing(AbstractCapability[None]):
     _active: bool = field(default=False, init=False)
     _roots: dict[str, Span] = field(default_factory=dict[str, Span], init=False)
     _fallback_id: str = field(default_factory=lambda: str(uuid4()), init=False)
+    # Bounded: a nested run's error that its parent handled never reaches a turn's end to be looked up.
+    _run_errors: deque[Exception] = field(default_factory=lambda: deque[Exception](maxlen=16), init=False)
 
     def start(self, email: str | None) -> None:
         """Open the current conversation's root; `email`, when known, identifies the user on roots only."""
@@ -78,9 +81,17 @@ class SessionTracing(AbstractCapability[None]):
         """Match instrumentation's last-instance precedence, preserving that instance's live roots."""
         return capabilities[-1]
 
+    def raised_in_run(self, error: BaseException) -> bool:
+        """Whether `error` left an agent run, so the `Instrumentation` this wraps recorded it on the run's span."""
+        return any(error is raised for raised in self._run_errors)
+
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         with parent_span(self.root()):
-            return await handler()
+            try:
+                return await handler()
+            except Exception as error:
+                self._run_errors.append(error)
+                raise
 
 
 async def git_email() -> str | None:

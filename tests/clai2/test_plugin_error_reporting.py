@@ -180,8 +180,15 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
         await harness.loader.load_all()
         assert "Plugin 'observer': RuntimeError: observer failed" in harness.text
         assert recorder.options[0]['send_to_logfire'] is False
-        errors = recorder.spans()
-        assert len(errors) == 1
-        assert (errors[0].attributes or {})['plugin'] == 'broken'
+        observer_failed, broken = recorder.spans()
+        assert (broken.attributes or {})['plugin'] == 'broken'
+        # The observer's own failure, shown in the terminal and carried on from, is recorded too.
+        assert (observer_failed.attributes or {})['logfire.msg'] == "Plugin 'observer' failed handling PluginLoadFailed"
+        assert observer_failed.status.status_code is trace.StatusCode.ERROR
+        [exception] = observer_failed.events
+        assert (exception.attributes or {})['exception.message'] == 'observer failed'
+        assert 'observer.py' in str((exception.attributes or {})['exception.stacktrace'])
     finally:
         await harness.loader.close('exit')
+    root = next(span for span in recorder.spans() if span.name == 'CLAI session')
+    assert observer_failed.parent == root.context

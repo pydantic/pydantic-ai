@@ -1,7 +1,8 @@
 """UI interaction telemetry: shared UI helpers say what the user did, and a subscribed Logfire instance exports it.
 
 Nothing is recorded until a sink subscribes. The built-in `observability` plugin subscribes its own instance when
-its `ui_events` setting is on, and unsubscribes before it shuts that instance down. Every span and log uses
+it starts, and unsubscribes before it shuts that instance down. UI records and spans need its `ui_events`
+setting; `handled_error`, for failures CLAI shows the user and recovers from, does not. Every span and log uses
 the `clai2` instrumentation scope, like everything else CLAI emits itself.
 
 Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the plugin loader,
@@ -21,7 +22,7 @@ from opentelemetry.trace import Span, SpanKind, get_current_span, use_span
 
 Attribute = str | int | float | bool
 SCOPE = 'clai2'
-"""The instrumentation scope for everything CLAI emits itself: session roots, UI records, and plugin errors."""
+"""The instrumentation scope for everything CLAI emits itself: session roots, UI records, and handled errors."""
 
 NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'label', 'key_name', 'new_key_name'})
 """Attributes that only ever hold names and listed choices, which `keep_names` exempts from scrubbing."""
@@ -31,21 +32,25 @@ NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'l
 class _Sink:
     instance: logfire.Logfire
     root: Callable[[], Span | None]
+    ui: bool
 
 
 _sinks: list[_Sink] = []
-"""Subscribed instances, newest last; only the newest receives UI telemetry."""
+"""Subscribed instances, newest last; only the newest receives each kind of telemetry."""
 _emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
 """Set while a UI record is handed to its sink, which is when Logfire scrubs it: `keep_names` checks it."""
 
 
-def subscribe(sink: logfire.Logfire, *, root: Callable[[], Span | None] = lambda: None) -> Callable[[], None]:
-    """Send UI telemetry to `sink` until the returned function is called; calling it again does nothing.
+def subscribe(
+    sink: logfire.Logfire, *, root: Callable[[], Span | None] = lambda: None, ui: bool = True
+) -> Callable[[], None]:
+    """Send telemetry to `sink` until the returned function is called; calling it again does nothing.
 
-    The caller supplies an instance in `SCOPE`. Telemetry goes to the most recently subscribed instance,
-    so each destination gets whole, correctly nested traces; when it unsubscribes, the previous one takes over.
+    The caller supplies an instance in `SCOPE`. Handled errors go to the most recently subscribed instance, and UI
+    telemetry to the most recent one with `ui`, so each destination gets whole, correctly nested traces; when it
+    unsubscribes, the previous one takes over.
     """
-    subscribed = _Sink(instance=sink, root=root)
+    subscribed = _Sink(instance=sink, root=root, ui=ui)
     _sinks.append(subscribed)
 
     def unsubscribe() -> None:
@@ -53,6 +58,10 @@ def subscribe(sink: logfire.Logfire, *, root: Callable[[], Span | None] = lambda
             _sinks.remove(subscribed)
 
     return unsubscribe
+
+
+def _ui_sink() -> _Sink | None:
+    return next((sink for sink in reversed(_sinks) if sink.ui), None)
 
 
 @contextmanager
@@ -76,10 +85,22 @@ def _exempt() -> Generator[None]:
 
 def record(msg_template: str, /, **attributes: Attribute) -> None:
     """Log one UI interaction, such as a setting change or a key saved."""
+    if (sink := _ui_sink()) is not None:
+        with parent_span(sink.root()), _exempt():
+            sink.instance.log('info', msg_template, attributes=dict(attributes))
+
+
+def handled_error(msg_template: str, error: BaseException, /, **attributes: Attribute) -> None:
+    """Log a failure CLAI showed the user and recovered from, with its exception and traceback, at `error` level.
+
+    It nests under the current span when that belongs to the session, such as a command's UI span, and under the
+    session root otherwise. Unlike UI records it does not need `ui_events`. The exception's message and traceback
+    get Logfire's normal scrubbing; only the `NAMES` attributes are exempt, as for UI records.
+    """
     if _sinks:
         sink = _sinks[-1]
         with parent_span(sink.root()), _exempt():
-            sink.instance.log('info', msg_template, attributes=dict(attributes))
+            sink.instance.log('error', msg_template, attributes=dict(attributes), exc_info=error)
 
 
 class UiSpan:
@@ -103,10 +124,10 @@ def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
     An exception propagates, but the span records only its type as `error`: messages can quote what was typed,
     such as a token a plugin's settings rejected.
     """
-    if not _sinks:
+    sink = _ui_sink()
+    if sink is None:
         yield UiSpan(None)
         return
-    sink = _sinks[-1]
     with parent_span(sink.root()):
         with _exempt():
             opened = _open(sink.instance, msg_template, attributes).__enter__()

@@ -101,8 +101,12 @@ class PluginError(Exception):
         self.error = error
 
 
-class PluginSettingsError(PluginError):
-    """A plugin rejected its settings while activating, so `/plugins add` does not save them."""
+class PluginSettingsError(PluginError, ValueError):
+    """A plugin rejected its settings while activating, so `/plugins add` does not save them.
+
+    A usage error, like other `ValueError`s from a command, so its message, which can quote a pasted secret, is
+    not recorded as a handled error.
+    """
 
 
 @dataclass(kw_only=True)
@@ -503,9 +507,7 @@ class PluginLoader(Generic[DepsT]):
                     await asyncio.wait({cleanup})
                     raise
                 if (error := cleanup.result()) is not None:
-                    self._console.print(
-                        str(PluginError(entry.name, error)), style=theme.color(theme.ERROR), markup=False
-                    )
+                    self._report(entry.name, error, SessionEnd)
         finally:
             self._drop(entry)
         await checkpoint()
@@ -518,7 +520,7 @@ class PluginLoader(Generic[DepsT]):
         try:
             await entry.loaded.dispatch(SessionEnd(reason=reason))
         except Exception as exc:  # noqa: BLE001 -- unloading must finish even if the plugin misbehaves.
-            self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
+            self._report(name, exc, SessionEnd)
         finally:
             self._drop(entry)
 
@@ -544,7 +546,12 @@ class PluginLoader(Generic[DepsT]):
             except Exception as exc:
                 if isinstance(event, TurnStart):
                     raise PluginError(name, exc) from exc
-                self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
+                self._report(name, exc, type(event))
+
+    def _report(self, name: str, error: BaseException, event: type[HostEvent]) -> None:
+        """Show a plugin handler's failure, which CLAI carries on from, and record it as a handled error."""
+        self._console.print(str(PluginError(name, error)), style=theme.color(theme.ERROR), markup=False)
+        telemetry.handled_error('Plugin {plugin!r} failed handling {event}', error, plugin=name, event=event.__name__)
 
     async def enable(self, name: str) -> None:
         """Remember the plugin as enabled and load it now."""

@@ -162,7 +162,9 @@ appear in the transcript and reach the model as a one-item list under the questi
 The built-in observability plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
 stock CLI. It contributes core's Instrumentation capability using an isolated
 Logfire instance. It exports to Logfire only when credentials are present, with
-no interactive setup or console logging. Text and binary images are included by
+no interactive setup or console logging. Errors CLAI shows and recovers from (plugin
+load failures, failed turns, unexpected slash command failures, failing plugin
+handlers) are recorded with their traceback; usage errors are not. Text and binary images are included by
 default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
 /plugins disable observability to remove it, or replace its settings with:
 
