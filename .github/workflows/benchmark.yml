@@ -21,6 +21,7 @@ jobs:
       pull-requests: read
     outputs:
       content_only: ${{ steps.classify.outputs.content_only }}
+      agents_only: ${{ steps.classify.outputs.agents_only }}
     steps:
       - name: Classify pull request changes
         id: classify
@@ -31,6 +32,7 @@ jobs:
           # Keep classification inline so this token-bearing job never executes PR-authored files.
           run_benchmarks() {
             echo 'content_only=false' >> "$GITHUB_OUTPUT"
+            echo 'agents_only=false' >> "$GITHUB_OUTPUT"
           }
 
           if [ "${{ github.event_name }}" != "pull_request" ]; then
@@ -87,20 +89,31 @@ jobs:
           }
 
           content_only=true
+          agents_only=true
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
+            case "$filename" in
+              .agents/*) ;;
+              *) agents_only=false ;;
+            esac
+            if [ -n "$previous_filename" ]; then
+              case "$previous_filename" in
+                .agents/*) ;;
+                *) agents_only=false ;;
+              esac
+            fi
             if ! is_non_test_content "$filename" || \
               { [ -n "$previous_filename" ] && ! is_non_test_content "$previous_filename"; }; then
               content_only=false
-              break
             fi
           done
           echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
+          echo "agents_only=$agents_only" >> "$GITHUB_OUTPUT"
 
   benchmarks:
     name: Run benchmarks
     needs: classify
-    if: needs.classify.outputs.content_only != 'true'
+    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true'
     runs-on: codspeed-macro-arm64-graviton-ubuntu-22-04
     timeout-minutes: 10
     permissions:
