@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import re
 import time
@@ -12,6 +11,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -48,13 +48,14 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, Capability, DynamicCapability
+from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, Hooks
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelHTTPError,
     ModelRetry,
     RunCancelled,
     ToolFailed,
@@ -81,11 +82,13 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
-from ..conftest import IsDatetime, IsNow, IsStr
+from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
+    from dbos._error import DBOSAwaitedWorkflowCancelledError
 
     from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
     from pydantic_ai.durable_exec.dbos import (
@@ -128,6 +131,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from .._inline_snapshot import snapshot
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
 # `DBOSAgent` is deprecated in favor of `capabilities=[DBOSDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -137,7 +141,6 @@ from ..model_lifecycle_utils import LifecycleTrackingModel
 warnings.filterwarnings('ignore', message='`DBOSAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='dbos'),
     pytest.mark.filterwarnings('ignore:`DBOSAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'),
@@ -187,21 +190,7 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         yield dbos
     finally:
         DBOS.destroy()
-        # `enable_otlp=True` makes DBOS attach an OTel `LoggingHandler` and a `DBOSLogTransformer`
-        # filter to the root logger and every registered logger, and `DBOS.destroy()` does not detach
-        # them. A leaked handler/filter's emit path imports `dbos._context`, which imports
-        # `http.server` - fatal inside the Temporal workflow sandbox when an xdist worker later runs
-        # the temporal suite. Detach them here.
-        # TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
-        # https://github.com/dbos-inc/dbos-transact-py/issues/821
-        from dbos import _logger as dbos_logger_module
-        from opentelemetry.sdk._logs import LoggingHandler
-
-        for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
-            for handler in [h for h in logger.handlers if isinstance(h, LoggingHandler)]:
-                logger.removeHandler(handler)
-            for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
-                logger.removeFilter(log_filter)
+        detach_dbos_logging()
 
 
 model = OpenAIChatModel(
@@ -233,6 +222,27 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
 
     output = await run_simple_agent()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def round_trip_workspace(ctx: RunContext[None]) -> str:
+    await ctx.workspace.write_text('note.txt', 'workspace content')
+    return await ctx.workspace.read_text('note.txt')
+
+
+async def test_dbos_agent_rejects_a_workspace_in_its_workflow(dbos: DBOS, tmp_path: Path) -> None:
+    """The deprecated wrapper has no durability capability, so a workspace's operations could not run as steps."""
+    agent = Agent(
+        TestModel(call_tools=['round_trip_workspace']),
+        name='dbos_agent_workspace',
+        deps_type=type(None),
+        tools=[round_trip_workspace],
+    )
+    dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    with pytest.raises(
+        UserError, match='Workspaces are not supported inside a DBOS workflow through the deprecated wrapper agent'
+    ):
+        await dbos_agent.run('Use the workspace.', workspace=LocalWorkspaceBackend(tmp_path))
 
 
 class Deps(BaseModel):
@@ -1728,6 +1738,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -1777,6 +1788,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -1877,6 +1889,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -1926,6 +1939,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -1996,6 +2010,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -2042,6 +2057,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -2082,6 +2098,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': IsDatetime(),
                 },
                 provider_response_id=IsStr(),
@@ -2406,6 +2423,58 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
+async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: DBOS) -> None:
+    """A model step's `ModelHTTPError` reaches workflow code as itself, so error hooks can match on it."""
+
+    def overloaded(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(503, 'overloaded-model', body={'error': 'overloaded'}, headers={'Retry-After': '7'})
+
+    async def describe(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        assert isinstance(error, ModelHTTPError)
+        return ModelResponse(parts=[TextPart(f'{type(error).__name__} {error.status_code} {error.retry_after}')])
+
+    agent = Agent(
+        FunctionModel(overloaded),
+        name='durability_model_error',
+        deps_type=type(None),
+        capabilities=[Hooks[None](model_request_error=describe), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello DBOS')).output
+
+    assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+async def test_dbos_durability_rejects_a_live_workspace_workflow_input(dbos: DBOS, tmp_path: Path) -> None:
+    """A live backend passed into a workflow has no durable steps behind it, so the run refuses it.
+
+    The same agent still takes the backend outside a workflow, where the capability is transparent.
+    The supported shape inside a workflow is a workspace capability attached at construction time;
+    see `test_dbos_workspace.py`.
+    """
+    agent = Agent(
+        TestModel(call_tools=['round_trip_workspace']),
+        name='dbos_durability_workspace',
+        deps_type=type(None),
+        tools=[round_trip_workspace],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent(workspace: LocalWorkspaceBackend) -> AgentRunResult[str]:
+        return await agent.run('Use the workspace.', workspace=workspace)
+
+    with pytest.raises(UserError, match='no capability supplied workspaces when the agent was constructed'):
+        await run_durable_agent(LocalWorkspaceBackend(tmp_path))
+
+    result = await agent.run('Use the workspace.', workspace=LocalWorkspaceBackend(tmp_path))
+    assert result.output == '{"round_trip_workspace":"workspace content"}'
+
+
 async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS) -> None:
     """A same-process `cancellation_token` can't cross the durable boundary, so it's rejected inside
     a workflow — but the same durable-capable agent still accepts one when run outside a workflow."""
@@ -2421,6 +2490,53 @@ async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS
     # Outside a workflow the capability is transparent, so the token works like a normal run.
     result = await agent.run('Hello', cancellation_token=CancellationToken())
     assert result.output == 'Echo: Hello'
+
+
+def _cancel_own_workflow_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('cancel_own_workflow')])
+    return ModelResponse(parts=[TextPart('never reached')])  # pragma: no cover
+
+
+async def cancel_own_workflow() -> str:
+    workflow_id = DBOS.workflow_id
+    assert workflow_id is not None
+    await DBOS.cancel_workflow_async(workflow_id)
+    return 'workflow cancelled'
+
+
+async def test_dbos_durability_workflow_cancellation_carries_run_state(dbos: DBOS) -> None:
+    """Cancelling a DBOS workflow aborts the run with a DBOS `BaseException` rather than a `CancelledError`
+    (`DBOSWorkflowCancelledError`, or `DBOSWorkflowConflictIDError` on dbos 3.2+). The run still
+    attaches its state to it, so `RunCancelled.from_cancellation()` recovers the history inside the workflow."""
+    agent = Agent(
+        FunctionModel(_cancel_own_workflow_model_fn),
+        name='durability_workflow_cancel',
+        tools=[cancel_own_workflow],
+        capabilities=[DBOSDurability()],
+    )
+    recovered: list[RunCancelled | None] = []
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        try:
+            await agent.run('Hello')
+        except BaseException as exc:
+            recovered.append(RunCancelled.from_cancellation(exc))
+            raise
+
+    with pytest.raises(DBOSAwaitedWorkflowCancelledError):
+        await run_durable_agent()
+
+    [cancelled] = recovered
+    assert cancelled is not None
+    tool_parts = [
+        (type(part).__name__, part.tool_name)
+        for message in cancelled.all_messages()
+        for part in message.parts
+        if isinstance(part, (ToolCallPart, ToolReturnPart))
+    ]
+    assert tool_parts[0] == ('ToolCallPart', 'cancel_own_workflow')
 
 
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
@@ -4658,3 +4774,62 @@ async def test_dbos_agent_run_sync_from_sync_tool_is_rejected():
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
+
+
+@pytest.mark.parametrize('deprecated_agent', [False, True])
+async def test_dbos_mcp_server_keeps_one_session_per_workflow(dbos: DBOS, deprecated_agent: bool) -> None:
+    """A statically attached `MCPToolset` connects once per workflow, not once per step (#8458).
+
+    The first step that needs the server connects it — inside a step, where DBOS retries a failed
+    connection — and the workflow holds the session for the steps that follow, so `cache_tools`
+    serves the later discovery steps and the `tools/list` the MCP SDK issues before a call finds a
+    warm session. Both APIs get it: the deprecated `DBOSAgent` builds its own MCP steps, and until
+    it is removed a `DBOSAgent` user should not be paying for a session per step.
+
+    Not a VCR test: an in-process server is what makes the round trips countable server-side, which
+    is what attributes the MCP SDK's own pre-call listing correctly.
+    """
+    from .counting_mcp import counting_mcp_server, two_echo_calls_model
+
+    server, counts = counting_mcp_server()
+    toolset = MCPToolset(server, id=f'session_mcp_{deprecated_agent}')
+    agent = Agent(
+        two_echo_calls_model(),
+        name=f'dbos_mcp_session_{deprecated_agent}',
+        toolsets=[toolset],
+        capabilities=[] if deprecated_agent else [DBOSDurability()],
+    )
+    durable_agent = DBOSAgent(agent) if deprecated_agent else agent  # pyright: ignore[reportDeprecated]
+
+    @DBOS.workflow(name=f'mcp_session_workflow_{deprecated_agent}')
+    async def run_workflow() -> str:
+        return (await durable_agent.run('go')).output
+
+    assert await run_workflow() == 'done'
+    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    # The workflow closed the session it held; nothing keeps the server connected between runs.
+    assert not toolset.is_running
+
+
+async def test_dbos_decide_span_nests_under_chat(
+    allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire
+) -> None:
+    """A decision model's `decide` span lands under the step, under `chat`, with the request's content policy.
+
+    The step runs in the workflow's process and context, so the policy the `chat` span set reaches it directly.
+    """
+    agent = Agent(
+        ShipItDecisionModel(),
+        output_type=ShipIt,
+        name='dbos_decide',
+        capabilities=[DBOSDurability(), Instrumentation()],
+    )
+
+    @DBOS.workflow()
+    async def run_decision_agent() -> ShipIt:
+        return (await agent.run('The migration is reviewed and the tests pass.')).output
+
+    assert await run_decision_agent() == ShipIt(ship=True)
+    lineage, attributes = decide_span_lineage(capfire.exporter.exported_spans_as_dict())
+    assert lineage[:3] == snapshot(['dbos_decide__model.request', 'chat ship-it', 'invoke_agent dbos_decide'])
+    assert attributes['pydantic_ai.decision.state'] == 'The migration is reviewed and the tests pass.'

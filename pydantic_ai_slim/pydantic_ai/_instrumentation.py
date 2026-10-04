@@ -6,13 +6,14 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
 from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
-from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
+from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, Tracer, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
@@ -76,16 +77,121 @@ TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip
 
-time_to_first_chunk_ctx: ContextVar[float | None] = ContextVar('time_to_first_chunk', default=None)
-"""Carries streaming TTFT (in seconds) from the agent graph's streaming request handler to the
-`Instrumentation` capability, which reads it after `await handler(...)` returns — the handler runs
-in the same task, so its `set` is visible there. The agent graph spawns a fresh task per streaming
-request and only that handler ever sets the variable, so a value can't outlive its request;
-non-streaming requests read the `None` default.
+_model_request_span_captures: ContextVar[
+    tuple[tuple[ModelRequestContext, Callable[[ModelRequestContext], ModelRequestContext]], ...]
+] = ContextVar('model_request_span_captures', default=())
+_model_response_span_captures: ContextVar[
+    tuple[tuple[ModelRequestContext, Callable[[ModelResponse, float | None], None]], ...]
+] = ContextVar('model_response_span_captures', default=())
 
-This is a context variable rather than a field on `ModelRequestContext` because that object is
-public and holds only the *inputs* to `Model.request[_stream]`.
+
+@dataclass(frozen=True)
+class ContentPolicy:
+    """One span's `include_content`, tagged with the span it was set for.
+
+    The tag is what makes the variable safe to read. Restoring it is a plain `set` rather than a
+    `reset` (an interrupted streamed run finalizes the context manager in a different `Context`,
+    where `reset` raises), and a `set` lands only in the `Context` that runs it, so the `Context`
+    that opened the request can be left holding a finished request's value. Naming the span means a
+    reader can only honour a policy set for the span in front of it, and anything else fails closed.
+
+    It also carries the tracer the span was opened with, so that a span opened inside the request
+    (a decision model's `decide`) goes to the same tracer provider as the request's own span, even
+    when that is not the global one. Such a span reads the policy through `open_request_policy`.
+    """
+
+    span: Span
+    include_content: bool
+    tracer: Tracer
+
+
+include_content_ctx: ContextVar[ContentPolicy | None] = ContextVar('include_content', default=None)
+"""Carries the open `chat` span's `include_content` to code that updates that span without holding
+the settings -- `FallbackModel`, which refreshes `model_request_parameters` once it knows which
+model answered. Set by `open_model_request_span` for the span's lifetime, so a refresh redacts the
+instruction content of the model it picked the way the span was opened, rather than guessing from
+what is already recorded. Read it through `span_include_content`, never directly. `None` means no
+instrumented request is open.
+
+A context variable because `ModelRequestContext` is public and holds only the inputs to
+`Model.request[_stream]`, and `FallbackModel` reaches the span through `get_current_span()` anyway,
+so it is already relying on the ambient context.
 """
+
+
+def span_include_content(span: Span) -> bool:
+    """Whether `span` was opened with content capture, defaulting to `False` when nothing says so.
+
+    Fails closed on every answer but "this span's own request wanted content": no request open, or a
+    policy belonging to a different span, both mean nothing vouches for exporting content here.
+    """
+    policy = include_content_ctx.get()
+    return (
+        policy is not None
+        and policy.span.get_span_context().span_id == span.get_span_context().span_id
+        and policy.include_content
+    )
+
+
+def open_request_policy() -> ContentPolicy | None:
+    """The policy of the instrumented request the caller runs inside, for a span opened beneath that request.
+
+    `span_include_content` answers for the one span a policy was set for. A span opened inside the
+    request -- a decision model's `decide` -- is not that span, and need not be its child either:
+    a durable engine's step, task or activity span can sit in between. So this asks whether the
+    request is still open around the caller, and still fails closed on a stale policy: the span the
+    policy was set for must not have ended, which a finished request's span has, and the current
+    span must be in its trace. `None` means no instrumented request is open here, and nothing
+    should be emitted.
+    """
+    policy = include_content_ctx.get()
+    if policy is None or not policy.span.is_recording():
+        return None
+    if get_current_span().get_span_context().trace_id != policy.span.get_span_context().trace_id:
+        return None
+    return policy
+
+
+@contextmanager
+def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
+    """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""
+    previous = include_content_ctx.get()
+    include_content_ctx.set(policy)
+    try:
+        yield
+    finally:
+        # A plain `set`, like `open_model_request_span`'s restore, so it can't fail across `Context`s.
+        include_content_ctx.set(previous)
+
+
+def capture_model_request_span_context(request_context: ModelRequestContext) -> None:
+    """Capture the finalized request at the model-call boundary when instrumentation is active."""
+    for owner, capture in _model_request_span_captures.get():
+        if owner is request_context:
+            capture(replace(request_context, messages=list(request_context.messages)))
+
+
+def capture_model_response_span_context(
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+    time_to_first_chunk: float | None = None,
+) -> None:
+    """Capture a response before an after hook can reject it when instrumentation is active."""
+    for owner, capture in _model_response_span_captures.get():
+        if owner is request_context:
+            capture(response, time_to_first_chunk)
+
+
+@contextmanager
+def model_response_span_capture(
+    request_context: ModelRequestContext, capture: Callable[[ModelResponse, float | None], None]
+) -> Generator[None]:
+    """Scope response capture to the active instrumentation wrapper."""
+    token = _model_response_span_captures.set((*_model_response_span_captures.get(), (request_context, capture)))
+    try:
+        yield
+    finally:
+        _model_response_span_captures.reset(token)
 
 
 @dataclass(slots=True)
@@ -340,11 +446,41 @@ def model_metric_attributes(
 
 
 def model_request_parameters_attributes(
-    model_request_parameters: ModelRequestParameters,
+    model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
-    return {
-        'model_request_parameters': safe_to_json(_serialize_model_request_parameters(model_request_parameters)).decode()
-    }
+    serialized = _serialize_model_request_parameters(model_request_parameters)
+    if not include_content:
+        serialized = _redact_model_request_parameters(serialized)
+        if serialized is None:
+            return {}
+    return {'model_request_parameters': safe_to_json(serialized).decode()}
+
+
+def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
+    """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
+
+    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
+    the prompted-output template. Instruction parts keep their origin and ids, so what the parts are
+    and how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
+    structure rather than message content, and `include_model_request_parameters=False` drops the
+    whole attribute for anyone who wants them gone as well.
+
+    `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
+    walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
+    representation, instructions and all. There is nothing to redact in a string, so that is reported
+    as unredactable rather than exported.
+    """
+    if not isinstance(serialized_parameters, dict):
+        return None
+    parameters = cast('dict[str, Any]', serialized_parameters)
+    parts = parameters.get('instruction_parts')
+    if isinstance(parts, list):
+        # Each part is `InstructionPart` dumped through its own schema, so a mapping with `content`.
+        for part in cast('list[dict[str, Any]]', parts):
+            part.pop('content', None)
+    if parameters.get('prompted_output_template') is not None:
+        parameters['prompted_output_template'] = None
+    return parameters
 
 
 def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
@@ -358,7 +494,7 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     """
     try:
         return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
-    except Exception:  # pragma: no cover
+    except Exception:
         # A tool definition carrying something unserializable must not take the span down with it.
         return serialize_any(model_request_parameters)
 
@@ -448,8 +584,8 @@ def response_attributes(
     attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
     if response_model is not None:
         attributes['gen_ai.response.model'] = response_model
-    if price_calculation is not None:
-        attributes['operation.cost'] = float(price_calculation.total_price)
+    if (cost := response_cost(response, price_calculation)) is not None:
+        attributes['operation.cost'] = float(cost)
     if response.provider_response_id is not None:
         attributes['gen_ai.response.id'] = response.provider_response_id
     if response.finish_reason is not None:
@@ -458,7 +594,14 @@ def response_attributes(
 
 
 def response_price_calculation(response: ModelResponse) -> PriceCalculation | None:
-    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`)."""
+    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`).
+
+    `None` too when the response already carries a cost, which `response_cost` then reports instead: whatever set it knew more than `model_name` does. OpenAI GPT-Live's
+    responses carry the tokens of the backend model it delegated to, priced at that model's rates,
+    while `model_name` names the Live model, so re-pricing from it would charge the wrong model.
+    """
+    if response.usage.cost is not None:
+        return None
     return best_effort_price(
         response.usage,
         model_name=response.model_name,
@@ -468,6 +611,11 @@ def response_price_calculation(response: ModelResponse) -> PriceCalculation | No
     )
 
 
+def response_cost(response: ModelResponse, price_calculation: PriceCalculation | None) -> Decimal | None:
+    """The cost to report for a response: its calculated price, or the cost it already carries."""
+    return price_calculation.total_price if price_calculation is not None else response.usage.cost
+
+
 class _FinishModelRequestSpan(Protocol):
     """The `finish` callback yielded by `open_model_request_span`.
 
@@ -475,7 +623,110 @@ class _FinishModelRequestSpan(Protocol):
     callers omit it.
     """
 
-    def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
+    def __call__(
+        self,
+        response: ModelResponse,
+        time_to_first_chunk: float | None = None,
+        *,
+        usage_response: ModelResponse | None = None,
+    ) -> ModelRequestContext: ...
+
+
+def _prepare_model_request_span_context(
+    settings: InstrumentationSettings, request_context: ModelRequestContext
+) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
+    prepared_settings, prepared_parameters = request_context.model.prepare_request(
+        request_context.model_settings, request_context.model_request_parameters
+    )
+    prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
+    attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    json_schema_properties: dict[str, dict[str, str]] = {}
+    if settings.include_model_request_parameters:
+        attributes.update(
+            model_request_parameters_attributes(prepared_parameters, include_content=settings.include_content)
+        )
+        json_schema_properties['model_request_parameters'] = {'type': 'object'}
+    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
+    if tool_definitions := build_tool_definitions(prepared_parameters):
+        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
+    attributes.update(model_settings_attributes(prepared_settings))
+    return prepared, attributes
+
+
+def record_exception(
+    span: Span,
+    error: BaseException,
+    *,
+    include_content: bool,
+    escaped: bool = True,
+    attributes: Mapping[str, AttributeValue] | None = None,
+) -> None:
+    """Record `error` on `span` as an `exception` event, with any `attributes` beside the exception's own.
+
+    With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
+    only the exception type is kept: the message and stack trace of an exception raised around
+    a tool, a model request or an agent run can quote content the setting is meant to withhold --
+    a tool retry or failure carries the text the model sees, an exception chained from one repeats
+    that text in its stack trace, a provider's error response can echo the request, and validation
+    errors and user exceptions may echo the rejected arguments. The type and `escaped` formatting
+    match what `Span.record_exception` would have produced.
+    """
+    # `use_span` records nothing on a span that isn't recording, and neither does this: the SDK
+    # formats the traceback before `add_event` drops it, so an exception whose `__str__` raises
+    # would surface that failure in place of the original error.
+    if not span.is_recording():
+        return
+    if include_content:
+        span.record_exception(error, attributes=attributes, escaped=escaped)
+        return
+    error_type = type(error)
+    type_name = (
+        f'{error_type.__module__}.{error_type.__qualname__}'
+        if error_type.__module__ != 'builtins'
+        else error_type.__qualname__
+    )
+    # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
+    span.add_event(
+        'exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped), **(attributes or {})}
+    )
+
+
+def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
+    """Set `span`'s status to ERROR, describing it the way `use_span` would have.
+
+    The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
+    exception event carries, so it is withheld alongside it when content capture is off.
+    """
+    if not span.is_recording():
+        return
+    span.set_status(
+        Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
+    )
+
+
+@contextmanager
+def record_uncaught_errors(
+    span: Span,
+    *,
+    include_content: bool,
+    event_attributes: Callable[[Exception], Mapping[str, AttributeValue]] | None = None,
+) -> Generator[None]:
+    """Record exceptions leaving `span`'s scope the way `use_span` would have.
+
+    For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
+    both jobs to the caller. `use_span` recorded the exception unescaped and described the ERROR
+    status with it; both repeat the message, so both follow `include_content`. Enter this around
+    the span's whole scope -- the scope `use_span` covered -- not just the call that may fail, so
+    that failures while finalizing the span still mark it. `event_attributes` adds attributes to the
+    exception event for an error, for what the event needs to say even when content is withheld.
+    """
+    try:
+        yield
+    except Exception as error:
+        attributes = event_attributes(error) if event_attributes else None
+        record_exception(span, error, include_content=include_content, escaped=False, attributes=attributes)
+        set_error_status(span, error, include_content=include_content)
+        raise
 
 
 @contextmanager
@@ -484,6 +735,7 @@ def open_model_request_span(
     request_context: ModelRequestContext,
     *,
     message_json_cache: MessageJsonCache | None = None,
+    defer_request_attributes: bool = False,
 ) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
@@ -497,46 +749,65 @@ def open_model_request_span(
 
     `message_json_cache` is a per-run cache reused across requests so the growing input history
     isn't re-serialized in full each time; the agent flow passes one, one-off requests pass `None`.
+    With `defer_request_attributes=True`, the span opens immediately and the agent graph populates
+    request attributes at the model-call boundary after request hooks have finished.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
     #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-    model = request_context.model
-    prepared_settings, prepared_parameters = model.prepare_request(
-        request_context.model_settings, request_context.model_request_parameters
-    )
-    prepared_request_context = replace(
-        request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters
-    )
     operation = 'chat'
-    span_name = f'{operation} {model.model_name}'
+    span_name = f'{operation} {request_context.model.model_name}'
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
-        **model_attributes(model),
         **get_agent_run_baggage_attributes(),
     }
-    json_schema_properties: dict[str, dict[str, str]] = {}
-    if settings.include_model_request_parameters:
-        attributes.update(model_request_parameters_attributes(prepared_parameters))
-        json_schema_properties['model_request_parameters'] = {'type': 'object'}
-    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
-
-    tool_definitions = build_tool_definitions(prepared_parameters)
-    if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
-
-    attributes.update(model_settings_attributes(prepared_settings))
+    prepared_request_context: ModelRequestContext | None = None
 
     record_metrics: Callable[[], None] | None = None
+    previous_include_content = include_content_ctx.get()
     try:
-        with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
+        with (
+            settings.tracer.start_as_current_span(
+                span_name,
+                attributes=attributes,
+                kind=SpanKind.CLIENT,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            record_uncaught_errors(span, include_content=settings.include_content),
+        ):
+            # Set inside the `with`, because the policy names the span it speaks for.
+            include_content_ctx.set(ContentPolicy(span, settings.include_content, settings.tracer))
+
+            def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
+                nonlocal prepared_request_context
+                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+
+                # Preserve attributes set while the request ran, notably the concrete model selected
+                # by `FallbackModel`, while filling all request fields from the final context.
+                request_attributes.update(getattr(span, 'attributes', {}))
+                attributes.update(request_attributes)
+                span.set_attributes(request_attributes)
+                span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')
+                prepared_request_context = prepared
+                return prepared
+
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
             # so observability backends that aggregate metrics from span attributes
             # don't double-count.
-            def finish(response: ModelResponse, time_to_first_chunk: float | None = None) -> None:
-                nonlocal record_metrics
+            def finish(
+                response: ModelResponse,
+                time_to_first_chunk: float | None = None,
+                *,
+                usage_response: ModelResponse | None = None,
+            ) -> ModelRequestContext:
+                nonlocal prepared_request_context, record_metrics
+
+                if prepared_request_context is None:
+                    return request_context
+                prepared_parameters = prepared_request_context.model_request_parameters
 
                 annotate_tool_call_otel_metadata(response, prepared_parameters)
 
@@ -545,38 +816,55 @@ def open_model_request_span(
                 request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
                 system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
 
-                response_model = response.model_name or request_model
+                accounted_response = usage_response or response
+                response_model = accounted_response.model_name or response.model_name or request_model
                 price_calculation: PriceCalculation | None = None
 
                 def _record_metrics() -> None:
                     metric_attributes = model_metric_attributes(system, request_model, response_model)
-                    settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
+                    settings.record_metrics(
+                        accounted_response, price_calculation, metric_attributes, time_to_first_chunk
+                    )
 
                 record_metrics = _record_metrics
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                price_calculation = response_price_calculation(response)
+                price_calculation = response_price_calculation(accounted_response)
 
                 if not span.is_recording():
-                    return
+                    return prepared_request_context
 
                 settings.handle_messages(
-                    prepared_request_context.messages,
+                    list(prepared_request_context.messages),
                     response,
                     span,
                     prepared_parameters,
                     message_json_cache=message_json_cache,
                 )
 
-                attributes_to_set = response_attributes(response, response_model, price_calculation)
+                attributes_to_set = response_attributes(accounted_response, response_model, price_calculation)
                 if time_to_first_chunk is not None:
                     attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
+                return prepared_request_context
 
-            yield finish, prepared_request_context
+            # Populating attributes inside the try keeps the capture token scoped even when
+            # `Model.prepare_request` raises (e.g. unsupported native output).
+            if defer_request_attributes:
+                capture_token = _model_request_span_captures.set(
+                    (*_model_request_span_captures.get(), (request_context, set_request_attributes))
+                )
+                try:
+                    yield finish, request_context
+                finally:
+                    _model_request_span_captures.reset(capture_token)
+            else:
+                prepared_request_context = set_request_attributes(request_context)
+                yield finish, prepared_request_context
     finally:
+        include_content_ctx.set(previous_include_content)
         if record_metrics:
             record_metrics()
 
@@ -594,6 +882,11 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
     the composite enters it around each segment without depending on OpenTelemetry itself.
     """
     captured = otel_context.get_current()
+    # The span's redaction policy has to travel with it: a streaming segment reads
+    # `include_content_ctx` in the consumer task, which never saw the `set` in
+    # `open_model_request_span`, so without this a `FallbackModel` refresh there would fall back to
+    # the default and re-export instruction content the span was opened without.
+    captured_include_content = include_content_ctx.get()
 
     @contextmanager
     def attach_captured_context() -> Generator[None]:
@@ -605,11 +898,17 @@ def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
         # 'Failed to detach context' (surfaced verbatim in the Pyodide output panel). `attach()` is a plain
         # `set`, which never fails cross-context, so it restores `previous` silently. See #6569.
         previous = otel_context.get_current()
+        previous_include_content = include_content_ctx.get()
         otel_context.attach(captured)
+        # Restored with `set` rather than `reset` for the same reason as `previous` above: this CM is
+        # held across the `yield`, so an interrupted streamed run finalizes it in a different
+        # `Context`, where `ContextVar.reset` raises `ValueError: ... created in a different Context`.
+        include_content_ctx.set(captured_include_content)
         try:
             yield
         finally:
             otel_context.attach(previous)
+            include_content_ctx.set(previous_include_content)
 
     return attach_captured_context
 

@@ -1,6 +1,7 @@
 import os
 import re
 import warnings
+from copy import deepcopy
 from importlib import import_module
 from unittest.mock import patch
 
@@ -27,6 +28,7 @@ from pydantic_ai.models import (
     parse_model_id,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
@@ -36,6 +38,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.mistral import MistralModel
@@ -232,6 +235,14 @@ TEST_CASES = [
         'github',
         'openai',
         OpenAIChatModel,
+    ),
+    pytest.param(
+        {'GITHUB_COPILOT_API_KEY': 'github-copilot-api-key'},
+        'github-copilot:claude-haiku-4.5',
+        'claude-haiku-4.5',
+        'github-copilot',
+        'github_copilot',
+        GitHubCopilotModel,
     ),
     pytest.param(
         {'MOONSHOTAI_API_KEY': 'moonshotai-api-key'},
@@ -487,6 +498,16 @@ def test_infer_model_profile_fills_default_profile_with_context_window():
     assert profile == {**DEFAULT_PROFILE, 'context_window': 123}
 
 
+def test_prepare_request_rejects_unsupported_text_output():
+    params = ModelRequestParameters()
+
+    with pytest.raises(UserError, match='Text output is not supported by this model'):
+        TestModel(profile={'supports_text_output': False}).prepare_request(None, params)
+
+    _, prepared = TestModel().prepare_request(None, params)
+    assert prepared.allow_text_output is True
+
+
 def test_custom_provider_instance_method_model_profile():
     """Verify that a custom provider using the old instance-method model_profile pattern still works for non-Temporal usage.
 
@@ -633,7 +654,6 @@ def test_prepare_messages_system_prompt_wrapping(
     assert _request_parts(model.prepare_messages(messages)) == expected
 
 
-@pytest.mark.anyio
 async def test_model_default_async_context_returns_model() -> None:
     model = TestModel()
     assert await AbstractModel.__aenter__(model) is model
@@ -698,3 +718,19 @@ def test_profile_context_window_callable_override():
         model = OpenAIChatModel('gpt-5', profile=profile)
     assert model.profile.get('context_window') is None
     assert inferred_context_windows[0] is not None
+
+
+def test_wrapper_model_deepcopy():
+    """`deepcopy` builds the copy without `__init__`, so `wrapped` is unset when `__getattr__` runs.
+
+    `copy` probes the new instance for `__setstate__`; forwarding that to an unset `wrapped` recursed
+    until `RecursionError`. No request is involved, so this is not a VCR test.
+    """
+    model = WrapperModel(TestModel(custom_output_text='wrapped'))
+
+    copied = deepcopy(model)
+
+    assert copied is not model
+    assert copied.wrapped is not model.wrapped
+    assert copied.model_name == 'test'
+    assert copied.custom_output_text == 'wrapped'

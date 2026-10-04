@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
+import json
 import os
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -13,6 +16,7 @@ from urllib.parse import urlparse
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -25,13 +29,17 @@ if sys.version_info < (3, 11):
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
+from opentelemetry.trace import StatusCode
+
 from pydantic_ai.embeddings import (
     Embedder,
     EmbeddingResult,
     EmbeddingSettings,
+    EmbedInputType,
     InstrumentedEmbeddingModel,
     KnownEmbeddingModelName,
     TestEmbeddingModel,
+    WrapperEmbeddingModel,
     infer_embedding_model,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -41,7 +49,6 @@ from pydantic_ai.usage import RequestUsage
 from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.usefixtures('allow_model_requests'),
 ]
 
@@ -49,10 +56,17 @@ with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 with try_import() as openai_imports_successful:
+    from openai import AsyncOpenAI
+
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
+    import cohere
+    from cohere.types.embed_by_type_response import EmbedByTypeResponse
+    from cohere.types.embed_by_type_response_embeddings import EmbedByTypeResponseEmbeddings
+
+    from pydantic_ai.embeddings import cohere as cohere_embeddings
     from pydantic_ai.embeddings.cohere import (
         CohereEmbeddingModel,
         CohereEmbeddingSettings,
@@ -61,7 +75,9 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as bedrock_imports_successful:
+    from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
     from botocore.exceptions import ClientError
+    from urllib3 import HTTPResponse
 
     from pydantic_ai.embeddings.bedrock import (
         BedrockEmbeddingModel,
@@ -534,6 +550,23 @@ class TestOpenAI:
                     },
                 },
             ]
+        )
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
+def test_cohere_empty_billed_units():
+    """An empty SDK billing object is a defensive case that a VCR recording cannot reliably produce."""
+    for billed_units in (cohere.ApiMetaBilledUnits(), cohere.ApiMetaBilledUnits(input_tokens=0, output_tokens=0)):
+        response = EmbedByTypeResponse(
+            id='test',
+            embeddings=EmbedByTypeResponseEmbeddings(float_=[[0.1]]),
+            meta=cohere.ApiMeta(billed_units=billed_units),
+        )
+        assert (
+            cohere_embeddings._map_usage(  # pyright: ignore[reportPrivateUsage]
+                response, 'cohere', 'https://api.cohere.com', 'embed-v4.0'
+            )
+            == RequestUsage()
         )
 
 
@@ -2274,6 +2307,38 @@ async def test_settings():
     )
 
 
+def test_embedder_compares_by_identity():
+    """An `Embedder` is a stateful client, so two are equal only when they are the same object.
+
+    Field equality compared only `instrument`, so it made two `Embedder`s over different models equal
+    whenever their `instrument` matched, and left the class unhashable. No request is involved, so
+    this is not a VCR test.
+    """
+    model = TestEmbeddingModel('small')
+    embedder = Embedder(model)
+
+    assert embedder == embedder
+    assert embedder != Embedder(model)
+    assert {embedder: 'small'}[embedder] == 'small'
+
+
+def test_wrapper_embedding_model_deepcopy():
+    """`deepcopy` builds the copy without `__init__`, so `wrapped` is unset when `__getattr__` runs.
+
+    `copy` probes the new instance for `__setstate__`; forwarding that to an unset `wrapped` recursed
+    until `RecursionError`. No request is involved, so this is not a VCR test.
+    """
+    model = WrapperEmbeddingModel(TestEmbeddingModel('wrapped'))
+
+    copied = deepcopy(model)
+
+    assert copied is not model
+    assert copied.wrapped is not model.wrapped
+    assert copied.model_name == 'wrapped'
+    # Only the wrapped `TestEmbeddingModel` defines it, so reading it proves the copy still forwards.
+    assert copied.last_settings is None
+
+
 def test_result():
     result = EmbeddingResult(
         embeddings=[[-1.0], [-0.5], [0.0], [0.5], [1.0]],
@@ -2328,3 +2393,115 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_exception_honors_include_content(capfire: CaptureLogfire, include_content: bool):
+    """A failing embedding request follows `include_content` like the agent's spans do.
+
+    A provider error carries its response body in the exception message, so the exception event and
+    the ERROR status description on the embedding span are withheld when content capture is off.
+    """
+
+    class FailingEmbeddingModel(TestEmbeddingModel):
+        async def embed(
+            self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        ) -> EmbeddingResult:
+            raise ModelHTTPError(status_code=400, model_name='failing', body='invalid input: embed-secret')
+
+    embedder = Embedder(FailingEmbeddingModel(), instrument=InstrumentationSettings(include_content=include_content))
+    with pytest.raises(ModelHTTPError):
+        await embedder.embed('hello', input_type='document')
+
+    [span] = [span for span in capfire.exporter.exported_spans if span.status.status_code is StatusCode.ERROR]
+    [event] = [event for event in span.events if event.name == 'exception']
+    attributes = dict(event.attributes or {})
+    assert attributes['exception.type'] == 'pydantic_ai.exceptions.ModelHTTPError'
+    assert attributes['exception.escaped'] == 'False'
+    if include_content:
+        assert {'exception.message', 'exception.stacktrace'} <= set(attributes)
+        assert 'embed-secret' in str(attributes['exception.message'])
+        assert span.status.description is not None
+    else:
+        assert set(attributes) == {'exception.type', 'exception.escaped'}
+        assert span.status.description is None
+        assert 'embed-secret' not in str(capfire.exporter.exported_spans)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_embedding_non_json_response_body_raises_model_api_error():
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(openai_client=client))
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+@pytest.mark.parametrize('call', ['embed', 'count_tokens'])
+async def test_google_embedding_non_json_response_body_raises_model_api_error(call: str):
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=provider)
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens('hello')
+            else:
+                await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+@pytest.mark.parametrize('body', [b'', b'not json'], ids=['empty', 'not-json'])
+async def test_bedrock_embedding_non_json_response_body_raises_model_api_error(body: bytes):
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    The response is injected at `before-send` because no real endpoint returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=provider)
+
+    def respond(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        return AWSResponse(request.url, 200, HTTPHeaders(), HTTPResponse(body=io.BytesIO(body), preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime', respond)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

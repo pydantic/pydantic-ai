@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
+from types import MethodType
 from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
 
 import pytest
@@ -29,6 +30,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     ImageGeneration,
     Instrumentation,
+    LocalWorkspace,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
@@ -48,6 +50,8 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
+from pydantic_ai.common_tools.web_fetch import WebFetchLocalTool
+from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestContext
@@ -58,8 +62,7 @@ from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool,
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-
-pytestmark = pytest.mark.anyio
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 
 @dataclass
@@ -133,6 +136,11 @@ _FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
 _SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
 
 
+def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
+    # One environment: the later workspace replaces the earlier whole, so the first one's `env` never leaks.
+    assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
+
+
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -191,6 +199,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'carries no configuration at all, so two are interchangeable',
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
+    ),
+    'LocalWorkspace': Combines(
+        'the later configuration replaces the earlier one whole',
+        lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
+        _check_local_workspace,
     ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
@@ -443,11 +456,14 @@ def test_merged_local_fallback_carries_the_merged_configuration() -> None:
         [WebFetch(local=True, allowed_domains=['a.com']), WebFetch(local=True, allowed_domains=['b.com'])]
     )
     assert isinstance(merged, WebFetch)
-    local = merged.local
-    assert isinstance(local, Tool)
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
     # The fallback is a bound method of the fetcher, which carries its own copy of the domain lists.
-    fetcher = cast('Any', local).function.__self__
-    assert fetcher.allowed_domains == ['a.com', 'b.com']
+    fetch = toolset.wrapped.tools['web_fetch'].function
+    assert isinstance(fetch, MethodType)
+    assert isinstance(fetch.__self__, WebFetchLocalTool)
+    assert fetch.__self__.allowed_domains == ['a.com', 'b.com']
 
 
 async def test_a_later_layer_wins_even_when_it_sorts_first() -> None:
@@ -581,24 +597,6 @@ def test_generic_alias_metadata_is_not_capability_configuration() -> None:
     assert isinstance(merged, ReinjectSystemPrompt)
     assert merged.replace_existing is True
     assert getattr(merged, '__orig_class__', None) is ReinjectSystemPrompt[Any]
-
-
-def test_durable_operation_bindings_are_not_capability_configuration() -> None:
-    """Bindings added when a capability is reused by durable agents are runtime bookkeeping.
-
-    Reached through the same rule as any other cached state rather than by being named in the
-    merge: they are a `cached_property`, so the merge finds them on the class, and the merged
-    capability starts without them so the next engine to bind creates its own.
-    """
-
-    first = ReinjectSystemPrompt(replace_existing=False)
-    assert first._durable_operation_bindings is not None  # pyright: ignore[reportPrivateUsage]
-
-    merged = ReinjectSystemPrompt.combine([first, ReinjectSystemPrompt(replace_existing=True)])
-
-    assert isinstance(merged, ReinjectSystemPrompt)
-    assert merged.replace_existing is True
-    assert '_durable_operation_bindings' not in vars(merged), "the last instance's bindings do not ride along"
 
 
 def test_a_cached_property_is_recomputed_against_the_merged_fields() -> None:
@@ -872,10 +870,14 @@ def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
 
     assert isinstance(merged, XSearch)
     assert merged.fallback_subagent_model == 'xai:grok-4.3', 'the later value, like any scalar'
-    local = merged.local
-    assert isinstance(local, Tool)
-    # The subagent tool is rebuilt from the merged field, so it carries its own copy of the model.
-    assert cast('Any', local).function.__self__.model == 'xai:grok-4.3'
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
+    # The subagent tool is derived from the merged field, so it carries its own copy of the model.
+    subagent_tool = toolset.wrapped.tools['x_search'].function
+    assert isinstance(subagent_tool, MethodType)
+    assert isinstance(subagent_tool.__self__, XSearchSubagentTool)
+    assert subagent_tool.__self__.model == 'xai:grok-4.3'
 
 
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
@@ -1274,6 +1276,11 @@ async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() 
         assert resolution.instrumentation_settings is not None
         assert resolution.instrumentation_settings.include_content is False, 'the session-level one wins'
         assert resolution.run_context.trace_include_content is False
+
+    workspace_agent = Agent(TestModel(), capabilities=[LocalWorkspace('/tmp')])
+    async with workspace_agent._resolve_realtime_session(_StubRealtimeModel()) as resolution:  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(Exception, match='Realtime sessions do not support workspaces yet'):
+            await resolution.run_context.workspace.working_dir()
 
 
 async def test_two_capabilities_on_one_agent_merge_rather_than_override() -> None:

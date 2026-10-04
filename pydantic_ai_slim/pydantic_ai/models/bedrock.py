@@ -19,6 +19,7 @@ from typing_extensions import ParamSpec, TypedDict, assert_never, override
 
 try:
     from botocore.client import BaseClient
+    from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
         BotoCoreError,
         ClientError,
@@ -81,9 +82,15 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
-from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from pydantic_ai.models._tool_choice import (
+    FORCING_UNSUPPORTED_REASON,
+    resolve_tool_choice,
+    support_tool_forcing,
+    tool_forcing_unavailable_reason,
+)
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
+from pydantic_ai.output import StructuredOutputMode
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS, ModelProfile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
@@ -134,6 +141,11 @@ if TYPE_CHECKING:
     )
 
 
+# botocore parses a 200 body that's empty, not JSON, or JSON without the operation's fields to a response lacking them,
+# instead of raising.
+_MISSING_RESPONSE_FIELD = 'Response has no {field!r} field'
+
+
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
     try:
@@ -157,6 +169,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
     except (HTTPClientError, BotocoreConnectionError) as e:
         # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except EventStreamParserError as e:
+        # botocore's event stream parser raises its own `ParserError`, not a `BotoCoreError`, for a streamed 200 whose
+        # body isn't an event stream, e.g. keep-alive whitespace before an upstream failure.
+        raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
 class _BotocoreRequestParams(TypedDict):
@@ -233,6 +249,7 @@ async def _call_bedrock(
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+_ADAPTIVE_THINKING_SETTING = "bedrock_additional_model_requests_fields={'thinking': {'type': 'adaptive'}}"
 _BEDROCK_USAGE_FIELDS = frozenset(
     {'inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens'}
 )
@@ -334,8 +351,11 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-opus-4-8',
     'us.anthropic.claude-opus-5',
     'global.anthropic.claude-opus-5',
+    'us.anthropic.claude-opus-5-5',
+    'global.anthropic.claude-opus-5-5',
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-sonnet-5-5',
     'us.anthropic.claude-fable-5',
     'us.anthropic.claude-fable-5-1',
     'global.anthropic.claude-fable-5',
@@ -343,6 +363,15 @@ LatestBedrockModelNames = Literal[
     # Amazon Nova
     'us.amazon.nova-premier-v1:0',
     'global.amazon.nova-2-lite-v1:0',
+    # OpenAI GPT-5.6 (models that require a cross-region inference profile)
+    'us.openai.gpt-5.6-sol',
+    'global.openai.gpt-5.6-sol',
+    'us.openai.gpt-5.6-luna',
+    'in.openai.gpt-5.6-luna',
+    'global.openai.gpt-5.6-luna',
+    'us.openai.gpt-5.6-terra',
+    'in.openai.gpt-5.6-terra',
+    'global.openai.gpt-5.6-terra',
     # Meta Llama 4
     'us.meta.llama4-maverick-17b-instruct-v1:0',
     'us.meta.llama4-scout-17b-instruct-v1:0',
@@ -660,10 +689,10 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest retention requested by supported Bedrock cache settings."""
         settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_prompt_cache_retention(
+        return self._max_cache_retention(
             settings.get('bedrock_cache_instructions')
             if self.profile.get('bedrock_supports_prompt_caching', False)
             else None,
@@ -680,31 +709,50 @@ class BedrockConverseModel(Model[BaseClient]):
         """The set of builtin tool types this model can handle."""
         return frozenset({CodeExecutionTool})
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        profile = cast(BedrockModelProfile, self.profile)
+        return _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        profile = cast(BedrockModelProfile, self.profile)
+        # Extended thinking, and thinking on the non-Anthropic variants, reject the forced tool choice Tool Output
+        # relies on.
+        if (
+            model_request_parameters.output_tools
+            and _effective_thinking_type(model_settings, model_request_parameters, profile) == 'enabled'
+        ):
+            return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
+        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
-        if model_request_parameters.output_tools and _is_thinking_enabled(settings, model_request_parameters):
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            elif (
-                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
-            ):  # pragma: no branch
-                suggested_output_type = (
-                    'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
-                )
-                raise UserError(
-                    f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
-                )
-
-        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
-        # strict-forcing check below also applies when native mode is reached via the profile default
-        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
-        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        profile = cast(BedrockModelProfile, self.profile)
+        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
+        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
+        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
         model_request_parameters = model_request_parameters.with_default_output_mode(
-            self.profile.get('default_structured_output_mode', 'tool')
+            self._default_structured_output_mode(settings, model_request_parameters)
         )
+        if (
+            model_request_parameters.output_mode == 'tool'
+            and not model_request_parameters.allow_text_output
+            and profile.get('bedrock_thinking_variant') not in (None, 'anthropic')
+            and _effective_thinking_type(settings, model_request_parameters, profile) is not None
+        ):
+            # This would result in `toolChoice: any`, which isn't available here.
+            suggested_output_type = (
+                'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
+            )
+            raise UserError(
+                'Bedrock does not support thinking and output tools at the same time. '
+                f'Use `output_type={suggested_output_type}(...)` instead.'
+            )
 
         if (
             self.profile.get('supports_json_schema_output', False)
@@ -724,7 +772,10 @@ class BedrockConverseModel(Model[BaseClient]):
     def _prepare_model_settings(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> ModelSettings | None:
-        if self.profile.get('anthropic_disallows_sampling_settings', False) and model_settings:
+        if model_settings and (
+            self.profile.get('anthropic_disallows_sampling_settings', False)
+            or self.profile.get('bedrock_disallows_sampling_settings', False)
+        ):
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)
             return filtered or None
@@ -735,7 +786,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         `temperature` and `top_p` would reach `inferenceConfig` and unified `top_k` would reach
         `additionalModelRequestFields`; all three are rejected with a 400 by the models that set
-        `anthropic_disallows_sampling_settings`. A user's own
+        `anthropic_disallows_sampling_settings` or `bedrock_disallows_sampling_settings`. A user's own
         `bedrock_additional_model_requests_fields` is deliberately left alone: it is the raw
         escape hatch, so a value placed there is addressed to Bedrock directly.
         """
@@ -858,6 +909,8 @@ class BedrockConverseModel(Model[BaseClient]):
         client = self.client
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
+        if 'inputTokens' not in response:
+            raise ModelAPIError(model_name=self.model_name, message=_MISSING_RESPONSE_FIELD.format(field='inputTokens'))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -990,20 +1043,7 @@ class BedrockConverseModel(Model[BaseClient]):
         variant = profile.get('bedrock_thinking_variant', None)
 
         if variant == 'anthropic' and 'thinking' not in existing:
-            if profile.get('bedrock_supports_adaptive_thinking', False):
-                if thinking is not False:
-                    existing['thinking'] = {'type': 'adaptive'}
-                    # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
-                    if (
-                        profile.get('bedrock_supports_effort', False)
-                        and isinstance(thinking, str)
-                        and 'output_config' not in existing
-                    ):
-                        existing['output_config'] = {'effort': resolve_anthropic_effort(thinking, supports_xhigh=False)}
-            elif thinking is False:
-                existing['thinking'] = {'type': 'disabled'}
-            else:
-                existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+            _add_anthropic_thinking_fields(existing, thinking, profile)
         elif variant == 'openai' and 'reasoning_effort' not in existing:
             if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
                 existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
@@ -1103,6 +1143,10 @@ class BedrockConverseModel(Model[BaseClient]):
                 )
             else:
                 model_response = await _call_bedrock(client, client.converse, params, settings.get('extra_headers'))
+                if 'output' not in model_response:
+                    raise ModelAPIError(
+                        model_name=self.model_name, message=_MISSING_RESPONSE_FIELD.format(field='output')
+                    )
         return model_response
 
     @staticmethod
@@ -1132,9 +1176,7 @@ class BedrockConverseModel(Model[BaseClient]):
         tool_defs = model_request_parameters.declared_tool_defs
 
         profile = cast(BedrockModelProfile, self.profile)
-        supports = _support_tool_forcing(
-            self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
-        )
+        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
 
         tool_choice: ToolChoiceTypeDef
         if resolved_tool_choice == 'auto':
@@ -1959,22 +2001,70 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise e  # pragma: lax no cover
 
 
-def _is_thinking_enabled(
+def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, profile: ModelProfile) -> None:
+    """Translate unified `thinking` into the Anthropic `thinking` (and `output_config.effort`) request fields."""
+    if profile.get('bedrock_supports_adaptive_thinking', False):
+        if thinking is False:
+            # Omitting `thinking` leaves it on for models that think by default. `Model.prepare_request`
+            # has already dropped `False` for models that can't turn thinking off.
+            if profile.get('thinking_enabled_by_default', False):
+                existing['thinking'] = {'type': 'disabled'}
+        else:
+            existing['thinking'] = {'type': 'adaptive'}
+            # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
+            # The merged profile carries the Anthropic xhigh flag, so `xhigh` passes through on the same
+            # models as the direct API. Bedrock rejects it on the other models, where it maps to `max`.
+            if (
+                profile.get('bedrock_supports_effort', False)
+                and isinstance(thinking, str)
+                and 'output_config' not in existing
+            ):
+                effort = resolve_anthropic_effort(
+                    thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                )
+                existing['output_config'] = {'effort': effort}
+    elif thinking is False:
+        existing['thinking'] = {'type': 'disabled'}
+    else:
+        existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+
+
+def _effective_thinking_type(
     model_settings: ModelSettings | None,
-    model_request_parameters: ModelRequestParameters | None = None,
-) -> bool:
-    if model_request_parameters is not None and model_request_parameters.thinking:
-        return True
-    if model_settings:
-        if model_settings.get('thinking'):
-            return True
-        if (
-            (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
-            and (thinking := additional_fields.get('thinking'))
-            and thinking.get('type') in ('enabled', 'adaptive')
-        ):
-            return True
-    return False
+    model_request_parameters: ModelRequestParameters | None,
+    profile: BedrockModelProfile,
+) -> Literal['adaptive', 'enabled'] | None:
+    """Resolve the thinking type used by the output-tool and tool-forcing guards.
+
+    Explicit `bedrock_additional_model_requests_fields` take precedence over unified thinking,
+    matching `_build_additional_model_request_fields`.
+    """
+    if model_settings and profile.get('bedrock_thinking_variant') == 'anthropic':
+        additional_fields = model_settings.get('bedrock_additional_model_requests_fields')
+        if additional_fields is not None and 'thinking' in additional_fields:
+            thinking_config = additional_fields['thinking']
+            if _utils.is_str_dict(thinking_config):
+                thinking_type = thinking_config.get('type')
+                if thinking_type in ('adaptive', 'enabled'):
+                    return thinking_type
+            return None
+
+    if model_settings is not None and 'thinking' in model_settings:
+        unified_thinking = model_settings['thinking']
+    else:
+        unified_thinking = model_request_parameters.thinking if model_request_parameters is not None else None
+    is_anthropic = profile.get('bedrock_thinking_variant') == 'anthropic'
+    if unified_thinking:
+        return 'adaptive' if is_anthropic and profile.get('bedrock_supports_adaptive_thinking', False) else 'enabled'
+    # Claude models that think by default keep thinking without a setting, and those that can't turn it off
+    # ignore `thinking=False`, as on the direct Anthropic API.
+    if (
+        is_anthropic
+        and (unified_thinking is None or profile.get('thinking_always_enabled', False))
+        and profile.get('thinking_enabled_by_default', False)
+    ):
+        return 'adaptive'
+    return None
 
 
 def _support_tool_forcing(
@@ -1982,28 +2072,34 @@ def _support_tool_forcing(
     profile: BedrockModelProfile,
     model_settings: BedrockModelSettings | None,
     model_request_parameters: ModelRequestParameters,
-    effective_tool_choice: ResolvedToolChoice,
 ) -> bool:
-    """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported.
+    """Whether to send a forced `toolChoice`, raising `UserError` if explicitly requested but unavailable.
 
-    Also checks for thinking mode compatibility - Bedrock/Anthropic don't support tool forcing with thinking enabled.
+    On top of the profile's forcing flags, extended thinking rejects a forced tool choice, and adaptive thinking
+    accepts it but answers without thinking, so only an explicit forcing `tool_choice` is sent then.
     """
-    if not profile.get('bedrock_supports_tool_choice', False):
-        explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
-                f'This model does not support forcing tool use.'
+    thinking_type = _effective_thinking_type(model_settings, model_request_parameters, profile)
+    if profile.get('bedrock_supports_tool_choice', False):
+        unavailable_reason = tool_forcing_unavailable_reason(
+            profile, thinking=thinking_type is not None, thinking_remedy='Disable thinking with `thinking=False`'
+        )
+    else:
+        unavailable_reason = FORCING_UNSUPPORTED_REASON
+    if unavailable_reason is None and thinking_type == 'enabled':
+        if profile.get('bedrock_thinking_variant') != 'anthropic':
+            unavailable_reason = (
+                "Bedrock doesn't support forcing tool use with thinking enabled for this model. "
+                "Disable thinking or use `tool_choice='auto'`."
             )
-        return False
-
-    if _is_thinking_enabled(model_settings, model_request_parameters):
-        explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                "Bedrock does not support forcing specific tools with thinking mode. Disable thinking or use `tool_choice='auto'`."
+        else:
+            unavailable_reason = (
+                "Extended thinking doesn't support forcing tool use. Disable thinking or use `tool_choice='auto'`."
             )
-        if effective_tool_choice == 'required' or isinstance(effective_tool_choice, tuple):
-            return False
-
-    return True
+            if profile.get('bedrock_supports_adaptive_thinking', False):
+                unavailable_reason += f' Alternatively, `{_ADAPTIVE_THINKING_SETTING}` supports forcing.'
+    return support_tool_forcing(
+        model_name,
+        model_settings,
+        unavailable_reason,
+        disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
+    )

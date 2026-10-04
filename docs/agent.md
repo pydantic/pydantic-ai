@@ -1,3 +1,7 @@
+---
+description: "Create and run Pydantic AI agents: run, run_sync, streaming and step-by-step iteration, plus instructions, model settings, usage limits and cancellation."
+---
+
 ## Introduction
 
 Agents are Pydantic AI's primary interface for interacting with LLMs.
@@ -30,7 +34,7 @@ roulette_agent = Agent(  # (1)!
     'openai:gpt-5.2',
     deps_type=int,
     output_type=bool,
-    system_prompt=(
+    instructions=(
         'Use the `roulette_wheel` function to see if the '
         'customer has won based on the number they provide.'
     ),
@@ -158,7 +162,7 @@ from pydantic_ai import (
 
 weather_agent = Agent(
     'openai:gpt-5.2',
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -502,6 +506,7 @@ async def main():
         End(data=FinalResult(output='The capital of France is Paris.')),
     ]
     """
+    assert agent_run.result is not None
     print(agent_run.result.output)
     #> The capital of France is Paris.
 ```
@@ -592,7 +597,7 @@ Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic
 
 Here is an example of streaming an agent run in combination with `async for` iteration:
 
-```python {title="streaming_iter.py"}
+```python {title="streaming_iter.py" noqa="C901"}
 import asyncio
 from dataclasses import dataclass
 from datetime import date
@@ -626,7 +631,7 @@ weather_agent = Agent[WeatherService, str](
     'openai:gpt-5.2',
     deps_type=WeatherService,
     output_type=str,  # We'll produce a final answer as plain text
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -836,6 +841,8 @@ async def main():
 3. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] contains everything completed before cancellation, including completed tool results. Any dangling tool call is [repaired automatically](message-history.md#making-histories-provider-valid) when the history is resumed.
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+
+Pressing Ctrl-C during [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] cancels the run too: catch the `KeyboardInterrupt` and pass it to `from_cancellation()` to recover the run state.
 
 On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
 
@@ -1073,7 +1080,7 @@ agent = Agent(
     'anthropic:claude-sonnet-4-6',
     retries={'tools': 3},
     output_type=NeverOutputType,
-    system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
+    instructions='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
 
 
@@ -1176,7 +1183,7 @@ except UsageLimitExceeded as e:
 Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
 
 !!! note
-    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
+    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Usage extraction is also best-effort, and an unexpected extraction failure emits [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 #### Model (Run) Settings
 
@@ -1335,6 +1342,8 @@ If you wish to further customize model behavior, you can use a subclass of [`Mod
 For example:
 
 ```py
+from google.genai.types import HarmBlockThreshold, HarmCategory
+
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
@@ -1345,14 +1354,14 @@ try:
         'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
         model_settings=GoogleModelSettings(
             temperature=0.0,  # general model settings can also be specified
-            gemini_safety_settings=[
+            google_safety_settings=[
                 {
-                    'category': 'HARM_CATEGORY_HARASSMENT',
-                    'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    'category': HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
                 },
                 {
-                    'category': 'HARM_CATEGORY_HATE_SPEECH',
-                    'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
                 },
             ],
         ),
@@ -1411,7 +1420,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```python {title="type_mistakes.py" hl_lines="18 28"}
+```python {title="type_mistakes.py" hl_lines="18 28" typecheck="skip - deliberately wrong to show what a type checker reports"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
@@ -1429,7 +1438,7 @@ agent = Agent(
 )
 
 
-@agent.system_prompt
+@agent.instructions
 def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
     return f"The user's name is {ctx.deps}."
 
@@ -1450,7 +1459,7 @@ Running `mypy` on this will give the following output:
 
 ```bash
 ➤ uv run mypy type_mistakes.py
-type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str]"  [arg-type]
+type_mistakes.py:18: error: Argument 1 to "instructions" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str | None]"  [arg-type]
 type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
 Found 2 errors in 1 file (checked 1 source file)
 ```
@@ -1620,12 +1629,13 @@ def local_time() -> str:
 
 
 @agent.instructions
-def user_name(ctx: RunContext[None]) -> str:
+def user_name(ctx: RunContext) -> str:
     return 'The user is Frank.'
 
 
 agent.run_sync('What is the capital of Italy?')
 
+assert model.last_model_request_parameters is not None
 parts = model.last_model_request_parameters.instruction_parts or []
 print([(part.name, str(part.id) if part.id is not None else None, part.content) for part in parts])
 """

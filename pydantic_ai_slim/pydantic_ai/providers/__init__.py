@@ -209,6 +209,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .cohere import CohereProvider
 
         return CohereProvider
+    elif provider == 'system-one':
+        from .system_one import SystemOneProvider
+
+        return SystemOneProvider
     elif provider == 'crusoe':
         from .crusoe import CrusoeProvider
 
@@ -245,6 +249,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
         return GitHubProvider  # pyright: ignore[reportDeprecated]
+    elif provider == 'github-copilot':
+        from .github_copilot import GitHubCopilotProvider
+
+        return GitHubCopilotProvider
     elif provider == 'litellm':
         from .litellm import LiteLLMProvider
 
@@ -277,6 +285,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .snowflake import SnowflakeProvider
 
         return SnowflakeProvider
+    elif provider == 'typesafe':
+        from .typesafe import TypeSafeProvider
+
+        return TypeSafeProvider
     elif provider == 'voyageai':
         from .voyageai import VoyageAIProvider
 

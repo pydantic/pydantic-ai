@@ -14,7 +14,11 @@ from ._warnings import PydanticAIDeprecationWarning
 
 __all__ = (
     'DEFAULT_HTTP_TIMEOUT',
+    'DEFAULT_MAX_CONNECTIONS',
+    'DEFAULT_MAX_KEEPALIVE_CONNECTIONS',
     'AsyncHTTPClient',
+    'HTTPAuth',
+    'HTTPTimeout',
     'create_async_httpx2_client',
     'legacy_httpx',
     'to_httpx2_timeout',
@@ -37,12 +41,18 @@ if TYPE_CHECKING:
     import httpx
 
     AsyncHTTPClient: TypeAlias = httpx.AsyncClient | httpx2.AsyncClient
+    HTTPAuth: TypeAlias = httpx.Auth | httpx2.Auth
+    HTTPTimeout: TypeAlias = httpx.Timeout | httpx2.Timeout
     LegacyTimeout: TypeAlias = httpx.Timeout
 elif legacy_httpx is not None:
     AsyncHTTPClient = legacy_httpx.AsyncClient | httpx2.AsyncClient
+    HTTPAuth = legacy_httpx.Auth | httpx2.Auth
+    HTTPTimeout = legacy_httpx.Timeout | httpx2.Timeout
     LegacyTimeout = legacy_httpx.Timeout
 else:
     AsyncHTTPClient = httpx2.AsyncClient
+    HTTPAuth = httpx2.Auth
+    HTTPTimeout = httpx2.Timeout
     # Without legacy HTTPX no `ModelSettings.timeout` can hold one of its `Timeout` objects, so the
     # `isinstance` check in `to_httpx2_timeout` falls back to the type the SDKs already accept and
     # the conversion just rebuilds an equivalent value.
@@ -51,18 +61,33 @@ else:
 _NotGivenT = TypeVar('_NotGivenT')
 
 
-def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx2.AsyncClient:
-    """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts and user agent.
+# The OpenAI and Anthropic SDKs' own connection pool limits, rather than HTTPX's 100 and 20.
+DEFAULT_MAX_CONNECTIONS = 1000
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 100
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+
+def create_async_httpx2_client(
+    *,
+    timeout: float | httpx2.Timeout = httpx2.Timeout(DEFAULT_HTTP_TIMEOUT, connect=5),
+    limits: httpx2.Limits = httpx2.Limits(
+        max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+    ),
+) -> httpx2.AsyncClient:
+    """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts, connection limits and user agent.
+
+    This is the client a provider creates when you don't pass your own `http_client`. Call it yourself
+    to adjust the timeouts or connection pool limits, and pass the result to the provider as
+    `http_client`. A client you create this way is yours to close.
+
+    Args:
+        timeout: The client's timeout, in seconds or as an `httpx2.Timeout` that sets each phase
+            separately. Defaults to 600 seconds, with a 5-second connect timeout.
+        limits: The connection pool limits. Defaults to 1000 connections, of which up to 100 are kept
+            alive while idle, matching the OpenAI and Anthropic SDKs' own clients.
     """
     from .models import get_user_agent
 
-    return httpx2.AsyncClient(
-        timeout=httpx2.Timeout(timeout=timeout, connect=connect),
-        headers={'User-Agent': get_user_agent()},
-    )
+    return httpx2.AsyncClient(timeout=timeout, limits=limits, headers={'User-Agent': get_user_agent()})
 
 
 def to_httpx2_timeout(timeout: float | LegacyTimeout | _NotGivenT) -> float | httpx2.Timeout | _NotGivenT:

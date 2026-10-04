@@ -9,6 +9,7 @@ import os
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
@@ -976,6 +977,11 @@ MultiModalContent = Annotated[
 # Explicit tuple for readability; validated against MultiModalContent in tests
 MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)
 
+_FILE_URL_KINDS: tuple[str, ...] = (ImageUrl.kind, AudioUrl.kind, DocumentUrl.kind, VideoUrl.kind)
+"""The `kind` values of the `FileUrl` subclasses: the multi-modal items whose media type is inferred
+from the URL when they were given none, and so the only ones a tool return has to spell a `media_type`
+out for (see `_RequireUrlMediaType`)."""
+
 
 def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
     """Check if obj is a MultiModalContent type, enabling type narrowing."""
@@ -984,6 +990,14 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 """A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
+
+# Explicit tuple for readability; validated against `UserContent` in tests
+_USER_CONTENT_TYPES: tuple[type, ...] = (str, TextContent, *MULTI_MODAL_CONTENT_TYPES, CachePoint)
+
+_NOT_USER_CONTENT = (
+    'Serialize the value yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) '
+    'or `pydantic_ai.format_as_xml()`.'
+)
 
 
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
@@ -1126,6 +1140,30 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def __post_init__(self) -> None:
+        # Every model's message mapper walks this content and hands each item to an exhaustive match. What
+        # is not `UserContent` gets there as a bare `AssertionError: Expected code to be unreachable`, and
+        # what is iterable but not a sequence -- a `dict`, most of all -- is walked as its keys, silently
+        # sending them to the model as the prompt. Both are caught here, where the value comes in, rather
+        # than once per mapper. `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic
+        # deserializes message history, where a `ValueError` becomes a `ValidationError` with location info.
+        content = self.content
+        if isinstance(content, str):
+            return
+        # `bytes` is a `Sequence` of `int`, so it passes the check below and fails on its first item with a
+        # message about an `int` the caller never wrote.
+        if not isinstance(content, Sequence) or isinstance(content, bytes | bytearray):
+            raise ValueError(
+                '`UserPromptPart.content` must be a `str` or a sequence of `UserContent` items, '
+                f'got `{type(content).__name__}`. {_NOT_USER_CONTENT}'
+            )
+        for index, item in enumerate(content):
+            if not isinstance(item, _USER_CONTENT_TYPES):
+                raise ValueError(
+                    f'`UserPromptPart.content[{index}]` must be a `UserContent` item, '
+                    f'got `{type(item).__name__}`. {_NOT_USER_CONTENT}'
+                )
+
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
         content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
@@ -1188,75 +1226,109 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
-# Derived from the union members (pinned by `test_multi_modal_content_types_matches_union`) so it can't drift.
-_MULTIMODAL_KINDS: frozenset[str] = frozenset(t.__dataclass_fields__['kind'].default for t in MULTI_MODAL_CONTENT_TYPES)
 
-# Type-specific fields that, alongside a matching `kind`, mark a dict as a real `MultiModalContent`
-# rather than a user dict reusing one of our `kind` values: `url` (`FileUrl` types), `media_type`
-# (every dumped item), `file_id` (`UploadedFile`).
-_MULTIMODAL_FIELDS: frozenset[str] = frozenset({'url', 'media_type', 'file_id'})
+class _StrPassthrough:
+    """The `str` arm of `ToolReturnContent`, matched entirely in Rust in both validation modes.
 
+    Strings dominate the node count of a typical structured tool return, and every node of one
+    crosses this union, so `str` is checked before the container arms. It is not a micro-optimisation:
+    without it a string falls through all four remaining arms, measured at ~14x slower in
+    `validate_python`. That figure is Rust-side arm-walking, so no frame count can pin it; what guards
+    the arm against deletion is the `dump_json` leg of
+    `test_tool_return_content_json_paths_make_no_per_node_python_calls`.
 
-def _tool_return_content_discriminator(value: Any) -> str:
-    """Route a `ToolReturnContent` value to one of the tagged union branches.
+    `is_instance_schema` leaves `str` subclasses (a `StrEnum` returned by a tool, say) as they are,
+    where pydantic's `str` validator would coerce them to a plain `str`; it can't run against JSON,
+    where a strict `str` schema is exact anyway.
 
-    Pydantic's smart-union resolution would otherwise pick `Mapping[str, ToolReturnContent]`
-    for a dumped `MultiModalContent` dict (e.g. `{'kind': 'binary', 'data': '...'}`) and skip
-    the discriminated `MultiModalContent` branch in `validate_python`, leaving multimodal
-    leaves as plain dicts.
-
-    A matching `kind` alone is not enough: this alias is wired into the core `ToolReturnContent`
-    type, so `ModelMessagesTypeAdapter` runs the discriminator on every tool return everywhere.
-    A type-specific field must also be present — `url` for the `FileUrl` types, `media_type`
-    (carried by every dumped `MultiModalContent`), or `file_id` for `UploadedFile` — so a user
-    dict that merely reuses one of our `kind` values (e.g. `{'kind': 'binary', 'label': 'foo'}`)
-    stays a plain mapping instead of being forced through multimodal validation.
+    Not `pydantic.InstanceOf[str]`, which builds the same validator but also attaches a wrap
+    serializer — reintroducing a Python call per string node on the dump path.
     """
-    if isinstance(value, MULTI_MODAL_CONTENT_TYPES):
-        return 'multimodal'
-    if isinstance(value, Mapping):
-        if (
-            'kind' in value
-            and isinstance(value['kind'], str)
-            and value['kind'] in _MULTIMODAL_KINDS
-            and any(field in value for field in _MULTIMODAL_FIELDS)
-        ):
-            return 'multimodal'
-        return 'mapping'
-    if isinstance(value, (str, bytes, bytearray)):
-        return 'any'
-    if isinstance(value, Sequence):
-        return 'sequence'
-    return 'any'
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, _source_type: Any, _handler: pydantic.GetCoreSchemaHandler
+    ) -> pydantic_core.CoreSchema:
+        return pydantic_core.core_schema.json_or_python_schema(
+            json_schema=pydantic_core.core_schema.str_schema(strict=True),
+            python_schema=pydantic_core.core_schema.is_instance_schema(str),
+        )
 
 
-def _validate_multimodal_or_passthrough(value: Any, handler: pydantic.ValidatorFunctionWrapHandler) -> Any:
-    """Validate a `multimodal`-tagged value as `MultiModalContent`, falling back to the raw value.
+class _RequireUrlMediaType:
+    """The `MultiModalContent` arm of `ToolReturnContent`, with an explicit `media_type` required of its URL items.
 
-    The discriminator gates a dict into the `multimodal` branch on a matching `kind` plus a
-    type-specific field, but that's a heuristic: a user tool-return dict that merely reuses one of
-    our `kind` values and happens to carry a `media_type`/`url`/`file_id` key (e.g.
-    `{'kind': 'binary', 'media_type': 'text/plain'}`) would otherwise raise a hard `ValidationError`.
-    Returning it unchanged keeps such dicts as plain mappings, matching the pre-discriminator behavior
-    where they fell through to the `Any` arm rather than being force-validated as multimodal content.
+    A tool return is arbitrary user data, so this arm has to separate a multimodal item we serialized
+    from a mapping a tool happened to build. For the four [`FileUrl`][pydantic_ai.messages.FileUrl]
+    kinds, `media_type` draws that line, because those are the items whose media type the URL alone
+    cannot always supply: `FileUrl.media_type` infers one from the URL when it was given none, and a
+    URL with no usable extension raises `Could not infer media type` — on the *dump*, not on the load
+    that built the object, so a history that had loaded cleanly could no longer be saved
+    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). An item reconstructed here
+    brings its own media type and never reaches that inference, and a URL mapping without one was
+    never dumped by us: it stays a plain `Mapping` and reaches the caller with the keys its tool put
+    in it.
+
+    Nothing is required of the other two kinds, which cannot fail that way and so keep rehydrating
+    from the fields they declare: `media_type` is a required field on `BinaryContent`, and
+    `UploadedFile.media_type` falls back to `application/octet-stream` instead of raising.
+
+    The requirement is a *non-empty* string. `FileUrl` infers whenever `_media_type` is falsy, so `''`
+    would reconstruct an item that raises on dump after all, and no dump of ours writes one.
+
+    The check is chained onto each URL choice of the tagged union rather than written as a validator,
+    because any Python callable on this union is called once per node of the decoded payload — the cost
+    [issue #7472](https://github.com/pydantic/pydantic-ai/issues/7472) was about. Chained inside the
+    union it costs nothing measurable: the discriminator has already read `kind` in Rust, so only a
+    mapping claiming one of the four URL kinds pays for it. The same check chained ahead of the union
+    runs on every mapping node instead, measured at 1.29x on a dict-heavy payload.
+
+    In python mode the check also admits an instance of ours, which reaches the choice as itself rather
+    than as a mapping, carrying whatever media type it was built with.
+
+    Making `_media_type` a required field on a copy of each dataclass schema would say the same thing
+    with no wrapper at all, and does not work: two core schemas for one dataclass do not reliably build
+    two validators, and the copy's requirement is dropped outright when no pydantic plugin is installed.
+
+    `handler` hands back the tagged union `UserContent` also uses, so the copy is what keeps the
+    requirement off a user prompt, which still accepts a file whose media type is inferred. The asserts
+    guard the two shapes the surgery reads: that the union is still discriminated on a literal tag, and
+    that each URL tag carries a schema of its own rather than a string aliasing another tag's.
     """
-    try:
-        return handler(value)
-    except pydantic.ValidationError:
-        return value
 
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: pydantic.GetCoreSchemaHandler
+    ) -> pydantic_core.CoreSchema:
+        schema = deepcopy(handler(source_type))
+        assert schema['type'] == 'tagged-union', schema['type']
+        for kind in _FILE_URL_KINDS:
+            choice = schema['choices'][kind]
+            assert isinstance(choice, dict), choice
+            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._names_a_media_type(), choice])
+        return schema
 
-def _serialize_multimodal_or_passthrough(value: Any, handler: pydantic.SerializerFunctionWrapHandler) -> Any:
-    """Serialize a `multimodal`-tagged value, passing non-`MultiModalContent` values through as-is.
-
-    Mirror of `_validate_multimodal_or_passthrough`: a passthrough dict left as a plain mapping (see
-    there) is still routed to the `multimodal` branch by the discriminator on serialization, where the
-    `MultiModalContent` serializer would emit a spurious `PydanticSerializationUnexpectedValue` warning.
-    Serializing it as a plain value avoids that while real `MultiModalContent` instances dump normally.
-    """
-    if isinstance(value, MULTI_MODAL_CONTENT_TYPES):
-        return handler(value)
-    return value
+    @staticmethod
+    def _names_a_media_type() -> pydantic_core.CoreSchema:
+        mapping_naming_its_media_type = pydantic_core.core_schema.typed_dict_schema(
+            {
+                'media_type': pydantic_core.core_schema.typed_dict_field(
+                    pydantic_core.core_schema.str_schema(min_length=1)
+                )
+            },
+            extra_behavior='allow',
+        )
+        return pydantic_core.core_schema.json_or_python_schema(
+            json_schema=mapping_naming_its_media_type,
+            # An instance is already one of ours and reaches the arm as itself, not as a mapping.
+            python_schema=pydantic_core.core_schema.union_schema(
+                [
+                    mapping_naming_its_media_type,
+                    pydantic_core.core_schema.is_instance_schema(FileUrl),
+                ],
+                mode='left_to_right',
+            ),
+        )
 
 
 if TYPE_CHECKING:
@@ -1265,21 +1337,26 @@ if TYPE_CHECKING:
 else:
     # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
     # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization.
-    # The explicit `Discriminator` is required because smart-union resolution otherwise picks
-    # `Mapping`/`Any` over the inner-discriminated `MultiModalContent` branch in python mode.
+    #
+    # `left_to_right` is required because smart-union resolution otherwise picks `Mapping`/`Any`
+    # over the inner-discriminated `MultiModalContent` branch in python mode, leaving multimodal
+    # leaves as plain dicts. It also keeps arm selection in Rust: a callable `pydantic.Discriminator`
+    # is invoked once per node of the decoded payload, making validation O(JSON nodes) Python calls.
+    #
+    # Falling through arm by arm is what keeps a user dict a plain mapping: `{'kind': 'binary',
+    # 'label': 'foo'}` merely reuses one of our `kind` values, fails `MultiModalContent` — whose members
+    # each require the fields they declare, and whose URL members additionally require a `media_type`
+    # here — and lands on `Mapping`. The `Any` arm catches everything else — scalars, `bytes`, non-str
+    # mapping keys — unchanged.
     ToolReturnContent = TypeAliasType(
         'ToolReturnContent',
         Annotated[
-            Annotated[
-                MultiModalContent,
-                pydantic.WrapValidator(_validate_multimodal_or_passthrough),
-                pydantic.WrapSerializer(_serialize_multimodal_or_passthrough),
-                pydantic.Tag('multimodal'),
-            ]
-            | Annotated[Mapping[str, 'ToolReturnContent'], pydantic.Tag('mapping')]
-            | Annotated[Sequence['ToolReturnContent'], pydantic.Tag('sequence')]
-            | Annotated[Any, pydantic.Tag('any')],
-            pydantic.Discriminator(_tool_return_content_discriminator),
+            Annotated[str, _StrPassthrough]
+            | Annotated[MultiModalContent, _RequireUrlMediaType]
+            | Mapping[str, 'ToolReturnContent']
+            | Sequence['ToolReturnContent']
+            | Any,
+            pydantic.Field(union_mode='left_to_right'),
         ],
     )
 
@@ -2664,7 +2741,7 @@ ModelRequestPart = Annotated[
 """A message part sent by Pydantic AI to a model."""
 
 
-def _tool_results_first_sort_key(part: ModelRequestPart) -> int:  # pyright: ignore[reportUnusedFunction]
+def _tool_results_first_sort_key(part: ModelRequestPart) -> int:
     """Stable-sort key placing the parts that answer tool calls ahead of a request's other parts.
 
     Providers such as Anthropic require every tool result answering an assistant turn to lead the
@@ -2716,6 +2793,20 @@ ModelResponsePart = Annotated[
     pydantic.Discriminator(_model_response_part_discriminator),
 ]
 """A message part returned by a model."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class WorkspaceRef:
+    """Serializable identity of a [workspace](../workspace.md) environment, without credentials.
+
+    Pass it to a later run as `workspace=` to continue in that environment.
+    """
+
+    provider: str
+    """Provider that owns the environment."""
+
+    id: str
+    """Provider-specific identifier for the environment."""
 
 
 @dataclass(repr=False)
@@ -2784,6 +2875,14 @@ class ModelResponse:
 
     metadata: dict[str, Any] | None = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    workspace_ref: WorkspaceRef | None = None
+    """The [workspace](../workspace.md) environment the run worked in, so a run continuing this history reuses it.
+
+    Each response records the ref when it is produced; the last response is refreshed when the run
+    ends. A run with no attached workspace carries the conversation's ref forward, unless it was
+    started with `workspace='new'`. Not sent to the model.
+    """
 
     state: ModelResponseState = 'complete'
     """The state of this response, indicating whether it is final or requires further action.
@@ -3133,6 +3232,322 @@ def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessag
     return result
 
 
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+
+
+SYNTHESIZED_TOOL_RETURN_METADATA_KEY = 'pydantic_ai_synthesized_tool_return'
+"""Metadata key set to `True` on `ToolReturnPart`s synthesized for tool calls that never received a result."""
+
+
+def _dangling_tool_calls_by_response(messages: list[ModelMessage]) -> dict[int, list[ToolCallPart]]:
+    """Find tool calls that will never receive a result, keyed by the index of their response.
+
+    Matching is an ordered walk: a tool result (`_is_tool_result_part` — a `ToolReturnPart` or
+    *tool-bound* `RetryPromptPart`; plain validation feedback doesn't answer a call even if its
+    `tool_call_id` collides) only answers a call that is open (produced by an earlier response and
+    not already answered) at that point. An out-of-place result — one preceding its call, a
+    duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
+    dangling call.
+    """
+    open_calls: dict[str, tuple[int, ToolCallPart]] = {}
+    dangling_by_response: dict[int, list[ToolCallPart]] = {}
+    for index, message in enumerate(messages):
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, ToolCallPart):
+                    if shadowed := open_calls.get(part.tool_call_id):
+                        # A new call reusing the ID of an open call means the open call can no
+                        # longer be answered: any later result answers the new call instead.
+                        dangling_by_response.setdefault(shadowed[0], []).append(shadowed[1])
+                    open_calls[part.tool_call_id] = (index, part)
+        elif isinstance(message, ModelRequest):  # pragma: no branch
+            for part in message.parts:
+                if _is_tool_result_part(part):
+                    open_calls.pop(part.tool_call_id, None)
+    for response_index, call in open_calls.values():
+        dangling_by_response.setdefault(response_index, []).append(call)
+    return dangling_by_response
+
+
+def _insert_synthesized_returns(request: ModelRequest, synthesized: list[ToolReturnPart]) -> ModelRequest:
+    """Insert synthesized returns after the request's existing tool results (if any).
+
+    They go ahead of user-facing parts — including a plain (non-tool-bound) `RetryPromptPart`,
+    which renders as user text — matching where providers expect tool results.
+    """
+    insert_at = next(
+        (
+            part_index + 1
+            for part_index in range(len(request.parts) - 1, -1, -1)
+            if _is_tool_result_part(request.parts[part_index])
+        ),
+        0,
+    )
+    return replace(request, parts=[*request.parts[:insert_at], *synthesized, *request.parts[insert_at:]])
+
+
+def _is_tool_result_part(
+    part: ModelRequestPart | ModelResponsePart,
+) -> TypeGuard[ToolReturnPart | RetryPromptPart]:
+    """Whether a part is a regular (locally-executed) tool result answering a `ToolCallPart`.
+
+    A `RetryPromptPart` with no `tool_name` is validation feedback rendered as a plain user message,
+    not a tool result, so it doesn't need (or have) a matching tool call. `NativeToolReturnPart` (a
+    sibling `BaseToolReturnPart` subclass) is intentionally excluded: native/builtin results are
+    co-located with their call in one `ModelResponse` and shaped by each model's own serializer, so
+    the pipeline leaves them alone.
+    """
+    return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+
+
+def _drop_orphaned_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """REMOVE regular tool results whose call is missing.
+
+    A `ToolReturnPart` or tool-bound `RetryPromptPart` (in a `ModelRequest`) whose `tool_call_id`
+    never appeared as a regular `ToolCallPart` in any preceding `ModelResponse` is "orphaned".
+    Providers reject a tool result without a matching tool call (Anthropic rejects a `tool_result`
+    with no `tool_use`; OpenAI Responses raises `No tool call found for function call output`).
+    Orphans arise from context eviction dropping the response that made the call, from a result
+    placed before its call in a hand-built history, or from adapter round-trips.
+
+    This operates only on regular, locally-executed tool call/result pairing across message
+    boundaries. Native/builtin parts (`NativeToolCallPart`/`NativeToolReturnPart`) are left untouched:
+    they're produced and resulted by the provider inline and shaped by each model's own serializer,
+    and a native result can even arrive in a *later* response (e.g. Anthropic tool search), so the
+    core pipeline must not treat them as droppable.
+
+    Removal, not reordering: a result that precedes its call could in principle be moved after it,
+    but that crosses message boundaries and reorders content, so the fundamentally-invalid result is
+    dropped instead (its now-unanswered call is later synthesized a result by
+    `_repair_dangling_tool_calls`). If dropping empties an interior `ModelRequest` the request is
+    dropped; if it empties the last message an empty `ModelRequest` is kept so the history still ends
+    on a request. Returns the input unchanged when there are no orphans.
+    """
+    seen_call_ids: set[str] = set()
+    repaired: list[ModelMessage] = []
+    changed = False
+    for index, message in enumerate(messages):
+        for part in message.parts:
+            if isinstance(part, ToolCallPart):
+                seen_call_ids.add(part.tool_call_id)
+        kept_parts = [
+            part
+            for part in message.parts
+            if not (_is_tool_result_part(part) and part.tool_call_id not in seen_call_ids)
+        ]
+        if len(kept_parts) == len(message.parts):
+            repaired.append(message)
+            continue
+        changed = True
+        if kept_parts or (isinstance(message, ModelRequest) and index == len(messages) - 1):
+            repaired.append(replace(message, parts=kept_parts))
+        # else: interior emptied `ModelRequest` — drop the message
+    return repaired if changed else messages
+
+
+def _repair_dangling_tool_calls(
+    messages: list[ModelMessage], *, repair_last_response: bool = False
+) -> list[ModelMessage]:
+    """Repair tool calls that are missing a matching result ("dangling" tool calls).
+
+    A run that was cancelled or crashed mid-tool-execution — or a hand-built history — can contain
+    `ToolCallPart`s with no matching `ToolReturnPart`/`RetryPromptPart` in a later `ModelRequest`.
+    Providers reject histories with dangling tool calls, so before a request is sent, every dangling
+    tool call gets a synthesized `ToolReturnPart` — marked with `SYNTHESIZED_TOOL_RETURN_METADATA_KEY`
+    in its `metadata` — inserted after the existing tool returns of the immediately following
+    `ModelRequest`, or as a new `ModelRequest` when no request follows.
+
+    This includes a call whose args string was cut off mid-stream (unparsable JSON): the call is
+    kept verbatim and closed out like any other dangling call, never removed. Malformed args are
+    already sendable — serializers degrade them gracefully (see `ToolCallPart.args_as_dict` and
+    `ToolCallPart.args_as_json_str`), as the tool-call retry flow relies on — and removing the call
+    would disturb the response's shape, e.g. leaving a thinking-only response whose signature was
+    computed over a turn that included the call.
+
+    The last `ModelResponse` is only repaired when `repair_last_response` is set: its tool calls
+    are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
+    trailing unparsable-args call is left for local args validation to turn into a retry prompt.
+
+    Matching is an ordered walk: a result only answers a call that is open (produced by an earlier
+    response and not already answered) at that point. An out-of-place result — one preceding its
+    call, a duplicate, or one reusing the ID of an already-answered call — doesn't mask a genuinely
+    dangling call; such orphaned results themselves are not repaired.
+
+    The repair is deterministic and idempotent: synthesized parts derive their timestamp from the
+    response they repair and contain no wall-clock or random data, so repairing the same history
+    twice (or on every run) yields the same output and never churns provider prompt-cache prefixes.
+    If there is nothing to repair, the input list is returned unchanged. Repair is silent — like
+    the other pipeline passes — with the `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` marker as the
+    mechanism for inspecting what was synthesized.
+    """
+    dangling_by_response = _dangling_tool_calls_by_response(messages)
+    if not repair_last_response:
+        last_response_index = next(
+            (index for index in range(len(messages) - 1, -1, -1) if isinstance(messages[index], ModelResponse)),
+            None,
+        )
+        if last_response_index is not None:
+            dangling_by_response.pop(last_response_index, None)
+    if not dangling_by_response:
+        return messages
+
+    repaired: list[ModelMessage] = []
+    synthesized: list[ToolReturnPart] = []
+    for index, message in enumerate(messages):
+        if isinstance(message, ModelResponse):
+            if synthesized:
+                # The dangling calls of the previous response are followed by another response,
+                # so the synthesized returns need a new request in between.
+                repaired.append(ModelRequest(parts=synthesized))
+                synthesized = []
+
+            if dangling := dangling_by_response.get(index):
+                for call in dangling:
+                    synthesized.append(
+                        ToolReturnPart(
+                            tool_name=call.tool_name,
+                            content=INTERRUPTED_TOOL_RETURN_CONTENT,
+                            tool_call_id=call.tool_call_id,
+                            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+                            timestamp=message.timestamp,
+                            outcome='interrupted',
+                        )
+                    )
+            repaired.append(message)
+        elif isinstance(message, ModelRequest):  # pragma: no branch
+            if synthesized:
+                message = _insert_synthesized_returns(message, synthesized)
+                synthesized = []
+            repaired.append(message)
+
+    if synthesized:
+        repaired.append(ModelRequest(parts=synthesized))
+
+    return repaired
+
+
+def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Normalize the history's shape by merging consecutive same-role messages into one.
+
+    Neither adds nor removes content — it only combines adjacent `ModelRequest`s (or adjacent
+    synthetic `ModelResponse`s) that providers expect as a single turn, and within a merged request
+    hoists tool results ahead of user-facing parts (where providers require them). Runs last, after
+    the repair passes have settled call/result pairing, so it operates on a valid history and never
+    separates a result from the call it answers.
+    """
+    clean_messages: list[ModelMessage] = []
+    for message in messages:
+        last_message = clean_messages[-1] if len(clean_messages) > 0 else None
+
+        if isinstance(message, ModelRequest):
+            if (
+                last_message
+                and isinstance(last_message, ModelRequest)
+                # Requests can only be merged if they have the same instructions
+                and (
+                    not last_message.instructions
+                    or not message.instructions
+                    or last_message.instructions == message.instructions
+                )
+                # We intentionally don't block merging when `conversation_id` or application metadata
+                # differ. These fields are only bookkeeping for callers; they're never part of what gets
+                # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
+                # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
+                # model implementations read it, so combine only that reserved namespace below.
+            ):
+                parts = [*last_message.parts, *message.parts]
+                parts.sort(key=_tool_results_first_sort_key)
+                metadata: dict[str, Any] | None = None
+                last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+                if _utils.is_str_dict(last_namespace) or _utils.is_str_dict(namespace):
+                    metadata = {
+                        _PYDANTIC_AI_METADATA_KEY: {
+                            **(last_namespace if _utils.is_str_dict(last_namespace) else {}),
+                            **(namespace if _utils.is_str_dict(namespace) else {}),
+                        }
+                    }
+                merged_message = ModelRequest(
+                    parts=parts,
+                    instructions=last_message.instructions or message.instructions,
+                    timestamp=message.timestamp or last_message.timestamp,
+                    metadata=metadata,
+                )
+                clean_messages[-1] = merged_message
+            else:
+                clean_messages.append(message)
+        elif isinstance(message, ModelResponse):  # pragma: no branch
+            if (
+                last_message
+                and isinstance(last_message, ModelResponse)
+                # Responses can only be merged if they didn't really come from an API
+                and last_message.provider_response_id is None
+                and last_message.provider_name is None
+                and last_message.model_name is None
+                and message.provider_response_id is None
+                and message.provider_name is None
+                and message.model_name is None
+            ):
+                merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
+                clean_messages[-1] = merged_message
+            else:
+                clean_messages.append(message)
+    return clean_messages
+
+
+def _clean_message_history(messages: list[ModelMessage], *, repair_last_response: bool = False) -> list[ModelMessage]:
+    """Make the message history provider-valid and normalize its shape, out of the box.
+
+    An ordered pipeline of pure `list[ModelMessage] -> list[ModelMessage]` passes over regular,
+    locally-executed tool call/result pairing across message boundaries. Following the principle
+    "massage the history however we can to make the model API accept it, and drop only what's
+    fundamentally unsendable", each pass ADDs (synthesizes) or REMOVEs content, never silently
+    dropping anything a provider could accept. Native/builtin parts are left entirely untouched:
+    they're produced and resulted by the provider inline and shaped by each model's own serializer
+    (which handles their own dangling/empty-id cases), and a native result can even arrive in a
+    later response, so the core pipeline must not touch them. Ordering matters:
+
+    1. `_drop_orphaned_tool_results` (REMOVE) — first, so an orphaned result can't survive into the
+       merge (which would hoist it to the front of a request) and so dropping it can expose a call
+       that then needs a synthesized result in pass 2.
+    2. `_repair_dangling_tool_calls` (ADD synthesized results) — the matching-graph repair; runs
+       before the merge changes message boundaries. Frontier-gated by `repair_last_response` so
+       the last response's still-answerable calls are left alone.
+    3. `_merge_consecutive_messages` (normalize) — last, once call/result pairing is valid, so it
+       never separates a result from its call.
+    """
+    messages = _drop_orphaned_tool_results(messages)
+    messages = _repair_dangling_tool_calls(messages, repair_last_response=repair_last_response)
+    messages = _merge_consecutive_messages(messages)
+    return messages
+
+
+def repair_messages(messages: Sequence[ModelMessage], *, repair_last_response: bool = True) -> list[ModelMessage]:
+    """Make a message history provider-valid.
+
+    Drops orphaned tool results, synthesizes a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]
+    for each dangling tool call, and merges adjacent compatible messages. The same repair runs before
+    every model request, so you don't normally need to call this for history passed to
+    [`Agent.run`][pydantic_ai.agent.Agent.run]. See [Making histories provider-valid](../message-history.md#making-histories-provider-valid)
+    for the full rules.
+
+    Use this before adding a new user prompt to history whose final response has unanswered tool calls,
+    which `Agent.run` refuses, or when a store, UI, or capability outside a run needs to record or pass on
+    a history it knows is runnable. The repair is deterministic and idempotent: repairing twice is a
+    no-op and never churns a provider's prompt-cache prefix. Synthesized returns carry
+    `{'pydantic_ai_synthesized_tool_return': True}` in `metadata` so you can distinguish them from real
+    results.
+
+    Args:
+        messages: The message history to repair.
+        repair_last_response: Whether to close out tool calls in the final response. Defaults to `True`.
+            Pass `False` to leave that live frontier alone: those calls can still be answered by resuming
+            the run with this history and no new prompt, or by passing `deferred_tool_results`; repairing
+            them would abandon that work.
+    """
+    return _clean_message_history(list(messages), repair_last_response=repair_last_response)
+
+
 def sanitize_messages(
     messages: Sequence[ModelMessage],
     *,
@@ -3141,6 +3556,7 @@ def sanitize_messages(
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
     allow_uploaded_files: bool = False,
+    strip_workspace_refs: bool = True,
     resolved_tool_call_ids: Collection[str] = (),
 ) -> list[ModelMessage]:
     """Strip message parts that aren't safe to honor from untrusted input.
@@ -3167,6 +3583,11 @@ def sanitize_messages(
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
       tool return parts.
+    - [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref], resetting it
+      to `None` (disable with `strip_workspace_refs=False`). The most recent reference in history is
+      otherwise offered to a capability's `get_workspace`, so a client that can set it could point a
+      reconnecting capability at an environment it attaches to using server-side provider
+      credentials. Reconnect explicitly by passing an authorized `workspace=` instead.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -3203,6 +3624,10 @@ def sanitize_messages(
         allow_uploaded_files: Whether to honor [`UploadedFile`][pydantic_ai.messages.UploadedFile] items
             from the untrusted input. Off by default, since an uploaded file references an object the model
             provider fetches using the server-side IAM role.
+        strip_workspace_refs: Whether to reset
+            [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref] to `None`.
+            On by default; pass `False` only when the history comes from storage the application
+            trusts, so that a run continues in the environment those responses were produced in.
         resolved_tool_call_ids: Tool call IDs to preserve when the final response ends with tool calls.
             Use this for human-in-the-loop resumption when matching tool results are being submitted
             with the same request.
@@ -3249,7 +3674,10 @@ def sanitize_messages(
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
             )
             if new_response_parts:
-                sanitized.append(replace(message, parts=new_response_parts))
+                # Drop `workspace_ref`: a client that can set it could point a reconnecting
+                # capability at an environment it attaches to with server-side credentials.
+                workspace_ref = None if strip_workspace_refs else message.workspace_ref
+                sanitized.append(replace(message, parts=new_response_parts, workspace_ref=workspace_ref))
             # Otherwise drop the response entirely so we don't leave an empty
             # `ModelResponse(parts=[])` in history.
         else:
@@ -4445,8 +4873,8 @@ class RealtimeSessionReconnectEvent:
 
     Session configuration (instructions, tools, voice, ...) is restored on every reconnect.
     Conversation state is restored either by the provider's native session resumption (Gemini Live
-    when enabled, xAI Grok Voice) or by the session replaying its local history into the fresh
-    server-side conversation (OpenAI/Azure OpenAI).
+    when enabled, xAI Grok Voice, a stored OpenAI GPT-Live session) or by the session replaying its local
+    history into the fresh server-side conversation (OpenAI/Azure OpenAI, an unstored GPT-Live session).
     """
 
     _: KW_ONLY

@@ -1,6 +1,10 @@
+---
+description: "Route each Pydantic AI run or step to a different model, chosen from dependencies, message history or usage, with the SelectModel capability."
+---
+
 # Select Model
 
-[`SelectModel`][pydantic_ai.capabilities.SelectModel] is a [capability](overview.md) that chooses a model from run dependencies, message history, usage, or the current step. The selector is first evaluated during run setup, so the agent does not need a constructor model:
+[`SelectModel`][pydantic_ai.capabilities.SelectModel] is a [capability](overview.md) that chooses a model from run dependencies, the run's prompt, message history, usage, or the current step. The selector is first evaluated during run setup, so the agent does not need a constructor model:
 
 ```python {title="adaptive_model.py"}
 from dataclasses import dataclass
