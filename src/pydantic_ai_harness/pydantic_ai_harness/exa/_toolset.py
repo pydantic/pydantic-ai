@@ -6,6 +6,7 @@ import functools
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Concatenate, Literal, ParamSpec, Protocol, TypeVar
 
 import httpx
@@ -15,6 +16,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
@@ -94,7 +96,16 @@ class ExaClient(Protocol):
         ...  # pragma: no cover
 
 
-def _default_client() -> ExaClient:
+@dataclass(frozen=True)
+class ExaSearchOperations:
+    """The durable operations an `ExaSearch` capability runs its toolset's Exa requests through."""
+
+    web_search: ToolOperation
+    get_page: ToolOperation
+    deep_search: ToolOperation
+
+
+def default_client() -> ExaClient:
     """Build an `AsyncExa` client from the `EXA_API_KEY` environment variable."""
     try:
         return AsyncExa()
@@ -156,6 +167,10 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
 
     With `defer_to_native=True`, `web_search` is the local fallback for the
     model's native web search, as `ExaSearch(native=True)` sets up.
+
+    `ExaSearch` passes `operations` so that each tool's Exa request runs as one
+    of its durable operations, whose result durable execution records instead
+    of making the request again on recovery.
     """
 
     def __init__(
@@ -169,9 +184,12 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         exclude_domains: Sequence[str] = (),
         text_summary: bool | str = False,
         defer_to_native: bool = False,
+        id: str | None = None,
+        operations: ExaSearchOperations | None = None,
     ) -> None:
-        super().__init__()
-        self._client = client if client is not None else _default_client()
+        super().__init__(id=id)
+        self._client = client if client is not None else default_client()
+        self._operations = operations
         self._num_results = num_results
         self._max_text_chars = max_text_chars
         self._include_domains = list(include_domains) if include_domains else None
@@ -195,6 +213,8 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The matching pages, each with title, URL, and excerpts.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.web_search(query))
         response = await self._client.search(
             query,
             contents={'highlights': True},
@@ -237,6 +257,8 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The page's title, URL, and text content.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.get_page(url))
         requested = min(self._max_text_chars + 1, EXA_MAX_PAGE_TEXT_CHARS)
         response = await self._client.get_contents(url, text={'max_characters': requested})
         first = response.results[0] if response.results else None
@@ -260,6 +282,8 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The synthesized answer, followed by the sources it drew on.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.deep_search(question))
         response = await self._client.search(
             question,
             contents=False,

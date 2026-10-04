@@ -43,6 +43,13 @@ async def main(prior_history=()):
         await session.send('Continue where we left off.')
 ```
 
+To continue a text run's conversation, pass its
+[`conversation`][pydantic_ai.agent.AgentRunResult.conversation] as `conversation=` instead. It seeds the
+history and also carries the running [`usage`][pydantic_ai.usage.RunUsage] and the `conversation_id`, so
+[usage limits](../agent.md#usage-limits) keep counting across the handoff and the session correlates with the run
+in telemetry. Going the other way, [`session.conversation`][pydantic_ai.realtime.RealtimeSession.conversation]
+is the bundle to hand to the next text run.
+
 Seeded tool calls and results are replayed as native function calls where the provider's protocol
 permits, and as readable text where it doesn't. Thinking signatures and provider-native execution
 metadata are omitted because they belong to the session that produced them.

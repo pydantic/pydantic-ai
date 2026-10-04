@@ -283,12 +283,10 @@ includes the call itself once [genai-prices](https://github.com/pydantic/genai-p
 predates `gpt-live-1`). The value belongs to the session rather than to any one [`ModelResponse`][pydantic_ai.messages.ModelResponse], because Live
 meters the call as a whole.
 
-!!! warning "The last seconds of a call you close may not be recorded"
-    Live reports its running total periodically rather than per turn, and sends the final total when
-    the session ends. When Live ends the session, that final total is recorded. When you close it,
-    Pydantic AI does not wait for it yet, so the seconds since Live's last periodic report are
-    missing, and a short call can record none. Reconcile against your OpenAI usage dashboard when the
-    exact number matters.
+Live reports that total only now and then, and last as the session ends, so closing the session asks
+Live to end it and waits up to two seconds for the final total. A [WebRTC sideband](deployment.md#browser-webrtc-server-sideband)'s
+`close()` leaves the browser's call running, so it can't ask; there, and when Live doesn't answer in
+time, the seconds since Live's last report are missing.
 
 The Live model itself reports no token counts, but the Responses backend it delegates to is billed
 per token like any other model, and that usage is accumulated with its cache and reasoning
