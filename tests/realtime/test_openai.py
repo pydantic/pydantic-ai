@@ -1038,7 +1038,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
         'create_response': True,
         'interrupt_response': True,
     }
-    assert session['audio']['input']['transcription'] == {'model': 'gpt-realtime-whisper'}  # `'auto'` resolved
+    assert session['audio']['input']['transcription'] == {'model': 'gpt-live-transcribe'}  # `'auto'` resolved
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
@@ -3686,6 +3686,17 @@ async def test_truncate_resets_generated_audio_between_responses() -> None:
         'content_index': 0,
         'audio_end_ms': 5,
     }
+
+
+async def test_truncate_clamps_at_the_profile_output_sample_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 3200 bytes of mono PCM16 is 100 ms at 16 kHz (and would be ~67 ms at the 24 kHz default).
+    ws = FakeWebSocket([_created(), _updated(), _audio_delta('item_7', audio_bytes=3200)])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', profile=RealtimeModelProfile(audio_output_sample_rate=16000))
+    async with _connect(model, 'x') as conn:
+        _ = [e async for e in conn]
+        await conn.send(TruncateOutput(audio_end_ms=1000))
+    assert json.loads(ws.sent[-1])['audio_end_ms'] == 100
 
 
 async def test_truncate_sideband_connection_does_not_clamp() -> None:
