@@ -9,17 +9,12 @@ capability you attach to an [`Agent`][pydantic_ai.Agent]:
   [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability]
 - [`pydantic_ai.durable_exec.prefect`][pydantic_ai.durable_exec.prefect] —
   [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]
-
-Cancelling a durable run from outside it is engine-agnostic and lives here:
-
-- [`DurableRunCancellation`][pydantic_ai.durable_exec.DurableRunCancellation]
 """
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ._base import BaseDurabilityCapability
-    from ._cancellation import DurableRunCancellation
     from ._codec import IDENTITY_CODEC, JSON_CODEC, DurabilityCodec
     from ._operation import (
         CapabilityOperationId,
@@ -55,7 +50,6 @@ __all__ = [
     'DurabilityCodec',
     'DurabilityEngineSpec',
     'DurableOperationBackend',
-    'DurableRunCancellation',
     'DurableOperationId',
     'DurableOperationNamer',
     'EventStreamHandlerId',
@@ -77,7 +71,6 @@ _exports = {
     'BaseDurabilityCapability': ('._base', 'BaseDurabilityCapability'),
     'DurabilityCodec': ('._codec', 'DurabilityCodec'),
     'DurabilityEngineSpec': ('._spec', 'DurabilityEngineSpec'),
-    'DurableRunCancellation': ('._cancellation', 'DurableRunCancellation'),
     'IDENTITY_CODEC': ('._codec', 'IDENTITY_CODEC'),
     'JSON_CODEC': ('._codec', 'JSON_CODEC'),
     'ToolsetCallToolId': ('._operation', 'ToolsetCallToolId'),
