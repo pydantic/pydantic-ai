@@ -93,6 +93,7 @@ from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
+from ..conversation import Conversation
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -1262,6 +1263,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -1288,6 +1290,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -1314,6 +1317,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[Any] | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
@@ -1403,6 +1407,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             user_prompt: User input to start/continue the conversation.
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately. Passing both raises `UserError`.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
@@ -1432,6 +1438,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        message_history, usage, conversation_id = _agent_graph.resolve_conversation(
+            conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
+        )
+
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
@@ -4387,6 +4397,11 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # Nested runs attach to the same propagating exception; the outermost run attaches
                 # last and wins, giving its awaiter the outer run's history.
                 _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
+            except KeyboardInterrupt as exc:
+                # Ctrl-C reaching the run itself (e.g. through a sync stream's teardown) is an external
+                # cancellation too: it keeps propagating, with the run state attached the same way.
+                _run_cancelled('The agent run was interrupted.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
                 raise
             except BaseException as exc:
                 # A durable execution engine can cancel the run from outside with its own exception rather
