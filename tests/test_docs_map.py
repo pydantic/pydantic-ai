@@ -70,7 +70,7 @@ def test_html_viewer_inlines_graph(docs_map: DocsMap):
     assert 'https://pydantic.dev/docs/ai/' in html
     assert 'cdn.jsdelivr.net' not in html
     assert 'src="./d3.min.js"' not in html
-    assert 'd3js.org' in html
+    assert (ROOT / 'scripts' / 'docs_map' / 'd3.min.js').read_text(encoding='utf-8') in html
     assert "raw !== '" not in html
     assert 'raw.startsWith' in html
     assert 'id="legend-body"' in html
