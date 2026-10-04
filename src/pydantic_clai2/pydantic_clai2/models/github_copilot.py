@@ -41,7 +41,7 @@ async def login(*, console: Console) -> str:
         if path.exists()
         else 'Credentials saved in the OS credential store.'
     )
-    return f'GitHub login saved. {storage} Use /add_model > github-copilot to check Copilot access and choose a model.'
+    return f'GitHub login saved. {storage} Use /model add > github-copilot to check Copilot access and choose a model.'
 
 
 def token() -> str:

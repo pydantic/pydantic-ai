@@ -370,25 +370,13 @@ def create_shell(
     models = _ModelResolver(console=console, store=store)
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
-        console.print('Add a model with /add_model.', style=theme.color(theme.INFO))
+        console.print('Add a model with /model add.', style=theme.color(theme.INFO))
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
     context = CommandContext(
         settings=settings, store=store, clear_history=session.clear, apply_setting=session_settings, project=project
     )
-
-    async def add_model(args: list[str]) -> str:
-        if args:
-            return context.set_setting(['model', *args])
-        from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
-
-        return await open_add_model_menu(context)
-
-    async def model_settings(args: list[str]) -> str:
-        from pydantic_clai2.ui.menus.model_menu import model_settings_command
-
-        return await model_settings_command(context, args)
 
     def fast(args: list[str]) -> str:
         if args not in ([], ['on'], ['off']):
@@ -398,7 +386,7 @@ def create_shell(
         saved = store.model_settings(model)
         custom = saved.get('custom_params')
         if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
-            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model_settings first.')
+            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
         enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
         tier = 'priority' if enabled else 'default'
         store.save_model_settings(model, {**saved, 'service_tier': tier})
@@ -449,29 +437,28 @@ def create_shell(
     commands.register(
         Command(
             name='model',
-            description='Select an added model; no arguments opens the picker',
+            description='Select any model, or open the picker; also /model add [NAME] and /model settings [NAME]',
             handler=lambda args: model_command(context, args),
             complete=lambda args: model_completions(context, args),
             during_turn=True,
         )
     )
+    # Deprecated spellings of `/model add` and `/model settings`, kept working for existing habits.
     commands.register(
         Command(
             name='add_model',
-            description='Add and use a model, or browse providers and model settings',
-            handler=add_model,
-            complete=lambda args: (
-                set_completions(['model', *args], plugin_models=context.plugin_models()) if len(args) <= 1 else ()
-            ),
+            description='Deprecated: use /model add',
+            handler=lambda args: model_command(context, ['add', *args]),
+            complete=lambda args: model_completions(context, ['add', *args]),
             during_turn=True,
         )
     )
     commands.register(
         Command(
             name='model_settings',
-            description='Choose an added model to configure, or edit a named model',
-            handler=model_settings,
-            complete=lambda args: model_completions(context, args),
+            description='Deprecated: use /model settings',
+            handler=lambda args: model_command(context, ['settings', *args]),
+            complete=lambda args: model_completions(context, ['settings', *args]),
             during_turn=True,
         )
     )
@@ -967,7 +954,7 @@ class _Shell(Generic[DepsT, OutputT]):
             self.session.model_settings = self.context.model_settings(model)
         except ValidationError as exc:
             self.console.print(
-                f'Invalid saved model settings for {model}. Fix or reset them with /model_settings {model}.',
+                f'Invalid saved model settings for {model}. Fix or reset them with /model settings {model}.',
                 style=theme.ERROR,
                 markup=False,
             )

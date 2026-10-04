@@ -33,7 +33,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   If its models need a sign-in, return PluginLogin(name=..., handler=...,
   models=...) values from get_logins to add /login NAME and save those models
   once it succeeds. ModelProvider(settings_from='anthropic') gives its models
-  Anthropic's /model_settings controls.
+  Anthropic's /model settings controls.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -551,7 +551,7 @@ not currently receive CommandContext through PluginHost; do not invent host.cont
 ## Custom models and providers
 
 A model identifier accepted by an existing core provider can be selected with
-/add_model PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
+/model add PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
 catalog. `/model` and its Tab suggestions select only previously added models.
 In `/model`, Ctrl+D or Delete removes a saved model and its per-model settings
 after confirmation. The current model and saved default are protected; select
@@ -634,8 +634,8 @@ class MyService(Plugin):
         return (ModelProvider(prefix='my-service', resolve=resolve, models=('fast', 'smart')),)
 ```
 
-`/add_model` then lists my-service:fast and my-service:smart, and any
-my-service:NAME works with /add_model or /set model. resolve receives NAME
+`/model add` then lists my-service:fast and my-service:smart, and any
+my-service:NAME works with /model add or /set model. resolve receives NAME
 without the prefix and runs in a worker thread before every run with that
 model, so it may read the keyring; raise UserError with setup instructions
 when it cannot build the model. The prefix starts with a lowercase letter,
@@ -643,7 +643,7 @@ followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
 CLAI already runs, aliases like openai-chat included, is rejected with
 ValueError.
 
-For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
+For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
 turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
@@ -657,7 +657,7 @@ While using an `openai-codex:` model, `/fast` toggles priority processing;
 `/fast on` and `/fast off` select explicitly. The service tier is saved for that
 model's next prompts and sessions. Reasoning effort is unchanged. Other models
 neither expose nor accept `/fast`. Remove a custom `service_tier` parameter with
-`/model_settings` before using `/fast`.
+`/model settings` before using `/fast`.
 
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a

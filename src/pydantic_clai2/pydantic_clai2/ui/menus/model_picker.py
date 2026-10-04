@@ -1,4 +1,4 @@
-"""Select or delete previously added models without browsing providers."""
+"""`/model`: select, add, delete, or configure models."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -8,6 +8,7 @@ from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.commands import set_completions
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering._rendering import markdown_style
@@ -26,9 +27,21 @@ class DeleteModel:
     name: str
 
 
+_SUBCOMMANDS = ('add', 'settings')
+"""`/model` subcommands; model names are provider-qualified (`PROVIDER:NAME`), so they never collide."""
+
+_USAGE = 'Usage: /model [NAME] | /model add [NAME] | /model settings [NAME]'
+
+
 def model_completions(context: CommandContext, args: list[str]) -> list[str]:
     """Read the saved list on each completion so changes appear immediately."""
-    return context.store.models() if len(args) <= 1 else []
+    if len(args) <= 1:
+        return [*_SUBCOMMANDS, *context.store.models()]
+    if len(args) == 2 and args[0] == 'add':
+        return list(set_completions(['model', args[1]], plugin_models=context.plugin_models()))
+    if len(args) == 2 and args[0] == 'settings':
+        return context.store.models()
+    return []
 
 
 def _protected_models(context: CommandContext) -> dict[str, str]:
@@ -119,9 +132,22 @@ def _run_model_picker(context: CommandContext, *, runners: Runners) -> tuple[Men
 
 
 async def model_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
-    """Select an existing model by name or through the picker."""
+    """Select a model by name or through the picker, or run the `add` and `settings` subcommands.
+
+    A name not yet in the saved list is added; an unknown model fails on the next request.
+    """
+    if args[:1] == ['settings']:
+        from pydantic_clai2.ui.menus.model_menu import model_settings_command
+
+        return await model_settings_command(context, args[1:], runners=runners)
+    if args == ['add']:
+        from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
+
+        return await open_add_model_menu(context, runners=runners)
+    if args[:1] == ['add']:
+        args = args[1:]
     if len(args) > 1:
-        raise ValueError('Usage: /model [NAME]')
+        raise ValueError(_USAGE)
     messages: list[str] = []
     if args:
         name = args[0]
@@ -137,7 +163,5 @@ async def model_command(context: CommandContext, args: list[str], *, runners: Ru
         if not isinstance(result.item.value, str):
             return '\n'.join(messages) or 'No changes.'
         name = result.item.value
-    if name not in context.store.models():
-        raise ValueError(f'Model not added: {name}. Use /add_model {name} first.')
     messages.append(context.set_setting(['model', name]))
     return '\n'.join(messages)

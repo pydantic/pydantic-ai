@@ -221,7 +221,7 @@ details.
 uv run clai2
 ```
 
-Run `/login copilot`, then open `/add_model` and choose `github-copilot`.
+Run `/login copilot`, then open `/model add` and choose `github-copilot`.
 The provider menu also starts login when no credentials exist. No application
 registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -239,7 +239,7 @@ GitHub authorization does not establish Copilot access: the menu queries your
 account's catalog and keeps only picker-enabled `/chat/completions` models.
 The shared model menu includes details and `Ctrl+S` settings. Subscription and
 organization policy still control inference access. A known ID also works with
-`/add_model github-copilot:claude-haiku-4.5`.
+`/model github-copilot:claude-haiku-4.5`.
 
 The `github-copilot` keyring account is separate from Codex and named API keys.
 Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
@@ -549,7 +549,7 @@ its default.
 
 Plugin settings are stored as plaintext in SQLite, so they hold only the key's
 name, never its value. Enter on **API key** opens the same picker as
-`/add_model`:
+`/model add`:
 
 - **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
   connections can name one key, so one Logfire API key saved once serves them all.
@@ -2221,8 +2221,8 @@ class MyService(Plugin):
         return (ModelProvider(prefix='my-service', resolve=resolve, models=('fast', 'smart')),)
 ```
 
-`models` are listed under the prefix in `/add_model` and completed by `/set model`
-and `/add_model`; any other `my-service:NAME` can still be typed. `resolve` gets
+`models` are listed under the prefix in `/model add` and completed by `/set model`
+and `/model add`; any other `my-service:NAME` can still be typed. `resolve` gets
 `NAME` without the prefix. CLAI calls it in a worker thread before every run with
 one of these models, so reading the keyring there is fine, and a sign-in made
 since the last run applies. Raise `UserError` naming the setup step when it cannot
@@ -2240,7 +2240,7 @@ again. Users can remove an unused model and its saved settings with **Ctrl+D** o
 select another model or change the default with `/set model NAME` first. Deleting
 a model does not unload its plugin or delete provider credentials.
 
-`/model_settings` offers generic controls (max tokens, temperature, custom
+`/model settings` offers generic controls (max tokens, temperature, custom
 parameters) for plugin models. When `resolve` returns a model class of a provider
 CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'`
 (or `'openai'`, `'openai-chat'`, `'google'`) on the `ModelProvider` and these
@@ -2281,8 +2281,8 @@ and cannot be one of CLAI's sign-ins, which raises `ValueError`; when two plugin
 add one name, the later one wins. Unloading the plugin removes it.
 
 Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
-`names`) are added to the saved model list, so `/model` and `/model_settings`
-offer them without an `/add_model` first. A failed sign-in adds nothing.
+`names`) are added to the saved model list, so `/model` and `/model settings`
+offer them without adding them first. A failed sign-in adds nothing.
 
 ## Rules that keep plugins predictable
 
@@ -2331,11 +2331,11 @@ declared. A plugin that reads the history gets a `Transcript` by default; pass
 
 ## vllm connection
 
-Open `/add_model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
 ## openrouter connection
 
-Open `/add_model`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -2397,17 +2397,21 @@ each connection. Replacing it then updates all of them.
 
 Existing connections with inline credentials, manually entered connection keys,
 and browser logins remain unchanged. To switch an existing connection to a
-reference, reconfigure it through `/add_model` and select a saved key. Changes do not
+reference, reconfigure it through `/model add` and select a saved key. Changes do not
 alter an already running request or revoke credentials at the provider.
 
 ### Adding and selecting models
 
-`/add_model` opens the provider catalog, connection setup, and per-model settings.
-`/add_model PROVIDER:NAME` adds a model directly. Adding a model also selects it
-for the next prompt. `/model` is a flat picker of added models, and `/model NAME`
-selects one without the menu. Choose **Add a model...** in `/model` to browse
-providers and select a new model, including when the saved list is empty.
-Its Tab suggestions contain only added models.
+`/model` is a flat picker of added models. Choose **Add a model...** in it, or
+run `/model add`, to open the provider catalog, connection setup, and per-model
+settings, including when the saved list is empty. `/model PROVIDER:NAME` selects
+any model without the menu: one not yet in the list is added first, without
+checking that the provider serves it, so a wrong name fails on the next prompt.
+`/model add PROVIDER:NAME` does the same. Adding a model also selects it for the
+next prompt. `/model settings [NAME]` edits a model's settings. Tab suggests the
+`add` and `settings` subcommands and added models; model names are provider-qualified,
+so they cannot collide with a subcommand. `/add_model` and `/model_settings` remain
+as deprecated spellings.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 
@@ -2455,18 +2459,18 @@ defaults. Plugins cannot register custom palettes. Theme selection adds no model
 requests, hooks, or telemetry.
 ### Model settings and custom parameters
 
-`/model_settings` opens a searchable list of added models. Enter configures a
+`/model settings` opens a searchable list of added models. Enter configures a
 model without changing the active model. Esc returns from settings to this list;
-Esc again closes it. `/model_settings PROVIDER:NAME` opens that model directly.
+Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
-`Ctrl+S` in `/add_model` opens the same editor. Edits save immediately and apply
+`Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
 on the next prompt. `r` resets a field; Esc or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
-For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
+For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
 turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
@@ -2482,14 +2486,14 @@ It saves the active model's service tier for subsequent prompts and sessions,
 without changing reasoning effort or other preferences. It is absent from help
 and Tab completion on other models, and typing it there reports an unknown command.
 If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model_settings` rather than saving an ineffective change.
+with `/model settings` rather than saving an ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
 compatibility fix. Editing or resetting a known field preserves unknown fields
 in the store. New edits still reject unknown keys and invalid values.
 An invalid value in a known field stops that turn with a repair message, not the
-shell; use `/model_settings` to fix or reset it and try again. CLAI does not silently
+shell; use `/model settings` to fix or reset it and try again. CLAI does not silently
 run with different settings or delete saved preferences.
 
 Older branches must receive this fix too. The minimum read-side backport is
