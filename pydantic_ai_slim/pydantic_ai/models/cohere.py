@@ -49,6 +49,7 @@ from . import (
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from cohere import (
@@ -222,7 +223,7 @@ class CohereModel(Model[AsyncClientV2]):
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         except httpx.TransportError as e:
             # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
-            raise ModelAPIError(model_name=self.model_name, message=str(e) or type(e).__name__) from e
+            raise ModelAPIError(model_name=self.model_name, message=transport_error_message(e)) from e
 
     def _get_tool_choice(
         self,

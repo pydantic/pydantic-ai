@@ -67,6 +67,7 @@ from . import (
     get_user_agent,
 )
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from mistralai.client import Mistral
@@ -132,7 +133,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
     except httpx2.TransportError as e:
         # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
-        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 LatestMistralModelNames = Literal[

@@ -56,6 +56,7 @@ from . import (
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from huggingface_hub import (
@@ -102,7 +103,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
     except (httpx.TransportError, InferenceTimeoutError) as e:
         # `huggingface_hub` doesn't wrap connection errors and read timeouts in its own exceptions.
-        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 __all__ = (

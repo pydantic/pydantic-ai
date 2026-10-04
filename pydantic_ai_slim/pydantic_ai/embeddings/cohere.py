@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models import check_allow_model_requests
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -47,7 +48,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=str(e)) from e  # pragma: no cover
     except httpx.TransportError as e:
         # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
-        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 LatestCohereEmbeddingModelNames = Literal[

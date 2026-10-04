@@ -89,6 +89,7 @@ from pydantic_ai.models._tool_choice import (
     support_tool_forcing,
     tool_forcing_unavailable_reason,
 )
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.output import StructuredOutputMode
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS, ModelProfile
@@ -173,7 +174,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
     except Urllib3HTTPError as e:
         # botocore reads an event stream straight from the urllib3 response, so a connection that breaks off or
         # times out mid-stream raises the raw urllib3 error rather than a botocore one.
-        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
     except EventStreamParserError as e:
         # botocore's event stream parser raises its own `ParserError`, not a `BotoCoreError`, for a streamed 200 whose
         # body isn't an event stream, e.g. keep-alive whitespace before an upstream failure.

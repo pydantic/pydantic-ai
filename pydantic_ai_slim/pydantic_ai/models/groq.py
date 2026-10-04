@@ -65,6 +65,7 @@ from . import (
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
@@ -113,7 +114,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
     except httpx.TransportError as e:
         # `groq` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
         # off a stream mid-way surfaces as the raw `httpx` error.
-        raise ModelAPIError(model_name=model_name, message=str(e) or type(e).__name__) from e
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 ProductionGroqModelNames = Literal[
