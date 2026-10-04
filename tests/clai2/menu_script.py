@@ -20,7 +20,6 @@ def make_context(tmp_path: Path) -> tuple[CommandContext, list[str]]:
     context = CommandContext(
         settings=store.load(),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: applied.append(key),
     )
     return context, applied

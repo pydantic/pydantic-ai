@@ -1,9 +1,6 @@
 """Opt-in herdr state, session, metadata, and conversation-title integration."""
 
-import asyncio
-import logging
 import os
-import sqlite3
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -24,11 +21,18 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
 from pydantic_ai_harness.compaction import ContextUsageEvent
 from pydantic_clai2.builtin_plugins._herdr_client import HerdrClient
-from pydantic_clai2.plugins import NoSettings, Plugin, PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import (
+    ConversationChanged,
+    NoSettings,
+    Plugin,
+    PluginHost,
+    SessionEnd,
+    SessionStart,
+    TurnEnd,
+    TurnStart,
+)
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.ui.rendering.usage_report import session_usage
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class _Reporter:
@@ -42,7 +46,6 @@ class _Reporter:
         self.last_metadata: dict[str, JsonValue] | None = None
         self.last_title: str | None = None
         self.context: str | None = None
-        self.watcher: asyncio.Task[None] | None = None
 
     def report(self, message: str = 'thinking') -> None:
         state = 'blocked' if self.waiting else 'working' if self.depth else 'idle'
@@ -54,33 +57,22 @@ class _Reporter:
         self.client.submit(lane, 'pane.report_agent', {'state': state, 'message': message})
         self.last_state = current
 
-    async def title(self) -> str | None:
+    def title(self) -> str | None:
         conversation = self.host.conversation
-        if not isinstance(conversation, Session) or conversation.conversations is None:
-            return None
-        reference = (conversation.summary.id, str(conversation.conversations.database.resolve()))
-        if reference != self.last_session:
-            self.context = None
-            self.client.submit(
-                'session',
-                'pane.report_agent_session',
-                {'agent_session_id': reference[0], 'agent_session_path': reference[1]},
-            )
-            self.last_session = reference
-        if not conversation.summary.revision:
-            return None
-        try:
-            summaries = await conversation.conversations.listing(query=reference[0])
-            saved = next((summary for summary in summaries if summary.id == reference[0]), None)
-            # A resume/clear may happen while the database read is in flight.
-            if saved is not None and conversation.summary.id == reference[0]:
-                return saved.title
-        except (OSError, sqlite3.Error, ValueError):
-            _LOGGER.debug('herdr session metadata unavailable', exc_info=True)
-        return None
+        if isinstance(conversation, Session) and conversation.conversations is not None:
+            reference = (conversation.conversation_id, str(conversation.conversations.database.resolve()))
+            if reference != self.last_session:
+                self.context = None
+                self.client.submit(
+                    'session',
+                    'pane.report_agent_session',
+                    {'agent_session_id': reference[0], 'agent_session_path': reference[1]},
+                )
+                self.last_session = reference
+        return conversation.title
 
-    async def refresh(self) -> None:
-        title = await self.title()
+    def refresh(self) -> None:
+        title = self.title()
         total = session_usage(self.host.conversation.messages).total
         tokens: dict[str, JsonValue] = {'model': self.host.status.model, 'tokens': f'{total.total_tokens:,}'}
         if self.context is not None:
@@ -101,31 +93,17 @@ class _Reporter:
             self.client.submit('title', 'tab.rename', {'label': title})
             self.last_title = title
 
-    async def watch(self) -> None:
-        while True:
-            await asyncio.sleep(2)
-            await self.refresh()
-
     async def stop(self, event: SessionEnd) -> None:
         with anyio.CancelScope(shield=True):
-            try:
-                if self.watcher is not None:
-                    self.watcher.cancel()
-                    try:
-                        await self.watcher
-                    except asyncio.CancelledError:
-                        pass
-            finally:
-                await anyio.to_thread.run_sync(self.client.close)
+            await anyio.to_thread.run_sync(self.client.close)
 
     async def start(self, event: SessionStart) -> None:
         self.report()
-        await self.refresh()
-        self.watcher = asyncio.create_task(self.watch(), name='clai2-herdr-titles')
+        self.refresh()
 
     async def prompt(self, event: TurnStart) -> None:
         self.context = None
-        await self.refresh()
+        self.refresh()
 
     async def run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         self.depth += 1
@@ -167,7 +145,7 @@ class _Reporter:
     async def finished(self, event: TurnEnd) -> None:
         self.waiting.clear()
         self.report()
-        await self.refresh()
+        self.refresh()
 
 
 @dataclass
@@ -233,6 +211,10 @@ class HerdrPlugin(Plugin):
     async def on_turn_end(self, event: TurnEnd) -> None:
         if self.reporter is not None:
             await self.reporter.finished(event)
+
+    async def on_conversation_changed(self, event: ConversationChanged) -> None:
+        if self.reporter is not None:
+            self.reporter.refresh()
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # Failed loads also call this, so it must tolerate a session that never started.

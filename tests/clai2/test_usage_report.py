@@ -116,7 +116,7 @@ async def test_unpriced_test_model_and_clear() -> None:
     assert line.startswith('Retained history cost unknown:')
     assert 'over 2 requests' in line
     assert 'No price data for no-such-model' in line
-    session.clear()
+    await session.clear()
     assert cost_line(session_usage(session.messages)) == 'No usage yet.'
 
 

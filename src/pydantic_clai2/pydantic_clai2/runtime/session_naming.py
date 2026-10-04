@@ -83,12 +83,14 @@ class SessionNamer:
         generate: Callable[[str], Awaitable[NamingResult | None]],
         enabled: Callable[[], bool] = lambda: True,
         timeout: float = 60,
+        on_named: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
-        """Bind dependencies without spawning a task."""
+        """Bind dependencies without spawning a task; `on_named` gets each saved conversation ID and title."""
         self.store = store
         self.generate = generate
         self.enabled = enabled
         self.timeout = timeout
+        self.on_named = on_named
         self._pending: OrderedDict[str, None] = OrderedDict()
         self._wake = anyio.Event()
 
@@ -144,10 +146,14 @@ class SessionNamer:
         result = await self.generate(prompt)
         if result is None:
             return False
-        return await self.store.name(
+        title = ' '.join(result.name.title.split()[:8])
+        named = await self.store.name(
             source=saved.summary,
-            title=' '.join(result.name.title.split()[:8]),
+            title=title,
             subtitle=' '.join(result.name.subtitle.split()[:12]),
             tags=tuple(result.name.tags),
             tokens=result.tokens,
         )
+        if named and self.on_named is not None:
+            await self.on_named(conversation_id, title)
+        return named

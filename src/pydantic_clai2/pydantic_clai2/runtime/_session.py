@@ -37,6 +37,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.ui import telemetry
 
@@ -190,11 +191,15 @@ class Session(Generic[DepsT, OutputT]):
         conversations: SqliteConversationStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
+        summary: ConversationSummary | None = None,
     ) -> None:
         self.delegations: DelegationTasks | None = None
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
-        self.summary = ConversationSummary(workspace=self.workspace)
+        self.summary = summary or ConversationSummary(workspace=self.workspace)
+        self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
+        """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self._published = (self.conversation_id, self.title)
         self.step_store: StepStore | None = (
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
@@ -223,12 +228,38 @@ class Session(Generic[DepsT, OutputT]):
         """Return a snapshot of the conversation's message list."""
         return list(self._messages)
 
-    def clear(self) -> None:
+    @property
+    def conversation_id(self) -> str:
+        """The ID `/resume` restores this conversation by."""
+        return self.summary.id
+
+    @property
+    def title(self) -> str | None:
+        """The saved title; `None` until the first prompt is saved."""
+        return self.summary.title if self.summary.revision else None
+
+    async def _publish(self) -> None:
+        """Tell `on_change` about a new conversation ID or title, once per change."""
+        identity = (self.conversation_id, self.title)
+        if identity == self._published:
+            return
+        self._published = identity
+        if self.on_change is not None:
+            await self.on_change(ConversationChanged(conversation_id=identity[0], title=identity[1]))
+
+    async def clear(self) -> None:
         """Start a new conversation without replacing the agent or plugins."""
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
         self.summary = ConversationSummary(workspace=self.workspace)
+        await self._publish()
+
+    async def renamed(self, *, conversation_id: str, title: str) -> None:
+        """Adopt a title already saved for `conversation_id`, if that is this conversation."""
+        if conversation_id == self.summary.id:
+            self.summary = replace(self.summary, title=title)
+            await self._publish()
 
     def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
         """Swap the retained history, as `/compact` does after summarising it."""
@@ -252,6 +283,11 @@ class Session(Generic[DepsT, OutputT]):
 
     async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
         """Restore a saved head without invoking the model or replaying tools."""
+        notice = await self._restore(conversation_id, allow_other_workspace=allow_other_workspace)
+        await self._publish()
+        return notice
+
+    async def _restore(self, conversation_id: str, *, allow_other_workspace: bool) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -340,6 +376,8 @@ class Session(Generic[DepsT, OutputT]):
                     summary=replace(candidate, outcome='running'), messages=accepted
                 )
                 self._messages = accepted
+                # The first save titles a new conversation.
+                await self._publish()
             with (
                 capture_run_messages() as messages,
                 self.delegations.bind() if self.delegations is not None else nullcontext(),

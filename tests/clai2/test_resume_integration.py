@@ -70,13 +70,12 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)
     await session.prompt('name this session')
     saved_id = session.summary.id
-    session.clear()
+    await session.clear()
 
     def select(browser: SessionBrowser) -> str:
         browser.reload()
@@ -124,7 +123,6 @@ async def test_browser_resumes_other_directory_without_confirmation(
     context = CommandContext(
         settings=Settings(model=None, session_namer=False),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)
@@ -211,7 +209,6 @@ async def test_empty_usage_missing_model_and_recovery_preview(tmp_path: Path, mo
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     service = Sessions(session=session, store=store, context=context)

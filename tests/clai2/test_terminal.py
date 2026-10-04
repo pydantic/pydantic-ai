@@ -162,9 +162,7 @@ async def test_plugin_can_cancel_a_turn(tmp_path: Path) -> None:
 
 def test_set_validation_preserves_active_and_saved_settings(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'settings.db')
-    context = CommandContext(
-        settings=store.load(), store=store, clear_history=lambda: None, apply_setting=lambda key, settings: None
-    )
+    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
     with pytest.raises(ValueError):
         context.set_setting(['run.request_limit', '-1'])
     assert context.settings.request_limit == store.load().request_limit == 10000

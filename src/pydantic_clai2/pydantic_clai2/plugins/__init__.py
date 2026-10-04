@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mappi
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import ClassVar, Generic, Literal, Protocol, TypeVar, cast, get_args, get_origin
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
@@ -37,6 +38,16 @@ class Conversation(Protocol):
 
     step_store: StepStore | None
 
+    @property
+    def conversation_id(self) -> str:
+        """The ID `/resume` and `--resume` restore this conversation by."""
+        ...
+
+    @property
+    def title(self) -> str | None:
+        """The conversation's title; `None` until its first prompt is saved."""
+        ...
+
     async def commit_messages(self, messages: Sequence[ModelMessage]) -> None:
         """Persist and publish a between-turn history replacement."""
         ...
@@ -58,11 +69,23 @@ class Conversation(Protocol):
 class Transcript:
     """An in-memory `Conversation` for hosts built outside the shell, such as in a plugin's tests."""
 
-    def __init__(self, *, messages: Sequence[ModelMessage] = (), model: Model | str | None = None) -> None:
-        """Start with `messages` retained and `model` as what `resolved_model` reports."""
+    def __init__(
+        self,
+        *,
+        messages: Sequence[ModelMessage] = (),
+        model: Model | str | None = None,
+        conversation_id: str | None = None,
+        title: str | None = None,
+    ) -> None:
+        """Start with `messages` retained and `model` as what `resolved_model` reports.
+
+        Without a `conversation_id`, a new random one identifies the transcript.
+        """
         self._messages = list(messages)
         self.step_store: StepStore | None = None
         self.model = model
+        self.conversation_id = conversation_id or str(uuid4())
+        self.title = title
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -88,6 +111,19 @@ class SessionStart:
 
     agent: AbstractAgent[Never, object]
     settings: Settings
+
+
+@dataclass(kw_only=True)
+class ConversationChanged:
+    """The shell switched to another conversation, or the current one got a new title.
+
+    Fires after `/new`, `/clear`, `/resume`, and `--resume`, when the first prompt titles a new
+    conversation, and when background naming or a rename in `/resume` retitles the current one.
+    """
+
+    conversation_id: str
+    title: str | None
+    """`None` until the conversation's first prompt is saved."""
 
 
 @dataclass(kw_only=True)
@@ -225,7 +261,7 @@ def _runs_already(prefix: str) -> bool:
     return True
 
 
-HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | PluginLoadFailed
+HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | ConversationChanged | PluginLoadFailed
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
@@ -459,6 +495,9 @@ class Plugin(Generic[SettingsT, DepsT]):
     async def on_turn_end(self, event: TurnEnd) -> None:
         """The turn finished."""
 
+    async def on_conversation_changed(self, event: ConversationChanged) -> None:
+        """The shell switched conversations, or the current one got a new title."""
+
     @property
     def has_configure(self) -> bool:
         """Whether this plugin overrides `configure`, offering a settings menu."""
@@ -480,6 +519,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     SessionEnd: 'on_session_end',
     TurnStart: 'on_turn_start',
     TurnEnd: 'on_turn_end',
+    ConversationChanged: 'on_conversation_changed',
     PluginLoadFailed: 'on_plugin_load_failed',
 }
 

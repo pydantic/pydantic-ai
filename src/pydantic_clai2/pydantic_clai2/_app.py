@@ -218,13 +218,14 @@ async def chat(
                         workers.start_soon(shell.sessions.namer.run)
                         try:
                             with transcript.capture(console):
-                                await shell.loader.load_all(fresh=fresh)
-                                _report_project_plugins(shell.loader, console)
+                                # Restore first, so plugins start with the conversation the user asked for.
                                 if resume is not None:
                                     console.print(
                                         await shell.sessions.command([resume] if resume else []), markup=False
                                     )
                                     resume = None
+                                await shell.loader.load_all(fresh=fresh)
+                                _report_project_plugins(shell.loader, console)
                             warming = warming or warm_imports.start()
                             reason = await shell.run()
                         finally:
@@ -362,9 +363,8 @@ def create_shell(
         usage_limits=usage_limits,
         message_history=message_history,
         conversations=conversations,
+        summary=summary,
     )
-    if summary is not None:
-        session.summary = summary
     session.model = settings.model
     session.tool_retries = settings.tool_retries
     models = _ModelResolver(console=console, store=store)
@@ -374,9 +374,7 @@ def create_shell(
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
-    context = CommandContext(
-        settings=settings, store=store, clear_history=session.clear, apply_setting=session_settings, project=project
-    )
+    context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
 
     async def add_model(args: list[str]) -> str:
         if args:
@@ -479,11 +477,11 @@ def create_shell(
         Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
     )
 
-    new_command = Command(
-        name='new',
-        description='Start a new session; preserve the previous session',
-        handler=lambda _: session.clear() or 'New session started. Previous session remains saved.',
-    )
+    async def new(args: list[str]) -> str:
+        await session.clear()
+        return 'New session started. Previous session remains saved.'
+
+    new_command = Command(name='new', description='Start a new session; preserve the previous session', handler=new)
     commands.register(new_command)
     commands.register(replace(new_command, name='clear', description='Alias of /new'))
     commands.register(
@@ -531,6 +529,7 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
+    session.on_change = loader.fire
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names

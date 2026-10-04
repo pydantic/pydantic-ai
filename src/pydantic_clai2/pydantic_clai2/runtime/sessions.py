@@ -41,8 +41,15 @@ class Sessions(Generic[DepsT, OutputT]):
         self.store = store
         self.context = context
         self.namer = SessionNamer(
-            store=store, generate=self.generate, enabled=lambda: self.context.settings.session_namer
+            store=store,
+            generate=self.generate,
+            enabled=lambda: self.context.settings.session_namer,
+            on_named=self.renamed,
         )
+
+    async def renamed(self, conversation_id: str, title: str) -> None:
+        """Retitle the current conversation when naming or a manual rename saved a new title for it."""
+        await self.session.renamed(conversation_id=conversation_id, title=title)
 
     async def generate(self, prompt: str) -> NamingResult | None:
         """Resolve credentials on the owning loop, without loading any coding plugins."""
@@ -100,11 +107,14 @@ class Sessions(Generic[DepsT, OutputT]):
                 + conversation_text(list(reversed(saved.messages)))
             )
 
+        retitled: dict[str, str] = {}
+
         async def rename(source: ConversationSummary, title: str) -> None:
             if not await self.store.name(
                 source=source, title=title, subtitle=source.subtitle, tags=source.tags, manual=True
             ):
                 raise ValueError('Session changed. Refresh and rename again.')
+            retitled[source.id] = title
 
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
@@ -119,6 +129,9 @@ class Sessions(Generic[DepsT, OutputT]):
             ).run()
 
         selected = await run_worker(browse)
+        # Plugins hear of a rename once the browser has closed, so none of them draws over it.
+        if (title := retitled.get(self.session.conversation_id)) is not None:
+            await self.renamed(self.session.conversation_id, title)
         if not selected:
             return ''
         return await self.session.resume(selected, allow_other_workspace=True)

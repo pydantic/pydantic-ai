@@ -29,7 +29,6 @@ class CommandContext:
 
     settings: Settings
     store: SettingsStore
-    clear_history: Callable[[], None]
     apply_setting: Callable[[str, Settings], None]
     project: ProjectSettings = field(default_factory=ProjectSettings)
     """Read-only here: `/set` writes the user store, and the project file wins again at next start."""
