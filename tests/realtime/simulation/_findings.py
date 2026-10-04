@@ -894,10 +894,15 @@ def _hand_commit_unanswered_at_the_end(sim: Simulation) -> bool:
     )
 
 
+def _server_vad(sim: Simulation) -> bool:
+    """Whether the simulated OpenAI-protocol session runs server VAD (xAI push-to-talk reports speech too)."""
+    options = getattr(sim, 'openai', None)
+    return options is not None and options.turn_detection == 'server_vad'
+
+
 def _clear_after_an_unread_vad_commit(sim: Simulation) -> bool:
     """Without transcription, the app cleared the buffer after server VAD committed a turn, before reading that it had."""
-    options = getattr(sim, 'openai', None)
-    if options is None or options.transcription:
+    if not _server_vad(sim) or getattr(sim, 'openai').transcription:
         return False
     clears = [operation.issued for operation in sim.operations if operation.name == 'clear_audio']
     for key, started in sim.truth.speech_started.items():
@@ -994,7 +999,11 @@ AUDIO_AFTER_A_CLEAR = Finding(
 
 
 def _hand_commit_under_server_vad(sim: Simulation, violation: InvariantViolation) -> bool:
-    if not sim.truth.speech_started or not any(operation.name == 'commit_audio' for operation in sim.operations):
+    if (
+        not _server_vad(sim)
+        or not sim.truth.speech_started
+        or not any(operation.name == 'commit_audio' for operation in sim.operations)
+    ):
         return False
     if violation.code != 'history.order':
         return True
