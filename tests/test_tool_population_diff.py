@@ -35,7 +35,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr, try_import
+from .conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
@@ -48,6 +48,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
+    from .models.conftest import message_shape
     from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
     from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
@@ -564,6 +565,115 @@ async def test_anthropic_keeps_the_cached_tools_section(
         assert reveals == [{'type': 'tool_reference', 'tool_name': 'later'}]
     # The reveal stays where it was recorded on the next request, so the message prefix doesn't move.
     assert requests[2]['messages'][: len(requests[1]['messages'])] == requests[1]['messages']
+
+
+_LIVE_PROMPT = 'Call the `unlock` tool. Once it has returned, call the `later` tool. Then reply with just "done".'
+
+
+def _non_deferred_tools(body: dict[str, Any]) -> str:
+    return json.dumps([tool for tool in body['tools'] if not tool.get('defer_loading')], sort_keys=True)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    ('model_name', 'reveal', 'shapes'),
+    [
+        pytest.param(
+            'claude-opus-5-5',
+            'tool_addition',
+            snapshot(
+                [
+                    [('user', ['text'])],
+                    [
+                        ('user', ['text']),
+                        ('assistant', ['thinking', 'tool_use']),
+                        ('user', ['tool_result']),
+                        ('system', ['tool_addition']),
+                    ],
+                    [
+                        ('user', ['text']),
+                        ('assistant', ['thinking', 'tool_use']),
+                        ('user', ['tool_result']),
+                        ('system', ['tool_addition']),
+                        ('assistant', ['tool_use']),
+                        ('user', ['tool_result']),
+                    ],
+                ]
+            ),
+            id='claude-opus-5-5-tool_addition',
+        ),
+        pytest.param(
+            'claude-sonnet-5',
+            'tool_reference',
+            snapshot(
+                [
+                    [('user', ['text'])],
+                    [
+                        ('user', ['text']),
+                        ('assistant', ['thinking', 'tool_use']),
+                        ('user', ['tool_result']),
+                        ('assistant', ['tool_use']),
+                        ('user', ['tool_result']),
+                    ],
+                    [
+                        ('user', ['text']),
+                        ('assistant', ['thinking', 'tool_use']),
+                        ('user', ['tool_result']),
+                        ('assistant', ['tool_use']),
+                        ('user', ['tool_result']),
+                        ('assistant', ['tool_use']),
+                        ('user', ['tool_result']),
+                    ],
+                ]
+            ),
+            id='claude-sonnet-5-tool_reference',
+        ),
+    ],
+)
+async def test_anthropic_accepts_the_newcomer_live(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    request_capture: RequestCapture,
+    model_name: str,
+    reveal: str,
+    shapes: list[list[tuple[str, list[str]]]],
+):
+    """Anthropic accepts a deferred declaration plus a reveal for a tool that was never authored as deferred."""
+    model = AnthropicModel(
+        model_name, provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
+    )
+    result = await _add_function_agent(model).run(_LIVE_PROMPT)
+
+    assert _deltas(result.all_messages()) == [['later']]
+    assert [part.tool_name for part in result.all_messages()[-2].parts if isinstance(part, ToolReturnPart)] == ['later']
+    bodies = request_capture.bodies('/v1/messages')
+    assert len(bodies) == 3
+    assert _non_deferred_tools(bodies[1]) == _non_deferred_tools(bodies[0])
+    assert _non_deferred_tools(bodies[2]) == _non_deferred_tools(bodies[0])
+    assert [tool['name'] for tool in bodies[1]['tools'] if tool.get('defer_loading')] == ['later']
+    reveals = [node for node in _walk(bodies[1]['messages']) if node.get('type') == reveal]
+    assert len(reveals) == 1
+    assert [message_shape(body) for body in bodies] == shapes
+
+
+@pytest.mark.vcr
+async def test_openai_responses_accepts_the_newcomer_live(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """OpenAI Responses accepts an `additional_tools` item for a tool that was never authored as deferred."""
+    model = OpenAIResponsesModel(
+        'gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    result = await _add_function_agent(model).run(_LIVE_PROMPT)
+
+    assert _deltas(result.all_messages()) == [['later']]
+    assert [part.tool_name for part in result.all_messages()[-2].parts if isinstance(part, ToolReturnPart)] == ['later']
+    bodies = request_capture.bodies('/responses')
+    assert len(bodies) == 3
+    tools = [json.dumps(body['tools'], sort_keys=True) for body in bodies]
+    assert tools[1] == tools[0] and tools[2] == tools[0]
+    additional = [node for node in _walk(bodies[1]['input']) if node.get('type') == 'additional_tools']
+    assert [tool['name'] for item in additional for tool in item['tools']] == ['later']
 
 
 async def test_no_channel_announces_the_newcomer():
