@@ -57,8 +57,8 @@ class LogfireSettings(BaseModel):
     )
     account: LogfireAccount | None = Field(
         default=None,
-        description='Saved by project setup. Its email tags session roots only while `token` is still its key, '
-        'so a token changed by any CLAI build sharing these settings is never tagged with it.',
+        description='Saved by project setup. Its email tags session roots only while `token` still names the '
+        '/keys entry that setup saved, so pointing `token` elsewhere from any CLAI build drops the tag.',
     )
     token: KeyReference | None = Field(
         default=None,

@@ -396,11 +396,12 @@ same saved conversation IDs.
 `user_tag` (default `logfire-account`) tags each session root, and only the
 root, with your email, as a Logfire tag and the `user.email` attribute.
 `logfire-account` uses the email in `account`, the account that signed in during
-the **Logfire project** setup, while `token` is still the key that setup saved.
-A token from elsewhere, a setup made before this setting existed, or a server
-that does not report the email leaves roots untagged until setup runs again.
-`git-email` uses `git config user.email` (Git is queried only then), and `false`
-turns the tag off. Set **User tag** in `/plugins configure observability`.
+the **Logfire project** setup, while `token` still names the key that setup
+saved. A token from elsewhere, a setup made before this setting existed, or a
+server that does not report the email leaves roots untagged until setup runs
+again. `git-email` uses `git config user.email` (Git is queried only then), and
+`false` turns the tag off. Set **User tag** in
+`/plugins configure observability`.
 
 `ui_events` (default `false`) also records CLAI's UI interactions on the same
 instance, as spans and logs in the `clai2` instrumentation scope, which session

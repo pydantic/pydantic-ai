@@ -1693,14 +1693,14 @@ Each session root is tagged with your email, as a Logfire tag and the
 comes from. The default, `logfire-account`, uses the account you signed in with
 when you set up the **Logfire project** (below); that account already has access
 to the project, so the tag reveals nothing new to it. With a token from
-`LOGFIRE_TOKEN`, the credentials file, or a setup made before this setting
-existed, there is no sign-in email and roots are not tagged until you run the
-setup again. `git-email` uses `git config user.email` instead (Git is only
-queried with this choice; a missing email leaves the tag out), and `false` turns
-the tag off. Choose **User tag** in `/plugins configure observability`, or set
-`user_tag` in the plugin settings. Everything CLAI records itself (session
-roots, UI records, and plugin load failures) uses the `clai2` instrumentation
-scope.
+`LOGFIRE_TOKEN`, the credentials file, a token changed since setup, a setup made
+before this setting existed, or a server that does not report your email, roots
+are not tagged until you run the setup again. `git-email` uses
+`git config user.email` instead (Git is only queried with this choice; a missing
+email leaves the tag out), and `false` turns the tag off. Choose **User tag** in
+`/plugins configure observability`, or set `user_tag` in the plugin settings.
+Everything CLAI records itself (session roots, UI records, and plugin load
+failures) uses the `clai2` instrumentation scope.
 
 Prompts, responses, tool arguments/results, and binary image attachments are
 included by default, including retained history used by later turns. This can
