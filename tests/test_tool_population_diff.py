@@ -48,7 +48,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    from .models.conftest import message_shape
+    from .models.conftest import json_objects, message_shape
     from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
     from .models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
@@ -650,7 +650,7 @@ async def test_anthropic_accepts_the_newcomer_live(
     assert len(bodies) == 3
     assert _non_deferred_tools(bodies[1]) == _non_deferred_tools(bodies[0])
     assert _non_deferred_tools(bodies[2]) == _non_deferred_tools(bodies[0])
-    assert [tool['name'] for tool in bodies[1]['tools'] if tool.get('defer_loading')] == ['later']
+    assert [tool['name'] for tool in json_objects(bodies[1]['tools']) if tool.get('defer_loading')] == ['later']
     reveals = [node for node in _walk(bodies[1]['messages']) if node.get('type') == reveal]
     assert len(reveals) == 1
     assert [message_shape(body) for body in bodies] == shapes
