@@ -83,6 +83,33 @@ def _write_docs(root: Path, navigation: str) -> None:
     (root / 'docs' / 'index.md').write_text('# Home\n', encoding='utf-8')
 
 
+def test_published_site_links_resolve_by_slug(tmp_path: Path):
+    _write_docs(
+        tmp_path,
+        """
+navigation:
+  - section: Overview
+    contents:
+      - page: Home
+        path: index.md
+      - page: Workspaces
+        path: workspace.md
+        slug: core-concepts/workspace
+      - page: Versus
+        path: comparisons/vs.md
+""",
+    )
+    (tmp_path / 'docs' / 'workspace.md').write_text('# Workspaces\n', encoding='utf-8')
+    (tmp_path / 'docs' / 'comparisons').mkdir()
+    (tmp_path / 'docs' / 'comparisons' / 'vs.md').write_text(
+        '[Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#setup) '
+        'and [GitHub](https://github.com/pydantic/pydantic-ai)\n',
+        encoding='utf-8',
+    )
+    edges = [(edge.src, edge.dst, edge.n) for edge in build_docs_map(tmp_path).edges]
+    assert edges == [('comparisons/vs.md', 'workspace.md', 1)]
+
+
 def test_link_entries_are_skipped(tmp_path: Path):
     _write_docs(
         tmp_path,

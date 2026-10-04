@@ -14,29 +14,29 @@ Published local pages: 322 (826,760 tok). API reference omitted below (9,538 tok
 
 ## Cross-region highways
 
-- Capabilities → Core Concepts ×138
+- Capabilities → Core Concepts ×163
+- Comparisons → Capabilities ×157
+- Core Concepts → Capabilities ×113
 - Core Concepts → Tools & Toolsets ×91
 - Tools & Toolsets → Core Concepts ×79
-- Capabilities → Tools & Toolsets ×65
+- Comparisons → Interfaces ×78
+- Capabilities → Tools & Toolsets ×67
 - Models & Providers → Core Concepts ×56
-- Comparisons → Interfaces ×53
-- Durable Execution → Core Concepts ×51
+- Durable Execution → Core Concepts ×52
 - Overview → Core Concepts ×49
 - Interfaces → Core Concepts ×44
 - Realtime (speech-to-speech) → Core Concepts ×41
 - Comparisons → Realtime (speech-to-speech) ×39
-- Core Concepts → Capabilities ×38
+- Overview → Capabilities ×35
 - Comparisons → Guides ×33
-- Core Concepts → Models & Providers ×33
-- Examples → Core Concepts ×32
 
 ## Regions
 
 ### Overview — 13,476 tok, 6 pages — inline
 
-Hub: `index.md` (7,912 tok, in 3, out 45)
+Hub: `index.md` (7,912 tok, in 3, out 59)
 
-- `index.md` — 7,912 tok, in 3, out 45
+- `index.md` — 7,912 tok, in 3, out 59
 - `install.md` — 2,661 tok, in 12, out 33
 - `coding-agent-skills.md` — 922 tok, in 3, out 12
 - `help.md` — 232 tok, in 3, out 0
@@ -45,30 +45,30 @@ Hub: `index.md` (7,912 tok, in 3, out 45)
 
 ### Core Concepts — 137,344 tok, 16 pages — SUBAGENT
 
-Hub: `agent.md` (24,188 tok, in 162, out 25)
+Hub: `agent.md` (24,188 tok, in 163, out 25)
 
-- `agent.md` — 24,188 tok, in 162, out 25 **do not slurp**
+- `agent.md` — 24,188 tok, in 163, out 25 **do not slurp**
 - `dependencies.md` — 2,911 tok, in 35, out 9
-- `output.md` — 16,378 tok, in 111, out 18 **do not slurp**
+- `output.md` — 16,378 tok, in 112, out 18 **do not slurp**
 - `input.md` — 4,866 tok, in 8, out 5
-- `hooks.md` — 8,439 tok, in 44, out 9 **do not slurp**
-- `workspace.md` — 8,106 tok, in 17, out 4 **do not slurp**
-- `capabilities/overview.md` — 9,467 tok, in 138, out 41 **do not slurp**
+- `hooks.md` — 8,439 tok, in 45, out 9 **do not slurp**
+- `workspace.md` — 8,106 tok, in 36, out 5 **do not slurp**
+- `capabilities/overview.md` — 9,467 tok, in 141, out 96 **do not slurp**
 - `capabilities/on-demand.md` — 6,958 tok, in 23, out 12
-- `capabilities/custom.md` — 21,034 tok, in 35, out 19 **do not slurp**
+- `capabilities/custom.md` — 21,034 tok, in 36, out 19 **do not slurp**
 - `agent-spec.md` — 2,325 tok, in 40, out 9
-- `message-history.md` — 15,605 tok, in 83, out 23 **do not slurp**
-- `persistence.md` — 2,487 tok, in 5, out 9
+- `message-history.md` — 15,605 tok, in 83, out 28 **do not slurp**
+- `persistence.md` — 2,487 tok, in 5, out 13
 - `direct.md` — 1,251 tok, in 1, out 1
 - `retries.md` — 6,640 tok, in 25, out 24
 - `timeouts.md` — 2,013 tok, in 6, out 11
-- `multi-agent-applications.md` — 4,676 tok, in 26, out 11
+- `multi-agent-applications.md` — 4,676 tok, in 26, out 13
 
 ### Models & Providers — 101,007 tok, 27 pages — SUBAGENT
 
-Hub: `models/overview.md` (9,180 tok, in 52, out 36)
+Hub: `models/overview.md` (9,180 tok, in 54, out 36)
 
-- `models/overview.md` — 9,180 tok, in 52, out 36 **do not slurp**
+- `models/overview.md` — 9,180 tok, in 54, out 36 **do not slurp**
 - `gateway.md` — 3,947 tok, in 17, out 1
 - `models/openai.md` — 7,209 tok, in 27, out 8
 - `models/anthropic.md` — 10,014 tok, in 22, out 9 **do not slurp**
@@ -90,7 +90,7 @@ Hub: `models/overview.md` (9,180 tok, in 52, out 36)
 - `models/openrouter.md` — 3,681 tok, in 5, out 2
 - `models/snowflake.md` — 1,227 tok, in 3, out 2
 - `models/system-one.md` — 2,029 tok, in 6, out 6
-- `models/typesafe.md` — 3,833 tok, in 21, out 5
+- `models/typesafe.md` — 3,833 tok, in 21, out 6
 - `models/xai.md` — 3,622 tok, in 10, out 7
 - `models/zai.md` — 1,094 tok, in 3, out 0
 - `models/compatible-apis.md` — 5,113 tok, in 20, out 5
@@ -101,82 +101,82 @@ Hub: `models/overview.md` (9,180 tok, in 52, out 36)
 Hub: `tools.md` (5,039 tok, in 53, out 11)
 
 - `tools.md` — 5,039 tok, in 53, out 11
-- `tools-advanced.md` — 17,018 tok, in 64, out 21 **do not slurp**
+- `tools-advanced.md` — 17,018 tok, in 66, out 22 **do not slurp**
 - `toolsets.md` — 10,665 tok, in 75, out 16 **do not slurp**
 - `deferred-tools.md` — 6,470 tok, in 70, out 14
 - `native-tools.md` — 12,869 tok, in 36, out 12 **do not slurp**
-- `common-tools.md` — 2,629 tok, in 10, out 1
+- `common-tools.md` — 2,629 tok, in 10, out 2
 - `third-party-tools.md` — 747 tok, in 3, out 5
 
 ### Capabilities — 200,498 tok, 78 pages — SUBAGENT
 
-Hub: `harness/index.md` (5,638 tok, in 60, out 101)
+Hub: `harness/index.md` (5,638 tok, in 159, out 102)
 
-- `harness/index.md` — 5,638 tok, in 60, out 101
-- `harness/coder.md` — 4,951 tok, in 17, out 12
-- `harness/researcher.md` — 1,383 tok, in 6, out 5
-- `harness/filesystem.md` — 5,676 tok, in 16, out 6
-- `harness/shell.md` — 4,241 tok, in 15, out 7
-- `harness/modal-sandbox.md` — 4,592 tok, in 5, out 4
-- `harness/e2b-sandbox.md` — 3,826 tok, in 2, out 4
-- `harness/sprites-sandbox.md` — 3,536 tok, in 1, out 5
-- `harness/ssh-workspace.md` — 1,234 tok, in 2, out 6
-- `harness/bubblewrap-sandbox.md` — 1,853 tok, in 2, out 8
+- `harness/index.md` — 5,638 tok, in 159, out 102
+- `harness/coder.md` — 4,951 tok, in 43, out 16
+- `harness/researcher.md` — 1,383 tok, in 19, out 13
+- `harness/filesystem.md` — 5,676 tok, in 19, out 7
+- `harness/shell.md` — 4,241 tok, in 18, out 8
+- `harness/modal-sandbox.md` — 4,592 tok, in 6, out 5
+- `harness/e2b-sandbox.md` — 3,826 tok, in 3, out 5
+- `harness/sprites-sandbox.md` — 3,536 tok, in 2, out 6
+- `harness/ssh-workspace.md` — 1,234 tok, in 3, out 6
+- `harness/bubblewrap-sandbox.md` — 1,853 tok, in 3, out 8
 - `harness/durable-execution.md` — 1,964 tok, in 5, out 9
 - `capabilities/mcp.md` — 607 tok, in 10, out 3
 - `capabilities/image-generation.md` — 3,427 tok, in 10, out 6
-- `harness/stackone.md` — 1,964 tok, in 1, out 4
-- `harness/localstack.md` — 2,153 tok, in 1, out 4
-- `harness/macroscope.md` — 1,286 tok, in 2, out 4
-- `harness/day-ai.md` — 1,555 tok, in 1, out 6
-- `harness/github.md` — 1,558 tok, in 1, out 6
-- `harness/google-workspace.md` — 1,282 tok, in 1, out 5
-- `harness/grain.md` — 1,554 tok, in 1, out 6
-- `harness/linear.md` — 1,275 tok, in 1, out 5
-- `harness/logfire-mcp.md` — 1,699 tok, in 1, out 6
-- `harness/notion.md` — 1,325 tok, in 1, out 5
-- `harness/ordinal.md` — 1,510 tok, in 1, out 5
-- `harness/posthog.md` — 1,856 tok, in 1, out 6
-- `harness/pylon.md` — 1,626 tok, in 1, out 6
-- `harness/slack.md` — 1,504 tok, in 1, out 6
-- `capabilities/web-search.md` — 527 tok, in 8, out 3
-- `capabilities/web-fetch.md` — 403 tok, in 4, out 3
+- `harness/stackone.md` — 1,964 tok, in 2, out 5
+- `harness/localstack.md` — 2,153 tok, in 2, out 4
+- `harness/macroscope.md` — 1,286 tok, in 3, out 5
+- `harness/day-ai.md` — 1,555 tok, in 2, out 6
+- `harness/github.md` — 1,558 tok, in 2, out 6
+- `harness/google-workspace.md` — 1,282 tok, in 2, out 5
+- `harness/grain.md` — 1,554 tok, in 2, out 6
+- `harness/linear.md` — 1,275 tok, in 2, out 5
+- `harness/logfire-mcp.md` — 1,699 tok, in 2, out 6
+- `harness/notion.md` — 1,325 tok, in 2, out 5
+- `harness/ordinal.md` — 1,510 tok, in 2, out 5
+- `harness/posthog.md` — 1,856 tok, in 2, out 6
+- `harness/pylon.md` — 1,626 tok, in 2, out 6
+- `harness/slack.md` — 1,504 tok, in 2, out 6
+- `capabilities/web-search.md` — 527 tok, in 9, out 4
+- `capabilities/web-fetch.md` — 403 tok, in 5, out 3
 - `capabilities/x-search.md` — 914 tok, in 4, out 8
-- `harness/exa-search.md` — 4,210 tok, in 4, out 6
-- `harness/youdotcom.md` — 3,483 tok, in 2, out 5
-- `harness/browser-use.md` — 4,582 tok, in 3, out 7
-- `harness/playwright.md` — 6,343 tok, in 3, out 4
+- `harness/exa-search.md` — 4,210 tok, in 8, out 6
+- `harness/youdotcom.md` — 3,483 tok, in 4, out 5
+- `harness/browser-use.md` — 4,582 tok, in 4, out 7
+- `harness/playwright.md` — 6,343 tok, in 4, out 4
 - `capabilities/thinking.md` — 7,711 tok, in 18, out 9
-- `harness/planning.md` — 2,893 tok, in 4, out 4
-- `harness/subagents.md` — 7,477 tok, in 13, out 5
-- `harness/dynamic-workflow.md` — 3,824 tok, in 3, out 5
-- `harness/advisor.md` — 2,188 tok, in 1, out 4
-- `harness/background-tools.md` — 1,519 tok, in 1, out 4
-- `harness/code-mode.md` — 9,034 tok, in 7, out 7 **do not slurp**
+- `harness/planning.md` — 2,893 tok, in 17, out 4
+- `harness/subagents.md` — 7,477 tok, in 32, out 6
+- `harness/dynamic-workflow.md` — 3,824 tok, in 4, out 5
+- `harness/advisor.md` — 2,188 tok, in 3, out 4
+- `harness/background-tools.md` — 1,519 tok, in 2, out 4
+- `harness/code-mode.md` — 9,034 tok, in 10, out 8 **do not slurp**
 - `capabilities/tool-search.md` — 449 tok, in 3, out 4
-- `capabilities/compaction.md` — 1,294 tok, in 25, out 6
-- `harness/compaction.md` — 9,586 tok, in 11, out 2 **do not slurp**
-- `harness/tool-output-limits.md` — 4,391 tok, in 19, out 4
-- `harness/warn-on-cache-busts.md` — 2,182 tok, in 1, out 3
-- `harness/memory.md` — 3,451 tok, in 3, out 3
-- `harness/conversation-search.md` — 2,404 tok, in 1, out 4
-- `harness/skills.md` — 2,221 tok, in 3, out 4
-- `harness/repo-context.md` — 1,752 tok, in 6, out 3
-- `harness/pydantic-ai-docs.md` — 1,354 tok, in 1, out 2
-- `harness/guardrails.md` — 6,906 tok, in 5, out 2
-- `harness/prompt-injection-defender.md` — 1,305 tok, in 1, out 2
-- `harness/spend.md` — 6,971 tok, in 1, out 2
+- `capabilities/compaction.md` — 1,294 tok, in 26, out 8
+- `harness/compaction.md` — 9,586 tok, in 18, out 4 **do not slurp**
+- `harness/tool-output-limits.md` — 4,391 tok, in 20, out 5
+- `harness/warn-on-cache-busts.md` — 2,182 tok, in 2, out 3
+- `harness/memory.md` — 3,451 tok, in 19, out 4
+- `harness/conversation-search.md` — 2,404 tok, in 4, out 4
+- `harness/skills.md` — 2,221 tok, in 15, out 5
+- `harness/repo-context.md` — 1,752 tok, in 8, out 4
+- `harness/pydantic-ai-docs.md` — 1,354 tok, in 2, out 3
+- `harness/guardrails.md` — 6,906 tok, in 18, out 2
+- `harness/prompt-injection-defender.md` — 1,305 tok, in 2, out 2
+- `harness/spend.md` — 6,971 tok, in 2, out 4
 - `capabilities/handle-deferred-tool-calls.md` — 434 tok, in 2, out 2
-- `harness/ask-user.md` — 2,483 tok, in 1, out 2
-- `harness/system-reminders.md` — 2,595 tok, in 3, out 5
-- `harness/trajectory-judge.md` — 1,912 tok, in 1, out 7
+- `harness/ask-user.md` — 2,483 tok, in 2, out 2
+- `harness/system-reminders.md` — 2,595 tok, in 4, out 5
+- `harness/trajectory-judge.md` — 1,912 tok, in 2, out 7
 - `harness/tool-call-judge.md` — 3,524 tok, in 1, out 3
-- `harness/capability-creation.md` — 1,695 tok, in 1, out 3
+- `harness/capability-creation.md` — 1,695 tok, in 2, out 4
 - `capabilities/instrumentation.md` — 382 tok, in 13, out 2
-- `harness/step-persistence.md` — 9,677 tok, in 9, out 4 **do not slurp**
+- `harness/step-persistence.md` — 9,677 tok, in 17, out 4 **do not slurp**
 - `harness/media.md` — 2,801 tok, in 2, out 2
-- `harness/managed-prompt.md` — 2,174 tok, in 1, out 2
-- `harness/repair-tool-arguments.md` — 550 tok, in 3, out 2
+- `harness/managed-prompt.md` — 2,174 tok, in 2, out 2
+- `harness/repair-tool-arguments.md` — 550 tok, in 4, out 2
 - `capabilities/thread-executor.md` — 272 tok, in 2, out 3
 - `capabilities/select-model.md` — 352 tok, in 2, out 2
 - `capabilities/resolve-model-id.md` — 648 tok, in 8, out 3
@@ -188,8 +188,8 @@ Hub: `harness/index.md` (5,638 tok, in 60, out 101)
 - `capabilities/reinject-system-prompt.md` — 595 tok, in 3, out 4
 - `capabilities/process-history.md` — 414 tok, in 4, out 3
 - `capabilities/process-event-stream.md` — 543 tok, in 3, out 3
-- `harness/examples.md` — 473 tok, in 0, out 2
-- `capabilities/third-party.md` — 2,368 tok, in 7, out 10
+- `harness/examples.md` — 473 tok, in 0, out 4
+- `capabilities/third-party.md` — 2,368 tok, in 7, out 19
 
 ### Realtime (speech-to-speech) — 44,197 tok, 15 pages — SUBAGENT
 
@@ -213,31 +213,31 @@ Hub: `realtime/overview.md` (4,007 tok, in 51, out 25)
 
 ### Durable Execution — 40,845 tok, 10 pages — SUBAGENT
 
-Hub: `durable_execution/overview.md` (472 tok, in 47, out 11)
+Hub: `durable_execution/overview.md` (472 tok, in 48, out 13)
 
-- `durable_execution/overview.md` — 472 tok, in 47, out 11
+- `durable_execution/overview.md` — 472 tok, in 48, out 13
 - `durable_execution/backends.md` — 2,083 tok, in 3, out 1
 - `durable_execution/temporal.md` — 16,008 tok, in 19, out 21 **do not slurp**
 - `durable_execution/dbos.md` — 6,312 tok, in 10, out 15
 - `durable_execution/prefect.md` — 6,808 tok, in 11, out 13
 - `durable_execution/restate.md` — 1,112 tok, in 3, out 0
-- `harness/aws-lambda.md` — 3,137 tok, in 1, out 0
-- `harness/absurd.md` — 1,681 tok, in 1, out 3
+- `harness/aws-lambda.md` — 3,137 tok, in 3, out 1
+- `harness/absurd.md` — 1,681 tok, in 3, out 4
 - `durable_execution/kitaru.md` — 1,673 tok, in 3, out 2
 - `durable_execution/airflow.md` — 1,559 tok, in 3, out 0
 
 ### Interfaces — 37,574 tok, 8 pages — inline
 
-Hub: `interfaces.md` (684 tok, in 4, out 9)
+Hub: `interfaces.md` (684 tok, in 4, out 13)
 
-- `interfaces.md` — 684 tok, in 4, out 9
-- `web.md` — 2,135 tok, in 21, out 4
+- `interfaces.md` — 684 tok, in 4, out 13
+- `web.md` — 2,135 tok, in 23, out 4
 - `ui/overview.md` — 4,237 tok, in 34, out 9
 - `ui/ag-ui.md` — 9,517 tok, in 26, out 7 **do not slurp**
 - `ui/vercel-ai.md` — 5,786 tok, in 21, out 8
-- `cli.md` — 2,175 tok, in 20, out 3
-- `harness/gh-aw.md` — 9,235 tok, in 0, out 10 **do not slurp**
-- `harness/acp.md` — 3,805 tok, in 1, out 6
+- `cli.md` — 2,175 tok, in 24, out 3
+- `harness/gh-aw.md` — 9,235 tok, in 19, out 10 **do not slurp**
+- `harness/acp.md` — 3,805 tok, in 15, out 6
 
 ### Guides — 30,676 tok, 5 pages — inline
 
@@ -289,7 +289,7 @@ Hub: `evals.md` (3,434 tok, in 37, out 17)
 Hub: `graph.md` (5,933 tok, in 35, out 5)
 
 - `graph.md` — 5,933 tok, in 35, out 5
-- `graph/builder/index.md` — 2,603 tok, in 2, out 7
+- `graph/builder/index.md` — 2,603 tok, in 2, out 8
 - `graph/builder/steps.md` — 2,870 tok, in 4, out 3
 - `graph/builder/joins.md` — 4,916 tok, in 5, out 2
 - `graph/builder/decisions.md` — 3,086 tok, in 4, out 2
@@ -323,27 +323,27 @@ Hub: `examples/setup.md` (541 tok, in 23, out 2)
 
 ### Comparisons — 13,372 tok, 13 pages — inline
 
-Hub: `comparisons/index.md` (398 tok, in 1, out 14)
+Hub: `comparisons/index.md` (398 tok, in 1, out 15)
 
-- `comparisons/index.md` — 398 tok, in 1, out 14
-- `framework-migration.md` — 711 tok, in 11, out 12
-- `comparisons/vs-langchain-langgraph.md` — 1,024 tok, in 2, out 15
-- `comparisons/vs-claude-agent-sdk.md` — 1,140 tok, in 2, out 16
-- `comparisons/vs-vercel-ai-sdk.md` — 1,104 tok, in 2, out 15
-- `comparisons/vs-openai-agents-sdk.md` — 1,132 tok, in 2, out 16
-- `comparisons/vs-google-adk.md` — 1,138 tok, in 2, out 15
-- `comparisons/vs-mastra.md` — 955 tok, in 2, out 16
-- `comparisons/vs-livekit.md` — 1,390 tok, in 1, out 19
-- `comparisons/vs-pipecat.md` — 1,469 tok, in 1, out 19
-- `comparisons/vs-pi.md` — 1,055 tok, in 2, out 16
-- `comparisons/vs-agno.md` — 959 tok, in 2, out 16
-- `comparisons/vs-crewai.md` — 897 tok, in 1, out 14
+- `comparisons/index.md` — 398 tok, in 1, out 15
+- `framework-migration.md` — 711 tok, in 11, out 13
+- `comparisons/vs-langchain-langgraph.md` — 1,024 tok, in 2, out 25
+- `comparisons/vs-claude-agent-sdk.md` — 1,140 tok, in 2, out 26
+- `comparisons/vs-vercel-ai-sdk.md` — 1,104 tok, in 2, out 25
+- `comparisons/vs-openai-agents-sdk.md` — 1,132 tok, in 2, out 26
+- `comparisons/vs-google-adk.md` — 1,138 tok, in 2, out 25
+- `comparisons/vs-mastra.md` — 955 tok, in 2, out 26
+- `comparisons/vs-livekit.md` — 1,390 tok, in 1, out 24
+- `comparisons/vs-pipecat.md` — 1,469 tok, in 1, out 24
+- `comparisons/vs-pi.md` — 1,055 tok, in 2, out 26
+- `comparisons/vs-agno.md` — 959 tok, in 2, out 26
+- `comparisons/vs-crewai.md` — 897 tok, in 1, out 24
 
 ### Project — 17,916 tok, 4 pages — inline
 
 Hub: `contributing.md` (3,474 tok, in 1, out 4)
 
 - `contributing.md` — 3,474 tok, in 1, out 4
-- `changelog.md` — 9,846 tok, in 6, out 9 **do not slurp**
-- `migration.md` — 3,817 tok, in 2, out 6
+- `changelog.md` — 9,846 tok, in 6, out 11 **do not slurp**
+- `migration.md` — 3,817 tok, in 2, out 8
 - `version-policy.md` — 779 tok, in 2, out 3

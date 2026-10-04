@@ -27,6 +27,7 @@ ATLAS_RELATIVE_PATH = Path('scripts/docs_map/docs-atlas.md')
 HTML_RELATIVE_PATH = Path('docs/map.html')
 GRAPH_PLACEHOLDER = '__GRAPH_JSON__'
 _SKIP_SCHEMES = ('http://', 'https://', 'mailto:', 'ftp://', 'javascript:')
+_SITE_URL = 'https://pydantic.dev/docs/ai/'
 _VIEWER_TEMPLATE = Path(__file__).resolve().parent / 'docs_map' / 'viewer.html'
 _D3_PATH = Path(__file__).resolve().parent / 'docs_map' / 'd3.min.js'
 _D3_TEMPLATE_TAG = '<script src="./d3.min.js"></script>'
@@ -341,6 +342,9 @@ def _resolve_href(
     if not target:
         return None
     lowered = target.lower()
+    if lowered.startswith(_SITE_URL):
+        # Published URLs carry the page's navigation slug, not its file path.
+        return by_slug.get(unquote(target[len(_SITE_URL) :].split('#', 1)[0]).strip('/'))
     if lowered.startswith(_SKIP_SCHEMES):
         return None
     path_part = unquote(target.split('#', 1)[0]).strip()
