@@ -411,11 +411,41 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
     produced = _resolve(serialization, serialization)
 
     assert set(accepted['properties']) == set(produced['properties'])
-    assert accepted['required'] == ['output']
-    assert accepted['title'] == produced['title'] == 'AgentRunResult'
+    assert {k: v for k, v in accepted.items() if k != '$defs'} == snapshot(
+        {
+            'description': 'The final result of an agent run.',
+            'properties': {
+                'output': {'title': 'Output', 'type': 'string'},
+                'messages': {
+                    'items': {
+                        'discriminator': {
+                            'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
+                            'propertyName': 'kind',
+                        },
+                        'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
+                    },
+                    'title': 'Messages',
+                    'type': 'array',
+                },
+                'new_message_index': {'title': 'New Message Index', 'type': 'integer'},
+                'output_tool_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Output Tool Name'},
+                'usage': {'$ref': '#/$defs/RunUsage'},
+                'run_id': {'title': 'Run Id', 'type': 'string'},
+                'conversation_id': {'title': 'Conversation Id', 'type': 'string'},
+                'metadata': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'title': 'Metadata',
+                },
+                'traceparent': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Traceparent'},
+            },
+            'required': ['output'],
+            'title': 'AgentRunResult',
+            'type': 'object',
+        }
+    )
     assert not [
         name
-        for name in ('_state', '_new_message_index', 'GraphAgentState', 'ModelRequestParameters')
+        for name in ('_state', '_new_message_index', '_AgentRunResult', 'GraphAgentState', 'ModelRequestParameters')
         if name in json.dumps(validation)
     ]
     assert adapter.validate_python({'output': 'hi'}).output == 'hi'
