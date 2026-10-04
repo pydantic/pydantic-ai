@@ -492,6 +492,28 @@ async def test_snowflake_response_still_rejects_other_malformed_fields(allow_mod
         await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
 
 
+async def test_snowflake_response_rejects_malformed_moderation_that_is_not_the_stub(allow_model_requests: None):
+    """Only the exact Cortex placeholder is dropped; a side with missing fields is still rejected."""
+    completion = chat.ChatCompletion.model_construct(
+        id='chatcmpl-123',
+        choices=[
+            Choice.model_construct(
+                finish_reason='stop', index=0, message=chat.ChatCompletionMessage(role='assistant', content='x')
+            )
+        ],
+        created=1751234567,
+        model='openai-gpt-5.2',
+        object='chat.completion',
+        moderation={'input': {}, 'output': {'type': 'moderation_results', 'model': 'm', 'results': []}},
+    )
+    model = SnowflakeModel(
+        'openai-gpt-5.2', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+    )
+
+    with pytest.raises(UnexpectedModelBehavior):
+        await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+
+
 async def test_snowflake_stream_with_empty_moderation_stub(allow_model_requests: None):
     stream = [
         chat.ChatCompletionChunk.model_construct(
