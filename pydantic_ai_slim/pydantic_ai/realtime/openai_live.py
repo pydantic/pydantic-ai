@@ -541,6 +541,18 @@ Returns the new socket and the new session's id.
 
 
 @dataclass
+class _SessionEnd:
+    """How far Live's session has ended, kept in one place so a replacement session starts from a fresh one."""
+
+    ended: bool = False
+    """Whether `session.closed` arrived, or the socket closed cleanly: there is nothing left to ask Live for."""
+
+    unclaimed: list[SessionUsage] = field(default_factory=list[SessionUsage])
+    """The final usage `session.closed` reported, until it has been yielded, so a session that stops reading in
+    between still gets it from `_end_session()`."""
+
+
+@dataclass
 class _Delegation:
     """A unit of work the Live model handed to the Responses backend."""
 
@@ -636,6 +648,7 @@ class OpenAILiveConnection(RealtimeConnection):
         # Calls asked for and not answered yet, which a replacement session wouldn't know.
         self._open_calls: set[str] = set()
         self._reported_seconds = 0.0
+        self._session_end = _SessionEnd()
         # Numbers the native tool parts this connection reports; the session maps them to its own indexes.
         self._native_part_index = 0
         # The backend's reasoning since its last other output item, per delegation. A search replays into
@@ -772,6 +785,39 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         await self._ws.send(to_json(event).decode())
 
+    async def _end_session(self) -> AsyncIterator[SessionUsage]:
+        """Send `session.close`, and read on until `session.closed` reports the session's final usage.
+
+        Live reports its billed seconds only periodically while a session runs, so without this the seconds
+        since the last report, all of them on a short call, would never be recorded. Called once the session
+        has stopped iterating: the read left in flight then is picked up here, so no frame is lost.
+
+        A backend response still finishing meanwhile has no reply left to land on, so its tokens are yielded
+        as session usage: counted in the session's total, attributed to no response.
+        """
+        if self._closed:
+            return
+        if self._session_end.ended:
+            # Live already ended the session; its final usage is yielded unless the session already took it.
+            unclaimed, self._session_end.unclaimed = self._session_end.unclaimed, []
+            for report in unclaimed:
+                yield report
+            return
+        await self._send_event({'type': 'session.close'})
+        while not self._session_end.ended:
+            read = self._recv_task if self._recv_task is not None else self._start_read()
+            self._recv_task = None
+            try:
+                raw = await read
+            except websockets.ConnectionClosedOK:
+                self._session_end.ended = True
+                break
+            for event in self._map_frame(raw):
+                if isinstance(event, SessionUsage):
+                    yield event if not event.response_scoped else SessionUsage(event.usage, response_scoped=False)
+            # Any final usage `session.closed` held back was just yielded.
+            self._session_end.unclaimed = []
+
     async def aclose(self) -> None:
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
         self._closed = True
@@ -805,6 +851,8 @@ class OpenAILiveConnection(RealtimeConnection):
                     if not self._redial_on_close:
                         # The read started above can no longer complete, and nothing will await it.
                         self._cancel_read()
+                        # The session is over, so there is nothing left for `_end_session()` to ask Live for.
+                        self._session_end.ended = True
                         # A graceful close ends whatever was in flight. Live never says a turn is over,
                         # so without this the last reply would be settled as interrupted even though the
                         # model had finished speaking and the session closed normally.
@@ -816,6 +864,7 @@ class OpenAILiveConnection(RealtimeConnection):
                     dropped = e
                 else:
                     for event in self._map_frame(raw):
+                        self._hand_over(event)
                         yield event
                     try:
                         await self._send_due_continuations()
@@ -896,6 +945,16 @@ class OpenAILiveConnection(RealtimeConnection):
         self._call_delegations.clear()
         self._continuations_due.clear()
         self._reported_seconds = 0.0
+        # The new session hasn't ended: closing asks it to, and records the usage it reports then.
+        self._session_end = _SessionEnd()
+
+    def _hand_over(self, event: RealtimeCodecEvent) -> None:
+        """Note that the session is being handed final usage `_end_session()` would otherwise yield.
+
+        Handed over as it is yielded: a session that takes it records it before it can stop reading.
+        """
+        if isinstance(event, SessionUsage) and (unclaimed := self._session_end.unclaimed):
+            self._session_end.unclaimed = [report for report in unclaimed if report is not event]
 
     def _start_read(self) -> asyncio.Task[str | bytes]:
         """Begin the next read, remembering it so it can be cancelled on the way out."""
@@ -1106,6 +1165,9 @@ class OpenAILiveConnection(RealtimeConnection):
         safety filter or the duration limit would be settled as though the model had finished it.
         """
         events: list[RealtimeCodecEvent] = [] if cumulative_seconds is None else self._map_usage(cumulative_seconds)
+        self._session_end = _SessionEnd(
+            ended=True, unclaimed=[report for report in events if isinstance(report, SessionUsage)]
+        )
         if reason in _NORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))
