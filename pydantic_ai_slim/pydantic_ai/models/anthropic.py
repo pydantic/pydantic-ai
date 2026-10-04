@@ -2362,9 +2362,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                                 elif item.media_type.startswith(('text/', 'application/')):
                                     tool_result_content.append(
-                                        BetaRequestDocumentBlockParam(
-                                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                                            type='document',
+                                        _with_document_citations(
+                                            BetaRequestDocumentBlockParam(
+                                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                                                type='document',
+                                            ),
+                                            include_citations,
                                         )
                                     )
                                 else:
@@ -2373,7 +2376,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         'Only image and document (text/application) types are supported.'
                                     )
                             elif is_multi_modal_content(item):
-                                tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
+                                tool_result_content.append(
+                                    await self._map_file_to_content_block(
+                                        item,  # pyright: ignore[reportArgumentType]
+                                        'tool returns',
+                                        # Anthropic requires citations on all of a request's documents or none.
+                                        include_citations=include_citations,
+                                    )
+                                )
                             elif isinstance(item, str):  # pragma: no branch
                                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
