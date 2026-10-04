@@ -46,7 +46,7 @@ class _SlashSearch:
             return self.clear()
         if key == Key.ENTER and self.hotkeys:
             if not self.query:
-                self.mode = 'browse'
+                self.mode, self.edited = 'browse', False
             elif self.menu.highlighted is not None:
                 self.mode = 'filtered'
             return ''
