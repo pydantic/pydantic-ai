@@ -36,9 +36,9 @@ model within its cache TTL still compares against that model's prefix.
 
 Native tool responses may sum cache reads across internal model calls. The monitor
 can still warn on a low total, but keeps the earlier prefix and waits for an ordinary
-request to confirm recovery. Anthropic responses with a single call to the main model
-and no compaction, and Gemini responses with separate tool-use prompt accounting,
-update the prefix and confirm recovery normally.
+request to confirm recovery. If the provider reports one call to the main model and
+no compaction, the response updates the prefix and confirms recovery normally.
+Gemini responses with separate tool-use prompt accounting do the same.
 
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run
 that continues an earlier one via `message_history` -- including history that was

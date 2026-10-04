@@ -126,8 +126,9 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     so a sustained collapse warns once rather than on every subsequent request. Native tool
     responses may sum cache reads across internal model calls. The monitor can still warn on a
     low total, but keeps the earlier prefix and waits for an ordinary request to confirm recovery.
-    Anthropic responses with a single call to the main model and no compaction, and Gemini responses with
-    separate tool-use prompt accounting, update the prefix and confirm recovery normally.
+    If the provider reports one call to the main model and no compaction, the response updates the
+    prefix and confirms recovery normally. Gemini responses with separate tool-use prompt accounting
+    do the same.
 
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
     that continues an earlier one via `message_history` -- including history that was
@@ -273,6 +274,8 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
         # Native tools can sum cache reads across passes, so the sum cannot establish a prefix. A
         # separate tool-use prompt counter leaves cache reads scoped to one prompt; otherwise a
         # native call is a conservative aggregation signal when no pass count is reported.
+        # Iteration counts come from Anthropic's _map_usage_details; 'tool_use_prompt_tokens' comes
+        # from Google's _usage_metadata_as_usage.
         passes = usage.details.get('message_iterations')
         if passes is None:
             aggregated_cache_usage = 'tool_use_prompt_tokens' not in usage.details and any(
