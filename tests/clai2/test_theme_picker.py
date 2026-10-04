@@ -90,6 +90,7 @@ def test_picker_keyboard_and_preview(
     keys = iter(['/', *'github', *pressed])
     monkeypatch.setattr('pydantic_clai2.ui.menus.theme_picker.menu_key', lambda: next(keys))
     result = build_theme_picker(context).run()
+    assert next(keys, None) is None, 'every key is read: the first Esc must not close'
     if pressed == ['enter']:
         assert result.item == MenuItem('github_light', value='github_light')
     else:

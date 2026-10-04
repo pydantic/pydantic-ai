@@ -157,8 +157,9 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
 - Esc and Ctrl-C close cleanly. They are not errors.
 - Make a new or changed menu searchable with `slash_search`
   (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
-  hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its `hotkeys` so they type into the
-  search instead of firing while the user searches.
+  hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
+  `hotkeys` so they type into the search instead of firing while the user
+  searches.
 - A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers

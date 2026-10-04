@@ -34,15 +34,18 @@ def slash_search(
     """
     actions = dict(hotkeys or {})
     mode: Literal['browse', 'search', 'filtered'] = 'browse'
+    queried = False
+    """Whether the search was edited; only then has the cursor lost its place in the full list."""
 
     def clear() -> str:
-        nonlocal mode
+        nonlocal mode, queried
         mode = 'browse'
         menu.clear_search()
-        return Key.HOME
+        moved, queried = queried, False
+        return Key.HOME if moved else ''
 
     def read_key() -> str:
-        nonlocal mode
+        nonlocal mode, queried
         key = key_source()
         if mode == 'search':
             if key == Key.ESCAPE:
@@ -51,7 +54,10 @@ def slash_search(
                 if menu.highlighted is not None:
                     mode = 'filtered'
                 return ''
-            return _HOTKEY + key if key in actions and not _typed(key) else key
+            if key in actions and not _typed(key):
+                return _HOTKEY + key
+            queried = queried or _typed(key) or key == Key.BACKSPACE
+            return key
         if key == Key.ESCAPE and mode == 'filtered':
             return clear()
         if key == '/':

@@ -14,9 +14,6 @@ CLAI groups its shell implementation into `cli/`, `config/`, `runtime/`,
 continue importing `PluginHost` from `pydantic_clai2.plugins` and `Command`
 from `pydantic_clai2.commands`.
 
-See [Managing plugins](#managing-plugins) for the searchable `/plugins` menu
-and typed commands.
-
 ## Startup
 
 `clai2 --help` parses arguments without loading the agent or plugins. Interactive
@@ -1463,9 +1460,10 @@ it, and `d` removes it. Press `/` to search: while searching, every key you type
 filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
 Backspace edits the search, and Up and Down move between matches. Enter ends the
 search and keeps the matches, so the keys above act on them; `/` resumes the
-search. Esc leaves the search and clears it, including when nothing matches.
-Changes apply immediately; there is no pending save step, so the **Save & close**
-row, Enter, `q`, Esc (outside a search), and Ctrl-C just close.
+search. Esc clears the search, or the matches Enter kept, including when nothing
+matches; with no filter, Esc closes. Changes apply immediately; there is no
+pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
+close.
 
 Turning a plugin on with Space opens its settings menu straight away when it
 offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
