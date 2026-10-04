@@ -6,7 +6,7 @@ import asyncio
 import dataclasses
 import difflib
 import weakref
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
@@ -103,6 +103,7 @@ from ._instrumentation import (
     SessionInstrumentation,
 )
 from ._lifecycle import LIFECYCLE_EVENT_TYPES
+from ._retained_audio import RetainedAudioBudget
 from ._utils import accumulate_transcript, pcm_to_wav, seed_pcm_audio, user_transcript_update
 from .codec import (
     AudioDelta,
@@ -254,6 +255,50 @@ class _HeldCommit:
 _UserTurnAnchor = ModelMessage | _InFlightResponse | _HeldCommit | None
 
 
+class _InputSegments:
+    """Retained input audio cut at each item's speech-stopped boundary, held until that item's turn is recorded.
+
+    Keeps the total size as segments come and go, and drops an evicted segment rather than emptying it, so
+    checking and enforcing `retain_audio_max_seconds` costs the same however many turns are waiting.
+    """
+
+    def __init__(self) -> None:
+        self._segments: OrderedDict[str, bytes] = OrderedDict()
+        # Items whose segment was evicted: their turn records no audio, rather than the rolling buffer's.
+        self._evicted: set[str] = set()
+        self.byte_count = 0
+
+    def cut(self, item_id: str, segment: bytes) -> None:
+        """Keep `segment` for `item_id`, unless it already has one (or had one evicted): the first cut wins."""
+        if item_id not in self._segments and item_id not in self._evicted:
+            self._segments[item_id] = segment
+            self.byte_count += len(segment)
+
+    def take(self, item_id: str) -> bytes | None:
+        """Remove and return `item_id`'s segment: `b''` if it was evicted, `None` if it was never cut."""
+        if item_id in self._evicted:
+            self._evicted.discard(item_id)
+            return b''
+        segment = self._segments.pop(item_id, None)
+        if segment is not None:
+            self.byte_count -= len(segment)
+        return segment
+
+    def evict_oldest(self) -> int | None:
+        """Evict the oldest segment, returning its size, or `None` when there is none."""
+        if not self._segments:
+            return None
+        item_id, segment = self._segments.popitem(last=False)
+        self._evicted.add(item_id)
+        self.byte_count -= len(segment)
+        return len(segment)
+
+    def clear(self) -> None:
+        self._segments.clear()
+        self._evicted.clear()
+        self.byte_count = 0
+
+
 @dataclass
 class _UserTurn:
     part: SpeechPart
@@ -301,6 +346,9 @@ _MAX_TRUNCATABLE_AUDIO_ITEMS = 32
 # a second of the user starting to speak; past this, the turn is recorded where history stands instead of
 # staying out of `all_messages()` for as long as a provider keeps talking.
 _BARGE_IN_TURN_HOLD_SECONDS = 5.0
+#: How long closing waits for the provider to end its session and report the usage it only reports then.
+#: Not waited for at all when the session is closing because it was cancelled.
+_END_SESSION_TIMEOUT = 2.0
 # The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
 # also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
 _AUDIO_TAP_MAX_CHUNKS = 30_000
@@ -671,7 +719,9 @@ class RealtimeSession:
     stored as ordinary user image turns by default. Set `retain_images_every_n` above `1` to sample
     high-rate frame streams, and `retain_images_max` (default `100`) to bound how many stay in
     history — the oldest retained image is evicted first, so a long-running stream can't grow memory
-    without limit.
+    without limit. Audio kept by `audio_retention` is bounded the same way: `retain_audio_max_seconds`
+    (default `1800`, 30 minutes across both speakers) caps how much stays in memory, evicting the
+    oldest retained audio first while keeping its transcript.
 
     When constructing a session directly, use it as an async context manager. The context owns the
     receive pump, background tool tasks, and instrumentation spans; iteration only reads its event
@@ -693,6 +743,7 @@ class RealtimeSession:
         handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
         owns_media: bool = True,
@@ -755,8 +806,13 @@ class RealtimeSession:
         )
         self._usage_limits = usage_limits
         self._audio_retention = audio_retention
-        self._retain_input = audio_retention in ('input_audio', 'all')
-        self._retain_output = audio_retention in ('output_audio', 'all')
+        self._audio_budget = RetainedAudioBudget(
+            retain_audio_max_seconds,
+            input_sample_rate=self.audio_input_sample_rate,
+            output_sample_rate=self.audio_output_sample_rate,
+        )
+        self._retain_input = audio_retention in ('input_audio', 'all') and self._audio_budget.retains_audio
+        self._retain_output = audio_retention in ('output_audio', 'all') and self._audio_budget.retains_audio
         self._handle_barge_in = handle_barge_in
         if retain_images_every_n < 1:
             raise UserError('`retain_images_every_n` must be at least 1.')
@@ -900,10 +956,13 @@ class RealtimeSession:
         self._audio_uncommitted = False
         # Retained input audio (`audio_retention='input_audio'`/`'all'`). `_input_audio` is the rolling buffer
         # of audio sent since the last turn boundary; on providers that report a per-item speech-stopped
-        # boundary, each segment is cut into `_input_audio_by_id` keyed by its input item id, so overlapping
+        # boundary, each segment is cut into `_input_segments` keyed by its input item id, so overlapping
         # turns whose transcripts finalize out of order still attach their own audio (not a later turn's).
         self._input_audio = bytearray()
-        self._input_audio_by_id: dict[str, bytes] = {}
+        self._input_segments = _InputSegments()
+        # Where in history the next pass for audio to evict starts: eviction goes oldest first, so the messages
+        # before it hold no retained audio any more. A message inserted or removed before it moves it along.
+        self._audio_eviction_start = 0
 
         # The session context is the single owner of the receive pump and background tool tasks.
         # It starts the pump on entry and never tears it down before `close()`: an early `break` can
@@ -1124,6 +1183,11 @@ class RealtimeSession:
         # may be nothing here but the background tasks.
         pump_tasks = (self._pump_task,) if self._pump_task is not None else ()
         await cancel_and_drain(*self._background_tasks, *pump_tasks, msg='Realtime session exited')
+        # A WebRTC sideband doesn't own the provider session: ending it would end the browser's call. A
+        # provider that already went away is the connection's to recognize, which it can do for certain.
+        # A cancelled session closes promptly instead of waiting on the provider.
+        if self._owns_media and not isinstance(self._closing_error, asyncio.CancelledError):
+            await self._record_final_usage()
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.
@@ -1156,6 +1220,29 @@ class RealtimeSession:
         if self._closing_error is None and (error := self._first_undelivered_error()) is not None:
             self._delivered_errors.append(error)
             self._close_error = error
+
+    async def _record_final_usage(self) -> None:
+        """End the provider session, recording the usage it reports only as it ends.
+
+        Runs once nothing reads the connection any more and before the session span reports its usage, so
+        what a provider bills at the very end (GPT-Live's last seconds of audio) is counted. Bounded, and
+        best-effort: what the provider reported before it stopped answering in time, or before the link
+        failed, is recorded, and nothing more.
+        """
+        recorded = False
+        try:
+            with anyio.move_on_after(_END_SESSION_TIMEOUT):
+                async for report in self._connection._end_session():  # pyright: ignore[reportPrivateUsage]
+                    if report.context_window_used is not None:
+                        self._reported_context_window_used = report.context_window_used
+                    self.usage.incr(report.usage)  # usage-attribution: the session owns its spans
+                    self._span_usage.incr(report.usage)  # usage-attribution: what the session span reports
+                    recorded = True
+        except self._connection.transport_errors:
+            pass
+        if recorded:
+            # The session is closed, so an exceeded limit is parked for `close()` to raise.
+            self._check_response_boundary_limits()
 
     def _queue_put(self, item: RealtimeEvent | object) -> None:
         """Append an item, bounding the queue while no session iterator is active."""
@@ -1546,7 +1633,8 @@ class RealtimeSession:
         Returns a copy, so the result doesn't change as the session continues. Feed it into
         [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run] to hand the
         conversation off to a standard agent run. Images streamed with `send()` are recorded according
-        to `retain_images_every_n`, bounded by `retain_images_max`.
+        to `retain_images_every_n`, bounded by `retain_images_max`, and audio retained by
+        `audio_retention` is bounded by `retain_audio_max_seconds`.
         """
         return [*self._seeded, *self._history]
 
@@ -1822,6 +1910,8 @@ class RealtimeSession:
             for index, message in enumerate(messages):
                 if message is request:
                     messages.pop(index)
+                    if messages is self._history and index < self._audio_eviction_start:
+                        self._audio_eviction_start -= 1
                     return
 
     async def send_audio(self, data: bytes | AsyncIterable[bytes]) -> None:
@@ -1906,6 +1996,8 @@ class RealtimeSession:
                 # the reconnect fails, the next chunk raises again.
                 return
             raise
+        if self._retain_input:
+            self._bound_retained_audio()
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
@@ -2378,6 +2470,7 @@ class RealtimeSession:
         events.extend(self._ensure_active_assistant(item_id=item_id))
         if self._retain_output:
             self._output_audio.extend(data)
+            self._bound_retained_audio()
         events.append(
             PartDeltaEvent(
                 index=self._active_assistant_index, delta=SpeechPartDelta(speaker='assistant', audio_chunk=data)
@@ -2394,13 +2487,7 @@ class RealtimeSession:
             if part.transcript == '':
                 part = replace(part, transcript=None)
             if self._retain_output and self._output_audio:
-                sample_rate = self.audio_output_sample_rate
-                part = replace(
-                    part,
-                    audio=BinaryContent(
-                        data=pcm_to_wav(bytes(self._output_audio), sample_rate), media_type=_WAV_MEDIA_TYPE
-                    ),
-                )
+                part = replace(part, audio=self._retain_audio(bytes(self._output_audio), output=True))
         index = self._active_assistant_index
         self._active_assistant = None
         self._active_assistant_item_id = None
@@ -2772,7 +2859,7 @@ class RealtimeSession:
                     if call_order.get(existing_id, position) > position:
                         break
                     insert_at += 1
-                self._history.insert(insert_at, request)
+                self._insert_into_history(insert_at, request)
                 return
         if call_part.tool_call_id in self._tool_calls_awaiting_usage:
             # OpenAI-protocol tool execution starts before `response.done` supplies usage and finalizes
@@ -2876,16 +2963,12 @@ class RealtimeSession:
             # id-less providers, manual push-to-talk, and boundary-less turns, where it holds this turn's
             # audio — and only clear the shared rolling buffer on that fallback, never when a segment was
             # used (a following turn's audio may already be accumulating there).
-            segment = self._input_audio_by_id.pop(item_id, None) if item_id is not None else None
+            segment = self._input_segments.take(item_id) if item_id is not None else None
             if segment is None:
                 segment = bytes(self._input_audio) if self._input_audio else None
                 self._input_audio.clear()
             if segment:
-                sample_rate = self.audio_input_sample_rate
-                part = replace(
-                    part,
-                    audio=BinaryContent(data=pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
-                )
+                part = replace(part, audio=self._retain_audio(segment, output=False))
         if item_id is None:
             self._anonymous_user_turn_finalized = True
             self._anonymous_user_turn_awaiting_answer = True
@@ -3036,7 +3119,12 @@ class RealtimeSession:
             _is_tool_result_request(self._history[insert_at]) or _is_user_speech_request(self._history[insert_at])
         ):
             insert_at += 1
-        self._history.insert(insert_at, request)
+        self._insert_into_history(insert_at, request)
+
+    def _insert_into_history(self, index: int, request: ModelRequest) -> None:
+        self._history.insert(index, request)
+        # A turn recorded where it started can carry retained audio, so the next eviction pass must see it.
+        self._audio_eviction_start = min(self._audio_eviction_start, index)
 
     def _flush_finalized_user_prefix(self) -> None:
         """Record finalized user items in provider order, up to the first item still awaiting its final.
@@ -3052,16 +3140,78 @@ class RealtimeSession:
             self._user_turns.pop(finalized_id)
             self._record_user_request(finalized_id, self._new_request([turn.part]))
 
+    def _retain_audio(self, pcm: bytes, *, output: bool) -> BinaryContent:
+        """Wrap a turn's retained PCM audio for its `SpeechPart`, counting it against `retain_audio_max_seconds`."""
+        sample_rate = self.audio_output_sample_rate if output else self.audio_input_sample_rate
+        audio = BinaryContent(data=pcm_to_wav(pcm, sample_rate), media_type=_WAV_MEDIA_TYPE)
+        return self._audio_budget.track(audio, len(pcm), output=output)
+
+    def _bound_retained_audio(self) -> None:
+        """Evict the oldest retained audio until what the session retains fits `retain_audio_max_seconds`.
+
+        Everything retained counts: audio recorded in history, parts finalized but not recorded yet (in a
+        response still in flight, say), segments waiting for their transcript, and the turns being spoken now.
+        Audio recorded in history goes first, oldest first, each part keeping its transcript; then the waiting
+        segments, oldest first; and only then the turns being spoken now, which keep their most recent audio.
+        A part not recorded yet is only evicted once it is. Only the local copy is trimmed: the provider
+        received all of it.
+        """
+        budget = self._audio_budget
+        segments = self._input_segments
+        excess = budget.excess(
+            untracked_input=segments.byte_count + len(self._input_audio),
+            untracked_output=len(self._output_audio),
+        )
+        if excess > 0 and budget.tracked_parts:
+            # Resume where the last pass stopped, so each message is passed over about once however many
+            # passes there are; a pass that finds nothing (the audio over budget is still on its way into
+            # history) leaves it at the end.
+            index = self._audio_eviction_start
+            while index < len(self._history):
+                stripped, freed = budget.strip(self._history[index], excess)
+                if freed:
+                    self._replace_recorded_message(index, stripped)
+                    excess -= freed
+                    if excess <= 0:
+                        break
+                index += 1
+            self._audio_eviction_start = index
+        while excess > 0 and (evicted := segments.evict_oldest()) is not None:
+            excess -= budget.weight(evicted, output=False)
+        excess = budget.trim(self._input_audio, excess, output=False)
+        budget.trim(self._output_audio, excess, output=True)
+
+    def _replace_recorded_message(self, index: int, message: ModelMessage) -> None:
+        """Swap a message in history for an updated copy, carrying over the user-turn anchors that point at it.
+
+        A copy, not an in-place edit, so a snapshot already returned by `all_messages()` doesn't change.
+        """
+        old = self._history[index]
+        self._history[index] = message
+        for item_id, anchor in self._user_turn_anchors.items():
+            if anchor is old:
+                self._user_turn_anchors[item_id] = message
+        anonymous_anchors = self._pending_anonymous_user_turn_anchors
+        for anchor_index, anchor in enumerate(anonymous_anchors):
+            if anchor is old:
+                anonymous_anchors[anchor_index] = message
+        for item_id, (anchor,) in self._pending_user_turn_anchors.items():
+            if anchor is old:
+                self._pending_user_turn_anchors[item_id] = (message,)
+        for held in (self._held_commit, self._sent_commit, *self._held_commits_in_flight):
+            if held is not None and held.anchor is old:
+                held.anchor = message
+
     def _segment_input_audio(self, item_id: str | None) -> None:
         """Cut the rolling input-audio buffer into `item_id`'s own segment at its speech-stopped boundary.
 
         Only applies with transcription enabled and input audio retained: the transcript arrives
         asynchronously (and possibly after a following turn's), so pinning the audio to the item now keeps
-        it with the right user turn. `setdefault` makes it idempotent if the provider repeats the boundary
+        it with the right user turn. `_InputSegments.cut` makes it idempotent if the provider repeats the boundary
         (or also emits a `committed` one): the first segment for an id wins.
         """
         if self._input_transcription_enabled and self._retain_input and item_id and self._input_audio:
-            self._input_audio_by_id.setdefault(item_id, bytes(self._input_audio))
+            self._input_segments.cut(item_id, bytes(self._input_audio))
             self._input_audio.clear()
 
     def _finalize_failed_user_item(self, item_id: str | None) -> list[RealtimeEvent]:
@@ -3101,7 +3251,7 @@ class RealtimeSession:
         self._pending_user_turn_anchors.clear()
         # Drop any input-audio segments whose transcript never arrived, so they can't leak across a
         # long-lived session (finalized items already popped their own segment above).
-        self._input_audio_by_id.clear()
+        self._input_segments.clear()
 
     def _finalize_untranscribed_user(self) -> list[RealtimeEvent]:
         """Finalize a user turn when no transcript will arrive.
@@ -3118,12 +3268,7 @@ class RealtimeSession:
             return []
         if None in self._user_turns or not self._user_turn_active:
             return []
-        audio = None
-        if self._input_audio:
-            audio = BinaryContent(
-                data=pcm_to_wav(bytes(self._input_audio), self.audio_input_sample_rate),
-                media_type=_WAV_MEDIA_TYPE,
-            )
+        audio = self._retain_audio(bytes(self._input_audio), output=False) if self._input_audio else None
         part = SpeechPart(speaker='user', transcript=None, audio=audio)
         self._input_audio.clear()
         self._user_turn_active = False
