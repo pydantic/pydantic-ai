@@ -5611,7 +5611,9 @@ async def test_audio_retention_budget_passes_over_history_once_across_many_turns
     messages = session.all_messages()
     assert len(messages) == 80
     # Only the last question and answer still fit.
-    assert [part.audio is not None for message in messages for part in message.parts] == [False] * 78 + [True] * 2
+    assert [
+        part.audio is not None for message in messages for part in message.parts if isinstance(part, SpeechPart)
+    ] == [False] * 78 + [True] * 2
     # Starting every pass from the beginning of history would be about 80 * 80.
     assert strips <= 3 * len(messages)
 
