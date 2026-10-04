@@ -102,7 +102,7 @@ class Chosen:
     token: KeyReference
     base_url: str
     project: Project
-    account_email: str
+    account_email: str | None
 
 
 async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | None) -> Chosen | None:
@@ -226,10 +226,16 @@ async def sign_in(http: httpx.AsyncClient, base_url: str, setup: Setup) -> str:
     raise SetupError('The sign-in link expired before it was approved. Run /plugins configure observability to retry.')
 
 
-async def _account_email(http: httpx.AsyncClient, base_url: str, user_token: str) -> str:
-    """The signed-in account's email, as the SDK's `LogfireClient.get_user_information` reads it."""
-    response = await _call(http.get(f'{base_url}/v1/account/me', headers={'Authorization': user_token}))
-    return _parse(_Account, response).email
+async def _account_email(http: httpx.AsyncClient, base_url: str, user_token: str) -> str | None:
+    """The signed-in account's email, from the SDK's `get_user_information` endpoint.
+
+    `None` when the server does not say: only the session root's tag needs it, so setup carries on.
+    """
+    try:
+        response = await _call(http.get(f'{base_url}/v1/account/me', headers={'Authorization': user_token}))
+        return _parse(_Account, response).email
+    except SetupError:
+        return None
 
 
 async def _projects(http: httpx.AsyncClient, base_url: str, user_token: str) -> list[Project]:

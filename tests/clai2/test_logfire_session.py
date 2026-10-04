@@ -103,7 +103,9 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     ]
     assert len(nested_runs) == len(tools) == 2
     assert [span.parent for span in nested_runs] == [span.context for span in tools]
-    ui = [span for span in children if span.instrumentation_scope and span.instrumentation_scope.name == 'clai2']
+    ui = [
+        span for span in children if span.instrumentation_scope and span.instrumentation_scope.name == telemetry.SCOPE
+    ]
     assert bool(ui) is ui_events
     if ui_events:
         commands = [span for span in ui if span.name == 'command']
@@ -256,7 +258,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
     ui = [
         span
         for span in recorder.spans()
-        if span.name != 'CLAI session' and span.instrumentation_scope and span.instrumentation_scope.name == 'clai2'
+        if span is not roots[0] and span.instrumentation_scope and span.instrumentation_scope.name == telemetry.SCOPE
     ]
     assert bool(ui) is ui_events
     if ui_events:

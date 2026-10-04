@@ -380,13 +380,12 @@ be recorded. Logfire's usual scrubbing is enabled.
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
 `LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
 sets `token`, `base_url`, `account_email`, and `send_to_logfire` for you (`R` on
-it clears `token`, `base_url`, and `account_email` again): it asks
-where traces go, runs Logfire's own device sign-in there (the one behind
-`logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
-accepts), lists the projects you can write to, and saves a new write token for
-the one you pick in `/keys`. The sign-in token is used only during setup, to read
-your account's email and mint the write token. The flow
-lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+it clears `token`, `base_url`, and `account_email` again): it asks where traces
+go, runs Logfire's own device sign-in there (the one behind `logfire auth`, not
+`logfire_mcp`'s MCP OAuth, whose tokens only the MCP server accepts), reads your
+account's email, lists the projects you can write to, and saves a new write
+token for the one you pick in `/keys`. The sign-in token is used only during
+setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 
 Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
@@ -397,20 +396,21 @@ same saved conversation IDs.
 `user_tag` (default `logfire-account`) tags each session root, and only the
 root, with your email, as a Logfire tag and the `user.email` attribute.
 `logfire-account` uses `account_email`, the account that signed in during the
-**Logfire project** setup; a token from elsewhere, or a setup made before this
-setting existed, has none, so roots stay untagged until setup runs again.
+**Logfire project** setup; a token from elsewhere, a setup made before this
+setting existed, or a server that does not report the email leaves it unset, so
+roots stay untagged until setup runs again.
 `git-email` uses `git config user.email` (Git is queried only then), and `false`
 turns the tag off. Set **User tag** in `/plugins configure observability`.
 
 `ui_events` (default `false`) also records CLAI's UI interactions on the same
 instance, as spans and logs in the `clai2` instrumentation scope, which session
-roots and plugin load failures share: menus opened
-and how they closed, slash commands, `/set` changes, plugin actions, `/keys`
-saves and prompts, prompt submissions, steering, interrupts, completions, and
-session start, clear, and resume. Attributes carry names and listed choices,
-never prompt text, typed values, or secrets. The chokepoints live in
-`pydantic_clai2.ui.telemetry`, and `run_worker` opens every menu's span, so a new
-menu is covered without extra code.
+roots and plugin load failures share: menus opened and how they closed, slash
+commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
+submissions, steering, interrupts, completions, and session start, clear, and
+resume. Attributes carry names and listed choices, never prompt text, typed
+values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
+`run_worker` opens every menu's span, so a new menu is covered without extra
+code.
 With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `setting`, `key_name`, ...) are exempt from scrubbing, since names like
 `OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.

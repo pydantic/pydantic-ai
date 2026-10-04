@@ -1691,8 +1691,8 @@ reloading starts new traces with the same saved conversation IDs.
 Each session root is tagged with your email, as a Logfire tag and the
 `user.email` attribute, never on child spans or logs. `user_tag` picks where it
 comes from. The default, `logfire-account`, uses the account you signed in with
-when you set up the **Logfire project** (below); it is the account that already
-owns the project, so the tag reveals nothing new to it. With a token from
+when you set up the **Logfire project** (below); that account already has access
+to the project, so the tag reveals nothing new to it. With a token from
 `LOGFIRE_TOKEN`, the credentials file, or a setup made before this setting
 existed, there is no sign-in email and roots are not tagged until you run the
 setup again. `git-email` uses `git config user.email` instead (Git is only

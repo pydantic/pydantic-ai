@@ -249,8 +249,6 @@ async def test_a_missing_browser_says_to_open_the_link(browser: bool | None, not
             'sent a sign-in link that is not https',
         ),
         (FakeLogfire(polls=[refuse] * 4), 'Lost contact with https://logfire-us.pydantic.dev'),
-        (FakeLogfire(account=httpx.Response(401)), 'Logfire refused /v1/account/me (HTTP 401)'),
-        (FakeLogfire(account=httpx.Response(200, json={'name': 'Mike'})), 'answered /v1/account/me with something'),
         (FakeLogfire(projects=httpx.Response(200, json=[])), 'You cannot write to any project'),
         (FakeLogfire(projects=httpx.Response(200, json={'bad': True})), 'answered the project list with something'),
         (FakeLogfire(write_token=httpx.Response(403)), 'Logfire refused /v1/organizations/pydantic'),
@@ -265,6 +263,18 @@ async def test_failures_say_what_went_wrong_and_save_nothing(
         await configure(host, Harness(server=server).setup(runners))
     assert host.settings(LogfireSettings) == LogfireSettings()
     assert load_keys() == {}
+
+
+@pytest.mark.parametrize(
+    'account', [refuse, httpx.Response(401), httpx.Response(200, json={'id': 'u-1', 'name': 'Mike'})]
+)
+async def test_an_unknown_account_email_still_sets_up_the_project(account: Answer, configure: Configure) -> None:
+    host = make_host()
+    harness = Harness(server=FakeLogfire(account=account))
+    await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
+    saved = host.settings(LogfireSettings)
+    assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
+    assert saved.account_email is None
 
 
 async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatch, configure: Configure) -> None:
