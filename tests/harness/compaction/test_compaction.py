@@ -3846,6 +3846,27 @@ class TestStructuralFeaturesThroughAgent:
             assert ('first' in _user_texts(request)) is preserve_first_user_message
             assert _receipt_parts(request[:1])
 
+    async def test_receipt_token_reservation_keeps_the_current_request(self):
+        # The token trigger reserves room for the receipt out of `keep_tokens`; the newest
+        # message must still survive even when that reservation exhausts the budget.
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_tokens=10, keep_tokens=5, receipts=True, preserve_first_user_message=False, tokenizer=len
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('a' * 20), _assistant('b' * 20), _user('c' * 20)]
+        prompts = ['one', 'two', 'three']
+        for prompt in prompts:
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        for request, prompt in zip(seen, prompts, strict=True):
+            assert _user_texts(request)[-1] == prompt
+            assert _receipt_parts(request[:1])
+
     async def test_pin_survives_compaction_in_a_run(self):
         seen: list[list[ModelMessage]] = []
         agent = Agent(
