@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -387,3 +388,52 @@ def test_legacy_shape_tolerates_a_sparse_state() -> None:
     assert sparse.all_messages() == []
     assert sparse.usage == RunUsage()
     assert UUID(sparse.run_id).version == 7
+
+
+def _resolve(schema: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
+    """Follow `node` to its definition in `schema` when it is a `$ref`."""
+    if '$ref' in node:
+        return schema['$defs'][node['$ref'].removeprefix('#/$defs/')]
+    return node
+
+
+def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
+    """The published input schema describes the public keys, not the private dataclass fields.
+
+    The JSON schema is generated from the dataclass, but the validator replaces its fields with the
+    public ones, so without the override an `AgentRunResult` in an API request model advertised
+    `_state` and pulled `GraphAgentState`, tool schemas included, into the published `$defs`.
+    """
+    adapter = TypeAdapter(AgentRunResult[str])
+    validation = adapter.json_schema(mode='validation')
+    serialization = adapter.json_schema(mode='serialization')
+    accepted = _resolve(validation, validation)
+    produced = _resolve(serialization, serialization)
+
+    assert set(accepted['properties']) == set(produced['properties'])
+    assert accepted['required'] == ['output']
+    assert accepted['title'] == produced['title'] == 'AgentRunResult'
+    assert not [
+        name
+        for name in ('_state', '_new_message_index', 'GraphAgentState', 'ModelRequestParameters')
+        if name in json.dumps(validation)
+    ]
+    assert adapter.validate_python({'output': 'hi'}).output == 'hi'
+
+
+def test_each_output_type_keeps_its_own_validation_schema() -> None:
+    """Two parameterizations in one API each publish their own `output`, not one shared definition."""
+
+    class City(BaseModel):
+        name: str
+
+    class Request(BaseModel):
+        text: AgentRunResult[str]
+        city: AgentRunResult[City]
+
+    schema = Request.model_json_schema(mode='validation')
+    text = _resolve(schema, schema['properties']['text'])
+    city = _resolve(schema, schema['properties']['city'])
+
+    assert text['properties']['output'] == {'title': 'Output', 'type': 'string'}
+    assert city['properties']['output'] == {'$ref': '#/$defs/City'}
