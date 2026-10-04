@@ -17,6 +17,7 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -43,6 +44,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -148,6 +150,7 @@ class FunctionModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        _check_instruction_deltas_projected(messages)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -188,6 +191,7 @@ class FunctionModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
+        _check_instruction_deltas_projected(messages)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -415,6 +419,17 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+def _check_instruction_deltas_projected(messages: Iterable[ModelMessage]) -> None:
+    """Reject canonical instruction changes before they reach the user's callback, like any adapter would."""
+    if any(
+        isinstance(part, InstructionDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        raise _unprojected_instruction_delta_error()
+
+
 def _estimate_usage(  # noqa: C901
     messages: Iterable[ModelMessage], *, allow_tool_availability_deltas: bool = False
 ) -> usage.RequestUsage:
@@ -438,6 +453,8 @@ def _estimate_usage(  # noqa: C901
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
+                elif isinstance(part, InstructionDeltaPart):  # pragma: no cover
+                    raise _unprojected_instruction_delta_error()
                 elif isinstance(part, ToolAvailabilityDeltaPart):
                     if not allow_tool_availability_deltas:
                         raise _unsynthesized_tool_availability_delta_error()

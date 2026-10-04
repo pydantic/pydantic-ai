@@ -26,6 +26,7 @@ from ..messages import (
     CachePoint,
     CompactionPart,
     FilePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -55,6 +56,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
@@ -2084,6 +2086,8 @@ def _request_entry(part: ModelRequestPart) -> JsonValue:
         return {'retry': part.model_response()}
     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
         raise _unsynthesized_tool_availability_delta_error()
+    elif isinstance(part, InstructionDeltaPart):  # pragma: no cover
+        raise _unprojected_instruction_delta_error()
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
         raise _unconverted_speech_part_error()

@@ -65,6 +65,7 @@ from ._deferred_capabilities import (
 )
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
+from ._instructions import update_instruction_history
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -76,6 +77,7 @@ from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -854,6 +856,7 @@ def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
         run_id=request.run_id,
         conversation_id=request.conversation_id,
         metadata=request.metadata,
+        instruction_baseline=request.instruction_baseline,
     )
 
 
@@ -942,6 +945,10 @@ def _apply_instruction_parts(
     """
     if instruction_parts is not None:
         request.instructions = _messages.InstructionPart.join(instruction_parts)
+        # Append-mode requests retain structured prefixes for replay; ordinary rewrite-mode
+        # history continues to record only the rendered instructions.
+        if request.instruction_parts is not None:
+            request.instruction_parts = instruction_parts
 
 
 async def _prepare_request_parameters(
@@ -1715,6 +1722,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        if instruction_parts is None and any(
+            isinstance(message, _messages.ModelRequest) and message.instruction_baseline is not None
+            for message in _messages.post_compaction_window(ctx.state.message_history)
+        ):
+            # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
+            instruction_parts = []
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
@@ -1772,7 +1785,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
+        instruction_source = _get_history_instructions_source(ctx.state.message_history)
+        instruction_parts = (
+            instruction_source.instruction_parts
+            if instruction_source is not None and instruction_source.instruction_parts is not None
+            else [_messages.InstructionPart(content=instructions)]
+            if instructions
+            else None
+        )
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
@@ -1856,7 +1876,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
 
             # Instruction parts are request configuration, but the message recording the
-            # current step must still reflect what was actually sent.
+            # current step must still reflect what was actually sent. Append-on-change blocks are
+            # resolved against the processed history: only a baseline that survived processing can
+            # anchor the prefix.
+            model_request_parameters = replace(
+                model_request_parameters,
+                instruction_parts=update_instruction_history(messages, model_request_parameters.instruction_parts),
+            )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
 
             if self.is_resuming_without_prompt:
@@ -1990,6 +2016,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             if instructions_target is not None:
                 _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
+
+            if any(
+                isinstance(part, _messages.InstructionDeltaPart)
+                for message in messages
+                if isinstance(message, _messages.ModelRequest)
+                for part in message.parts
+            ):
+                # Projection can split a foreign native tool-search exchange into a trailing
+                # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
+                # frontier, so its tool calls must not get synthesized returns.
+                messages = _merge_consecutive_messages(model.prepare_messages(messages, model_request_parameters))
+                request_context.messages = messages
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters

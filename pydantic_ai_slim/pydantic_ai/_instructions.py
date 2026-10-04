@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import warnings
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, replace
-from typing import Generic
+from typing import Generic, Literal
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionId, InstructionPart, InstructionSource
+from pydantic_ai.messages import (
+    InstructionBaselineEntry,
+    InstructionDeltaPart,
+    InstructionId,
+    InstructionPart,
+    InstructionSource,
+    ModelMessage,
+    ModelRequest,
+    post_compaction_window,
+)
 from pydantic_ai.template import TemplateStr
 
 from . import _system_prompt
@@ -53,6 +64,7 @@ class SourcedInstruction(Generic[AgentDepsT]):
     name: str | None = None
     id: InstructionId | None = None
     dynamic: bool = False
+    on_change: Literal['rewrite', 'append'] = 'rewrite'
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -106,7 +118,7 @@ async def resolve_sourced_instructions(
     for sourced in instructions:
         instruction = sourced.instruction
         if isinstance(instruction, InstructionPart):
-            if not (content := instruction.content.strip()):
+            if not (content := instruction.content.strip()) and instruction.on_change != 'append':
                 continue
             flush_group()
             group_key = None
@@ -119,8 +131,15 @@ async def resolve_sourced_instructions(
             group_key = sourced.id
             group.append(InstructionPart(content=content, id=sourced.id))
         else:
-            if content := await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context):
-                part = InstructionPart(content=content, name=sourced.name, id=sourced.id, dynamic=sourced.dynamic)
+            content = await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context)
+            if content or sourced.on_change == 'append':
+                part = InstructionPart(
+                    content=content or '',
+                    name=sourced.name,
+                    id=sourced.id,
+                    dynamic=sourced.dynamic,
+                    on_change=sourced.on_change,
+                )
                 if group:
                     pending_parts.append(part)
                 else:
@@ -156,6 +175,101 @@ def normalize_toolset_instruction_parts(
     parts: list[InstructionPart] = []
     for item in items:
         part = item if isinstance(item, InstructionPart) else InstructionPart(content=item, dynamic=True)
-        if part.content.strip():
+        if part.content.strip() or part.on_change == 'append':
             parts.append(part)
     return parts
+
+
+def update_instruction_history(
+    messages: Sequence[ModelMessage], instructions: list[InstructionPart] | None
+) -> list[InstructionPart] | None:
+    """Preserve the initial prefix and append changed instruction blocks to the outgoing request.
+
+    Run after history processing: only a baseline that survived processing can anchor the prefix.
+    Canonical records stay in history, independently of the provider's rendering of them.
+    """
+    current = instructions or []
+    counts = Counter(part.id for part in current)
+    normalized: list[InstructionPart] = []
+    for part in current:
+        if part.on_change == 'append' and (part.id is None or counts[part.id] > 1):
+            warnings.warn(
+                f'Instruction block {str(part.id) if part.id is not None else part.name!r} uses '
+                "`on_change='append'` without a unique instruction identity; rewriting its prefix. "
+                'Declare a unique `name` and an owning capability/toolset `id` where applicable.',
+                UserWarning,
+                stacklevel=2,
+            )
+            part = replace(part, on_change='rewrite')
+        normalized.append(replace(part, content=part.content.strip()) if part.on_change == 'append' else part)
+
+    baseline: dict[str, InstructionBaselineEntry] | None = None
+    effective: dict[str, str | None] = {}
+    for message in post_compaction_window(messages):
+        if not isinstance(message, ModelRequest):
+            continue
+        if message.instruction_baseline is not None:
+            baseline = message.instruction_baseline
+            effective = {instruction_id: entry.part.content or None for instruction_id, entry in baseline.items()}
+        if baseline is not None:
+            effective.update(
+                (part.id, part.content) for part in message.parts if isinstance(part, InstructionDeltaPart)
+            )
+
+    target = messages[-1]
+    assert isinstance(target, ModelRequest)
+    if instructions is None:
+        # Unset parts preserve the recorded request text and end the structured append window.
+        target.instruction_baseline = {} if baseline is not None else None
+        return None
+    if any(str(part.id) in effective and part.on_change != 'append' for part in normalized) or (
+        baseline is not None and any(entry.part.id is None for entry in baseline.values())
+    ):
+        # A changed policy or ambiguous identity can no longer address the old block safely, and
+        # neither can a baseline block from a source namespace this version doesn't know: models
+        # render its `<context id>` from the part's id, which didn't survive deserialization.
+        # Rebaseline the window so its old deltas cannot override the rewritten prefix.
+        baseline = None
+        effective.clear()
+        target.instruction_baseline = {}
+    if baseline is None:
+        if not any(part.on_change == 'append' for part in normalized):
+            # `normalized`, not `instructions`: a block downgraded to `'rewrite'` above must not be
+            # rendered as an append-mode block.
+            return normalized
+        baseline = {
+            str(part.id): InstructionBaselineEntry(index=index, part=replace(part))
+            for index, part in enumerate(normalized)
+            if part.on_change == 'append'
+        }
+        target.instruction_baseline = baseline
+    else:
+        current_parts: dict[str, list[InstructionPart]] = {}
+        for part in normalized:
+            if part.id is not None and (part.on_change == 'append' or str(part.id) in effective):
+                current_parts.setdefault(str(part.id), []).append(part)
+        current_values: dict[str, str | None] = {
+            instruction_id: InstructionPart.join(parts) for instruction_id, parts in current_parts.items()
+        }
+        changes = [
+            InstructionDeltaPart(id=instruction_id, content=current_values.get(instruction_id))
+            for instruction_id in dict.fromkeys([*effective, *current_values])
+            if effective.get(instruction_id) != current_values.get(instruction_id)
+        ]
+        if changes:
+            target.parts = [*target.parts, *changes]
+
+    # Non-opted-in instructions keep their current values. Initial append blocks retain their
+    # positions, including withdrawn ones; blocks first seen later are delivered only at the tail.
+    tracked = baseline.keys() | effective.keys()
+    prefix: list[InstructionPart] = [
+        part for part in normalized if part.on_change != 'append' and str(part.id) not in tracked
+    ]
+    # Parts keep only their content: each model renders the append-mode ones for its own delivery
+    # path in `Model.prepare_request`.
+    for entry in sorted(baseline.values(), key=lambda entry: entry.index):
+        prefix.insert(entry.index, entry.part)
+    prefix = [part for part in prefix if part.content]
+    target.instructions = InstructionPart.join(prefix)
+    target.instruction_parts = prefix
+    return prefix

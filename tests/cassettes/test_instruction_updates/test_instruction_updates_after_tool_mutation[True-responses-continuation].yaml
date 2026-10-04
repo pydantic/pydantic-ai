@@ -1,0 +1,201 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "636"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Process the todo.
+        instructions: |-
+          When the todo is pending, call finish_todo once. When it is done, reply DONE.
+
+          <context id="capability:todos:state">
+          Todo status: pending.
+          </context>
+          A later <context> element with the same id replaces this one.
+        model: gpt-5.6
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+        stream: true
+        tool_choice: auto
+        tools:
+        - name: finish_todo
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: Finish the pending todo.
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "309"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_006e87a281f04e92006abc2351d2c487d18e844114d41356e7","object":"response","created_at":1790714705,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When the todo is pending, call finish_todo once. When it is done, reply DONE.\n\n<context id=\"capability:todos:state\">\nTodo status: pending.\n</context>\nA later <context> element with the same id replaces this one.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Finish the pending todo.","name":"finish_todo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_006e87a281f04e92006abc2351d2c487d18e844114d41356e7","object":"response","created_at":1790714705,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When the todo is pending, call finish_todo once. When it is done, reply DONE.\n\n<context id=\"capability:todos:state\">\nTodo status: pending.\n</context>\nA later <context> element with the same id replaces this one.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Finish the pending todo.","name":"finish_todo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_006e87a281f04e92006abc235287a487d192f740dc2d7e86f9","type":"function_call","status":"in_progress","arguments":"","call_id":"call_YsWoDOpTRT7lqsOWvGbtxX3e","name":"finish_todo"},"output_index":0,"sequence_number":2}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{}","item_id":"fc_006e87a281f04e92006abc235287a487d192f740dc2d7e86f9","obfuscation":"pdJgNAbLbpbGrZ","output_index":0,"sequence_number":3}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{}","item_id":"fc_006e87a281f04e92006abc235287a487d192f740dc2d7e86f9","output_index":0,"sequence_number":4}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_006e87a281f04e92006abc235287a487d192f740dc2d7e86f9","type":"function_call","status":"completed","arguments":"{}","call_id":"call_YsWoDOpTRT7lqsOWvGbtxX3e","name":"finish_todo"},"output_index":0,"sequence_number":5}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_006e87a281f04e92006abc2351d2c487d18e844114d41356e7","object":"response","created_at":1790714705,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1790714706,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When the todo is pending, call finish_todo once. When it is done, reply DONE.\n\n<context id=\"capability:todos:state\">\nTodo status: pending.\n</context>\nA later <context> element with the same id replaces this one.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"fc_006e87a281f04e92006abc235287a487d192f740dc2d7e86f9","type":"function_call","status":"completed","arguments":"{}","call_id":"call_YsWoDOpTRT7lqsOWvGbtxX3e","name":"finish_todo"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Finish the pending todo.","name":"finish_todo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":96,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":15,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":111},"user":null,"metadata":{}},"sequence_number":6}
+
+  recorded_at: 2026-09-29T20:45:06.836232+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "865"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - type: function_call_output
+          call_id: call_YsWoDOpTRT7lqsOWvGbtxX3e
+          output: Saved.
+        - role: system
+          content: |-
+            <context id="capability:todos:state">
+            Todo status: done.
+            </context>
+        instructions: |-
+          When the todo is pending, call finish_todo once. When it is done, reply DONE.
+
+          <context id="capability:todos:state">
+          Todo status: pending.
+          </context>
+          A later <context> element with the same id replaces this one.
+        model: gpt-5.6
+        previous_response_id: resp_006e87a281f04e92006abc2351d2c487d18e844114d41356e7
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+        stream: true
+        tool_choice: auto
+        tools:
+        - name: finish_todo
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: Finish the pending todo.
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-processing-ms:
+      - "425"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_006e87a281f04e92006abc2352efc087d1b1e927dcf6c013d9","object":"response","created_at":1790714707,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When the todo is pending, call finish_todo once. When it is done, reply DONE.\n\n<context id=\"capability:todos:state\">\nTodo status: pending.\n</context>\nA later <context> element with the same id replaces this one.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_006e87a281f04e92006abc2351d2c487d18e844114d41356e7","prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Finish the pending todo.","name":"finish_todo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_006e87a281f04e92006abc2352efc087d1b1e927dcf6c013d9","object":"response","created_at":1790714707,"status":"in_progress","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When the todo is pending, call finish_todo once. When it is done, reply DONE.\n\n<context id=\"capability:todos:state\">\nTodo status: pending.\n</context>\nA later <context> element with the same id replaces this one.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_006e87a281f04e92006abc2351d2c487d18e844114d41356e7","prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Finish the pending todo.","name":"finish_todo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_006e87a281f04e92006abc2353bc0887d1881fd85d482a3fd3","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_006e87a281f04e92006abc2353bc0887d1881fd85d482a3fd3","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"DONE","item_id":"msg_006e87a281f04e92006abc2353bc0887d1881fd85d482a3fd3","logprobs":[],"obfuscation":"1gEU8he9KYu3","output_index":0,"sequence_number":4}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_006e87a281f04e92006abc2353bc0887d1881fd85d482a3fd3","logprobs":[],"output_index":0,"sequence_number":5,"text":"DONE"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_006e87a281f04e92006abc2353bc0887d1881fd85d482a3fd3","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"DONE"},"sequence_number":6}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_006e87a281f04e92006abc2353bc0887d1881fd85d482a3fd3","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"DONE"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":7}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_006e87a281f04e92006abc2352efc087d1b1e927dcf6c013d9","object":"response","created_at":1790714707,"status":"completed","access_programs":{"cyber":"daybreak_blue"},"background":false,"completed_at":1790714707,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"When the todo is pending, call finish_todo once. When it is done, reply DONE.\n\n<context id=\"capability:todos:state\">\nTodo status: pending.\n</context>\nA later <context> element with the same id replaces this one.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"msg_006e87a281f04e92006abc2353bc0887d1881fd85d482a3fd3","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"DONE"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":"resp_006e87a281f04e92006abc2351d2c487d18e844114d41356e7","prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"none","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Finish the pending todo.","name":"finish_todo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":147,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":152},"user":null,"metadata":{}},"sequence_number":8}
+
+  recorded_at: 2026-09-29T20:45:08.087815+00:00
