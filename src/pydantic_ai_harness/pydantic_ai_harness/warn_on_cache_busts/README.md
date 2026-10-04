@@ -13,13 +13,14 @@ it could have served from cache. `WarnOnCacheBusts` makes that collapse visible.
 
 This is the **observe** signal: it reads the provider's own verdict rather than
 guessing from the structured request. On each response it reads
-`usage.cache_read_tokens` and tracks the largest cacheable prefix the conversation
-has established (`cache_read_tokens + cache_write_tokens`, a high-water mark), keyed
-by the response's `(provider_name, provider_url, model_name)`. Because message
-history is append-only, a stable prefix means each request for that model reads back
-at least what the previous one cached, so any real shortfall is the observable
-signature of a collapse -- including a partial one, where a change deep in the
-history moves only the tail of the prefix.
+`usage.cache_read_tokens` and tracks the cacheable prefix the conversation has
+established (`cache_read_tokens + cache_write_tokens`; it grows with the prefix and
+re-baselines after a collapse), keyed by the response's
+`(provider_name, provider_url, model_name)`. Because message history is append-only,
+a stable prefix means each request for that model reads back at least what the
+previous one cached, so any real shortfall is the observable signature of a
+collapse -- including a partial one, where a change deep in the history moves only
+the tail of the prefix.
 
 When a request falls short of the established prefix by more than `min_missed_ratio`
 of it (5%) and by at least `min_missed_tokens` (2,000), the thresholds Claude Code

@@ -147,9 +147,9 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     """Warn when a conversation's prompt cache hit collapses between requests.
 
     Attach it to any agent whose model uses prompt caching. On each response the monitor
-    reads `usage.cache_read_tokens` and tracks the largest cacheable prefix the conversation
-    has established (`cache_read_tokens + cache_write_tokens`, a high-water mark), keyed by the
-    response's `(provider_name, provider_url, model_name)`. When a later request for the same
+    reads `usage.cache_read_tokens` and tracks the cacheable prefix the conversation has
+    established (`cache_read_tokens + cache_write_tokens`; it grows with the prefix and
+    re-baselines after a collapse), keyed by the response's `(provider_name, provider_url, model_name)`. When a later request for the same
     key falls short of that established prefix by more than `min_missed_ratio` of it and by at
     least `min_missed_tokens`, the collapse is classified against the provider's cache retention
     window, and a `CacheBustWarning` is emitted unless the window explains it. The mark then
