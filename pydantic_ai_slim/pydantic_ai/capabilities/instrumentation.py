@@ -421,7 +421,7 @@ class Instrumentation(AbstractCapability[Any]):
 
             with (
                 model_response_span_capture(request_context, capture_response),
-                observe_continuation_segments(segments.append),
+                observe_continuation_segments(request_context, segments.append),
             ):
                 try:
                     response = await handler(request_context)

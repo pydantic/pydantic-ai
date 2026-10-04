@@ -1228,7 +1228,7 @@ async def model_request(
                 raise
 
             new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
-            report_continuation_segment(new_response)
+            report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
                 if response.state == 'suspended':
@@ -1312,6 +1312,7 @@ async def model_request_stream(
             # it here so re-attaching it around each segment keeps `get_current_span()`-driven span
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
+            request_context=request_context,
         )
         try:
             yield sr

@@ -289,6 +289,38 @@ def test_response_rejected_by_a_later_hook_still_counts() -> None:
     ]
 
 
+def test_nested_agent_request_is_not_taken_for_a_continuation_segment() -> None:
+    """A request made by a nested agent inside an instrumented request is its own, not one of that request's segments."""
+
+    def nested_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('nested')],
+            usage=RequestUsage(input_tokens=20000, cache_read_tokens=100),
+            provider_name='test',
+        )
+
+    nested_agent = Agent(FunctionModel(nested_model_function, model_name='cache-model'))
+
+    @dataclass
+    class RunNestedAgent(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            await nested_agent.run('nested')
+            return response
+
+    spans, _ = cache_spans(
+        [CacheUsage(write=15000), CacheUsage(read=15000)],
+        retention=timedelta(hours=1),
+        capabilities=[RunNestedAgent()],
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 15000},
+        {'pydantic_ai.cache.hit_ratio': 0.75, 'pydantic_ai.cache.established_tokens': 15000},
+    ]
+
+
 @pytest.mark.parametrize(
     ('retention', 'prompt', 'reason', 'has_event'),
     [
