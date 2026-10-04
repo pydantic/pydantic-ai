@@ -1,1 +1,1 @@
-baseline edit fixture
+edited fixture data only
