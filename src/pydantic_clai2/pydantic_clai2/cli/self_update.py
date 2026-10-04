@@ -36,11 +36,11 @@ DISTRIBUTION = 'pydantic-clai2'
 REPOSITORY = 'https://github.com/pydantic/pydantic-ai'
 PACKAGES = {
     'pydantic-clai2': 'src/pydantic_clai2',
-    'pydantic-ai-harness': 'src/pydantic_ai_harness',
-    'pydantic-ai-slim': 'pydantic_ai_slim',
+    'pydantic-ai-harness[coder]': 'src/pydantic_ai_harness',
+    'pydantic-ai-slim[anthropic,mcp,openai]': 'pydantic_ai_slim',
     'pydantic-graph': 'pydantic_graph',
 }
-"""Source subdirectories installed together from one commit's archive."""
+"""Requirements and source subdirectories installed together from one commit's archive."""
 VERSION_BYPASS = 'UV_DYNAMIC_VERSIONING_BYPASS'
 """The build backend reads versions from Git history, which an archive lacks; this supplies one instead."""
 _ARCHIVE = re.compile(re.escape(REPOSITORY) + r'/archive/([0-9a-f]{40})\.tar\.gz')
@@ -143,19 +143,19 @@ class Update:
         return f'{name} @ {REPOSITORY}/archive/{self.target}.tar.gz#subdirectory={PACKAGES[name]}'
 
     def overrides(self) -> str:
-        """Replace CLAI's exact pins on the other packages with the same archive; uv keeps these in its receipt."""
-        return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES if name != DISTRIBUTION)
+        """Install CLAI and its pinned packages from one archive, preserving extras that uv overrides replace."""
+        return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def environment(self) -> dict[str, str]:
         """Variables uv's build needs: a version for the Git-less archive, `0.0.0` with the commit attached."""
-        return {} if self.channel == 'stable' else {VERSION_BYPASS: f'0.0.0+{self.label}'}
+        return {} if self.channel == 'stable' else {VERSION_BYPASS: f'0.0.0+{self.target}'}
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
         """The `uv tool install` that replaces the current install; bleeding reads `overrides`."""
         if self.channel == 'stable':
             return [uv, 'tool', 'install', '--force', f'{DISTRIBUTION}=={self.target}']
         assert overrides is not None, 'a bleeding install needs the overrides file'
-        return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), self.requirement(DISTRIBUTION)]
+        return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), DISTRIBUTION]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:

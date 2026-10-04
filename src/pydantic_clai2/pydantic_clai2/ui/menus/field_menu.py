@@ -251,7 +251,7 @@ ListRunner = Callable[[Menu], MenuResult]
 TextRunner = Callable[[TextInput], TextInputResult]
 
 
-def run_menu(menu: Menu) -> MenuResult:  # pragma: no cover -- needs a real terminal.
+def run_menu(menu: Menu) -> MenuResult:
     """Show a termflow menu on the real terminal."""
     return menu.run()
 
