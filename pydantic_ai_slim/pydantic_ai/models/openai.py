@@ -1009,6 +1009,21 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `'in_progress'`), the agent automatically polls for completion using `retrieve()`.
     """
 
+    openai_prompt_cache_diagnostics: bool
+    """Whether to request [prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics). Defaults to `True`.
+
+    On models that support them (GPT-5.6 and later on the OpenAI API), each request whose message history holds an
+    earlier OpenAI response passes that response's ID as `prompt_cache_options.comparison_response_id`, and OpenAI
+    reports whether the new request could reuse its cached prefix, and if not, why. The result is available in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under the
+    `'prompt_cache_diagnostics'` key, as OpenAI's `prompt_cache_diagnostics` object: `{'type': 'cache_hit'}`,
+    `{'type': 'cache_miss', 'reason': ..., 'cache_missed_tokens': ..., 'comparison_reusable_tokens': ...}`,
+    `{'type': 'comparison_response_not_found'}` or `{'type': 'unavailable'}`.
+
+    Diagnostics are free, don't affect caching or latency, and work with `openai_store=False`.
+    Set this to `False` to leave `comparison_response_id` off the request.
+    """
+
 
 def _resolve_openai_service_tier(
     model_settings: OpenAIChatModelSettings,
@@ -2630,6 +2645,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
             provider_details['service_tier'] = response.service_tier
+        if response.prompt_cache_diagnostics is not None:
+            provider_details['prompt_cache_diagnostics'] = response.prompt_cache_diagnostics.model_dump(mode='json')
 
         state = _response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
@@ -2909,8 +2926,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         # The SDK's Responses `PromptCacheOptions` has keys ours doesn't expose, so the TypedDicts aren't assignable.
         prompt_cache_options: ResponsesPromptCacheOptions | Omit = OMIT
-        if (cache_options := model_settings.get('openai_prompt_cache_options')) is not None:
-            prompt_cache_options = ResponsesPromptCacheOptions(**cache_options)
+        cache_options = model_settings.get('openai_prompt_cache_options')
+        comparison_response_id = self._prompt_cache_comparison_response_id(messages, model_settings)
+        if cache_options is not None or comparison_response_id is not None:
+            prompt_cache_options = (
+                ResponsesPromptCacheOptions(**cache_options)
+                if cache_options is not None
+                else ResponsesPromptCacheOptions()
+            )
+            if comparison_response_id is not None:
+                prompt_cache_options['comparison_response_id'] = comparison_response_id
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
@@ -3318,6 +3343,27 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if setting == 'auto' or self._is_at_compaction_boundary(messages):
             return None, messages
         return setting, messages
+
+    def _prompt_cache_comparison_response_id(
+        self, messages: list[ModelRequest | ModelResponse], model_settings: OpenAIResponsesModelSettings
+    ) -> str | None:
+        """The response to compare this request against for prompt cache diagnostics, if they should be requested.
+
+        That is the most recent response from this provider. OpenAI rejects an ID that doesn't start with `resp` with
+        a 400, so a response from an endpoint that issues other IDs is skipped. So is one from the `/compact`
+        endpoint: like `previous_response_id`, it's a boundary, and a request after it starts a new prefix anyway.
+        """
+        if not model_settings.get('openai_prompt_cache_diagnostics', True) or not self.profile.get(
+            'openai_responses_supports_prompt_cache_diagnostics', False
+        ):
+            return None
+        for message in reversed(messages):
+            if isinstance(message, ModelResponse) and message.provider_name == self.system:
+                if message.provider_details and message.provider_details.get('compaction'):
+                    return None
+                response_id = message.provider_response_id
+                return response_id if response_id and response_id.startswith('resp_') else None
+        return None
 
     def _is_at_compaction_boundary(self, messages: list[ModelMessage]) -> bool:
         for m in reversed(messages):
@@ -4440,6 +4486,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         # Only terminal events report the tier that served the request; earlier ones echo the requested tier.
         if service_tier := response.service_tier:
             self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
+        # Likewise, earlier events can report prompt cache diagnostics as `unavailable` before the comparison has finished.
+        if (diagnostics := response.prompt_cache_diagnostics) is not None:
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
+            }
 
     async def close_stream(self) -> None:
         await self._response.source.close()
