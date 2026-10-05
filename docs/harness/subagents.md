@@ -432,6 +432,17 @@ output settles. Reports are routed to the direct parent; an idle parent receives
 pending reports on its next explicitly started run. Enqueue delivery is acknowledged
 only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
 
+The model can manage the tasks it started, too: with an owner bound, `SubAgents` also
+offers `list_tasks` and `stop_task(task_id)`. `list_tasks` lists each task's ID, agent,
+status or outcome, foreground or background mode, start time, and the first 80
+characters of its task. `stop_task` calls `cancel(task_id, user=False)`, stopping the
+task and its descendants without marking it as user-stopped, so the model can later
+continue it with `delegate_task(resume=task_id)` unless it is one-shot. The tool's result
+stands in for the stopped task's report, so no report follows. A top-level run reaches
+every task in its conversation; a delegated run reaches only the tasks below it, so it
+cannot list or stop its siblings or its parent. Neither tool is offered without an
+owner or to a run at `max_depth`, which cannot delegate.
+
 An observer receives `DelegationTaskEvent`, with the task identity and an optional
 correlated child stream event. Managed start/end events carry `task_id` and
 `parent_id`. Managed cancellation and uncontained exceptions produce terminal

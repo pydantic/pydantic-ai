@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from decimal import Decimal
 from pathlib import Path
 
@@ -770,3 +770,197 @@ async def test_rejects_cyclic_persisted_ancestry(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match='Cyclic'):
         async with DelegationTasks(directory=tmp_path).opened():
             pytest.fail('Invalid ancestry must not reach task controls')  # pragma: no cover
+
+
+def scripted(respond: Callable[[list[ModelMessage]], Awaitable[ModelResponse]]) -> FunctionModel:
+    """A model whose requests and streamed requests both answer with `respond`."""
+
+    async def function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return await respond(messages)
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        response = await respond(messages)
+        for index, part in enumerate(response.parts):
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {
+                    index: DeltaToolCall(
+                        name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id
+                    )
+                }
+
+    return FunctionModel(function=function, stream_function=stream)
+
+
+def call(tool_name: str, **args: object) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart(tool_name, args)])
+
+
+def results(messages: list[ModelMessage], tool_name: str) -> list[str]:
+    """What the model was told for each call to `tool_name`, as a result or a retry prompt."""
+    return [
+        str(part.content)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_name == tool_name
+    ]
+
+
+async def test_stop_task_stops_a_background_child_and_its_descendants() -> None:
+    leaf_started = asyncio.Event()
+    long_task = 'Investigate why the nightly build fails on Windows only, and report every flaky test you find there.'
+
+    async def leaf_respond(messages: list[ModelMessage]) -> ModelResponse:
+        leaf_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    async def child_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='leaf', task='dig deeper', background=True)
+        # The child's output waits for its background leaf, so it stays running until stopped.
+        return ModelResponse(parts=[TextPart('child done')])
+
+    owner = DelegationTasks(max_depth=3)
+    leaf = Agent(scripted(leaf_respond), deps_type=object, name='leaf')
+    child = Agent(
+        scripted(child_respond),
+        deps_type=object,
+        name='worker',
+        capabilities=[SubAgents(agents=[SubAgent(leaf)], agent_folders=None)],
+    )
+
+    async def parent_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='worker', task=long_task, background=True)
+        if not results(messages, 'list_tasks'):
+            await leaf_started.wait()
+            return call('list_tasks')
+        if not results(messages, 'stop_task'):
+            (worker,) = [r for r in owner.records.values() if r.agent_name == 'worker']
+            return call('stop_task', task_id=worker.id)
+        return ModelResponse(parts=[TextPart('stopped')])
+
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(
+                    scripted(parent_respond),
+                    capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+                )
+                result = await parent.run(
+                    'go',
+                    conversation_id='root',
+                    capabilities=[DelegationReports(owner, conversation_id='root')],
+                )
+            worker, grandchild = owner.records.values()
+            messages = result.all_messages()
+            (listing,) = results(messages, 'list_tasks')
+            worker_line, grandchild_line = listing.splitlines()
+            assert worker_line.startswith(f'- {worker.id} (worker): running, background, started ')
+            assert worker_line.endswith(f'Task: {long_task[:77]}...')
+            assert grandchild_line.startswith(f'- {grandchild.id} (leaf): running, background, started ')
+            assert grandchild_line.endswith(f', started by task {worker.id}. Task: dig deeper')
+            assert results(messages, 'stop_task') == [f'Task {worker.id}: running -> stopped.']
+            assert (worker.outcome, grandchild.outcome) == ('cancelled', 'cancelled')
+            # The stop result is the report: no automated report about the stopped task follows.
+            assert 'Automated subagent task report' not in str(messages)
+            # A model-requested stop is not a user stop, so the task can be resumed.
+            assert not worker.user_stopped and not grandchild.user_stopped
+            assert 'done' in await delegate(owner, resume=worker.id)
+
+
+async def test_task_controls_only_reach_the_conversations_own_tasks() -> None:
+    owner = DelegationTasks()
+    child = Agent(TestModel(), deps_type=object, name='worker')
+    async with owner.opened():
+        await delegate(owner, conversation_id='other')
+        await delegate(owner, conversation_id='root')
+        other, mine = owner.records.values()
+
+        async def respond(messages: list[ModelMessage]) -> ModelResponse:
+            stops = results(messages, 'stop_task')
+            if not stops:
+                return ModelResponse(
+                    parts=[ToolCallPart('list_tasks', {}), ToolCallPart('stop_task', {'task_id': other.id})]
+                )
+            if len(stops) == 1:
+                return call('stop_task', task_id=mine.id)
+            if len(stops) == 2:
+                return call('stop_task', task_id='missing')
+            return ModelResponse(parts=[TextPart('done')])
+
+        with owner.bind():
+            parent = Agent(scripted(respond), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+            result = await parent.run('go', conversation_id='root')
+            (listing,) = results(result.all_messages(), 'list_tasks')
+            assert listing.startswith(f'- {mine.id} (worker): finished (ok), foreground, started ')
+            assert listing.endswith('Task: go')
+            assert results(result.all_messages(), 'stop_task') == [
+                f'Unknown task {other.id!r}. Call `list_tasks` to see the tasks you started.',
+                f'Task {mine.id} had already finished (ok); nothing to stop.',
+                "Unknown task 'missing'. Call `list_tasks` to see the tasks you started.",
+            ]
+            assert other.outcome == mine.outcome == 'ok'
+
+            empty = Agent(
+                TestModel(call_tools=['list_tasks']),
+                capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+            )
+            result = await empty.run('go', conversation_id='fresh')
+            assert results(result.all_messages(), 'list_tasks') == ['No tasks started yet.']
+
+
+async def test_a_delegated_run_only_reaches_its_own_descendants() -> None:
+    owner = DelegationTasks(max_depth=3)
+    leaf = Agent(TestModel(custom_output_text='leaf done'), deps_type=object, name='leaf')
+
+    async def worker_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='leaf', task='leaf work')
+        listing = results(messages, 'list_tasks')
+        if not listing:
+            return call('list_tasks')
+        return ModelResponse(parts=[TextPart(listing[0])])
+
+    worker = Agent(
+        scripted(worker_respond),
+        deps_type=object,
+        name='worker',
+        capabilities=[SubAgents(agents=[SubAgent(leaf)], agent_folders=None)],
+    )
+
+    async def parent_respond(messages: list[ModelMessage]) -> ModelResponse:
+        delegated = results(messages, 'delegate_task')
+        if len(delegated) < 2:
+            return call('delegate_task', agent_name='worker', task=f'pass {len(delegated) + 1}')
+        return ModelResponse(parts=[TextPart('done')])
+
+    async with owner.opened():
+        await delegate(owner)
+        with owner.bind():
+            parent = Agent(
+                scripted(parent_respond), capabilities=[SubAgents(agents=[SubAgent(worker)], agent_folders=None)]
+            )
+            await parent.run('go', conversation_id='root')
+        _, first, first_leaf, second, second_leaf = owner.records.values()
+        assert first.output.startswith(f'- {first_leaf.id} (leaf): finished (ok), foreground, started ')
+        assert first.output.endswith('Task: leaf work')
+        assert second.output.startswith(f'- {second_leaf.id} (leaf): finished (ok), foreground, started ')
+        assert len(first.output.splitlines()) == len(second.output.splitlines()) == 1
+
+
+async def test_task_controls_need_an_owner() -> None:
+    offered: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.extend(tool.name for tool in info.function_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    child = Agent(TestModel(), deps_type=object, name='worker')
+    agent = Agent(FunctionModel(respond), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+    await agent.run('go')
+    assert offered == ['delegate_task']

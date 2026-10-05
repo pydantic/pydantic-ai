@@ -1312,6 +1312,9 @@ Definition files are read as data and never executed.
   parent to continue the saved child. Explore and Plan cannot resume. The parent
   uses `delegate_task` with the same ID and agent name; it remains responsible
   for reviewing the child's result.
+- The model has its own **`list_tasks`** and **`stop_task`** tools for the tasks
+  it started. A task the model stopped, unlike one you stop, can be resumed by
+  the model without `/tasks resume`.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
 counts. Successful rows disappear on completion; failed and stopped rows remain

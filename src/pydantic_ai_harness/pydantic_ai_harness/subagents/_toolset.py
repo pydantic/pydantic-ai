@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncIterable, Coroutine, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
+from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Generic
 
@@ -274,13 +275,16 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # and tools become activities; an activity cannot run an agent (`ctx.model` is unavailable there).
         # Any other delegate would make its model requests in workflow code, so it stays an activity.
         self_only = include_self and not self._agents and not self._models
+        metadata: dict[str, Any] | None = {'temporal': False} if self_only else None
         self.add_function(
             self.delegate_task,
             name=tool_name,
             retries=tool_retries,
             prepare=self._prepare_delegate,
-            metadata={'temporal': False} if self_only else None,
+            metadata=metadata,
         )
+        self.add_function(self.stop_task, prepare=self._prepare_task_control, metadata=metadata)
+        self.add_function(self.list_tasks, prepare=self._prepare_task_control, metadata=metadata)
 
     def _prepare_delegate(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         """Shape the delegate tool's `model` argument to the configured menu, or hide it at `max_depth`.
@@ -312,6 +316,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             properties.pop('resume', None)
         schema['properties'] = properties
         return replace(tool_def, parameters_json_schema=schema)
+
+    def _prepare_task_control(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
+        """Offer `stop_task` and `list_tasks` only where this run can have started tasks: an open owner, below `max_depth`."""
+        if DelegationTasks.current() is None or at_max_depth(self._max_depth):
+            return None
+        return tool_def
 
     def _inherited_toolsets(self, ctx: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]] | None:
         """The parent agent's own toolsets, excluding capability-contributed ones.
@@ -432,6 +442,48 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 backgroundable=not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend),
             )
         return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key)
+
+    async def stop_task(self, ctx: RunContext[AgentDepsT], task_id: str) -> str:
+        """Stop a running background task you started.
+
+        Use it e.g. when you realize mid-flight the approach is wrong or the user changed requirements.
+        Pass the task_id from delegate_task's receipt. Tasks it started are stopped with it.
+        A stopped task can be continued later with delegate_task's `resume`.
+
+        Args:
+            ctx: The run context.
+            task_id: The ID of the task to stop.
+        """
+        owner = DelegationTasks.current()
+        # The tool is only offered while an owner is bound.
+        if owner is None:  # pragma: no cover
+            raise ModelRetry('Stopping a task requires an open `DelegationTasks` owner')
+        record = next((r for r in _owned_tasks(owner, ctx) if r.id == task_id), None)
+        if record is None:
+            raise ModelRetry(f'Unknown task {task_id!r}. Call `list_tasks` to see the tasks you started.')
+        if record.status == 'finished':
+            return f'Task {task_id} had already finished ({record.outcome}); nothing to stop.'
+        # This result is the stop's report, so the settled task is not reported to the parent again.
+        record.delivered = True
+        # Not a user stop: the model that stopped the task may resume it.
+        await owner.cancel(task_id, user=False)
+        return f'Task {task_id}: running -> stopped.'
+
+    async def list_tasks(self, ctx: RunContext[AgentDepsT]) -> str:
+        """List the tasks you started with delegate_task, and the tasks they started, with their IDs and status.
+
+        Args:
+            ctx: The run context.
+        """
+        owner = DelegationTasks.current()
+        # The tool is only offered while an owner is bound.
+        if owner is None:  # pragma: no cover
+            raise ModelRetry('Listing tasks requires an open `DelegationTasks` owner')
+        records = _owned_tasks(owner, ctx)
+        if not records:
+            return 'No tasks started yet.'
+        caller = DelegationTasks.child_id()
+        return '\n'.join(_task_line(record, nested=record.parent_id != caller) for record in records)
 
     def _resolve_agent(self, ctx: RunContext[AgentDepsT], agent_name: str) -> SubAgent[AgentDepsT]:
         """The delegate `agent_name` names, with the running agent resolved at call time for `include_self`.
@@ -692,6 +744,43 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if on_failure is not None:
             return on_failure
         return default
+
+
+_PROMPT_SNIPPET_CHARS = 80
+
+
+def _owned_tasks(owner: DelegationTasks, ctx: RunContext[Any]) -> list[DelegationTask]:
+    """The tasks the calling run may list and stop, oldest first.
+
+    A top-level run owns every task in its conversation. A delegated run owns only the tasks
+    below it, so a child cannot reach its siblings or the tasks of the run that started it.
+    """
+    caller = DelegationTasks.child_id()
+    if caller is None:
+        conversation_id = ctx.conversation_id or ctx.run_id or ''
+        return [r for r in owner.records.values() if r.conversation_id == conversation_id]
+
+    def below_caller(record: DelegationTask) -> bool:
+        parent = record.parent_id
+        while parent is not None:
+            if parent == caller:
+                return True
+            ancestor = owner.records.get(parent)
+            parent = ancestor.parent_id if ancestor is not None else None
+        return False
+
+    return [r for r in owner.records.values() if below_caller(r)]
+
+
+def _task_line(record: DelegationTask, *, nested: bool) -> str:
+    started = datetime.fromtimestamp(record.started_at, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    status = 'running' if record.status == 'running' else f'finished ({record.outcome})'
+    mode = 'background' if record.background else 'foreground'
+    prompt = ' '.join(record.prompt.split())
+    if len(prompt) > _PROMPT_SNIPPET_CHARS:
+        prompt = f'{prompt[: _PROMPT_SNIPPET_CHARS - 3]}...'
+    parent = f', started by task {record.parent_id}' if nested else ''
+    return f'- {record.id} ({record.agent_name}): {status}, {mode}, started {started}{parent}. Task: {prompt}'
 
 
 def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:
