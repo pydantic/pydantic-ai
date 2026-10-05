@@ -300,3 +300,5 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
   otherwise.
 - Azure AI Voice Live rides the same model behind `azure_voice_live=True`, against its own
   resource and beta session protocol; browser WebRTC is GA-only for now.
+- Voice Live's informational `warning` events are raised as Python `UserWarning`s, so escalating
+  warnings to errors ends the session.
