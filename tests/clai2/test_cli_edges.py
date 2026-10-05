@@ -12,6 +12,14 @@ import pytest
 from pydantic_clai2.config.settings_store import SettingsStore
 
 
+@pytest.fixture(autouse=True)
+def disable_subprocess_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Subprocess coverage adds import overhead to the CLI startup hang guard.
+    for name in tuple(os.environ):
+        if name.startswith('COVERAGE_'):
+            monkeypatch.delenv(name)
+
+
 @pytest.mark.parametrize('args', [[], ['--model', 'test', '--request-limit', '12'], ['--request-limit', '0']])
 def test_cli_startup(tmp_path: Path, args: list[str]) -> None:
     env = dict(os.environ, CLAI_NO_SPLASH='1')
