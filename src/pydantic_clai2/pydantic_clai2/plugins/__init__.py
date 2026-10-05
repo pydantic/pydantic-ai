@@ -474,7 +474,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return None
 
     async def configure(self) -> str:
-        """A settings menu, opened by `/plugins configure NAME`, `C` in `/plugins`, and on enable or add.
+        """A settings menu, opened by `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
 
         Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
         change with `host.save_settings` as the user makes it and return a line to show. When the
