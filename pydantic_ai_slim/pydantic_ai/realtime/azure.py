@@ -589,6 +589,13 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             sdp_offer=sdp_offer,
         )
 
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        # Azure OpenAI's calls can't be ended from the server yet: the call ends when the browser hangs up.
+        raise UserError(
+            'Hanging up an Azure OpenAI WebRTC call from the server is not supported yet, so `hang_up()` is '
+            'unavailable. The call ends when the browser hangs up.'
+        )
+
     async def create_client_secret(
         self,
         *,

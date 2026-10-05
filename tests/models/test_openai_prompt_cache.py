@@ -2292,8 +2292,9 @@ def test_openai_effective_cache_settings():
     assert model.resolve_cache_retention(OpenAIResponsesModelSettings(openai_cache_instructions=False)) == timedelta(
         minutes=30
     )
+    # A deprecated maximum on GPT-5.6, so it doesn't widen the default 30 minutes.
     assert model.resolve_cache_retention(OpenAIResponsesModelSettings(openai_prompt_cache_retention='24h')) == (
-        timedelta(hours=24)
+        timedelta(minutes=30)
     )
 
 

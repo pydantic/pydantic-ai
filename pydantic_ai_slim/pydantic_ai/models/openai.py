@@ -1145,7 +1145,13 @@ def _translate_openai_cache(
 
 def _resolve_cache_retention(model: Model[Any], model_settings: ModelSettings | None) -> timedelta | None:
     settings = merge_model_settings(model.settings, model_settings) or {}
-    if settings.get('openai_prompt_cache_retention') == '24h':
+    # On GPT-5.6 and later, `prompt_cache_retention` is a deprecated *maximum* that doesn't extend the
+    # 30-minute minimum OpenAI guarantees, so it says nothing about how long the prefix stays cached.
+    # https://developers.openai.com/api/docs/guides/prompt-caching
+    if (
+        not model.profile.get('openai_supports_prompt_cache_breakpoints', False)
+        and settings.get('openai_prompt_cache_retention') == '24h'
+    ):
         return timedelta(hours=24)
     return model._max_cache_retention(*model._effective_cache_settings(settings))  # pyright: ignore[reportPrivateUsage]
 

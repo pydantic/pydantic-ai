@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import pytest
+from pytest_mock import MockerFixture
 
+from pydantic_ai import ModelResponse, TextPart
+from pydantic_ai._cache_health import CacheHealthDetector, ConversationCacheMarkStore
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import try_import
 
@@ -40,9 +44,8 @@ def test_model_resolve_cache_retention_defaults_to_none() -> None:
 @pytest.mark.parametrize(
     ('setting', 'expected'),
     [
-        # GPT-5.6 caches with its 30-minute TTL by default.
-        (None, timedelta(minutes=30)),
-        ('in_memory', timedelta(minutes=30)),
+        (None, None),
+        ('in_memory', None),
         ('24h', timedelta(hours=24)),
     ],
 )
@@ -52,7 +55,7 @@ def test_openai_resolve_cache_retention(
     expected: timedelta | None,
 ) -> None:
     model_type = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
-    model = model_type('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
+    model = model_type('gpt-5.5', provider=OpenAIProvider(api_key='test-key'))
     settings = OpenAIChatModelSettings(openai_prompt_cache_retention=setting) if setting is not None else None
 
     assert model.resolve_cache_retention(settings) == expected
@@ -73,9 +76,47 @@ def test_openai_resolve_cache_retention_unified_cache(api: Literal['chat', 'resp
         )
         is None
     )
+    # `openai_prompt_cache_retention` doesn't widen the window on GPT-5.6 and later.
     assert model.resolve_cache_retention(
         OpenAIChatModelSettings(cache='5m', openai_prompt_cache_retention='24h')
-    ) == timedelta(hours=24)
+    ) == timedelta(minutes=30)
+
+
+@pytest.mark.parametrize('api', ['chat', 'responses'])
+def test_openai_prompt_cache_retention_does_not_widen_gpt_5_6_window(
+    mocker: MockerFixture, api: Literal['chat', 'responses']
+) -> None:
+    """On GPT-5.6 and later, `openai_prompt_cache_retention='24h'` is a deprecated maximum that doesn't extend
+    the 30-minute minimum, so a collapse after 45 idle minutes is an expired cache, not an unexpected one."""
+    model_type = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
+    model = model_type('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
+    settings = OpenAIChatModelSettings(openai_prompt_cache_retention='24h')
+    # The default unified `cache` setting's 30 minutes, not the 24 hours.
+    assert model.resolve_cache_retention(settings) == timedelta(minutes=30)
+
+    request_context = ModelRequestContext(
+        model=model, messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
+    )
+    detector = CacheHealthDetector(ConversationCacheMarkStore(), 'conversation', 'run', alert_on={'unexpected'})
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    mocker.patch('pydantic_ai._utils.now_utc', side_effect=[t0, t0 + timedelta(minutes=45)])
+
+    def response(*, read: int = 0, write: int = 0) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('done')],
+            usage=RequestUsage(input_tokens=20000, cache_read_tokens=read, cache_write_tokens=write),
+            model_name='gpt-5.6',
+            provider_name='openai',
+        )
+
+    assert detector.observe(request_context, response(read=14000)) is not None
+    health = detector.observe(request_context, response(read=1000))
+
+    assert health is not None
+    assert health.collapse is not None
+    assert health.collapse.retention == timedelta(minutes=30)
+    assert health.collapse.reason == 'ttl_expired'
+    assert not health.collapse.alert
 
 
 @pytest.mark.parametrize(
