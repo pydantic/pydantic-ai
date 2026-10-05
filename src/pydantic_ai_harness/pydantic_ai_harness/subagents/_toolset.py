@@ -451,26 +451,28 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         Use it e.g. when you realize mid-flight the approach is wrong or the user changed requirements.
         Pass the task_id from delegate_task's receipt. Tasks it started are stopped with it.
-        A stopped task can be continued later with delegate_task's `resume`.
+        The result says whether the stopped task can be continued later with delegate_task's `resume`.
 
         Args:
             ctx: The run context.
             task_id: The ID of the task to stop.
         """
         owner = DelegationTasks.current()
-        # The tool is only offered while an owner is bound.
-        if owner is None:  # pragma: no cover
-            raise ModelRetry('Stopping a task requires an open `DelegationTasks` owner')
+        assert owner is not None, '`stop_task` is only offered while a `DelegationTasks` owner is bound'
         record = next((r for r in _owned_tasks(owner, ctx) if r.id == task_id), None)
         if record is None:
             raise ModelRetry(f'Unknown task {task_id!r}. Call `list_tasks` to see the tasks you started.')
         if record.status == 'finished':
             return f'Task {task_id} had already finished ({record.outcome}); nothing to stop.'
-        # This result is the stop's report, so the settled task is not reported to the parent again.
-        record.delivered = True
+        if record.parent_id == DelegationTasks.child_id():
+            # The caller started this task, so this result is its report and none follows. A task
+            # started by a descendant still reports to that descendant, which is waiting for it.
+            record.delivered = True
         # Not a user stop: the model that stopped the task may resume it.
         await owner.cancel(task_id, user=False)
-        return f'Task {task_id}: running -> stopped.'
+        if record.resumable:
+            return f'Task {task_id}: running -> stopped. Continue it with delegate_task(resume={task_id!r}) if needed.'
+        return f'Task {task_id}: running -> stopped. It is one-shot and cannot be resumed.'
 
     async def list_tasks(self, ctx: RunContext[AgentDepsT]) -> str:
         """List the tasks you started with delegate_task, and the tasks they started, with their IDs and status.
@@ -479,9 +481,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             ctx: The run context.
         """
         owner = DelegationTasks.current()
-        # The tool is only offered while an owner is bound.
-        if owner is None:  # pragma: no cover
-            raise ModelRetry('Listing tasks requires an open `DelegationTasks` owner')
+        assert owner is not None, '`list_tasks` is only offered while a `DelegationTasks` owner is bound'
         records = _owned_tasks(owner, ctx)
         if not records:
             return 'No tasks started yet.'

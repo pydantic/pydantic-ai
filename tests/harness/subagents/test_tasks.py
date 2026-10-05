@@ -864,13 +864,69 @@ async def test_stop_task_stops_a_background_child_and_its_descendants() -> None:
             assert worker_line.endswith(f'Task: {long_task[:77]}...')
             assert grandchild_line.startswith(f'- {grandchild.id} (leaf): running, background, started ')
             assert grandchild_line.endswith(f', started by task {worker.id}. Task: dig deeper')
-            assert results(messages, 'stop_task') == [f'Task {worker.id}: running -> stopped.']
+            assert results(messages, 'stop_task') == [
+                f"Task {worker.id}: running -> stopped. Continue it with delegate_task(resume='{worker.id}') if needed."
+            ]
             assert (worker.outcome, grandchild.outcome) == ('cancelled', 'cancelled')
             # The stop result is the report: no automated report about the stopped task follows.
             assert 'Automated subagent task report' not in str(messages)
             # A model-requested stop is not a user stop, so the task can be resumed.
             assert not worker.user_stopped and not grandchild.user_stopped
             assert 'done' in await delegate(owner, resume=worker.id)
+
+
+async def test_a_stopped_nested_task_still_reports_to_its_own_parent() -> None:
+    leaf_started, worker_finished = asyncio.Event(), asyncio.Event()
+
+    async def leaf_respond(messages: list[ModelMessage]) -> ModelResponse:
+        leaf_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    async def worker_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='leaf', task='dig deeper', background=True)
+        return ModelResponse(parts=[TextPart('worker done')])
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        if update.task.agent_name == 'worker' and update.task.status == 'finished':
+            worker_finished.set()
+
+    owner = DelegationTasks(max_depth=3, one_shot=frozenset({'leaf'}), observer=observe)
+    leaf = Agent(scripted(leaf_respond), deps_type=object, name='leaf')
+    worker = Agent(
+        scripted(worker_respond),
+        deps_type=object,
+        name='worker',
+        capabilities=[SubAgents(agents=[SubAgent(leaf)], agent_folders=None)],
+    )
+
+    async def parent_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='worker', task='investigate', background=True)
+        if not results(messages, 'stop_task'):
+            await leaf_started.wait()
+            (nested,) = [r for r in owner.records.values() if r.agent_name == 'leaf']
+            return call('stop_task', task_id=nested.id)
+        return ModelResponse(parts=[TextPart('done')])
+
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(
+                    scripted(parent_respond),
+                    capabilities=[SubAgents(agents=[SubAgent(worker)], agent_folders=None)],
+                )
+                result = await parent.run('go', conversation_id='root')
+                await worker_finished.wait()
+            worker_record, leaf_record = owner.records.values()
+            assert results(result.all_messages(), 'stop_task') == [
+                f'Task {leaf_record.id}: running -> stopped. It is one-shot and cannot be resumed.'
+            ]
+            # The worker that started the stopped task is still told how it ended.
+            assert (worker_record.outcome, leaf_record.outcome) == ('ok', 'cancelled')
+            assert f'Task {leaf_record.id} (leaf), outcome: cancelled' in str(worker_record.messages)
+            assert leaf_record.delivered
 
 
 async def test_task_controls_only_reach_the_conversations_own_tasks() -> None:

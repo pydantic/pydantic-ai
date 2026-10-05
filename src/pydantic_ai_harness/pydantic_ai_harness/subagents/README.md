@@ -415,8 +415,10 @@ offers `list_tasks` and `stop_task(task_id)`. `list_tasks` lists each task's ID,
 status or outcome, foreground or background mode, start time, and the first 80
 characters of its task. `stop_task` calls `cancel(task_id, user=False)`, stopping the
 task and its descendants without marking it as user-stopped, so the model can later
-continue it with `delegate_task(resume=task_id)` unless it is one-shot. The tool's result
-stands in for the stopped task's report, so no report follows. A top-level run reaches
+continue it with `delegate_task(resume=task_id)` unless it is one-shot; the result says
+which. When the caller started the task itself, the tool's result stands in for the
+stopped task's report, so no report follows; a stopped task started by one of the
+caller's descendants still reports to that descendant. A top-level run reaches
 every task in its conversation; a delegated run reaches only the tasks below it, so it
 cannot list or stop its siblings or its parent. Neither tool is offered without an
 owner or to a run at `max_depth`, which cannot delegate.
