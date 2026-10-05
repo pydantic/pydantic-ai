@@ -5349,11 +5349,52 @@ async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> N
 
 
 @pytest.mark.anyio
+async def test_a_failed_send_takes_back_its_own_audio_while_another_waits_to_go_out() -> None:
+    """Two chunks sent at once go out one after the other: the first failing takes back its own audio, not the second's."""
+
+    class _FirstAudioFails(_QueuedWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sending = asyncio.Event()
+            self.fail = asyncio.Event()
+            self.sends = 0
+
+        async def send(self, data: str) -> None:
+            self.sends += 1
+            if self.sends == 1:
+                self.sending.set()
+                await self.fail.wait()
+                raise OSError('gone')
+
+    ws = _FirstAudioFails()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+    first, second = b'\x01\x00' * 100, b'\x02\x00' * 50
+    async with session:
+        first_send = asyncio.create_task(session.send_audio(first))
+        await ws.sending.wait()
+        second_send = asyncio.create_task(session.send_audio(second))
+        await asyncio.sleep(0)
+        ws.fail.set()
+        with pytest.raises(RealtimeError):
+            await first_send
+        await second_send
+        core = session._core  # pyright: ignore[reportPrivateUsage]
+        assert core is not None
+        assert bytes(core._input_audio) == second  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
 async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None:
     """The session core's history keeps retained audio; the session's own record (what tools see) lets its copy go.
 
-    The part streamed as an event keeps its audio, so what is resident is bounded by `retain_audio_max_seconds`
-    once rather than twice.
+    The part streamed as an event keeps its audio, so recorded audio is bounded by `retain_audio_max_seconds` once
+    rather than twice.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
