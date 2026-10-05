@@ -559,9 +559,16 @@ def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
 
 
 def load_plugin(plugin_type: type[Plugin[BaseModel, DepsT]], host: PluginHost[DepsT]) -> LoadedPlugin[DepsT]:
-    """Build `plugin_type` from `host`'s settings and collect what it contributes, as the loader does except `prepare`.
+    """Build `plugin_type` from `host`'s settings and collect what it contributes, as the loader does.
 
-    This is also how a plugin's tests load it without a shell; fire host events with `dispatch`. For a
-    plugin with `prepare`, call `from_host`, await `prepare`, then `collect`.
+    This is also how a plugin's tests load it without a shell; fire host events with `dispatch`. It is
+    synchronous, so a plugin that overrides `prepare` raises `TypeError`: load it with `from_host`,
+    `await plugin.prepare()`, then `collect`.
     """
+    if plugin_type.prepare is not Plugin.prepare:
+        name = plugin_type.__name__
+        raise TypeError(
+            f'{name} overrides `prepare`, which `load_plugin` cannot await. Use '
+            f'`plugin = {name}.from_host(host)`, `await plugin.prepare()`, then `collect(plugin)`.'
+        )
     return collect(plugin_type.from_host(host))

@@ -2355,7 +2355,7 @@ offer them without an `/add_model` first. A failed sign-in adds nothing.
 ## Testing a plugin
 
 `load_plugin(PluginClass, host)` builds a plugin and collects its contributions,
-as the loader does, except that it does not await `prepare`. `PluginHost` is an ordinary object: build one with a
+exactly as the loader does. `PluginHost` is an ordinary object: build one with a
 `Console` writing to a `StringIO`, then send hand-made events through
 `dispatch`. No terminal, no model, no network.
 
@@ -2373,9 +2373,9 @@ assert plugin.capabilities == ()
 ```
 
 `plugin.commands`, `plugin.status_segments`, and the rest hold what the plugin
-declared. `load_plugin` does not call `prepare`; for a plugin that has one, build
-it with `PluginClass.from_host(host)`, `await plugin.prepare()`, then
-`collect(plugin)`. A plugin that reads the history gets a `Transcript` by default; pass
+declared. `load_plugin` cannot await `prepare`, so it raises `TypeError` for a
+plugin that has one; build that plugin with `PluginClass.from_host(host)`,
+`await plugin.prepare()`, then `collect(plugin)`. A plugin that reads the history gets a `Transcript` by default; pass
 `conversation=Transcript(messages=[...], model=TestModel())` to seed it.
 
 ## vllm connection

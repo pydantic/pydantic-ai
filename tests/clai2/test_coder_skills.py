@@ -24,7 +24,7 @@ from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, collect
+from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, collect, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
 
 PromptT = TypeVar('PromptT')
@@ -263,6 +263,11 @@ class TestSkillCommands:
         )
         with pytest.raises(RuntimeError, match='works only in a /command handler run between turns'):
             shell.submit_prompt('hello')
+
+    def test_load_plugin_refuses_a_plugin_it_cannot_prepare(self) -> None:
+        host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings={})
+        with pytest.raises(TypeError, match=r'CoderPlugin overrides `prepare`.*await plugin.prepare\(\)'):
+            load_plugin(CoderPlugin, host)
 
     def test_submit_prompt_needs_a_shell(self) -> None:
         host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings={})

@@ -29,7 +29,7 @@ from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, Cod
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
+from pydantic_clai2.plugins import PluginHost, SessionStart, collect
 from pydantic_clai2.plugins.loader import PluginLoader
 
 
@@ -132,7 +132,9 @@ async def test_unrestricted_filesystem_setting_controls_paths_outside_the_projec
         'sub_agents': False,
     }
     host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings=settings)
-    loaded = load_plugin(CoderPlugin, host)
+    plugin = CoderPlugin[None].from_host(host)
+    await plugin.prepare()
+    loaded = collect(plugin)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:

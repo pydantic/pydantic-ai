@@ -85,7 +85,9 @@ The consequences:
   capability class (`module:Class`), which is wrapped in a plugin whose only
   contribution is that capability, built from the settings JSON.
 - **Tests construct, not activate.** `load_plugin(PluginClass, host)` returns the
-  same `LoadedPlugin` the loader builds.
+  same `LoadedPlugin` the loader builds. It is synchronous, so for a plugin with
+  `prepare` it raises `TypeError` naming the `from_host`, `await prepare()`,
+  `collect` sequence to use instead.
 
 Startup load failures happen before an agent run, so core's `before_run` and other
 run hooks cannot report them. The loader delivers `PluginLoadFailed` through
