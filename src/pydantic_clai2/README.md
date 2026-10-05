@@ -1445,8 +1445,9 @@ The model still receives the original tool result.
 Shell output is rendered one completed line at a time. Carriage-return progress
 updates replace the buffered line rather than printing control-code text; the last
 update appears at newline or tool completion. CRLF works across chunk boundaries.
-Long display lines are ellipsized to terminal width. Multiline commands show their
-first line and the number of additional command lines rather than dumping scripts.
+Long display lines are ellipsized to terminal width. The command itself wraps
+under a hanging indent, keeping its own line breaks, up to 10 terminal rows; a
+count summarizes any rows beyond that.
 Full output remains in the log; display formatting does not alter model results.
 
 ## Shell preview limit
