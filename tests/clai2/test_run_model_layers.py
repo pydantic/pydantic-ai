@@ -6,7 +6,7 @@ effect over CLAI's defaults. Without such a capability, the effective model and 
 what they were when CLAI passed both to `agent.run`.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
@@ -85,6 +85,7 @@ async def run_turn(
     plugins: tuple[AbstractCapability[None], ...] = (),
     agent: Agent[None, str] | None = None,
     recorder: Recorder | None = None,
+    resolve: Callable[[str], Model | str] | None = None,
 ) -> tuple[Recorder, Session[None, str]]:
     """One shell turn, on the stock agent unless `agent` is given; returns what the model saw and the session."""
     store = SettingsStore(tmp_path / 'config.db')
@@ -103,7 +104,7 @@ async def run_turn(
         headless=True,
     )
     recorder = recorder or Recorder()
-    shell.session.resolve_model = recorder.resolve
+    shell.session.resolve_model = resolve or recorder.resolve
     ended = await shell.run_turn(TurnStart(text='hello'), headless=True)
     assert ended.outcome == 'completed', ended.error
     return recorder, shell.session
@@ -415,6 +416,27 @@ async def test_selected_model_resolves_through_clai_first(tmp_path: Path, stock:
     )
     assert [name for name, _ in recorder.calls] == ['openai-codex:gpt-6-astra' if stock else 'openai:gpt-6']
     assert elsewhere.calls == []
+
+
+async def test_names_clai_does_not_handle_are_left_to_other_resolvers(tmp_path: Path) -> None:
+    """A model a capability selects by an alias only its own resolver knows still resolves there."""
+    recorder = Recorder()
+
+    @dataclass
+    class Alias(Published):
+        async def resolve_model_id(self, ctx: ModelResolutionContext[None], *, model_id: str) -> Model | None:
+            return recorder.resolve('anthropic:claude-sonnet-4-6') if model_id == 'my-alias' else None
+
+    default = Settings().model
+    await run_turn(
+        tmp_path,
+        settings=Settings(),
+        plugins=(Alias(model='my-alias'),),
+        recorder=recorder,
+        # Like CLAI's resolver, which returns a name it has no integration for unchanged.
+        resolve=lambda name: recorder.resolve(name) if name == default else name,
+    )
+    assert [name for name, _ in recorder.calls] == ['anthropic:claude-sonnet-4-6']
 
 
 @pytest.mark.parametrize('source', ['saved', 'cli'])

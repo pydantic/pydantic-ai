@@ -144,7 +144,8 @@ class _ModelDefaults(AbstractCapability[DepsT]):
 class _SessionModels(ResolveModelId[DepsT]):
     """Resolve model names through CLAI first, as when CLAI resolved the selected model before each run.
 
-    Outermost, so it is tried before a resolver on the agent or a plugin.
+    Outermost, so it is tried before a resolver on the agent or a plugin, unless that one is outermost
+    too. Names CLAI does not handle itself, other than the selected model, are left to those resolvers.
     """
 
     def get_ordering(self) -> CapabilityOrdering:
@@ -402,11 +403,13 @@ class Session(Generic[DepsT, OutputT]):
             capabilities.append(_ModelDefaults[DepsT](self.model_defaults))
         return run_model, capabilities
 
-    async def _resolve_model_id(self, ctx: ModelResolutionContext[DepsT], model_id: str) -> Model:
+    async def _resolve_model_id(self, ctx: ModelResolutionContext[DepsT], model_id: str) -> Model | None:
         model = self.resolve_model(model_id)
         if isinstance(model, Awaitable):
             model = await model
-        return infer_model(model) if isinstance(model, str) else model
+        if isinstance(model, Model):
+            return model
+        return infer_model(model) if model_id == self.model else None
 
     def steer(self, text: str, *, images: Sequence[BinaryContent] = ()) -> bool:
         """Deliver input to the active run, or decline when no run is accepting input."""
