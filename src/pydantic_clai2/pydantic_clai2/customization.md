@@ -33,7 +33,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   If its models need a sign-in, return PluginLogin(name=..., handler=...,
   models=...) values from get_logins to add /login NAME and save those models
   once it succeeds. ModelProvider(settings_from='anthropic') gives its models
-  Anthropic's /model_settings controls.
+  Anthropic's /model settings controls.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -124,10 +124,16 @@ with the same name and different JSON; that replaces the built-in. Keep
 "repo_context": false in that JSON: the second built-in, repo_context
 (pydantic_clai2.builtin_plugins.repo_context), already reads AGENTS.md or CLAUDE.md from the
 launch directory, and Coder's bundled RepoContext would load it again. CLAI
-turns Coder's delegation off ("sub_agents": false) unless the JSON sets it:
-delegation needs Coder bound to the agent, and CLAI passes plugins to each run. To run
-without coding tools, /plugins disable coder; to stop reading the instruction
-file, /plugins disable repo_context. /plugins remove coder resets the
+enables task delegation in the stock Coder plugin. When the active plugin
+capabilities change, CLAI rebuilds its stock agent before the next prompt with
+those capabilities bound to it. A delegated task gets a fresh conversation with
+the same plugin tools, instructions, and guardrails. Supplied agents are unchanged
+and still receive plugins per run; self-delegation on them requires capabilities
+bound at agent construction. Saved Coder declarations that omit "sub_agents"
+still default to false; set "sub_agents": true in /plugins configure coder to
+opt in. An explicit false remains an opt-out. To run without coding tools,
+/plugins disable coder; to stop reading the instruction file,
+/plugins disable repo_context. /plugins remove coder resets the
 built-in to its defaults rather than removing it. A repository's
 .clai/settings.json can declare plugins too; they show as (project), rank
 just above the built-ins, and start off until the user runs /plugins enable
@@ -169,10 +175,12 @@ Other options are service_name (default pydantic-clai2), send_to_logfire
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
 then receives the telemetry), and ui_events (default false: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
-submissions, by name and never by content). /plugins configure observability sets
-token and base_url for you, and turns sending on: pick Logfire US, EU, or
-a self-hosted URL, sign in in the browser, and pick a project; its new write
-token is saved in /keys. This explicit option overrides
+submissions, by name; while include_content is on, a submitted prompt also
+carries its text, but ! lines and slash-command arguments never do).
+/plugins configure observability opens a settings menu that edits these options.
+Its Logfire project row sets token and base_url for you, and turns sending on:
+pick Logfire US, EU, or a self-hosted URL, sign in in the browser, and pick a
+project; its new write token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
 $XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
 Both SDK configuration and credentials are read from that user directory, not
@@ -193,7 +201,9 @@ Each plugin instance gets its own PluginHost: the console, conversation, status,
 full screen, and its saved settings. Keep mutable state on the instance, set up
 in __init__, not in module globals. Loading builds the instance, calls each get_*
 method once, then on_session_start; unloading calls on_session_end and discards
-everything the plugin declared. Changes happen between turns. Failed or cancelled
+everything the plugin declared. /plugins can change plugins during a turn: the
+running agent keeps the capabilities it started with until the next prompt, and
+a plugin unloaded mid-turn gets on_session_end when the turn ends. Failed or cancelled
 loading calls on_session_end with reason=error under cancellation shielding, with
 a five-second cooperative timeout, then discards the plugin. Errors and timeouts
 are reported without replacing the load error. Blocking code and nested shields
@@ -300,6 +310,102 @@ For typed capability events use hooks.on.event(EventClass) with a handler taking
 RunContext and the event, or core's @on_event(EventClass) on a capability method.
 Match on event classes rather than tool-name strings. If an event supports
 cancel(), use its documented cancellation semantics.
+
+## Settings that need a feature: requirement tags
+
+Every CLAI on a machine shares one settings database (~/.config/pydantic-clai2/config.db),
+whatever code it runs: other worktrees, branches, and installs. A plugin setting that one
+build supports can break another. Version numbers cannot tell them apart, because worktrees
+are diverging branches that report the same dev version. Feature names can.
+
+### When a setting needs a tag
+
+Tag a setting whenever its valid values or its meaning depend on code that other builds may
+lack. Typical cases: a new value of an existing setting, a setting that only works with a new
+code path, or an old setting whose meaning changed. A setting every build understands the same
+way needs no tag.
+
+Tag only settings whose default is the safe choice. A build without the feature drops the
+saved value and uses the default, so dropping must never loosen a restriction.
+
+### Name the feature and declare it
+
+1. Pick a stable, descriptive name: lowercase words joined by hyphens, such as
+   stock-bound-delegation. Name the capability, not the branch or ticket. Never rename or reuse
+   a name; other builds compare names as plain strings.
+2. Add it to SUPPORTED_FEATURES in pydantic_clai2/config/features.py, in the same change that
+   adds the code behind it:
+
+```python
+SUPPORTED_FEATURES: frozenset[str] = frozenset({'stock-bound-delegation'})
+```
+
+### Tag the setting
+
+A Plugin subclass declares tags where it reads its settings. Override from_host so
+requirements are recorded before the plugin is built. Keys are the saved names,
+aliases included:
+
+```python
+class Fancy(Plugin[Options]):
+    @classmethod
+    def from_host(cls, host):
+        settings = host.settings(Options, requires={'mode': ['fancy-mode']})
+        return cls(host, settings)
+```
+
+A capability class declared as module:Class has no Plugin subclass, so list its tags in
+CAPABILITY_REQUIREMENTS in config/features.py, keyed by the factory string.
+
+That is all. Writers attach the tags for you: host.save_settings, /plugins add, /plugins
+enable and disable, and the settings menus all store them beside the declaration, in a separate
+plugin_requirements table. Never put tags in the settings JSON or in PluginSettings: builds
+before this feature pass settings to the plugin and validate declarations strictly, so an
+unknown key would break their plugin loading.
+
+### What each build does with a tag
+
+- A build that lists every feature a setting needs applies it as saved.
+- A build that lacks one, or does not recognize a name, ignores that one setting. It uses the
+  shipped declaration's value (for a built-in) or the plugin's own default, keeps every other
+  setting, and prints one line per plugin, such as
+  coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
+- Reading never rewrites anything. When that build saves the plugin's settings, it writes the
+  ignored values back unchanged, still tagged. A tag only goes away when its value changes.
+- Builds older than requirement tags never read the table, so they apply every setting as
+  before. Tags cannot protect them. The fail-soft layer below limits the damage in builds that
+  have it.
+
+### Worked example: Coder's sub_agents
+
+A branch binds Coder delegation to its stock agent, so its users can save "sub_agents": true.
+A build without that support passes Coder at run level, where SubAgents(include_self=True)
+raises UserError on every turn. The branch with support:
+
+```python
+# config/features.py on the branch with delegation support
+SUPPORTED_FEATURES: frozenset[str] = frozenset({'stock-bound-delegation'})
+CAPABILITY_REQUIREMENTS = {
+    'pydantic_ai_harness.coder:Coder': {'sub_agents': frozenset({'stock-bound-delegation'})},
+}
+```
+
+Saving coder there stores {"sub_agents": ["stock-bound-delegation"]} for it. Another build
+with tags but without the feature loads coder with the built-in "sub_agents": false and shows
+the notice. A build older than tags still applies true; with fail-soft, only its first turn fails.
+
+### Fail-soft at run setup
+
+A setting that slips through untagged costs one turn and then one capability, not every
+turn. CLAI guards each capability it builds itself from a module:Class declaration's saved
+settings (such as coder), unless any part of it is a Hooks. Capabilities a plugin's get_capabilities
+returns, and every policy hook, are never guarded. When a guarded one raises UserError while
+the run is set up (in for_run, or in wrap_run before it hands over to the run), that turn fails
+closed with the plugin named, and CLAI leaves the capability out of later turns until
+/plugins reload. The turn is not retried, so no other capability's setup runs twice, and a
+capability that refuses to run never gets skipped within the turn it refused.
+Errors from the model, tools, or hooks once the run is under way propagate as before, and
+Plugin handlers are never guarded, so a raising handler still fails closed.
 
 ## CLI UX and rendering
 
@@ -437,6 +543,10 @@ Pass during_turn=True to Command when the menu is safe to open mid-turn, so the
 bare command opens at once instead of queueing behind the running turn. While
 run_worker runs, CLAI holds the turn's output and prints it in order afterwards.
 Only opt in when the running turn cannot observe what the menu changes.
+during_turn_subcommands=('add',) does the same for a bare subcommand such as
+/model add. Pass args_during_turn=True when every form of the command is safe
+mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
+as /plugins does.
 
 For named validated fields, reuse FieldSource, FieldMenu and run_flow in
 field_menu.py rather than write another editor. SettingsSource in set_menu.py
@@ -448,8 +558,15 @@ not currently receive CommandContext through PluginHost; do not invent host.cont
 ## Custom models and providers
 
 A model identifier accepted by an existing core provider can be selected with
-/add_model PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
-catalog. `/model` and its Tab suggestions select only previously added models.
+/model PROVIDER:NAME (or /model add PROVIDER:NAME, /set model PROVIDER:NAME) even
+if it is absent from the catalog. A name not yet saved is added and selected
+without checking that it exists; a wrong name fails on the next prompt with the
+provider's error. Bare `/model` picks from previously added models, and its Tab
+suggestions are the `add` and `settings` subcommands plus saved models.
+In `/model`, Ctrl+D or Delete removes a saved model and its per-model settings
+after confirmation. The current model and saved default are protected; select
+another model or change the default with `/set model NAME` first. Provider
+credentials and plugins are left alone.
 Adding a model also selects it and saves it for later sessions. Install optional provider dependencies in the same environment as CLAI
 and supply credentials via the provider's supported environment variables.
 
@@ -527,8 +644,8 @@ class MyService(Plugin):
         return (ModelProvider(prefix='my-service', resolve=resolve, models=('fast', 'smart')),)
 ```
 
-`/add_model` then lists my-service:fast and my-service:smart, and any
-my-service:NAME works with /add_model or /set model. resolve receives NAME
+`/model add` then lists my-service:fast and my-service:smart, and any
+my-service:NAME works with /model add or /set model. resolve receives NAME
 without the prefix and runs in a worker thread before every run with that
 model, so it may read the keyring; raise UserError with setup instructions
 when it cannot build the model. The prefix starts with a lowercase letter,
@@ -536,7 +653,7 @@ followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
 CLAI already runs, aliases like openai-chat included, is rejected with
 ValueError.
 
-For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
+For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
 turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
@@ -550,15 +667,15 @@ While using an `openai-codex:` model, `/fast` toggles priority processing;
 `/fast on` and `/fast off` select explicitly. The service tier is saved for that
 model's next prompts and sessions. Reasoning effort is unchanged. Other models
 neither expose nor accept `/fast`. Remove a custom `service_tier` parameter with
-`/model_settings` before using `/fast`.
+`/model settings` before using `/fast`.
 
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings
 are declared in ModelSettingsForm in model_settings.py; extend that form, not a
 second editor. Credentials belong in provider-supported storage, not model
-settings. /login signs in to subscriptions: /login codex (the default),
-/login copilot, and any sign-in a plugin returns from get_logins.
+settings. /login signs in to subscriptions: /login openai-codex,
+/login github-copilot, and any sign-in a plugin returns from get_logins.
 
 ## Test and verify
 
@@ -587,3 +704,15 @@ The `ask_user` plugin is skipped without changing saved preferences. Full-screen
 requests fail, stream renderers are not called, and host console output is
 suppressed. Plugins must not read input or print directly to stdout. Errors go
 to stderr with a nonzero exit status. `-m` also works in the interactive CLI.
+
+## Managed delegation UI
+
+Interactive stock agents use harness `DelegationTasks`: `/tasks` inspects children,
+Enter opens a full-width live transcript, `b` backgrounds, and `x` stops the selected
+tree. Ctrl+B backgrounds foreground children. `/tasks resume ID` is explicit user
+authorization to resume a general-purpose/custom child with its independent history.
+Explore and Plan are read-only, inherit the selected model, and cannot resume.
+Task reports are automated untrusted evidence, never user instructions or permission
+grants. Supplied agents and headless runs retain their existing delegation behavior.
+Background execution requires a local workspace; plugin changes wait for children
+to settle. These are shell services, not additional `PluginHost` hooks.

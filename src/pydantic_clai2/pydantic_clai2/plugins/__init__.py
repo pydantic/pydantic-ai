@@ -1,7 +1,7 @@
 """The declarative plugin API: subclass `Plugin` and override what it contributes, as with `AbstractCapability`."""
 
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import ClassVar, Generic, Literal, Protocol, TypeVar, cast, get_args, get_origin
@@ -19,6 +19,7 @@ from pydantic_ai.providers import infer_provider_class
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
+from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
 from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
@@ -50,7 +51,10 @@ class Conversation(Protocol):
         ...
 
     async def resolved_model(self) -> Model | str | None:
-        """The model the next run uses; `None` when nothing has been chosen yet."""
+        """The model CLAI or the user selected for the next run; `None` when neither has chosen one.
+
+        A capability that selects a model can replace CLAI's default per request, so a run may use another.
+        """
         ...
 
 
@@ -90,6 +94,14 @@ class SessionStart:
 
 
 @dataclass(kw_only=True)
+class PluginLoadFailed:
+    """A plugin failed to load; delivered to loaded plugins after startup loading finishes."""
+
+    plugin: str
+    error: BaseException
+
+
+@dataclass(kw_only=True)
 class SessionEnd:
     """CLAI is quitting, or this plugin is being unloaded."""
 
@@ -121,7 +133,7 @@ class TurnEnd:
 
 
 SettingsProvider = Literal['anthropic', 'google', 'openai', 'openai-chat']
-"""Providers whose `/model_settings` controls a plugin's models can take."""
+"""Providers whose `/model settings` controls a plugin's models can take."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -135,16 +147,16 @@ class ModelProvider:
     a model under it then fails as an unknown provider until the plugin is enabled again.
 
     When `resolve` returns that provider's model class, such as an `AnthropicModel` subclass, set
-    `settings_from` so `/model_settings` offers its controls (thinking, effort) for these models.
+    `settings_from` so `/model settings` offers its controls (thinking, effort) for these models.
     """
 
     prefix: str
     resolve: Callable[[str], Model]
     """Build the model for a name given without its prefix."""
     models: tuple[str, ...] = ()
-    """Names without the prefix, offered by `/add_model` and `/set model`."""
+    """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
-    """The provider whose `/model_settings` controls these models take; `None` offers the generic ones."""
+    """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
 
     def __post_init__(self) -> None:
         """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
@@ -168,10 +180,11 @@ class PluginLogin:
 
     For sign-ins that store credentials, such as the subscription behind a `ModelProvider`. Keep
     secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
-    NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
+    Name it after the model prefix it unlocks, as CLAI's own `openai-codex` and `github-copilot` are.
+    NAME cannot be a sign-in CLAI ships (including the earlier `codex` and `copilot`); when two
     plugins add one name, the later one wins. Unloading the plugin removes it. Once the sign-in
     succeeds, `models` (as `PREFIX:NAME`, such as a `ModelProvider`'s `names`) are added to the saved
-    model list, so `/model` and `/model_settings` offer them without `/add_model`.
+    model list, so `/model` and `/model settings` offer them without `/model add`.
     """
 
     name: str
@@ -216,7 +229,7 @@ def _runs_already(prefix: str) -> bool:
     return True
 
 
-HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd
+HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | PluginLoadFailed
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
@@ -243,8 +256,10 @@ class PluginHost(Generic[DepsT]):
         settings: dict[str, JsonValue],
         full_screen: FullScreen = bare_screen,
         conversation: Conversation | None = None,
+        session_id: Callable[[], str | None] = lambda: None,
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
+        requirements: Requirements | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -264,12 +279,39 @@ class PluginHost(Generic[DepsT]):
         screen. Between turns it is a no-op.
         """
         self.conversation: Conversation = conversation if conversation is not None else Transcript()
+        self._session_id = session_id
         self.status = status if status is not None else Status()
         self._settings = settings
         self._persist = save_settings
+        self._requirements: Requirements = dict(requirements or {})
 
-    def settings(self, model: type[ModelT], /) -> ModelT:
-        """Validate the JSON saved for this plugin right now, as a settings menu needs after each save."""
+    @property
+    def session_id(self) -> str | None:
+        """The current saved conversation's ID, or `None` for a host without session persistence."""
+        return self._session_id()
+
+    @property
+    def requirements(self) -> Requirements:
+        """Feature names each setting key needs, as declared with `settings(Model, requires=...)`."""
+        return dict(self._requirements)
+
+    def settings(self, model: type[ModelT], /, *, requires: Mapping[str, Iterable[str]] | None = None) -> ModelT:
+        """Validate the JSON given to `plugins add` against the plugin's own model.
+
+        `requires` names the features a setting's saved value depends on, such as
+        `{'sub_agents': ['stock-bound-delegation']}`. CLAI stores the tags beside the declaration
+        whenever the settings are saved, and a build missing a feature ignores that setting and uses
+        its default. Keys are the saved names (aliases included); see `PLUGINS.md`.
+        """
+        if requires is not None:
+            declared = declared_requirements(requires)
+            known = {name for key, info in model.model_fields.items() for name in (key, info.alias) if name}
+            unknown = declared.keys() - known
+            if unknown:
+                raise ValueError(
+                    f'{model.__name__} has no setting {", ".join(sorted(unknown))} to require features for.'
+                )
+            self._requirements = declared
         return model.model_validate(self._settings)
 
     def save_settings(self, settings: BaseModel, /) -> None:
@@ -393,7 +435,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return ()
 
     def get_model_providers(self) -> Sequence[ModelProvider]:
-        """Model prefixes this plugin runs, offered in `/add_model` and `/set model`."""
+        """Model prefixes this plugin runs, offered in `/model add` and `/set model`."""
         return ()
 
     def get_logins(self) -> Sequence[PluginLogin]:
@@ -405,7 +447,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return None
 
     async def configure(self) -> str:
-        """A settings menu, opened by `/plugins configure NAME`, `C` in `/plugins`, and on enable or add.
+        """A settings menu, opened by `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
 
         Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
         change with `host.save_settings` as the user makes it and return a line to show. When the
@@ -418,6 +460,9 @@ class Plugin(Generic[SettingsT, DepsT]):
 
     async def on_session_end(self, event: SessionEnd) -> None:
         """CLAI is quitting, the plugin is unloading, or it failed to load after it was built."""
+
+    async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
+        """A startup plugin failed to load; called after all enabled plugins have been tried."""
 
     async def on_turn_start(self, event: TurnStart) -> None:
         """A prompt was submitted; edit `event.text` or call `event.cancel()`. A failure cancels the turn."""
@@ -446,6 +491,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     SessionEnd: 'on_session_end',
     TurnStart: 'on_turn_start',
     TurnEnd: 'on_turn_end',
+    PluginLoadFailed: 'on_plugin_load_failed',
 }
 
 
@@ -471,12 +517,16 @@ class LoadedPlugin(Generic[DepsT]):
         await getattr(self.plugin, _HANDLERS[type(event)])(event)
 
     def summary(self) -> str:
-        """One line for the `/plugins` menu."""
-        return (
-            f'{len(list(self.commands))} commands, {self.plugin.hook_count} hooks, '
-            f'{len(self.capabilities)} capabilities, {int(self.plugin.has_render)} renderers, '
-            f'{len(self.status_segments)} status segments'
+        """One line for the `/plugins` menu, naming only what the plugin contributes."""
+        counts = (
+            (len(list(self.commands)), 'command', 'commands'),
+            (self.plugin.hook_count, 'hook', 'hooks'),
+            (len(self.capabilities), 'capability', 'capabilities'),
+            (int(self.plugin.has_render), 'renderer', 'renderers'),
+            (len(self.status_segments), 'status segment', 'status segments'),
         )
+        parts = [f'{count} {one if count == 1 else many}' for count, one, many in counts if count]
+        return ', '.join(parts) or 'nothing yet'
 
 
 def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:

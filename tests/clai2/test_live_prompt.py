@@ -27,7 +27,7 @@ from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
@@ -62,7 +62,7 @@ async def test_long_paste_submission_and_history() -> None:
         frame = Text.from_ansi('\n'.join(live.frame())).plain
         assert '[paste 5 lines]' in frame
         assert 'line 4' not in frame
-        pipe.send_text('\n')
+        pipe.send_text('\r')
         assert await live.read() == text
         assert live.history.get_strings() == [text]
         assert live.buffer.display() == ('', 0)
@@ -76,14 +76,14 @@ async def test_long_paste_submission_and_history() -> None:
 
 async def test_input_queue_and_controls() -> None:
     async with editor() as (live, pipe, _):
-        pipe.send_text('  \nfirst\nsecond\n')
+        pipe.send_text('  \rfirst\rsecond\r')
         assert await live.read() == 'first'
         assert await live.read() == 'second'
         pipe.send_text('discard\x03')
         with pytest.raises(KeyboardInterrupt):
             await live.read()
         assert live.buffer.text == ''
-        pipe.send_text('keep\x01\x04\n')
+        pipe.send_text('keep\x01\x04\r')
         assert await live.read() == 'eep'
         pipe.send_text('\x04')
         with pytest.raises(EOFError):
@@ -96,9 +96,9 @@ async def test_input_queue_and_controls() -> None:
 )
 async def test_option_backspace_deletes_word_before_cursor(sequence: str) -> None:
     async with editor() as (live, pipe, _):
-        pipe.send_text('one two three' + '\x1b[D' * 6 + sequence + '\n')
+        pipe.send_text('one two three' + '\x1b[D' * 6 + sequence + '\r')
         assert await live.read() == 'one  three'
-        pipe.send_text('one\x1b[13;2utwo' + sequence + 'three\n')
+        pipe.send_text('one\x1b[13;2utwo' + sequence + 'three\r')
         assert await live.read() == 'one\nthree'
 
 
@@ -198,7 +198,7 @@ async def test_closed_input_reports_eof() -> None:
 
 async def test_paste_is_atomic_and_alt_word_editing_works() -> None:
     async with editor() as (live, pipe, _):
-        pipe.send_text('\x1b[200~one\ntwo\x1b[201~\x1bbX\n')
+        pipe.send_text('\x1b[200~one\ntwo\x1b[201~\x1bbX\r')
         assert await live.read() == 'Xone\ntwo'
         assert live.buffer.text == ''
 
@@ -247,12 +247,12 @@ async def test_completion_acceptance_and_cycling() -> None:
         live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
         pipe.send_text('/he')
         await ready.wait()
-        pipe.send_text('\t\t\n\n')
+        pipe.send_text('\t\t\r\r')
         assert await live.read() == '/hello'
         ready = anyio.Event()
         pipe.send_text('/ell')
         await ready.wait()
-        pipe.send_text('\t\n')
+        pipe.send_text('\t\r')
         assert await live.read() == '/hello'
         live.feed('tab')
         live.feed('backtab')
@@ -275,11 +275,11 @@ async def test_literal_paths_attach_images_and_queue_is_bounded(tmp_path: Path) 
 
 async def test_history_search_and_multiline_submission() -> None:
     async with editor() as (live, pipe, _):
-        pipe.send_text('history entry\n')
+        pipe.send_text('history entry\r')
         assert await live.read() == 'history entry'
-        pipe.send_text('\x12history\n\n')
+        pipe.send_text('\x12history\r\r')
         assert await live.read() == 'history entry'
-        pipe.send_text('first\x1b[13;2usecond\n')
+        pipe.send_text('first\x1b[13;2usecond\r')
         assert await live.read() == 'first\nsecond'
 
 
@@ -290,15 +290,6 @@ async def test_footer_warning_and_control_bytes_are_safe() -> None:
         assert theme.sgr(theme.WARNING) in footer
         assert '\x1b[2J' not in footer
         assert r'\x1b[2J' in footer
-
-
-@pytest.mark.parametrize('sequence', ['\x1b[13;2u', '\x1b[27;2;13~'])
-async def test_shift_enter_inserts_newline_and_plain_enter_submits(sequence: str) -> None:
-    async with editor() as (live, pipe, _):
-        pipe.send_text(f'first{sequence}second\r')
-        assert await live.read() == 'first\nsecond'
-        assert live.queued_messages == ()
-        assert live.buffer.text == ''
 
 
 @pytest.mark.parametrize('colorterm', ['', 'truecolor'])
@@ -590,3 +581,44 @@ async def test_live_resize_signal_schedules_viewport_clear_without_losing_draft(
         signal.raise_signal(signal.SIGWINCH)
         await cleared.wait()
         assert live.buffer.text == 'retained during resize signal'
+
+
+async def test_automated_wake_preserves_draft_and_prioritizes_user_input() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.replace('unfinished pirate hamster prompt')
+        live.buffer.cursor = 9
+        live.wake()
+        live.wake()
+        live.submit('user follow-up')
+        assert await live.read() == 'user follow-up'
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        assert live.buffer.display() == ('unfinished pirate hamster prompt', 9)
+        assert live.history.get_strings() == []
+        assert live.queued_messages == ()
+        with anyio.move_on_after(0) as waiting:
+            await live.read()
+        assert waiting.cancelled_caught
+        live.submit(EOFError())
+        with pytest.raises(EOFError):
+            await live.read()
+
+
+@pytest.mark.parametrize('wake', [False, True])
+async def test_removing_queued_prompt_does_not_discard_pending_wake(wake: bool) -> None:
+    async with editor() as (live, _, _):
+        live.feed('paste', 'remove me')
+        live.feed('enter')
+        if wake:
+            live.wake()
+        live.feed('up')
+        live.buffer.replace('')
+        live.feed('enter')
+        assert live.queued_messages == ()
+        if wake:
+            with pytest.raises(PromptWakeup):
+                await live.read()
+        else:
+            with anyio.move_on_after(0) as waiting:
+                await live.read()
+            assert waiting.cancelled_caught

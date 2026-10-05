@@ -1,4 +1,7 @@
-"""The built-in `google_workspace` plugin: Google's hosted Workspace MCP servers, through harness `GoogleWorkspace`."""
+"""Use Gmail, Calendar, and Drive through Google's hosted Workspace MCP servers.
+
+The built-in `google_workspace` plugin: Google's hosted Workspace MCP servers, through harness `GoogleWorkspace`.
+"""
 
 from collections.abc import Sequence
 from functools import partial
@@ -277,6 +280,7 @@ class GoogleWorkspacePlugin(Plugin[GoogleWorkspaceSettings, DepsT]):
                 name='google_workspace',
                 description='Google Workspace settings: products, read-only tools, and the /keys token',
                 handler=partial(configure, self.host),
+                during_turn=True,
             ),
         )
 

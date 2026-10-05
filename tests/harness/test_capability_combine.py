@@ -292,6 +292,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
+    'DelegationReports': Anonymous(
+        'one per task owner and conversation; each delivers only its own reports, so several coexist'
+    ),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
@@ -338,8 +341,8 @@ COMBINE_POLICY: dict[str, Policy] = {
         'its toolset registers `run_command` and friends under fixed names',
         lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
     ),
-    'CapabilityCreation': Collides(
-        'its toolset registers `author_capability` and friends under fixed names',
+    'CapabilityCreation': Narrows(
+        'one store directory per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_B))),
     ),
     'PydanticAIDocs': Collides(
@@ -355,9 +358,9 @@ COMBINE_POLICY: dict[str, Policy] = {
         'its toolset registers `run_macroscope_review` under a fixed name',
         lambda cls: (cls(), cls()),
     ),
-    'LocalStack': Collides(
-        'its toolset registers `aws_cli` and `localstack_health` under fixed names',
-        lambda cls: (cls(), cls()),
+    'LocalStack': Narrows(
+        'one LocalStack environment per id, and its service lists are an access boundary',
+        lambda cls: (cls(allowed_services=['s3']), cls(allowed_services=['sqs'])),
     ),
     'Linear': Narrows(
         'one Linear connection per id; two that differ need their own ids and PrefixTools',
@@ -387,14 +390,26 @@ COMBINE_POLICY: dict[str, Policy] = {
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'PlaywrightBrowser': Collides('its toolset registers `click` and friends under fixed names'),
     'ConversationSearch': Collides('its toolset registers `search_conversation_history` under a fixed name'),
-    'ExaAgent': Collides('its toolset registers `web_search` and friends under fixed names'),
-    'ExaSearch': Collides('its toolset registers `web_search` and friends under fixed names'),
+    'ExaAgent': Narrows(
+        'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),
+    ),
+    'ExaSearch': Narrows(
+        'one Exa search configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
     'GitHub': Narrows(
         'one GitHub connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'YouResearch': Collides('its toolset registers `research` and friends under fixed names'),
-    'YouSearch': Collides('its toolset registers `web_search` and friends under fixed names'),
+    'YouResearch': Narrows(
+        'one You.com research configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
+    'YouSearch': Narrows(
+        'one You.com search configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
     'Slack': Narrows(
         'one Slack connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),

@@ -1,6 +1,8 @@
-"""The built-in `grain` plugin: harness's `Grain` capability, with no secret in plugin settings.
+"""Use Grain meeting recordings, with its token kept in /keys.
 
-`/grain` (or `C` in `/plugins`, and turning the plugin on) opens a menu for the token source and the non-secret settings; each change is saved at once and applies
+The built-in `grain` plugin: harness's `Grain` capability, with no secret in plugin settings.
+
+`/grain` (or `c` in `/plugins`, and turning the plugin on) opens a menu for the token source and the non-secret settings; each change is saved at once and applies
 to the next prompt. The token comes from, in order: the `GRAIN_ACCESS_TOKEN` environment variable; a named key from
 `/keys` (only the key's name is saved, and it is resolved on every run, so replacing the key in `/keys` applies and
 deleting it fails closed); or a browser sign-in whose tokens go to the OS keyring the way `/mcp` OAuth servers keep
@@ -167,6 +169,7 @@ class GrainPlugin(Plugin[GrainSettings]):
                 description='Configure Grain: token source and settings (/grain), or /grain status | key | logout.',
                 handler=partial(grain_command, connection=self.connection),
                 complete=lambda args: ('key', 'logout', 'status') if len(args) <= 1 else (),
+                during_turn=True,
             ),
         )
 

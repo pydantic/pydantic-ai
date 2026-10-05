@@ -148,9 +148,10 @@ def test_settings_validate_against_plugin_model() -> None:
 def test_a_plugin_that_overrides_nothing_contributes_nothing() -> None:
     loaded = load_plugin(Bare, host())
     assert loaded.capabilities == ()
-    assert loaded.summary() == '0 commands, 0 hooks, 0 capabilities, 0 renderers, 0 status segments'
+    assert loaded.summary() == 'nothing yet'
     assert not loaded.plugin.has_configure
     assert not loaded.plugin.has_render
+    assert loaded.plugin.render(FunctionToolCallEvent(part=ToolCallPart(tool_name='shout', args={}))) is None
 
 
 async def test_a_plugin_without_a_settings_menu_says_so() -> None:
@@ -185,7 +186,7 @@ async def test_host_hooks_dispatch_by_event_type() -> None:
         await loaded.dispatch(event)
     assert seen == ['start:openai-codex:gpt-6-astra', 'turn:hi', 'done:completed', 'end:eof']
     assert loaded.capabilities == ()
-    assert loaded.summary() == '0 commands, 4 hooks, 0 capabilities, 0 renderers, 0 status segments'
+    assert loaded.summary() == '4 hooks'
 
 
 @dataclass
@@ -237,7 +238,7 @@ async def test_contributions_are_collected_once_and_reach_the_run() -> None:
     loaded = load_plugin(Everything, host())
     plugin = loaded.plugin
     assert isinstance(plugin, Everything)
-    assert loaded.summary() == '1 commands, 0 hooks, 3 capabilities, 1 renderers, 1 status segments'
+    assert loaded.summary() == '1 command, 3 capabilities, 1 renderer, 1 status segment'
     assert loaded.status_segments[0]() == 'here'
     assert [command.name for command in loaded.commands] == ['noop']
     session = Session(Agent(TestModel(call_tools=['shout'])), deps=None, plugins=list(loaded.capabilities))

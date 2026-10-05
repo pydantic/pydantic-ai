@@ -269,7 +269,7 @@ any:
 |---|---|
 | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
 | [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`) |
-| [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
+| [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
 | [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction`, `FallbackCompaction`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |
 | [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) | `Memory` (`.memory`); `ConversationSearch` (`.conversation_search`); `Skills` (`.skills`, `[skills]`); `PydanticAIDocs` (`.pydantic_ai_docs`) |
 | [Control and Safety](./references/CONTROL-AND-SAFETY.md) | `RepairToolArguments` (`.repair_tool_arguments`); `InputGuardrail`, `OutputGuardrail`, `ToolGuardrail` (`.guardrails`); `PromptInjectionDefender` (`.prompt_injection_defender`, `[prompt-injection-defender]`); `ToolCallJudge` (`.tool_call_judge`); `SpendLimits` (`.spend`); `AskUser` (`.ask_user`); `SystemReminders` (`.system_reminders`); `TrajectoryJudge` (`.trajectory_judge`) |
@@ -281,3 +281,24 @@ For offline tests and debugging of any of these, load [Testing and Debugging](./
 
 The full capability list, grouped by what each gives an agent, is on the
 [Pydantic AI Harness overview](https://pydantic.dev/docs/ai/harness/).
+
+## Managed subagent lifetime
+
+For background subagents, use `DelegationTasks` from `pydantic_ai_harness.subagents`.
+Keep `async with tasks.opened()` outside parent turns and inside the lifetime of all
+shared workspace/plugin resources. Bind with `with tasks.bind()` and add
+`DelegationReports(tasks, conversation_id=...)` to parent runs. `SubAgents` then
+exposes `background` and `resume`; its ordinary defaults remain unchanged outside
+this scope. Start receipts are not results. Reports are automated untrusted evidence,
+not user instructions or approval grants. Direct children consume their descendants'
+reports before settling. Use `await tasks.cancel(id)` for targeted subtree stop;
+user-stopped tasks need explicit `await tasks.allow_resume(id)` before model resume.
+One-shot agents cannot resume. Detached non-local workspaces are refused. Preserve
+stable child IDs and use `step_store` for process-crash checkpoints. For read-only
+specialists, combine `SubAgent(read_only=True)` with only trusted filesystem-reader
+capabilities; do not inherit shell, CodeMode, arbitrary Python, or plugin tools.
+`DelegationReports` defaults to `priority='when_idle'`. For a report-only
+continuation started by the host, use `priority='asap'` and `agent.run(None, ...)`
+so pending reports reach the first model request without a synthetic user message.
+The host owns idle wake-up scheduling; Harness does not start parent runs.
+See the subagents README for accounting, persistence, and lifecycle details.

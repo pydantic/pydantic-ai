@@ -5,9 +5,9 @@ description: "Save Pydantic AI agent run snapshots to memory, files, SQLite, or 
 
 # Step Persistence
 
-`StepPersistence` records what an agent did at each boundary, separate from whether the run can be safely resumed. It is the persistence substrate for orchestrators that delegate to sub-agents -- for example, an AICA orchestrator that spawns a `code_librarian` to investigate one symbol, then continues that delegate's investigation with a follow-up question.
+`StepPersistence` saves a snapshot of an agent run at every settled step and when the run fails, so you can resume the run, or fork it from an earlier step, in the same process or another one, from memory, files, SQLite, MongoDB, or your own store. Alongside the snapshots it keeps an append-only trail of step events and a ledger of tool side effects, so after a crash you can tell which tool calls completed and which may or may not have run. It is also the persistence layer for orchestrators that delegate to sub-agents, for example continuing a delegate's investigation with a follow-up question.
 
-It is not a full graph-state checkpoint. Capability-state restore, workspace snapshots, and graph-node resume are out of scope and tracked separately (see `pydantic-ai-harness` issues #149 and #196).
+A snapshot holds the run's message history, not everything around it: capability state outside the messages, workspace files, and resuming from the middle of a step are tracked separately (see `pydantic-ai-harness` issues #149 and #196). For recovery inside a step, run the agent on [durable execution](../durable_execution/overview.md), which `StepPersistence` works alongside.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 
@@ -159,7 +159,7 @@ By default `continue_run` returns the messages of the latest `complete` snapshot
 - at `after_run`, when the run ended past that boundary (a run that reached no boundary at all, or an `Agent.run_stream` whose closing response lands after the last one), and
 - when a run *fails*: the live history at failure time is saved, whatever its shape -- a model request that raises after a clean tool cycle produces a `complete` snapshot; a crash mid-tool-cycle produces an `interrupted` one carrying every completed cycle.
 
-An `interrupted` snapshot is sendable on resume -- pydantic-ai (>= 2.10) repairs broken tool-call/result pairing before every model request -- but not necessarily *safe*: a pending tool call may be re-executed (resuming without a new prompt) or closed out with a synthesized `interrupted` return, and neither says whether the original side effect happened. That is the tool-effect ledger's job. So the default read path skips `interrupted` snapshots; pass `include_interrupted=True` to `continue_run` / `fork_run` / `latest_snapshot` after checking `list_unresolved_tool_effects`. If no matching snapshot exists, `continue_run` raises `LookupError`.
+An `interrupted` snapshot is sendable, but not necessarily *safe*: a pending tool call may be re-executed or closed out with a synthesized `interrupted` return, and neither says whether the original side effect happened. That is the tool-effect ledger's job. Which one happens depends on how you continue. Resuming without a new prompt executes the pending calls. With a new prompt, calls are closed out if some of their batch already returned; if none did, the run raises `UserError` rather than abandon calls that could still be answered, so call [`repair_messages`][pydantic_ai.messages.repair_messages] on the history first to close them out yourself. So the default read path skips `interrupted` snapshots; pass `include_interrupted=True` to `continue_run` / `fork_run` / `latest_snapshot` after checking `list_unresolved_tool_effects`. If no matching snapshot exists, `continue_run` raises `LookupError`.
 
 ## Run lineage: `parent_run_id`
 

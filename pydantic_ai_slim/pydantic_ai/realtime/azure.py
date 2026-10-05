@@ -254,11 +254,11 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     set), `turn_detection` (or `openai_turn_detection`, or `azure_voice_live_turn_detection`),
     `openai_input_noise_reduction`, `thinking` (as `reasoning_effort`, on models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]),
-    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools, plus the
-    `azure_voice_live_*` settings.
+    `input_transcription_model`, `output_modality`, `max_tokens`, `parallel_tool_calls`, `tool_choice`,
+    and tools, plus the `azure_voice_live_*` settings.
 
-    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, and
-    `parallel_tool_calls` — are **silently ignored** under Voice Live; they still apply on the GA path.
+    The remaining inherited fields — `openai_output_speed` and `openai_truncation` — are **silently
+    ignored** under Voice Live; they still apply on the GA path.
     Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
     `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """
@@ -291,9 +291,10 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `openai_voice`, which native-audio models like `gpt-realtime` also accept under Voice Live.
     """
     azure_voice_live_temperature: float
-    """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
+    """Sampling temperature for a Voice Live session; only applies when the session uses Voice Live.
 
-    The GA realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
+    Microsoft documents a range of 0.6 to 1.2 (default 0.8), but Voice Live accepts 0 to 2. The GA
+    realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
     warning while a reasoning model like `gpt-5` is reasoning, since those models then accept only the
     default.
     """
@@ -348,9 +349,33 @@ class _VoiceLiveSessionCreated(BaseModel):
     session: _VoiceLiveSession
 
 
+class _VoiceLiveWarning(BaseModel):
+    message: str
+    code: str | None = None
+    param: str | None = None
+
+
+class _VoiceLiveWarningEvent(BaseModel):
+    """Voice Live's `warning` event: informational, and the session goes on."""
+
+    warning: _VoiceLiveWarning
+
+
 def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map Voice Live's beta text events and delegate the remaining OpenAI-compatible events."""
     event_type = data.get('type')
+    if event_type == 'warning':
+        # Nothing in the conversation changes, so it isn't a session event; surface it as a Python warning
+        # rather than dropping it, as the shared OpenAI mapper does with event types it doesn't know.
+        warning = _VoiceLiveWarningEvent.model_validate(data).warning
+        details = ', '.join(
+            f'{name}={value!r}' for name, value in (('code', warning.code), ('param', warning.param)) if value
+        )
+        warnings.warn(
+            f'Azure AI Voice Live warning: {warning.message}' + (f' ({details})' if details else ''),
+            UserWarning,
+        )
+        return None
     if event_type in ('response.text.delta', 'response.text.done'):
         is_final = event_type == 'response.text.done'
         content = data.get('text' if is_final else 'delta')
@@ -402,6 +427,9 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     """
 
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = AzureRealtimeConnection
+    # Azure resolves it against the resource's deployments, so `'auto'` names the deployment our docs tell
+    # users to create; changing it would break every resource deployed for the old name.
+    _auto_transcription_model: ClassVar[str] = 'gpt-realtime-whisper'
     credential: AzureTokenCredential | None = None
 
     def __init__(
@@ -561,6 +589,13 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             sdp_offer=sdp_offer,
         )
 
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        # Azure OpenAI's calls can't be ended from the server yet: the call ends when the browser hangs up.
+        raise UserError(
+            'Hanging up an Azure OpenAI WebRTC call from the server is not supported yet, so `hang_up()` is '
+            'unavailable. The call ends when the browser hangs up.'
+        )
+
     async def create_client_secret(
         self,
         *,
@@ -643,6 +678,10 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['tools'] = [tool_def_to_openai(tool) for tool in advertised_tools]
         if (max_tokens := settings.get('max_tokens')) is not None:
             config['max_response_output_tokens'] = max_tokens
+        if settings.get('parallel_tool_calls') is False:
+            # Voice Live defaults to parallel calls, and `gpt-realtime`/`-mini`/`-1.5` reject an explicit
+            # `True`, so only `False` is sent.
+            config['parallel_tool_calls'] = False
         if tool_choice is not None:
             config['tool_choice'] = tool_choice_config(tool_choice)
         thinking = settings.get('thinking')
