@@ -21,7 +21,9 @@ search layer.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from collections import OrderedDict
+from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.messages import (
@@ -57,8 +59,13 @@ class HistorySource(Protocol):
     snapshot stores; an event-sourced substrate can implement it via replay.
     """
 
-    async def list_runs(self) -> list[RunRecord]:
-        """Return all persisted runs, sorted by `started_at` ascending."""
+    async def list_runs(self, *, conversation_id: str | None = None) -> list[RunRecord]:
+        """Return persisted runs, sorted by `started_at` ascending.
+
+        With `conversation_id`, return only that conversation's runs, so a
+        conversation-scoped search never enumerates other conversations. `None`
+        returns every run.
+        """
         ...  # pragma: no cover
 
     async def run_history(self, *, run_id: str) -> list[ModelMessage]:
@@ -90,6 +97,46 @@ class SnapshotStore(Protocol):
     ) -> list[RunRecord]: ...  # pragma: no cover
 
     async def list_snapshots(self, *, run_id: str) -> list[ContinuableSnapshot]: ...  # pragma: no cover
+
+
+@runtime_checkable
+class _LatestSnapshotStore(SnapshotStore, Protocol):
+    """A `SnapshotStore` that can also load a run's newest snapshot on its own.
+
+    Every `StepStore` can, so every shipped store qualifies. It lets
+    `SnapshotHistorySource` confirm a cached run is unchanged without reloading all
+    of its snapshots; a store without it still gets incremental reconstruction.
+    """
+
+    async def latest_snapshot(
+        self, *, run_id: str, include_interrupted: bool = False
+    ) -> ContinuableSnapshot | None: ...  # pragma: no cover
+
+
+_SnapshotKey = tuple[int, datetime, str | None, int]
+"""Identity of a persisted snapshot: `(step_index, timestamp, idempotency_key, message count)`.
+
+`step_index` alone is not unique, since it restarts when a `run_id` is reused across
+`Agent.run` calls. `StepPersistence` gives every snapshot a distinct idempotency key; for
+snapshots saved without one, the save timestamp and message count tell them apart.
+"""
+
+
+def _snapshot_key(snapshot: ContinuableSnapshot) -> _SnapshotKey:
+    return (snapshot.step_index, snapshot.timestamp, snapshot.idempotency_key, len(snapshot.messages))
+
+
+@dataclass(frozen=True)
+class _ReconstructedRun:
+    """A run's durable record, and the snapshots it was reconstructed from."""
+
+    snapshot_keys: tuple[_SnapshotKey, ...]
+    newest_key: _SnapshotKey | None
+    """Key of the run's newest snapshot of any state when the record was built, or `None`
+    when the store cannot report it. Any save appends a snapshot and changes this, including
+    an `interrupted` one that retention answers by pruning older `complete` snapshots."""
+    history: tuple[ModelMessage, ...]
+    hashes: tuple[str, ...]
 
 
 def _canonical_message(message: ModelMessage) -> ModelMessage:
@@ -153,9 +200,20 @@ class SnapshotHistorySource:
     The shipped stores' `list_snapshots` defaults to `complete` snapshots only
     (mirroring `latest_snapshot`), so `interrupted` captures -- which can carry
     unsettled tool work and synthesized tool returns -- stay out of the corpus.
+
+    Reconstruction is cached per run, because every search would otherwise reload
+    and rehash every snapshot of every run in scope. Snapshots are write-once and a
+    run's snapshot list only changes when a save appends one (bounded retention
+    prunes on that same save), so the cache is checked against the run's newest
+    snapshot of any state: unchanged, the cached record is returned without
+    reloading; changed, only snapshots appended since are folded in, and anything
+    else (a pruned or replaced snapshot) rebuilds the record from scratch. A store without
+    `latest_snapshot` skips the unchanged check and reloads the snapshot list, but
+    still only folds in the new ones. `max_cached_runs` bounds
+    how many runs are kept, least recently searched first out; `0` disables the cache.
     """
 
-    def __init__(self, store: SnapshotStore) -> None:
+    def __init__(self, store: SnapshotStore, *, max_cached_runs: int = 128) -> None:
         # Fail at construction, not mid-search, when a store lacks the read seam.
         # `list_snapshots` is not part of the `StepStore` protocol, so a
         # third-party store can satisfy `StepStore` without it; without this
@@ -167,20 +225,60 @@ class SnapshotHistorySource:
                 'needs a store providing both `list_runs` and `list_snapshots`. The shipped '
                 'InMemoryStepStore, FileStepStore, SqliteStepStore, and MongoStepStore satisfy this.'
             )
+        if max_cached_runs < 0:
+            raise ValueError(f'max_cached_runs must be non-negative, got {max_cached_runs!r}.')
         self._store = store
+        # With the cache disabled there is nothing to validate, so skip the extra read.
+        self._latest_store = store if max_cached_runs and isinstance(store, _LatestSnapshotStore) else None
+        self._max_cached_runs = max_cached_runs
+        self._cache: OrderedDict[str, _ReconstructedRun] = OrderedDict()
 
-    async def list_runs(self) -> list[RunRecord]:
-        """Return all persisted runs, sorted by `started_at` ascending."""
-        return await self._store.list_runs()
+    async def list_runs(self, *, conversation_id: str | None = None) -> list[RunRecord]:
+        """Return persisted runs, optionally only one conversation's, sorted by `started_at` ascending."""
+        return await self._store.list_runs(conversation_id=conversation_id)
 
     async def run_history(self, *, run_id: str) -> list[ModelMessage]:
-        """Union one run's snapshots into its durable message record."""
+        """Union one run's snapshots into its durable message record.
+
+        The list is new on every call, but its messages are shared with the cache (as
+        `InMemoryStepStore` shares its stored ones), so treat them as read-only.
+        """
+        cached = self._cache.get(run_id)
+        newest_key: _SnapshotKey | None = None
+        if self._latest_store is not None:
+            # Read before `list_snapshots`: a save landing in between leaves this key stale,
+            # which only forces a reload next time rather than hiding the new snapshot.
+            newest = await self._latest_store.latest_snapshot(run_id=run_id, include_interrupted=True)
+            newest_key = None if newest is None else _snapshot_key(newest)
+            if cached is not None and newest_key is not None and newest_key == cached.newest_key:
+                self._remember(run_id, cached)
+                return list(cached.history)
+
+        snapshots = await self._store.list_snapshots(run_id=run_id)
+        keys = tuple(_snapshot_key(snapshot) for snapshot in snapshots)
         history: list[ModelMessage] = []
         history_hashes: list[str] = []
-        for snapshot in await self._store.list_snapshots(run_id=run_id):
+        start = 0
+        if cached is not None and keys[: len(cached.snapshot_keys)] == cached.snapshot_keys:
+            history.extend(cached.history)
+            history_hashes.extend(cached.hashes)
+            start = len(cached.snapshot_keys)
+        for snapshot in snapshots[start:]:
             messages = [message for message in snapshot.messages if not is_summary_artifact(message)]
             snapshot_hashes = [message_hash(message) for message in messages]
             overlap = _overlap_length(history_hashes, snapshot_hashes)
             history.extend(messages[overlap:])
             history_hashes.extend(snapshot_hashes[overlap:])
+
+        if keys:
+            self._remember(run_id, _ReconstructedRun(keys, newest_key, tuple(history), tuple(history_hashes)))
+        else:
+            self._cache.pop(run_id, None)
         return history
+
+    def _remember(self, run_id: str, run: _ReconstructedRun) -> None:
+        """Cache `run` as the most recently searched, evicting the least recent past the bound."""
+        self._cache[run_id] = run
+        self._cache.move_to_end(run_id)
+        while len(self._cache) > self._max_cached_runs:
+            self._cache.popitem(last=False)
