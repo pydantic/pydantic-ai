@@ -127,6 +127,9 @@ def test_provider_catalog_and_back_navigation(tmp_path: Path) -> None:
         model.name for model in codex.models
     }
     assert menu.build_providers().highlighted == MenuItem('openai-codex', value='openai-codex')
+    profiled, _ = make_context(tmp_path / 'profiled')
+    profiled.settings = Settings(model='openai@work:gpt-5')
+    assert ModelMenu(profiled).build_providers().highlighted == MenuItem('openai', value='openai')
     script = Script(
         lists=[pick('anthropic'), MenuResult(cancelled=True), pick('openai-codex'), pick('openai-codex:gpt-5.6-luna')],
         choices=[],

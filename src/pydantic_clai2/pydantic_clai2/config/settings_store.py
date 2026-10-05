@@ -123,13 +123,17 @@ class SettingsStore:
     def remove_model(self, *, name: str) -> bool:
         """Forget a model and its overrides; return `False` if it is the saved default."""
         with self._connect() as connection:
-            # Keep the default check and both deletes atomic across CLAI sessions.
-            connection.execute('BEGIN IMMEDIATE')
-            row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
-            if row is not None and _JSON.validate_json(row[0]) == name:
-                return False
-            connection.execute('DELETE FROM models WHERE name = ?', (name,))
-            connection.execute('DELETE FROM model_settings WHERE model = ?', (name,))
+            return self._remove_model(connection, name)
+
+    @staticmethod
+    def _remove_model(connection: sqlite3.Connection, name: str) -> bool:
+        # Keep the default check and the deletes atomic across CLAI sessions.
+        connection.execute('BEGIN IMMEDIATE')
+        row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
+        if row is not None and _JSON.validate_json(row[0]) == name:
+            return False
+        connection.execute('DELETE FROM models WHERE name = ?', (name,))
+        connection.execute('DELETE FROM model_settings WHERE model = ?', (name,))
         return True
 
     def chains(self) -> dict[str, list[str]]:
@@ -153,10 +157,13 @@ class SettingsStore:
             connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (f'chain:{name}',))
 
     def delete_chain(self, *, name: str) -> bool:
-        """Forget a chain, its model-list entry, and its settings; `False` if it is the saved default."""
-        if not self.remove_model(name=f'chain:{name}'):
-            return False
+        """Forget a chain, its model-list entry, and its settings; `False` if it is the saved default.
+
+        One transaction, so another session cannot make the chain its default between the check and the delete.
+        """
         with self._connect() as connection:
+            if not self._remove_model(connection, f'chain:{name}'):
+                return False
             connection.execute('DELETE FROM model_chains WHERE name = ?', (name,))
         return True
 

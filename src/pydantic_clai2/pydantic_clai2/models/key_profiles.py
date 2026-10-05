@@ -101,6 +101,8 @@ async def _save_key(*, provider: str, name: str) -> bool:
     if not isinstance(token, KeyReference) and not token.strip():
         raise ValueError(f'An API key is required for {name}.')
     connection = KeyConnection(token=token if isinstance(token, KeyReference) else SecretStr(token.strip()))
+    # Build it now, so a provider that also needs an endpoint or region fails here, not on the next turn.
+    await to_thread.run_sync(partial(_checked_provider, provider=provider, name=name, token=connection.token))
     value = connection.model_dump(mode='json')
     if isinstance(connection.token, SecretStr):
         value['token'] = connection.token.get_secret_value()
@@ -113,10 +115,8 @@ async def _save_key(*, provider: str, name: str) -> bool:
 def model(name: str) -> Model:
     """Build a core provider's model with the profile's saved key instead of environment variables."""
     ref = parse_model(name)
-    if (provider_class := keyed_provider(ref.provider)) is None:
-        raise UserError(
-            f'{ref.provider} has no profiles; only providers that sign in with an API key do. Use {ref.provider}:MODEL.'
-        )
+    if keyed_provider(ref.provider) is None:
+        raise _no_profiles(ref.provider)
     raw = load_codex_credentials(account=ref.account)
     if raw is None:
         raise UserError(f'{ref.account} is not connected. Run /login {ref.account}.')
@@ -124,9 +124,34 @@ def model(name: str) -> Model:
         connection = KeyConnection.model_validate_json(raw)
     except ValidationError:
         raise UserError(f'Stored {ref.account} credentials are invalid. Run /login {ref.account}.') from None
-    key = resolve_key(token=connection.token)
+    provider = build_provider(ref.provider, key=resolve_key(token=connection.token))
+    return infer_model(f'{ref.provider}:{ref.name}', provider_factory=lambda _: provider)
 
-    def provider_factory(_: str) -> Provider[object]:
-        return provider_class(api_key=key)
 
-    return infer_model(f'{ref.provider}:{ref.name}', provider_factory=provider_factory)
+def build_provider(provider: str, *, key: str) -> Provider[object]:
+    """The provider core would build for `provider:` models, with `key` instead of the environment's key.
+
+    A `gateway/` route goes through core's gateway provider, as `infer_provider` does, so it keeps the
+    Gateway's endpoint. Other settings, such as an Azure endpoint, still come from the environment.
+    """
+    if provider.startswith('gateway/'):
+        from pydantic_ai.providers.gateway import gateway_provider
+
+        return gateway_provider(provider.removeprefix('gateway/'), api_key=key)
+    provider_class = keyed_provider(provider)
+    if provider_class is None:
+        raise _no_profiles(provider)
+    return provider_class(api_key=key)
+
+
+def _no_profiles(provider: str) -> UserError:
+    return UserError(
+        f'{provider} has no profiles; only providers that sign in with an API key do. Use {provider}:MODEL.'
+    )
+
+
+def _checked_provider(*, provider: str, name: str, token: SecretStr | KeyReference) -> None:
+    try:
+        build_provider(provider, key=resolve_key(token=token))
+    except (UserError, ValueError) as exc:
+        raise UserError(f'{name} was not saved: {exc}') from None

@@ -170,6 +170,35 @@ async def test_a_core_provider_profile_saves_a_key(
     assert key_users(name='OPENAI_WORK') == ([] if answer == 'typed' else ['openai@work'])
 
 
+async def test_a_key_profile_for_a_provider_missing_other_settings_is_not_saved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def prompt_api_key(*, prompt: object, label: str) -> str:
+        return 'sk-typed'
+
+    monkeypatch.setattr(key_profiles, 'prompt_api_key', prompt_api_key)
+    monkeypatch.delenv('OLLAMA_BASE_URL', raising=False)
+    with pytest.raises(UserError, match=r'ollama@work was not saved: Set the `OLLAMA_BASE_URL`'):
+        await login_command(['ollama@work'], codex=CodexAuth(Console(file=io.StringIO())))
+    assert load_codex_credentials(account='ollama@work') is None
+    # With the server configured, the same sign-in is saved and runs.
+    monkeypatch.setenv('OLLAMA_BASE_URL', 'http://localhost:11434/v1')
+    assert (await login_command(['ollama@work'], codex=CodexAuth(Console(file=io.StringIO())))).startswith(
+        'ollama@work connected'
+    )
+    assert key_profiles.model('ollama@work:llama3').model_name == 'llama3'
+
+
+def test_a_gateway_profile_keeps_the_gateway_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('PYDANTIC_AI_GATEWAY_API_KEY', raising=False)
+    save_codex_credentials(account='gateway/openai@work', value=json.dumps({'token': 'pylf_v1_us_work'}))
+    model = key_profiles.model('gateway/openai@work:gpt-5')
+    assert isinstance(model, OpenAIResponsesModel)
+    assert model.client.api_key == 'pylf_v1_us_work'
+    assert 'api.openai.com' not in str(model.client.base_url)
+    assert 'gateway' in str(model.client.base_url)
+
+
 async def test_core_providers_need_a_profile_and_an_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     codex = CodexAuth(Console(file=io.StringIO()))
     with pytest.raises(ValueError, match=r'^Usage: /login'):
@@ -180,6 +209,8 @@ async def test_core_providers_need_a_profile_and_an_api_key(monkeypatch: pytest.
     assert key_profiles.supports('openrouter', profile=None)
     with pytest.raises(UserError, match='snowflake has no profiles; only providers that sign in with an API key'):
         key_profiles.model('snowflake@work:x')
+    with pytest.raises(UserError, match='snowflake has no profiles'):
+        key_profiles.build_provider('snowflake', key='sk-x')
     with pytest.raises(UserError, match=r'openai@work is not connected. Run /login openai@work.'):
         key_profiles.model('openai@work:gpt-5')
     save_codex_credentials(account='openai@work', value='not json')
@@ -343,6 +374,7 @@ def test_chain_command(tmp_path: Path) -> None:
     store.set('model', 'chain:pool')
     with pytest.raises(ValueError, match='saved default model'):
         chain_command(store, ['remove', 'pool'])
+    assert 'pool' in store.chains()  # a refused removal keeps the chain the default still names
     store.set('model', 'openai:gpt-5')
     store.save_model_settings('chain:pool', {'max_tokens': 10})
     assert chain_command(store, ['remove', 'pool']) == 'Removed chain:pool.'

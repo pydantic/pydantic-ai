@@ -249,7 +249,7 @@ class ModelMenu:
     def build_providers(self) -> Menu:
         """Choose a provider before browsing its models."""
         providers = self.providers()
-        current = (self.current or '').partition(':')[0]
+        current = provider_of(self.current or '')
         return (
             MenuBuilder('Providers')
             .style(markdown_style())

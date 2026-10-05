@@ -595,7 +595,9 @@ Sign in to more than one account per provider with a profile. Write
 A model without `@PROFILE` uses the default account, exactly as before. For
 Codex, Copilot, OpenRouter, and vLLM that is the existing login. Providers such as
 `openai` and `anthropic` still read their usual environment variables by default;
-a profile uses the key saved at `/login`. Plugins can support profiles too, such
+a profile uses the key saved at `/login`. Anything else a provider needs, such as an
+Azure endpoint or an Ollama URL, still comes from the environment, and `/login`
+refuses to save the key until it is set. Plugins can support profiles too, such
 as `/login claude@work` for a plugin's `claude-code` models. A profile name is 1
 to 32 lowercase letters, digits, hyphens, or underscores; `default` is reserved
 for the account without a profile. Each profile's
