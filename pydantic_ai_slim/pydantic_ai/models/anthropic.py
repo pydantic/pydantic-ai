@@ -2795,8 +2795,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         return system_prompt, anthropic_messages
 
+    @staticmethod
     def _limit_cache_points(
-        self,
         system_prompt: str | list[BetaTextBlockParam],
         anthropic_messages: list[BetaMessageParam],
         tools: list[BetaToolUnionParam],

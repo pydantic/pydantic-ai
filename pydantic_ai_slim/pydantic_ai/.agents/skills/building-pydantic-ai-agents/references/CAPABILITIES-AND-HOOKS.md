@@ -54,6 +54,26 @@ Supported effort values:
 - `'high'`
 - `'xhigh'`
 
+## Enable Prompt Caching Across Providers
+
+Use the unified `cache` model setting rather than reaching for provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-opus-4-6', name='cached_agent', model_settings={'cache': True})
+```
+
+Accepted values:
+
+- `True`: cache with the provider's default retention, using its automatic caching mode where one exists, or placing breakpoints at the end of the tool definitions and static instructions elsewhere
+- `False`: no library-managed caching (overrides a `cache` value in the model's default settings)
+- `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists)
+
+Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `google_cached_content`) take precedence: if any is set, the unified value is ignored entirely. OpenAI and Google cache prompts implicitly, so the setting adds nothing to their requests; on Google it warns unless `google_cached_content` is set. Explicit `CachePoint` markers in the message history still work alongside it.
+
+See [`ModelSettings.cache`](https://ai.pydantic.dev/api/settings/#pydantic_ai.settings.ModelSettings.cache) for the per-provider mapping.
+
 ## Intercept Agent Lifecycle with Hooks
 
 Use `Hooks` for decorator-based lifecycle interception.

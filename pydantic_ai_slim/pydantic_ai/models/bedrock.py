@@ -1766,8 +1766,8 @@ class BedrockConverseModel(Model[BaseClient]):
             cache_point['ttl'] = cache_setting
         return cast('ContentBlockUnionTypeDef', {'cachePoint': cache_point})
 
+    @staticmethod
     def _limit_cache_points(
-        self,
         system_prompt: list[SystemContentBlockTypeDef],
         bedrock_messages: list[MessageUnionTypeDef],
         tools: list[ToolTypeDef],

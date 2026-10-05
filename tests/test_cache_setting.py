@@ -12,13 +12,16 @@ from datetime import timedelta
 from typing import Any, Literal
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._prompt_cache import excess_cache_points, snap_cache_retention
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import CacheRetention, CacheSetting, ModelSettings
 
@@ -35,11 +38,7 @@ with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as openai_imports:
-    from pydantic_ai.models.openrouter import (
-        OpenRouterModel,
-        OpenRouterModelSettings,
-        _openrouter_settings_to_openai_settings,
-    )
+    from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 with try_import() as google_imports:
@@ -329,16 +328,27 @@ class TestOpenRouterCacheTranslation:
         return OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key='test'))
 
     def test_cache_true_translates_to_stable_boundaries(self):
-        params = ModelRequestParameters(cache=True)
-        result: dict[str, Any] = dict(_openrouter_settings_to_openai_settings(OpenRouterModelSettings(), params))
-        assert result.get('openrouter_cache_instructions') == '5m'
-        assert result.get('openrouter_cache_tool_definitions') == '5m'
+        settings, params = self._model().prepare_request(ModelSettings(cache=True), ModelRequestParameters())
+        assert settings == snapshot(
+            {'openrouter_cache_instructions': '5m', 'openrouter_cache_tool_definitions': '5m', 'extra_body': {}}
+        )
+        assert params.cache is True
 
     def test_cache_retention_forwarded(self):
-        params = ModelRequestParameters(cache='1h')
-        result: dict[str, Any] = dict(_openrouter_settings_to_openai_settings(OpenRouterModelSettings(), params))
-        assert result.get('openrouter_cache_instructions') == '1h'
-        assert result.get('openrouter_cache_tool_definitions') == '1h'
+        settings, params = self._model().prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
+        assert settings == snapshot(
+            {'openrouter_cache_instructions': '1h', 'openrouter_cache_tool_definitions': '1h', 'extra_body': {}}
+        )
+        assert params.cache == '1h'
+
+    def test_cache_retention_snapped_on_gemini_downstream(self):
+        """Gemini on OpenRouter supports only the 5-minute tier, so `'1h'` snaps down before translation."""
+        model = OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(api_key='test'))
+        settings, params = model.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
+        assert settings == snapshot(
+            {'openrouter_cache_instructions': '5m', 'openrouter_cache_tool_definitions': '5m', 'extra_body': {}}
+        )
+        assert params.cache == '5m'
 
     def test_explicit_provider_setting_wins(self):
         settings, params = self._model().prepare_request(
@@ -401,8 +411,6 @@ class TestResolveCacheRetentionUnified:
         assert model.resolve_cache_retention(ModelSettings(cache='1h')) is None
 
     def test_fallback_model_resolves_none(self):
-        from pydantic_ai.models.fallback import FallbackModel
-
         model = FallbackModel(_make_model(supports_cache=True))
         assert model.resolve_cache_retention(ModelSettings(cache='1h')) is None
 
@@ -412,8 +420,6 @@ class TestResolveCacheRetentionUnified:
         assert model.resolve_cache_retention(ModelSettings(cache=True)) is None
 
     def test_wrapper_model_delegates_to_wrapped(self):
-        from pydantic_ai.models.wrapper import WrapperModel
-
         model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '1h'))
         assert WrapperModel(model).resolve_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
 
@@ -446,9 +452,6 @@ async def test_fallback_model_snaps_cache_per_wrapped_model():
     """`FallbackModel` passes the original settings through, so each wrapped model snaps the
     unified retention against its own profile; a chain with mixed retention support resolves
     per model rather than using the first model's tiers."""
-    from pydantic_ai import Agent
-    from pydantic_ai.exceptions import ModelHTTPError
-    from pydantic_ai.models.fallback import FallbackModel
 
     def _fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise ModelHTTPError(status_code=500, model_name='primary')
