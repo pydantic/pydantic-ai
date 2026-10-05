@@ -53,6 +53,15 @@ class Status:
     status_segments: tuple[StatusSegment, ...] = ()
     """Plugin fragments appended after the built-in figures; the shell fills this in each turn."""
 
+    def clear_conversation(self) -> None:
+        """Forget the figures of a conversation the shell switched away from."""
+        self.context_tokens = None
+        self.context_window = None
+        self.context_alert = False
+        self.output_tokens = None
+        self.cost = None
+        self.streamed_chars = 0
+
     def observe(self, event: AgentStreamEvent) -> None:
         """Include text, thinking, and streamed tool arguments in the estimate."""
         if isinstance(event, PartStartEvent):

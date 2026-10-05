@@ -1,5 +1,6 @@
 """Plugins read the conversation's ID and title, and hear `ConversationChanged` when either changes."""
 
+from decimal import Decimal
 from io import StringIO
 from pathlib import Path
 from typing import ClassVar
@@ -267,3 +268,29 @@ async def test_plugin_resumes_a_saved_conversation(tmp_path: Path) -> None:
 async def test_transcript_has_nothing_to_resume() -> None:
     with pytest.raises(LookupError, match='No saved session: missing'):
         await Transcript().resume('missing')
+
+
+async def test_a_plugin_command_switching_conversations_clears_the_footer(tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'settings.db'),
+        builtin_plugins=[],
+        project=ProjectSettings(),
+        headless=True,
+    )
+    session = shell.session
+    await session.prompt('earlier work')
+    saved = session.conversation_id
+    await session.clear()
+    shell.status.context_tokens = 90
+    shell.status.cost = Decimal('0.01')
+    # Titling the current conversation keeps its figures.
+    await session.prompt('current work')
+    assert shell.status.context_tokens == 90
+    await session.resume(saved)
+    assert (shell.status.context_tokens, shell.status.cost) == (None, None)

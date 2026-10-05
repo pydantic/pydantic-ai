@@ -69,7 +69,7 @@ class Conversation(Protocol):
         """Switch to a saved conversation, as `/resume ID` does, and return the notice to show.
 
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
-        turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a
+        turns, such as from `on_session_start` or a command; the status row starts afresh. It raises `RuntimeError` during a
         run, `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
         directory or still running in another process. `on_conversation_changed` follows.
         """

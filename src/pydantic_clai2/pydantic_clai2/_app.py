@@ -46,6 +46,7 @@ from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
 from pydantic_clai2.plugins import (
+    ConversationChanged,
     ModelProvider,
     PluginLogin,
     Renderer,
@@ -531,7 +532,17 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
-    session.on_change = loader.fire
+    shown = session.conversation_id
+
+    async def conversation_changed(event: ConversationChanged) -> None:
+        nonlocal shown
+        # A plugin's `resume` switches conversations too, not only the commands `_reset_status` knows.
+        if event.conversation_id != shown:
+            shown = event.conversation_id
+            status.clear_conversation()
+        await loader.fire(event)
+
+    session.on_change = conversation_changed
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -1049,12 +1060,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
 
 def _reset_status(command: str, status: Status) -> None:
     if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
-        status.context_tokens = None
-        status.context_window = None
-        status.context_alert = False
-        status.output_tokens = None
-        status.cost = None
-        status.streamed_chars = 0
+        status.clear_conversation()
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
