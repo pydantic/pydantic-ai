@@ -74,12 +74,16 @@ _MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
 
 def _trim_url(url: str) -> str:
     """Leave trailing punctuation and unbalanced closing brackets out of a bare URL, as GFM does."""
-    while url[-1] in '.,;:!?\'"*_~)]':
-        opener = {')': '(', ']': '['}.get(url[-1])
-        if opener and url.count(opener) >= url.count(url[-1]):
-            break
-        url = url[:-1]
-    return url
+    unopened = {')': url.count(')') - url.count('('), ']': url.count(']') - url.count('[')}
+    end = len(url)
+    while url[end - 1] in '.,;:!?\'"*_~)]':
+        char = url[end - 1]
+        if char in unopened:
+            if unopened[char] <= 0:
+                break
+            unopened[char] -= 1
+        end -= 1
+    return url[:end]
 
 
 class MarkdownRenderer(Renderer):
@@ -94,10 +98,14 @@ class MarkdownRenderer(Renderer):
         super().render(event)
 
     def _format_inline(self, text: str) -> str:
-        taken = [match.span() for pattern in (CODE_SPAN_RE, IMAGE_RE, LINK_RE) for match in pattern.finditer(text)]
+        # Each pattern's matches are disjoint, so marking them is linear in the line length.
+        taken = bytearray(len(text))
+        for pattern in (CODE_SPAN_RE, IMAGE_RE, LINK_RE):
+            for match in pattern.finditer(text):
+                taken[match.start() : match.end()] = b'\x01' * (match.end() - match.start())
 
         def mark(match: re.Match[str]) -> str:
-            if any(start <= match.start() < end for start, end in taken):
+            if taken[match.start()]:
                 return match[0]
             url = match[1] or _trim_url(match[0])
             rest = '' if match[1] else match[0][len(url) :]

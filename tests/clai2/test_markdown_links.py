@@ -110,6 +110,18 @@ async def test_heading_colour_continues_after_a_bare_url() -> None:
     assert (after.color, after.bold) == (before.color, True)
 
 
+async def test_long_lines_of_many_urls_and_brackets() -> None:
+    """Sized so a quadratic rescan per URL or per trailing bracket turns this sub-second test into ~20 seconds."""
+    content = ' '.join(f'`c` https://x.dev/{i}' for i in range(8000)) + f' {URL}' + ')' * 200_000
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, width=120)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content)))
+    await renderer.finish()
+    assert output.getvalue().count('\x1b]8;;https://') == 8001
+    assert f'{OPEN}' in output.getvalue()
+
+
 def test_each_smooth_chunk_closes_its_link() -> None:
     output = io.StringIO()
     writer = LinkOutput(output=output)
