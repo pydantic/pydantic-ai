@@ -1,5 +1,6 @@
 """Plugins read the conversation's ID and title, and hear `ConversationChanged` when either changes."""
 
+from collections.abc import Sequence
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
@@ -20,6 +21,7 @@ from pydantic_clai2 import chat
 from pydantic_clai2._app import create_shell, create_stock_agent
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -304,6 +306,16 @@ async def test_transcript_has_nothing_to_resume() -> None:
         await Transcript().resume('missing')
 
 
+class Switcher(Plugin):
+    """Offers `/switch ID`, a plugin command that resumes another conversation."""
+
+    def get_commands(self) -> Sequence[Command]:
+        async def switch(args: list[str]) -> str:
+            return await self.host.conversation.resume(args[0])
+
+        return (Command(name='switch', description='Resume a conversation', handler=switch),)
+
+
 async def test_a_plugin_command_switching_conversations_clears_the_footer(tmp_path: Path) -> None:
     shell = create_shell(
         Agent(TestModel()),
@@ -313,18 +325,23 @@ async def test_a_plugin_command_switching_conversations_clears_the_footer(tmp_pa
         console=Console(file=StringIO()),
         settings=None,
         store=SettingsStore(tmp_path / 'settings.db'),
-        builtin_plugins=[],
+        builtin_plugins=[PluginSettings(id='switcher', factory='tests.clai2.test_conversation_identity:Switcher')],
         project=ProjectSettings(),
         headless=True,
     )
-    session = shell.session
-    await session.prompt('earlier work')
-    saved = session.conversation_id
-    await session.clear()
-    shell.status.context_tokens = 90
-    shell.status.cost = Decimal('0.01')
-    # Titling the current conversation keeps its figures.
-    await session.prompt('current work')
-    assert shell.status.context_tokens == 90
-    await session.resume(saved)
-    assert (shell.status.context_tokens, shell.status.cost) == (None, None)
+    await shell.loader.load_all()
+    try:
+        session = shell.session
+        await session.prompt('earlier work')
+        saved = session.conversation_id
+        await shell.commands.execute_async('/new')
+        shell.status.context_tokens = 90
+        shell.status.cost = Decimal('0.01')
+        # Titling the current conversation keeps its figures.
+        await session.prompt('current work')
+        assert shell.status.context_tokens == 90
+        assert 'Resumed earlier work' in await shell.commands.execute_async(f'/switch {saved}')
+        assert session.conversation_id == saved
+        assert (shell.status.context_tokens, shell.status.cost) == (None, None)
+    finally:
+        await shell.loader.close('exit')
