@@ -269,6 +269,13 @@ def test_voice_live_azure_turn_detection() -> None:
     )
     # `None` isn't in the type, but disables VAD like it does for the sibling settings.
     assert _voice_live_config('gpt-realtime', azure_voice_live_turn_detection=None)['turn_detection'] is None
+    # An `AzureServerVAD` is a `ServerVAD`, so `openai_turn_detection` carries its Azure-only options too.
+    assert (
+        _voice_live_config('gpt-4.1', openai_turn_detection=server)['turn_detection']['end_of_utterance_detection']
+        == eou
+    )
+    with pytest.raises(UserError, match='End-of-utterance detection works only'):
+        _voice_live_config('gpt-realtime', openai_turn_detection=server)
     # A cascade deployed under another name opts in through its profile.
     cascade = AzureRealtimeModelProfile(azure_voice_live_cascade=True)
     config = _voice_live_config(

@@ -381,27 +381,27 @@ def _voice_live_turn_detection(
     turn_detection: ServerVAD | SemanticVAD | AzureServerVAD | AzureSemanticVAD | None
     if 'azure_voice_live_turn_detection' in settings:
         turn_detection = settings['azure_voice_live_turn_detection']
-        if turn_detection is None:  # pyright: ignore[reportUnnecessaryComparison]
-            # Not in the type, but `None` disables VAD for the sibling settings, and did for this one too.
-            return None
-        if 'end_of_utterance_detection' in turn_detection and not cascade:
-            # Voice Live rejects it for any other model, and then refuses every later frame of the session.
-            raise UserError(
-                f'End-of-utterance detection works only on an Azure AI Voice Live cascade model, and {model_name!r} '
-                'is not one. Remove `end_of_utterance_detection`, or, for a cascade model deployed under another '
-                'name, pass `profile=AzureRealtimeModelProfile(azure_voice_live_cascade=True)`.'
-            )
-        if turn_detection['type'] != 'semantic_vad':
-            # Server VAD and Voice Live's own semantic VAD are sent as given, Azure-only options included,
-            # with the response defaults `turn_detection_config` would fill in.
-            return {'create_response': True, 'interrupt_response': True, **turn_detection}
     elif 'openai_turn_detection' in settings:
+        # An `AzureServerVAD` is a `ServerVAD` too, so its Azure-only options can arrive this way as well.
         turn_detection = settings['openai_turn_detection']
     elif 'turn_detection' in settings:
         turn_detection = resolve_base_turn_detection(settings['turn_detection'])
     else:
         turn_detection = ServerVAD(type='server_vad')
-    if turn_detection is not None and turn_detection['type'] == 'semantic_vad' and cascade:
+    if turn_detection is None:
+        return None
+    if 'end_of_utterance_detection' in turn_detection and not cascade:
+        # Voice Live rejects it for any other model, and then refuses every later frame of the session.
+        raise UserError(
+            f'End-of-utterance detection works only on an Azure AI Voice Live cascade model, and {model_name!r} '
+            'is not one. Remove `end_of_utterance_detection`, or, for a cascade model deployed under another '
+            'name, pass `profile=AzureRealtimeModelProfile(azure_voice_live_cascade=True)`.'
+        )
+    if turn_detection['type'] != 'semantic_vad':
+        # Server VAD and Voice Live's own semantic VAD are sent as given, Azure-only options included,
+        # with the response defaults `turn_detection_config` would fill in.
+        return {'create_response': True, 'interrupt_response': True, **turn_detection}
+    if cascade:
         # The cascade models reject OpenAI's semantic VAD, so use Voice Live's own model-based one,
         # which every model accepts; it has no `eagerness`.
         return {
