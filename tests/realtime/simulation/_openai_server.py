@@ -156,8 +156,9 @@ class OpenAIServer:
         self.network = Network(self)
         self.sessions: list[ServerSession] = []
         self._armed_rejections: list[Literal['content', 'response']] = []
-        # The turn each `input_audio_buffer.cleared` cut off (if any), until the client reads the frame.
-        self._clears_unread: list[str | None] = []
+        # The turn each `input_audio_buffer.cleared` cut off (if any), until the client reads the frame, by the
+        # connection it comes back on.
+        self._clears_unread: dict[int, list[str | None]] = {}
         self._next_item = 1
         # Server event id of an `error` frame -> the inputs it refused, resolved when the client reads it.
         self._refusals: dict[str, list[str]] = {}
@@ -241,8 +242,10 @@ class OpenAIServer:
             response.started_read = now
         if response is not None and response.content_read is None and frame_type.startswith(_CONTENT_FRAME_PREFIXES):
             response.content_read = now
-        if frame_type == 'input_audio_buffer.cleared' and self._clears_unread:
-            if (cleared := self._clears_unread.pop(0)) is not None:
+        if frame_type == 'input_audio_buffer.cleared' and (
+            clears := self._clears_unread.get(self._session_for(socket).index)
+        ):
+            if (cleared := clears.pop(0)) is not None:
                 self.truth.speech_cleared_read.add(cleared)
         if frame_type == 'conversation.item.input_audio_transcription.completed':
             self.truth.transcripts_read.setdefault(str(frame.get('transcript')), now)
@@ -426,7 +429,7 @@ class OpenAIServer:
                 # (Only a clear between a commit the session sent and its reply's first word.)
                 self._finish_active(session, 'cancelled')  # A clear right after a commit cancels its reply.
         session.audio_ms = 0
-        self._clears_unread.append(session.speaking)
+        self._clears_unread.setdefault(session.index, []).append(session.speaking)
         if (key := session.speaking) is not None:
             self.truth.speech_cleared.add(key)
             if self.dialect == 'xai' and session.transcription:

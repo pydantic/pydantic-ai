@@ -513,8 +513,10 @@ class Checker:
             spoken = sum(input_.kind == 'speech' for input_ in truth.inputs)
             if sim.close_requested is not None:
                 # Closing records what the user was still saying, though the provider never committed it.
+                inputs = {input_.key for input_ in truth.inputs}
                 spoken += sum(
-                    key not in truth.speech_committed
+                    key not in inputs  # (xAI adds the turn at speech start: it's counted above.)
+                    and key not in truth.speech_committed
                     and key not in truth.speech_stopped_uncommitted
                     # A clear the session never heard back about (its send failed) leaves the turn as it was.
                     and (key not in truth.speech_cleared or key not in truth.speech_cleared_read)

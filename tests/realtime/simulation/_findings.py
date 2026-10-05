@@ -237,19 +237,14 @@ SENT_BEFORE_REPLY_STARTED = Finding(
 
 
 def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A spoken turn committed after a response ended, which the user started before that response was over.
-
-    Either server VAD heard them start before it ended, or their voiced audio started streaming before any of its
-    content arrived.
-    """
+    """A spoken turn committed after a response ended, which the user started before that response was over: their
+    voiced audio started streaming before any of its content arrived."""
     input_ = sim.truth.input(violation.context.get('input', ''))
     response = sim.truth.responses.get(violation.context.get('response', ''))
     if input_ is None or response is None or input_.kind != 'speech' or response.seq_end is None:
         return False
-    if input_.seq <= response.seq_end:
+    if input_.seq <= response.seq_end:  # pragma: lax no cover (the other way round)
         return False
-    if (started := sim.truth.speech_started.get(input_.key)) is not None and started <= response.seq_end:
-        return True  # Server VAD heard the user start before the response ended.
 
     content_read, ended, cancelled = response.content_read, response.seq_end, response.status == 'cancelled'
 
@@ -665,14 +660,14 @@ EXTENDED_THINKING_PARALLEL_CALLS = Finding(
 def _refusal_around_a_reconnect(sim: Simulation) -> bool:
     """A refusal the next connection loss followed with no response started in between: nothing released its request."""
     truth = sim.truth
-    for input_ in truth.inputs:
-        if input_.refused_at is None:
-            continue
-        refused = input_.refused_at
+
+    def unreleased(refused: int) -> bool:
         loss = next((loss for loss in truth.connection_losses if loss > refused), None)
-        if loss is not None and not any(refused < response.seq_start < loss for response in truth.responses.values()):
-            return True
-    return False
+        return loss is not None and not any(
+            refused < response.seq_start < loss for response in truth.responses.values()
+        )
+
+    return any(input_.refused_at is not None and unreleased(input_.refused_at) for input_ in truth.inputs)
 
 
 LOST_REFUSAL = Finding(
