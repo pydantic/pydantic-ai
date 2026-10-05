@@ -11,12 +11,14 @@ from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
 from termflow import Parser, Renderer
+from termflow.ansi import UNDERLINE_OFF, UNDERLINE_ON, fg_color, make_link
 from termflow.parser.events import (
     CodeBlockEndEvent,
     CodeBlockLineEvent,
     CodeBlockStartEvent,
     ParseEvent,
 )
+from termflow.parser.inline import CODE_SPAN_RE, IMAGE_RE, LINK_RE
 from termflow.render.style import RenderFeatures, RenderStyle
 from termflow.stream import SmoothWriter
 from termflow.syntax import LANGUAGE_ALIASES
@@ -56,6 +58,45 @@ def markdown_style() -> RenderStyle:
         link=theme.AQUA,
         error=theme.CALCIUM,
     )
+
+
+_URL_RE = re.compile(r'<(https?://[^\s<>]+)>|(?<![\w/])https?://[^\s<>`]+')
+_URL_START, _URL_END = '\ue000', '\ue001'
+"""Private-use marks around a URL while Termflow formats the line; `terminal_text` escapes any from the model."""
+_MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
+
+
+def _trim_url(url: str) -> str:
+    """Leave trailing punctuation and unbalanced closing brackets out of a bare URL, as GFM does."""
+    while url[-1] in '.,;:!?\'"*_~)]':
+        if url[-1] == ')' and url.count('(') >= url.count(')'):
+            break
+        url = url[:-1]
+    return url
+
+
+class MarkdownRenderer(Renderer):
+    """Termflow's renderer, also highlighting bare `https://` and `<https://...>` URLs as links."""
+
+    def _format_inline(self, text: str) -> str:
+        taken = [match.span() for pattern in (CODE_SPAN_RE, IMAGE_RE, LINK_RE) for match in pattern.finditer(text)]
+
+        def mark(match: re.Match[str]) -> str:
+            if any(start <= match.start() < end for start, end in taken):
+                return match[0]
+            url = match[1] or _trim_url(match[0])
+            rest = '' if match[1] else match[0][len(url) :]
+            return f'{_URL_START}{url}{_URL_END}{rest}'
+
+        return _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
+
+    def _link(self, match: re.Match[str]) -> str:
+        url = match[1]
+        if '\x1b' in url:  # Other formatting split the URL; leave it as Termflow styled it.
+            return url
+        # Reset only the foreground so surrounding bold and thinking dim continue after the link.
+        label = f'{fg_color(self.style.link)}{url}\x1b[39m'
+        return make_link(url, label) if self.features.hyperlinks else f'{UNDERLINE_ON}{label}{UNDERLINE_OFF}'
 
 
 class LinkOutput(io.StringIO):
@@ -204,7 +245,7 @@ class StreamRenderer:
         if self.console.is_terminal:
             self._writer = self._make_writer()
             self._writer.start()
-        self._renderer = Renderer(
+        self._renderer = MarkdownRenderer(
             output=self._writer or self.console.file,  # pyright: ignore[reportArgumentType]
             width=self.console.width,
             style=markdown_style(),
