@@ -140,6 +140,17 @@ class _ModelDefaults(AbstractCapability[DepsT]):
         return lambda ctx: self.defaults(_requested_model(ctx)) or ModelSettings()
 
 
+@dataclass
+class _SessionModels(ResolveModelId[DepsT]):
+    """Resolve model names through CLAI first, as when CLAI resolved the selected model before each run.
+
+    Outermost, so it is tried before a resolver on the agent or a plugin.
+    """
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+
 def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
     """The capabilities the agent was built with, so a sandbox configured on it counts too.
 
@@ -386,7 +397,7 @@ class Session(Generic[DepsT, OutputT]):
             # Already bound to the stock agent, including delegation and guardrails.
             capabilities = []
         if self.model is not None:
-            capabilities.append(ResolveModelId[DepsT](self._resolve_model_id))
+            capabilities.append(_SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:
             capabilities.append(_ModelDefaults[DepsT](self.model_defaults))
         return run_model, capabilities

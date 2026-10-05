@@ -17,9 +17,9 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Thinking
+from pydantic_ai.capabilities import AbstractCapability, ResolveModelId, Thinking
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 from pydantic_ai.profiles import ModelProfile
@@ -396,6 +396,25 @@ async def test_fork_keeps_how_the_model_was_chosen(tmp_path: Path, model: str | 
     fork = shell.fork_session(model, [])
     await fork.prompt('hello')
     assert recorder.calls[-1][0] == (model or 'openai:gpt-6-luna')
+
+
+@pytest.mark.parametrize('stock', [True, False], ids=['stock', 'supplied'])
+async def test_selected_model_resolves_through_clai_first(tmp_path: Path, stock: bool) -> None:
+    """CLAI resolves the selected model before a resolver on the agent or a plugin, as when it did so before each run."""
+    elsewhere = Recorder()
+
+    def claim(ctx: ModelResolutionContext[None], model_id: str) -> Model:
+        return elsewhere.resolve(model_id)
+
+    resolver = ResolveModelId[None](claim)
+    recorder, _ = await run_turn(
+        tmp_path,
+        settings=Settings() if stock else resolve_settings({'model': 'openai:gpt-6'}),
+        plugins=(resolver,) if stock else (),
+        agent=None if stock else Agent(None, deps_type=type(None), capabilities=[resolver]),
+    )
+    assert [name for name, _ in recorder.calls] == ['openai-codex:gpt-6-astra' if stock else 'openai:gpt-6']
+    assert elsewhere.calls == []
 
 
 @pytest.mark.parametrize('source', ['saved', 'cli'])
