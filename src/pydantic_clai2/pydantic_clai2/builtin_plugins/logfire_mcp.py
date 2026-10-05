@@ -29,6 +29,7 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_US_MCP_URL, LogfireMCP
 from pydantic_clai2.builtin_plugins.logfire_destination import (
     REGIONS,
+    Destination,
     destination_problem,
     parse_destination,
     pick_destination,
@@ -374,19 +375,26 @@ async def _configure(source: LogfireMCPSource) -> str:
             return [f'Logfire uses {KEY_NAME} from the environment or /keys, then browser sign-in.']
         return [f'Logfire uses the saved key {key.name}. Manage it in /keys.']
 
+    # Before these settings are first saved (saving writes every option), start from the Logfire last set up.
+    last: Destination | None = None
+
     def pick_url() -> list[str]:
+        nonlocal last
         settings = source.settings
         current = parse_destination(settings.url) if destination_problem(settings.url) is None else None
-        destination = pick_destination(RUNNERS, current=current, then=_THEN)
+        destination = pick_destination(RUNNERS, current=last or current, then=_THEN)
         if destination is None:
             return []
         source.save(settings.model_copy(update={URL: destination.mcp_url}))
         remember(destination)
+        last = None  # Chosen now, so reopening the picker starts from this choice.
         return [f'Logfire tools connect to {destination.label} at {destination.mcp_url}.']
 
     def flow() -> list[str]:
-        # Built in the worker: its rows read `/keys` (a cross-process lock) and the keyring, and the seed a file.
-        seeded = _seed(source)
+        nonlocal last
+        # In the worker: the rows read `/keys` (a cross-process lock) and the keyring, and `remembered` a file.
+        last = None if URL in source.settings.model_fields_set else remembered()
+        seeded = _seed(source, last)
         return [*seeded, *run_flow(FieldMenu(source), RUNNERS, submenus={'key': pick_key, URL: pick_url})]
 
     return '\n'.join(await run_worker(flow)) or 'Logfire settings unchanged.'
@@ -395,14 +403,14 @@ async def _configure(source: LogfireMCPSource) -> str:
 _THEN = "Enter: the agent's Logfire tools connect here,\nwith the API key or browser sign-in set in this menu."
 
 
-def _seed(source: LogfireMCPSource) -> list[str]:
-    """Before these settings are first saved, connect to the Logfire last set up in `observability` or here.
+def _seed(source: LogfireMCPSource, last: Destination | None) -> list[str]:
+    """Connect to `last`, the Logfire last set up, when it is a hosted region.
 
-    Saving writes every option, so a Logfire saved by this plugin, even the default, is never replaced.
+    Any other Logfire is only highlighted in the picker: the key this plugin already has must not reach a server
+    the user never confirmed for it.
     """
     settings = source.settings
-    last = None if URL in settings.model_fields_set else remembered()
-    if last is None or last.mcp_url == settings.url:
+    if last is None or last.region is None or last.mcp_url == settings.url:
         return []
     source.save(settings.model_copy(update={URL: last.mcp_url}))
     return [f'Logfire tools connect to {last.label}, the Logfire you last set up. Change it under Which Logfire.']

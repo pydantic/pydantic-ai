@@ -643,3 +643,33 @@ async def test_the_logfire_picker_starts_from_the_saved_one_and_esc_keeps_it(
     # A URL at another path, saved by an earlier build, is not one the picker can name, so it starts at the top.
     assert highlighted == [REGIONS['Logfire US']]
     assert shell.saved()['url'] == url
+
+
+async def test_another_remembered_logfire_is_only_offered_never_connected_to_unasked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key this plugin already uses must not reach a server nobody picked for it, so only regions are switched to."""
+    remember(Destination(base_url='https://logfire.example.com'))
+    api_keys.save_key(name='LOGFIRE_API_KEY', value='us-key')
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    highlighted: list[object] = []
+    shown = script(monkeypatch, lists=[pick('url')] * 3, choices=[CLOSE, pick(REGIONS['Logfire EU']), CLOSE])
+    run_choice = shown.run_choice
+
+    def watch(menu: Menu) -> MenuResult:
+        highlighted.append(menu.highlighted.value if menu.highlighted else None)
+        return run_choice(menu)
+
+    monkeypatch.setattr(
+        'pydantic_clai2.builtin_plugins.logfire_mcp.RUNNERS',
+        Runners(run_list=shown.run_list, run_choice=watch, run_text=shown.run_text),
+    )
+    assert await shell.loader.configure('logfire_mcp') == (
+        'Logfire tools connect to Logfire EU at https://logfire-eu.pydantic.dev/mcp.'
+    )
+    # Offered first; Esc kept Logfire US. Once Logfire EU is picked, reopening starts from it.
+    assert highlighted == [OTHER, OTHER, REGIONS['Logfire EU']]
+    assert shell.capability() == LogfireMCP[None](
+        auth=SavedKey(name='LOGFIRE_API_KEY', setup=SETUP), url=LOGFIRE_EU_MCP_URL, read_only=True
+    )
