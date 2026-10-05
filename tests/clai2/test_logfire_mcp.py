@@ -716,3 +716,16 @@ async def test_another_remembered_logfire_is_only_offered_never_connected_to_una
     assert shell.capability() == LogfireMCP[None](
         auth=SavedKey(name='LOGFIRE_API_KEY', setup=SETUP), url=LOGFIRE_EU_MCP_URL, read_only=True
     )
+
+
+async def test_picking_the_saved_logfire_again_keeps_its_url_and_sign_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Browser sign-ins are stored under the exact MCP URL, so one an earlier build saved is not rewritten."""
+    saved = 'https://logfire-eu.pydantic.dev/mcp/'
+    shell = Shell(tmp_path, {'url': saved, 'oauth': False})
+    await shell.loader.enable('logfire_mcp')
+    script(monkeypatch, lists=[pick('url')], choices=[pick(REGIONS['Logfire EU'])])
+    assert await shell.loader.configure('logfire_mcp') == f'Logfire tools connect to Logfire EU at {saved}.'
+    assert shell.saved()['url'] == saved
+    assert remembered() == REGIONS['Logfire EU']

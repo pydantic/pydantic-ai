@@ -386,10 +386,12 @@ async def _configure(source: LogfireMCPSource) -> str:
         destination = pick_destination(RUNNERS, current=last or current, then=_THEN)
         if destination is None:
             return []
-        source.save(settings.model_copy(update={URL: destination.mcp_url}))
+        if destination != current:
+            # Picking the Logfire already saved keeps its URL as it is: browser sign-ins are stored under it.
+            source.save(settings.model_copy(update={URL: destination.mcp_url}))
         remember(destination)
         last = None  # Chosen now, so reopening the picker starts from this choice.
-        return [f'Logfire tools connect to {destination.label} at {destination.mcp_url}.']
+        return [f'Logfire tools connect to {destination.label} at {source.settings.url}.']
 
     def flow() -> list[str]:
         nonlocal last

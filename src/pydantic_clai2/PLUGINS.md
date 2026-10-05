@@ -586,10 +586,12 @@ plugin connects to the origin plus `/mcp`. The hosted regions come from harness'
 `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
 regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
 mean Logfire US. In this plugin's JSON settings, a host or the URL you open Logfire
-at becomes its MCP URL, but an MCP URL is kept exactly as given (browser sign-ins
-are stored under it), so settings from earlier builds keep their sign-in. Only https is accepted, and an address with a password, another
-path, a query, or a fragment is refused as you type. Enter uses the address;
-Esc goes back to the list, and Esc there cancels without changing anything.
+at becomes its MCP URL, but an MCP URL is kept exactly as given, and so is the one
+saved when you pick the same Logfire again: browser sign-ins are stored under it, so
+an MCP URL saved by an earlier build keeps its sign-in. Only https is accepted, and
+an address with a password, another path, a query, or a fragment is refused as you
+type. Enter uses the address; Esc goes back to the list, and Esc there cancels
+without changing anything.
 
 Whichever Logfire you last chose in either plugin is remembered, in
 `~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
