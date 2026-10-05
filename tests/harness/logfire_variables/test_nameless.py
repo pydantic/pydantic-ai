@@ -111,7 +111,7 @@ async def test_nameless_with_underivable_agent_name_raises() -> None:
 
 
 async def test_failed_model_selection_leaves_no_resolution_behind() -> None:
-    # `wrap_run` clears the handoff, and a selection that raises never reaches it. Setting it before
+    # `wrap_run` consumes the handoff, and a selection that raises never reaches it. Setting it before
     # the model decision would leave this run's instructions, settings and tool overrides in the
     # context for whatever runs next.
     capability = AgentControl()

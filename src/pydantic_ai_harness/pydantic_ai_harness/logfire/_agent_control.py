@@ -624,7 +624,13 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     # which is where the framework reads it from.
     id: str | None = field(default=_AGENT_CONTROL_ID, kw_only=True)
 
-    _selection_resolved: ContextVar[ResolvedVariable[AgentConfig] | None] = field(init=False, repr=False)
+    _selection_resolved: ContextVar[list[ResolvedVariable[AgentConfig]] | None] = field(init=False, repr=False)
+    """The resolution model selection made, handed to `wrap_run` in a box it empties.
+
+    Model selection runs in the caller's task and `wrap_run` in a task Pydantic AI starts with a copy
+    of its context, so `wrap_run` cannot reset the caller's value; emptying the shared box is what keeps
+    a later run in the same task, one that skips selection with `run(model=...)`, from picking it up.
+    """
     _code_model: ContextVar[str | None] = field(init=False, repr=False)
     _code_settings: ContextVar[Mapping[str, Any] | None] = field(init=False, repr=False)
     """The settings in force before this capability's patch, snapshotted for the baseline.
@@ -728,10 +734,10 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
                         'defines no model and none is published in Logfire yet. Give the agent a model, '
                         'pass one to `run(model=...)`, or publish a `model` in the managed config.'
                     )
-                # Handed off only once selection has succeeded. `wrap_run` is what clears this, and a
+                # Handed off only once selection has succeeded. `wrap_run` is what consumes this, and a
                 # selection that raises never reaches it -- so setting it earlier would leave this run's
                 # instructions, settings and tool overrides in the context for whatever runs next.
-                self._selection_resolved.set(resolved)
+                self._selection_resolved.set([resolved])
             return selected[0]
 
         return select
@@ -823,7 +829,8 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Add applied-section baggage inside the base's once-per-run resolution context."""
-        resolved = self._selection_resolved.get() or self._resolve(ctx)
+        handoff = self._selection_resolved.get()
+        resolved = handoff.pop() if handoff else self._resolve(ctx)
         self._warn_if_unreadable(self._ensure_variable(ctx), resolved)
         with resolved:
             token = self._resolved.set(resolved)
@@ -839,7 +846,6 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
                 return await handler()
             finally:
                 self._resolved.reset(token)
-                self._selection_resolved.set(None)
                 # Issues belong to the request that planned them. A run that failed between planning
                 # a section and reporting it leaves some here, and the next run plans its own.
                 self._planned_issues.set({})

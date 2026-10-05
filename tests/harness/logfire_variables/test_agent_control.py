@@ -1174,6 +1174,28 @@ async def test_callable_targeting_resolution_is_reused_for_run(publish: Publish)
     assert calls == 1
 
 
+async def test_a_call_site_model_run_resolves_its_own_targeting(publish: Publish) -> None:
+    """A run that skips model selection resolves for itself rather than reusing the previous run's.
+
+    Model selection runs in the caller's task and `wrap_run` in a task started from a copy of its
+    context, so a handoff `wrap_run` only reset on its own side stayed in the caller's context. The next
+    run in the same task with `run(model=...)` skips selection and would then serve the previous run's
+    resolution -- another tenant's instructions and tools -- without consulting its own targeting.
+    """
+    keys: list[str] = []
+
+    def targeting(ctx: RunContext[str]) -> str:
+        keys.append(ctx.deps)
+        return ctx.deps
+
+    publish('per_tenant', AgentConfig(model='test'))
+    capability = AgentControl[str]('per_tenant', label='production', targeting_key=targeting)
+    agent = Agent(TestModel(), deps_type=str, capabilities=[capability])
+    await agent.run('hello', deps='tenant-a')
+    await agent.run('hello', deps='tenant-b', model=TestModel())
+    assert keys == ['tenant-a', 'tenant-b']
+
+
 async def test_a_resolved_config_builds_one_snapshot_per_process(
     capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
 ) -> None:
