@@ -30,7 +30,6 @@ from pydantic_ai_harness.logfire_mcp import LOGFIRE_US_MCP_URL, LogfireMCP
 from pydantic_clai2.builtin_plugins.logfire_destination import (
     REGIONS,
     Destination,
-    destination_problem,
     parse_destination,
     pick_destination,
     remember,
@@ -73,12 +72,11 @@ class LogfireMCPSettings(BaseModel):
     @field_validator('url')
     @classmethod
     def _mcp_url(cls, url: str) -> str:
-        try:
-            return parse_destination(url).mcp_url
-        except ValueError:
-            pass
-        # Earlier builds took any https MCP URL, so one saved at another path still loads as it was.
         parts = urlsplit(url)
+        if '://' not in url or not parts.path.strip('/'):
+            # A host, or the URL you open Logfire at, names the Logfire whose MCP server is at `/mcp`.
+            return parse_destination(url).mcp_url
+        # An MCP URL is kept exactly as given, as earlier builds kept it: browser sign-ins are stored under it.
         # A query or fragment would make the URL differ from the resource Logfire signs in for.
         extras = parts.username or parts.password or parts.query or parts.fragment
         if parts.scheme != 'https' or not parts.hostname or extras:
@@ -381,7 +379,10 @@ async def _configure(source: LogfireMCPSource) -> str:
     def pick_url() -> list[str]:
         nonlocal last
         settings = source.settings
-        current = parse_destination(settings.url) if destination_problem(settings.url) is None else None
+        try:
+            current = parse_destination(settings.url)
+        except ValueError:
+            current = None  # An MCP URL at another path, as earlier builds took, has no row in the picker.
         destination = pick_destination(RUNNERS, current=last or current, then=_THEN)
         if destination is None:
             return []

@@ -585,7 +585,9 @@ CLAI derives the rest: `observability` sends traces to the https origin, and thi
 plugin connects to the origin plus `/mcp`. The hosted regions come from harness's
 `LOGFIRE_US_MCP_URL` and `LOGFIRE_EU_MCP_URL`, which match the Logfire SDK's
 regions. The pre-region hosts `logfire.pydantic.dev` and `logfire-api.pydantic.dev`
-mean Logfire US. Only https is accepted, and an address with a password, another
+mean Logfire US. In this plugin's JSON settings, a host or the URL you open Logfire
+at becomes its MCP URL, but an MCP URL is kept exactly as given (browser sign-ins
+are stored under it), so settings from earlier builds keep their sign-in. Only https is accepted, and an address with a password, another
 path, a query, or a fragment is refused as you type. Enter uses the address;
 Esc goes back to the list, and Esc there cancels without changing anything.
 

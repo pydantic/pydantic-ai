@@ -507,10 +507,20 @@ def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None
 
 @pytest.mark.parametrize(
     'url',
-    ['https://logfire-eu.pydantic.dev/mcp', 'https://logfire.example.com/mcp', 'https://logfire.example.com/x/mcp'],
+    [
+        'https://logfire-eu.pydantic.dev/mcp',
+        'https://logfire.example.com/mcp',
+        'https://logfire.example.com/x/mcp',
+        # Not as the picker writes them, but browser sign-ins are stored under these exact URLs.
+        'https://logfire-eu.pydantic.dev/mcp/',
+        'https://Logfire-EU.pydantic.dev/mcp',
+        'https://logfire.pydantic.dev/mcp',
+    ],
 )
 def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path: Path, url: str) -> None:
     """The plugin is shown as Logfire, but keeps the `logfire_mcp` id, and every MCP URL older builds saved loads as is.
+
+    The URL is the OAuth resource a browser sign-in is stored under, so normalizing it would sign the user out.
 
     `logfire` cannot become its id: it is the `observability` plugin's stored id, which older builds still read.
     """
