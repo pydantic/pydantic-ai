@@ -11,6 +11,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     CachePoint,
     ModelMessage,
@@ -26,6 +27,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanEvent,
@@ -68,6 +70,13 @@ def _ctx() -> RunContext[None]:
     return cast(RunContext[None], ctx)
 
 
+def _run_ctx(root_capability: AbstractCapability[None] | None = None) -> RunContext[None]:
+    """A real run context, as `call_tool` needs, whose emitted events go nowhere."""
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), root_capability=root_capability)
+    object.__setattr__(ctx, 'emit', AsyncMock())
+    return ctx
+
+
 def _toolset(*, subtasks: bool = False, store: InMemoryPlanStore | None = None) -> PlanningToolset[None]:
     cap = Planning[None](store=store or InMemoryPlanStore(), enable_subtasks=subtasks)
     return PlanningToolset[None](cap)
@@ -90,6 +99,40 @@ async def test_plan_read_dispatches_as_durable_operation() -> None:
     bound = RecordingDurability.from_agent(agent)
     assert bound is not None
     assert 'planning__capability__planning.read_plan' in {name for name, _ in bound.calls}
+
+
+class FunctionToolWrappingDurability(RecordingDurability):
+    """Runs each function tool in its own unit, as Temporal and Prefect do."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, wrapped_toolset_kinds=frozenset({'function'}))
+
+
+@pytest.mark.parametrize(
+    ('durability', 'expected'),
+    [
+        pytest.param(None, False, id='no-durability'),
+        pytest.param(RecordingDurability, True, id='tools-in-workflow-code'),
+        pytest.param(FunctionToolWrappingDurability, False, id='tools-in-their-own-units'),
+    ],
+)
+async def test_plan_tool_calls_run_alone_only_where_tools_run_in_workflow_code(
+    durability: type[RecordingDurability] | None, expected: bool
+) -> None:
+    """Concurrent plan tools in workflow code would interleave their recorded store steps by timing."""
+    sequential: dict[str, bool] = {}
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sequential.update({tool.name: tool.sequential for tool in info.function_tools})
+        return ModelResponse(parts=[TextPart('done')])
+
+    capabilities: list[AbstractCapability[None]] = [Planning[None]()]
+    if durability is not None:
+        capabilities.append(durability())
+    agent = Agent(FunctionModel(respond), name='sequential_plan', deps_type=type(None), capabilities=capabilities)
+
+    await agent.run('plan')
+
+    assert sequential and set(sequential.values()) == {expected}
 
 
 class FunctionToolsetRejectingDurability(RecordingDurability):
@@ -198,6 +241,45 @@ async def test_worker_tree_resolves_store_without_caching_it() -> None:
     await toolset.write_plan(worker_ctx(first), [PlanItem(content='only-first')])
     assert await toolset.read_plan(worker_ctx(second)) == 'No plan yet. Use write_plan to create one.'
     assert [item.content for item in await first.get_items()] == ['only-first']
+
+
+async def test_direct_call_in_a_worker_tree_uses_one_store() -> None:
+    """A plan method called outside `call_tool` resolves one store for the whole call."""
+    stores: list[InMemoryPlanStore] = []
+
+    def resolve(ctx: RunContext[None]) -> InMemoryPlanStore:
+        stores.append(InMemoryPlanStore())
+        return stores[-1]
+
+    planning = Planning[None](store_resolver=resolve)
+    toolset = cast(PlanningToolset[None], planning.get_toolset())
+    ctx = _run_ctx(planning)
+
+    result = await toolset.write_plan(ctx, [PlanItem(content='step')])
+
+    assert 'step' in result
+    assert len(stores) == 1
+
+
+async def test_worker_tree_resolves_the_store_once_per_tool_call() -> None:
+    """Each store call is its own durable operation, and all of one tool call's must use one store."""
+    stores: list[InMemoryPlanStore] = []
+
+    def resolve(ctx: RunContext[None]) -> InMemoryPlanStore:
+        stores.append(InMemoryPlanStore())
+        return stores[-1]
+
+    planning = Planning[None](store_resolver=resolve)
+    toolset = cast(PlanningToolset[None], planning.get_toolset())
+    # A worker's tree: the construction-time capability, with no run copy holding a store.
+    ctx = _run_ctx(planning)
+    tools = await toolset.get_tools(ctx)
+
+    result = await toolset.call_tool('write_plan', {'items': [PlanItem(content='step')]}, ctx, tools['write_plan'])
+
+    assert result.startswith('Plan updated: 1 step(s).')
+    assert len(stores) == 1
+    assert [item.content for item in await stores[0].get_items()] == ['step']
 
 
 # --- Types ------------------------------------------------------------------
@@ -1267,3 +1349,37 @@ class TestEndToEnd:
         with pytest.raises(AssertionError, match='no CachePoint'):
             durable_prefix([ModelRequest(parts=[UserPromptPart('no breakpoint')])])
         assert breakpoints([*result_1.all_messages(), *result_2.all_messages()]) == []
+
+
+async def test_plan_tools_update_and_remove_through_the_recorded_store() -> None:
+    """An agent run whose plan tools update and remove a step through the durable store operations."""
+    turns = iter(
+        [
+            ToolCallPart('write_plan', {'items': [{'id': 'a', 'content': 'Write the migration'}]}),
+            ToolCallPart('update_task_status', {'task_id': 'a', 'status': 'completed'}),
+            ToolCallPart('remove_task', {'task_id': 'a'}),
+        ]
+    )
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        part = next(turns, None)
+        return ModelResponse(parts=[part if part is not None else TextPart('done')])
+
+    store = InMemoryPlanStore()
+    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[Planning[None](store=store)])
+
+    await agent.run('plan')
+
+    assert await store.get_items() == []
+
+
+async def test_standalone_toolset_without_operations_calls_the_store_directly() -> None:
+    """A unit test, since an `Agent` always builds its `PlanningToolset` with the capability's operations."""
+    store = InMemoryPlanStore()
+    toolset = PlanningToolset[None](Planning[None](store=store))
+    ctx = _run_ctx()
+    tools = await toolset.get_tools(ctx)
+
+    await toolset.call_tool('write_plan', {'items': [PlanItem(content='step')]}, ctx, tools['write_plan'])
+
+    assert [item.content for item in await store.get_items()] == ['step']

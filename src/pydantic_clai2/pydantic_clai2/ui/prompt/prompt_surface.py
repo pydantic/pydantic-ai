@@ -135,8 +135,17 @@ class PromptSurface(io.StringIO):
             # Jumping to the region bottom instead left a blank band under short
             # history, visible after startup and whenever a menu hands the screen back.
             up = f'\x1b[{len(rows)}A' if rows else ''
+            # Keep xterm's legacy Ctrl keys; Kitty needs disambiguation and alternate
+            # key identities to preserve Ctrl shortcuts on non-Latin layouts.
             parts.extend(
-                ['\x1b[?25l\x1b[?2004h\x1b[>4;1m', '\r\n' * len(rows), up, '\x1b7', f'\x1b[1;{bottom}r', '\x1b8']
+                [
+                    '\x1b[?25l\x1b[?2004h\x1b[>4;1m\x1b[>5u',
+                    '\r\n' * len(rows),
+                    up,
+                    '\x1b7',
+                    f'\x1b[1;{bottom}r',
+                    '\x1b8',
+                ]
             )
             self._active = True
         elif changed_geometry:
@@ -221,7 +230,7 @@ class PromptSurface(io.StringIO):
                 parts = ['\x1b7\x1b[r']
                 for row in range(bottom + 1, self._geometry[1] + 1):
                     parts.append(f'\x1b[{row};1H\x1b[2K')
-                parts.extend(['\x1b8', '\x1b[>4;0m\x1b[0m\x1b[?2004l\x1b[?25h'])
+                parts.extend(['\x1b8', '\x1b[<u\x1b[>4;0m\x1b[0m\x1b[?2004l\x1b[?25h'])
                 self._transaction(''.join(parts))
             finally:
                 if self._deferred is not None and not self._holds:

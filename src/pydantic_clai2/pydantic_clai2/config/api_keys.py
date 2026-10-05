@@ -155,8 +155,8 @@ def _save_keys(*, keys: dict[str, SecretStr]) -> None:
 
 
 _KEY_CONSUMERS = {
-    'vllm': '/add_model',
-    'openrouter': '/add_model',
+    'vllm': '/model add',
+    'openrouter': '/model add',
     'google-workspace': '/google_workspace',
     'pylon': '/pylon',
     'ordinal': '/ordinal',

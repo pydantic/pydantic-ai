@@ -86,6 +86,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
@@ -1908,6 +1909,8 @@ async def test_temporal_agent_realtime_signaling_in_workflow():
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
 class _FakeRealtimeConnection(RealtimeConnection):

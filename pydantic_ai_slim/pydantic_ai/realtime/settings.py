@@ -28,6 +28,10 @@ does not report speech-end boundaries, so its user part contains everything sent
 response completed through the current response completion, including silence sent while the model
 is responding. Retention records the microphone stream only; it does not mix the model's output audio
 into the user's part unless that output is present in the microphone input itself.
+
+How much retained audio a session keeps is bounded by `retain_audio_max_seconds` on
+[`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session]; the oldest is evicted first, keeping
+its transcript.
 """
 
 
@@ -74,8 +78,10 @@ class RealtimeModelSettings(TypedDict, total=False):
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI, Azure OpenAI, and OpenAI GPT-Live, where it applies to the delegated backend
-    unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it but ignores it.
+    Supported by: OpenAI, Azure OpenAI, Azure AI Voice Live (where `True` leaves the model's default,
+    since some models can't call tools in parallel), and OpenAI GPT-Live, where it applies to the
+    delegated backend unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it
+    but ignores it.
     """
 
     async_tool_calls: bool | None
@@ -122,7 +128,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     """Model used to transcribe the user's audio input, so their turns are captured into history.
 
     `'auto'` (the default) uses the provider's recommended realtime transcription model; pass a
-    specific id (e.g. `'gpt-4o-transcribe'`) to pin one, or `None` to disable transcription (see
+    specific id (e.g. `'gpt-live-transcribe'`) to pin one, or `None` to disable transcription (see
     `audio_retention` to retain the raw audio instead).
 
     `None` turns transcription off on every provider. A *pinned* id applies only to the providers that
@@ -213,6 +219,8 @@ KnownRealtimeTranscriptionModelName = TypeAliasType(
         'gpt-4o-transcribe',
         'gpt-4o-mini-transcribe',
         'gpt-realtime-whisper',
+        'gpt-live-transcribe',
+        'gpt-transcribe',
         'grok-transcribe',
         'azure-speech',
         'mai-transcribe',
