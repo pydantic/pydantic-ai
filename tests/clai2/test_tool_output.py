@@ -158,8 +158,33 @@ async def test_shell_progress_replaces_carriage_return_frames() -> None:
     text = output.getvalue()
     assert 'header\n100%\ndone\n' in text
     assert '10%' not in text and '50%' not in text and '\\x0d' not in text
-    assert '(+2 command lines)' in text and 'print(123)' not in text
+    assert text.startswith('● shell python3 - <<PY\n        print(123)\n        PY\n\n')
     assert 'Truncated' not in text
+
+
+async def test_long_shell_command_wraps_under_a_hanging_indent() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=40), stop_loading=lambda: None)
+    command = 'cd /repo/src; cat pkg/module.py; grep -n "needle" -r pkg | head -40'
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='long'))
+    )
+    assert output.getvalue() == (
+        '● shell cd /repo/src; cat pkg/module.py;\n        grep -n "needle" -r pkg | head\n        -40\n\n'
+    )
+
+
+async def test_shell_command_rows_beyond_the_limit_are_counted() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    command = '\n'.join(f'echo {index}' for index in range(15))
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='script'))
+    )
+    lines = output.getvalue().splitlines()
+    assert lines[0] == '● shell echo 0'
+    assert lines[9] == '        echo 9'
+    assert lines[10:] == ['        … +5 lines', '']
 
 
 async def test_edit_uses_termflow_diff_renderer() -> None:
