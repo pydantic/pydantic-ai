@@ -38,6 +38,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -49,7 +50,13 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     ToolAvailabilityDeltaPart,
 )
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import (
+    CompletedStreamedResponse,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    StreamedResponse,
+)
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1988,6 +1995,109 @@ async def test_nested_fallback_keeps_the_inner_attempts(inner_outcome: str) -> N
     }
     attempts = [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []]
     assert (attempts, result.usage.input_tokens) == expected[inner_outcome]
+
+
+class _UsageAttemptsSpy(AbstractCapability[Any]):
+    """Reads the attempts core recorded on the request context, from an error hook and as the wrapper unwinds."""
+
+    def __init__(self, *, recover: bool = False) -> None:
+        self.recover = recover
+        self.in_error_hook: tuple[ModelRequestAttempt, ...] | None = None
+        self.in_wrapper: tuple[ModelRequestAttempt, ...] | None = None
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        finally:
+            self.in_wrapper = request_context._usage_attempts  # pyright: ignore[reportPrivateUsage]
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        self.in_error_hook = request_context._usage_attempts  # pyright: ignore[reportPrivateUsage]
+        if self.recover:
+            return ModelResponse(parts=[TextPart('recovered')])
+        raise error
+
+
+def _reject_all(response: ModelResponse) -> bool:
+    return True
+
+
+def _rejecting_models() -> FallbackModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('response')], usage=RequestUsage(input_tokens=10))
+
+    return FallbackModel(
+        FunctionModel(respond, model_name='a'), FunctionModel(respond, model_name='b'), fallback_on=_reject_all
+    )
+
+
+@pytest.mark.parametrize('recover', [False, True])
+async def test_unanswered_attempts_are_on_the_request_context_before_error_hooks(recover: bool) -> None:
+    """When every model fails, the group's attempts are recorded before any error hook can recover from it."""
+    spy = _UsageAttemptsSpy(recover=recover)
+    agent = Agent(_rejecting_models(), capabilities=[spy])
+
+    if recover:
+        assert (await agent.run('test')).output == 'recovered'
+    else:
+        with pytest.raises(FallbackExceptionGroup):
+            await agent.run('test')
+
+    assert spy.in_error_hook is not None
+    assert [(attempt.model_name, attempt.outcome) for attempt in spy.in_error_hook] == [
+        ('a', 'rejected'),
+        ('b', 'rejected'),
+    ]
+    assert spy.in_wrapper == spy.in_error_hook
+
+
+async def test_unanswered_attempts_of_a_nested_fallback_model_are_recorded_once() -> None:
+    outer = FallbackModel(
+        _rejecting_models(),
+        FunctionModel(failure_response, model_name='c'),
+        fallback_on=[FallbackExceptionGroup, ModelHTTPError],
+    )
+    spy = _UsageAttemptsSpy()
+
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await Agent(outer, capabilities=[spy]).run('test')
+
+    assert spy.in_wrapper == tuple(exc_info.value.attempts)
+    assert [attempt.model_name for attempt in spy.in_wrapper] == ['a', 'b', 'fallback:a,b', 'c']
+
+
+async def test_unanswered_attempts_of_a_failed_stream_are_on_the_request_context() -> None:
+    """A stream opens lazily, so its group is raised in the consumer; it is recorded before the wrapper unwinds."""
+
+    model = FallbackModel(
+        FunctionModel(stream_function=failure_response_stream, model_name='a'),
+        FunctionModel(stream_function=failure_response_stream, model_name='b'),
+    )
+    spy = _UsageAttemptsSpy()
+
+    with pytest.raises(FallbackExceptionGroup):
+        async with Agent(model, capabilities=[spy]).run_stream('test') as result:
+            await result.get_output()  # pragma: no cover
+
+    assert spy.in_error_hook is None
+    assert [(attempt.model_name, attempt.outcome, attempt.usage) for attempt in spy.in_wrapper or ()] == [
+        ('a', 'error', None),
+        ('b', 'error', None),
+    ]
+
+
+async def test_a_request_without_a_fallback_group_records_no_unanswered_attempts() -> None:
+    spy = _UsageAttemptsSpy()
+
+    with pytest.raises(ModelHTTPError):
+        await Agent(FunctionModel(failure_response), capabilities=[spy]).run('test')
+
+    assert spy.in_error_hook == ()
+    assert spy.in_wrapper == ()
 
 
 class _CompletedStreamModel(FunctionModel):

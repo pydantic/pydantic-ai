@@ -53,6 +53,7 @@ from pydantic_ai_harness.spend import (
     SpendEntry,
     SpendLimitExceeded,
     SpendLimits,
+    SpendRecordedEvent,
     SpendSnapshot,
     Spent,
     UnpricedModelError,
@@ -128,6 +129,7 @@ class _UsageRequestContext:
     """Stands in for the provider-response record core keeps on a `ModelRequestContext`."""
 
     _usage_responses: tuple[ModelResponse, ...] = ()
+    _usage_attempts: tuple[ModelRequestAttempt, ...] = ()
 
 
 def _response(
@@ -2067,12 +2069,6 @@ def _attempt(
     )
 
 
-def _fallback_group(*attempts: ModelRequestAttempt) -> FallbackExceptionGroup:
-    group = FallbackExceptionGroup('All models from FallbackModel failed', [RuntimeError('rejected')])
-    group.attempts = attempts
-    return group
-
-
 class TestFallbackAttempts:
     """A response a `FallbackModel` rejected was billed, though the agent never acted on it."""
 
@@ -2090,6 +2086,14 @@ class TestFallbackAttempts:
         assert priced == ['gpt-4o-mini', 'gpt-4o']
         assert (await guard.status())[0].spent == Spent(usd=Decimal('1.2'), tokens=132, requests=2)
         assert result.usage.input_tokens + result.usage.output_tokens == 132
+
+    async def test_an_event_says_whether_it_is_for_a_rejected_response(self):
+        guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
+        ctx = _guard_ctx(guard)
+        await _record(guard, ctx=ctx, response=replace(_response(), failed_attempts=[_attempt()]))
+
+        events = [event for event in ctx._event_stream_buffer if isinstance(event, SpendRecordedEvent)]  # pyright: ignore[reportPrivateUsage]
+        assert [(event.model, event.failed_attempt) for event in events] == [('gpt-4o-mini', True), ('gpt-4.1', False)]
 
     async def test_an_attempt_without_a_price_uses_the_cost_core_calculated(self):
         """`price` declining falls through to the cost core put on the attempt, then to the registry."""
@@ -2234,13 +2238,13 @@ class TestFallbackAttempts:
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
 
         async def fail(ctx: RunContext[Any], attempts: Sequence[ModelRequestAttempt]) -> None:
-            async def handler(request_context: ModelRequestContext) -> ModelResponse:
-                return await guard.on_model_request_error(
-                    ctx, request_context=request_context, error=_fallback_group(*attempts)
-                )
-
             request_context: Any = _UsageRequestContext()
-            with pytest.raises(FallbackExceptionGroup):
+
+            async def handler(request_context: Any) -> ModelResponse:
+                request_context._usage_attempts = tuple(attempts)
+                raise RuntimeError('every model failed')
+
+            with pytest.raises(RuntimeError):
                 await guard.wrap_model_request(_guard_ctx(guard, ctx), request_context=request_context, handler=handler)
 
         await fail(_run_ctx(), [_attempt(), _attempt('gpt-4o', at=_EPOCH + timedelta(minutes=1))])

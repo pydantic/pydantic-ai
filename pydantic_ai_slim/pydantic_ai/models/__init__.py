@@ -306,6 +306,7 @@ class ModelRequestParameters:
 @dataclass
 class _ModelRequestUsageLedger:
     responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+    attempts: list[ModelRequestAttempt] = field(default_factory=list[ModelRequestAttempt])
 
 
 @dataclass(kw_only=True)
@@ -399,6 +400,20 @@ class ModelRequestContext:
         `SpendLimits`, which pins this package's exact version.
         """
         return tuple(self._usage_response_ledger.responses)
+
+    @property
+    def _usage_attempts(self) -> tuple[ModelRequestAttempt, ...]:
+        """The attempts of a request that failed with no response to carry them.
+
+        Filled from a `FallbackExceptionGroup` when every model of a `FallbackModel` failed, before any
+        `on_model_request_error` hook runs and before `wrap_model_request` unwinds. Attempts that preceded a
+        response are on that response's `failed_attempts` instead, and a nested `FallbackModel`'s attempts
+        are already flattened into its outer group, so each attempt appears once. An attempt with `usage`
+        was billed. Request contexts copied with `dataclasses.replace()` see the same attempts.
+
+        Private for now, like `_usage_responses`: read by the Pydantic AI Harness's `SpendLimits`.
+        """
+        return tuple(self._usage_response_ledger.attempts)
 
 
 @dataclass(frozen=True, kw_only=True)

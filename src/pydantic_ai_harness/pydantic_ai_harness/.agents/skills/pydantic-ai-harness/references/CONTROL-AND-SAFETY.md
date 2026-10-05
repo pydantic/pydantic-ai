@@ -357,9 +357,10 @@ Gotchas:
 - `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
   capability order; cached and `SkipModelRequest` responses aren't charged.
 - Each response a `FallbackModel` rejected is charged as its own request, with its own
-  `SpendRecordedEvent`. `price` receives it as a `ModelResponse` with the attempt's model, provider
-  and usage but no `parts` and no `provider_url`, so a `price` that reads the output or keys on the
-  endpoint will misprice it. `Spent.requests` can exceed `RunUsage.requests`.
+  `SpendRecordedEvent` (`failed_attempt=True`). `price` receives it as a `ModelResponse` with the
+  attempt's model, provider and usage but no `parts` and no `provider_url`, so a `price` that reads
+  the output or keys on the endpoint will misprice it. `Spent.requests` can exceed
+  `RunUsage.requests`.
 - Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
 
 ## AskUser

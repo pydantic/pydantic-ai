@@ -1091,6 +1091,16 @@ def _split_resume_seed(
     return list(messages), None
 
 
+def _record_unanswered_attempts(request_context: ModelRequestContext, error: BaseException) -> None:
+    """Note on the request context the attempts of a `FallbackModel` whose every model failed.
+
+    No response carries them, so this is where `wrap_model_request` finds them. Called before any error hook
+    runs and before the wrapper unwinds.
+    """
+    if isinstance(error, exceptions.FallbackExceptionGroup):
+        request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
+
+
 def _record_attempts_usage(usage: _usage.RunUsage, attempts: Sequence[_messages.ModelRequestAttempt] | None) -> None:
     """Record the usage of attempts that failed before a response, such as responses a `FallbackModel` rejected.
 
@@ -1575,6 +1585,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             try:
                 if stream_error is not None:
+                    # The stream opens lazily, so a `FallbackModel` whose every model failed raises here, in the
+                    # consumer, rather than inside the wrapper about to be cancelled.
+                    _record_unanswered_attempts(wrap_request_context, stream_error)
                     await _cancel_task(wrap_task)
                     # Capture the partial response so `capture_run_messages` and `all_messages()`
                     # include what was streamed before the interruption.
@@ -2083,6 +2096,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # No response reaches history, but a response a `FallbackModel` rejected was still billed,
             # so it counts towards the run's usage and its token and cost limits.
             _record_attempts_usage(ctx.state.usage, error.attempts)
+            _record_unanswered_attempts(request_context, error)
         root_capability = ctx.deps.root_capability
         try:
             if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
