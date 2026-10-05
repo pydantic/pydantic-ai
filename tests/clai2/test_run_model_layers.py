@@ -544,8 +544,9 @@ async def test_settings_saved_mid_turn_match_the_merged_settings(tmp_path: Path)
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         settings = ModelSettings(**(info.model_settings or {}))
-        if (thinking := info.model_request_parameters.thinking) is not None:
-            settings['thinking'] = thinking
+        thinking = info.model_request_parameters.thinking
+        assert thinking is not None
+        settings['thinking'] = thinking
         recorded.append(settings)
         if edits:
             store.save_model_settings(name, edits.pop(0))
@@ -561,4 +562,4 @@ async def test_settings_saved_mid_turn_match_the_merged_settings(tmp_path: Path)
     tool = Capability[None](tools=[Tool(lambda: 'ok', name='noop', takes_ctx=False)])
     await run_turn(tmp_path, settings=resolve_settings({'model': name}), plugins=(tool,), resolve=lambda _: model)
     assert recorded[1:] == expected
-    assert [settings['openai_reasoning_effort'] for settings in recorded] == ['high', 'medium', 'low']
+    assert [dict(settings).get('openai_reasoning_effort') for settings in recorded] == ['high', 'medium', 'low']
