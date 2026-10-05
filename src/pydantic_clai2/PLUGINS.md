@@ -221,7 +221,7 @@ details.
 uv run clai2
 ```
 
-Run `/login github-copilot`, then open `/add_model` and choose `github-copilot`.
+Run `/login github-copilot`, then open `/model add` and choose `github-copilot`.
 The provider menu also starts login when no credentials exist. No application
 registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -239,7 +239,7 @@ GitHub authorization does not establish Copilot access: the menu queries your
 account's catalog and keeps only picker-enabled `/chat/completions` models.
 The shared model menu includes details and `Ctrl+S` settings. Subscription and
 organization policy still control inference access. A known ID also works with
-`/add_model github-copilot:claude-haiku-4.5`.
+`/model github-copilot:claude-haiku-4.5`.
 
 The `github-copilot` keyring account is separate from Codex and named API keys.
 Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
@@ -379,21 +379,39 @@ be recorded. Logfire's usual scrubbing is enabled.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
 `LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
-sets `token`, `base_url`, and `send_to_logfire` for you (`R` on it clears `token`
-and `base_url` again): it asks
-where traces go, runs Logfire's own device sign-in there (the one behind
-`logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
-accepts), lists the projects you can write to, and saves a new write token for
-the one you pick in `/keys`. The sign-in token is used only during setup. The flow
-lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+sets `token`, `base_url`, `account`, and `send_to_logfire` for you (`R` on it
+clears `token`, `base_url`, and `account` again): it asks where traces go, runs
+Logfire's own device sign-in there (the one behind `logfire auth`, not
+`logfire_mcp`'s MCP OAuth, whose tokens only the MCP server accepts), reads your
+account's email, lists the projects you can write to, and saves a new write
+token for the one you pick in `/keys`. The sign-in token is used only during
+setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+
+Agent runs and UI records nest under a `CLAI session` root whose
+`agent_session_id` is the saved conversation ID. `/clear` selects a new root;
+`/resume` reuses that conversation's root if this plugin instance already opened
+it. Unloading the plugin ends its roots; reloading starts new traces with the
+same saved conversation IDs.
+
+`user_tag` (default `logfire-account`) tags each session root, and only the
+root, with your email, as a Logfire tag and the `user.email` attribute.
+`logfire-account` uses the email in `account`, the account that signed in during
+the **Logfire project** setup, while `token` still names the key that setup
+saved. A token from elsewhere, a setup made before this setting existed, or a
+server that does not report the email leaves roots untagged until setup runs
+again. `git-email` uses `git config user.email` (Git is queried only then), and
+`false` turns the tag off. Set **User tag** in
+`/plugins configure observability`.
 
 `ui_events` (default `false`) also records CLAI's UI interactions on the same
-instance, as spans and logs tagged `clai2-ui`: menus opened and how they closed,
-slash commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
+instance, as spans and logs in the `clai2` instrumentation scope, which session
+roots and plugin load failures share: menus opened and how they closed, slash
+commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
 resume. Attributes carry names and listed choices, never prompt text, typed
 values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
-`run_worker` opens every menu's span, so a new menu is covered without extra code.
+`run_worker` opens every menu's span, so a new menu is covered without extra
+code.
 With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `setting`, `key_name`, ...) are exempt from scrubbing, since names like
 `OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.
@@ -549,7 +567,7 @@ its default.
 
 Plugin settings are stored as plaintext in SQLite, so they hold only the key's
 name, never its value. Enter on **API key** opens the same picker as
-`/add_model`:
+`/model add`:
 
 - **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
   connections can name one key, so one Logfire API key saved once serves them all.
@@ -1544,7 +1562,16 @@ What "load" and "unload" mean for your plugin:
 - Unload runs `on_session_end`, then drops everything the plugin declared:
   commands, capabilities, renderers, status segments, spinners, and model
   providers. Nothing else is touched.
-- Both only happen between prompts, never while the agent is running.
+- `/plugins` can load and unload during a turn. The agent run already in
+  progress keeps the capabilities it bound when it started, so a plugin's tools,
+  instructions, and hooks join or leave the agent on the next prompt. Everything
+  else changes at once. A plugin unloaded mid-turn gets `on_session_end` once
+  the turn ends, even if it was cancelled, because the run may still use what it
+  declared. A reload mid-turn can therefore start the new instance before the
+  old one ends, which is one more reason to keep state on the instance.
+- A plugin's code that `/plugins` runs mid-turn (`on_session_start`,
+  `configure`) can use `host.full_screen()`; the command already owns the
+  screen, so the block does not wait for it.
 - Drop-in entry modules load from current source. Installed entry modules use
   `importlib.reload`, which retains globals absent from the new source. Keep
   plugin state on the instance, set up in `__init__`.
@@ -1870,14 +1897,17 @@ has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
-its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the oldest
-queued follow-up to the active run through core's
-`RunContext.enqueue(priority='asap')`, without starting another turn, cancelling
-tools, or changing the draft. Each press sends one message. If the run is no
-longer accepting steering, the message stays queued. Slash commands and exit
-signals are not steered or skipped over. With no queued message, Alt+Enter does
-nothing. When idle, Enter starts a turn. Shift-Enter inserts a newline.
-Modified-key reporting is enabled only while the editor owns input.
+its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
+draft, or with an empty draft the oldest queued follow-up, to the active run
+through core's `RunContext.enqueue(priority='asap')`, without starting another
+turn or cancelling tools. Each press sends one message. Slash commands, `!` shell
+commands, and exit signals are never steered: such a draft, or any draft the run
+does not accept, is taken as Enter would take it, and such a queued message stays
+queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
+a newline when the terminal distinguishes it from Enter. Ctrl-J inserts a newline
+on terminals that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty
+keyboard reporting is enabled only while the editor owns input and released for
+menus and on exit.
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
@@ -2158,14 +2188,21 @@ status row still name the selected one, and `/compact` and session naming (witho
 with the command, stdout, stderr, and completion status. They do not start an
 agent turn or fire turn hooks; the context reaches the model on the next prompt.
 
-`host.status` is the footer's state:
-`context_tokens` and `context_window` render as compact used/max, such as
-`128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
-not an assumed fallback. Set `context_alert` to paint the figure in the warning
-colour. The built-in `compaction` plugin fills these fields from Harness usage
-events, including an explicit window override, and clears the window when unloaded. A host built outside the shell gets an in-memory
-`Transcript` and a detached `Status`, so tests need no special case. The status
-row itself is CLAI's; a plugin adds to it with `get_status_segments`.
+`host.session_id` is the current saved conversation ID, following `/clear` and
+`/resume`. During a run it identifies that run's conversation, including a
+background fork. It is `None` while startup resume is selecting a conversation,
+or for a host without session persistence. Custom hosts can supply a
+`session_id` callback to read their current ID.
+
+`host.status` is the footer's state: `context_tokens` and `context_window`
+render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
+`context_window` for a known capacity, not an assumed fallback. Set
+`context_alert` to paint the figure in the warning colour. The built-in
+`compaction` plugin fills these fields from Harness usage events, including an
+explicit window override, and clears the window when unloaded. A host built
+outside the shell gets an in-memory `Transcript` and a detached `Status`, so
+tests need no special case. The status row itself is CLAI's; a plugin adds to it
+with `get_status_segments`.
 
 The double-Esc rewind menu also uses `commit_messages` between turns. It removes
 the selected prompt and later history, but does not undo plugin state, file
@@ -2244,8 +2281,8 @@ class MyService(Plugin):
         return (ModelProvider(prefix='my-service', resolve=resolve, models=('fast', 'smart')),)
 ```
 
-`models` are listed under the prefix in `/add_model` and completed by `/set model`
-and `/add_model`; any other `my-service:NAME` can still be typed. `resolve` gets
+`models` are listed under the prefix in `/model add` and completed by `/set model`
+and `/model add`; any other `my-service:NAME` can still be typed. `resolve` gets
 `NAME` without the prefix. CLAI calls it in a worker thread before every run with
 one of these models, so reading the keyring there is fine, and a sign-in made
 since the last run applies. Raise `UserError` naming the setup step when it cannot
@@ -2263,7 +2300,7 @@ again. Users can remove an unused model and its saved settings with **Ctrl+D** o
 select another model or change the default with `/set model NAME` first. Deleting
 a model does not unload its plugin or delete provider credentials.
 
-`/model_settings` offers generic controls (max tokens, temperature, custom
+`/model settings` offers generic controls (max tokens, temperature, custom
 parameters) for plugin models. When `resolve` returns a model class of a provider
 CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'`
 (or `'openai'`, `'openai-chat'`, `'google'`) on the `ModelProvider` and these
@@ -2305,8 +2342,8 @@ and cannot be one of CLAI's sign-ins, which raises `ValueError`; when two plugin
 add one name, the later one wins. Unloading the plugin removes it.
 
 Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
-`names`) are added to the saved model list, so `/model` and `/model_settings`
-offer them without an `/add_model` first. A failed sign-in adds nothing.
+`names`) are added to the saved model list, so `/model` and `/model settings`
+offer them without adding them first. A failed sign-in adds nothing.
 
 ## Rules that keep plugins predictable
 
@@ -2355,11 +2392,11 @@ declared. A plugin that reads the history gets a `Transcript` by default; pass
 
 ## vllm connection
 
-Open `/add_model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
 ## openrouter connection
 
-Open `/add_model`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -2425,17 +2462,21 @@ each connection. Replacing it then updates all of them.
 
 Existing connections with inline credentials, manually entered connection keys,
 and browser logins remain unchanged. To switch an existing connection to a
-reference, reconfigure it through `/add_model` and select a saved key. Changes do not
+reference, reconfigure it through `/model add` and select a saved key. Changes do not
 alter an already running request or revoke credentials at the provider.
 
 ### Adding and selecting models
 
-`/add_model` opens the provider catalog, connection setup, and per-model settings.
-`/add_model PROVIDER:NAME` adds a model directly. Adding a model also selects it
-for the next prompt. `/model` is a flat picker of added models, and `/model NAME`
-selects one without the menu. Choose **Add a model...** in `/model` to browse
-providers and select a new model, including when the saved list is empty.
-Its Tab suggestions contain only added models.
+`/model` is a flat picker of added models. Choose **Add a model...** in it, or
+run `/model add`, to open the provider catalog, connection setup, and per-model
+settings, including when the saved list is empty. `/model PROVIDER:NAME` selects
+any model without the menu: one not yet in the list is added first, without
+checking that the provider serves it, so a wrong name fails on the next prompt.
+`/model add PROVIDER:NAME` does the same. Adding a model also selects it for the
+next prompt. `/model settings [NAME]` edits a model's settings. Tab suggests the
+`add` and `settings` subcommands and added models; model names normally start
+with a provider, so no real model is called `add` or `settings`. `/add_model`
+and `/model_settings` remain as deprecated spellings.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 
@@ -2483,18 +2524,19 @@ defaults. Plugins cannot register custom palettes. Theme selection adds no model
 requests, hooks, or telemetry.
 ### Model settings and custom parameters
 
-`/model_settings` opens a searchable list of added models. Enter configures a
+`/model settings` opens a searchable list of added models. Enter configures a
 model without changing the active model. Esc returns from settings to this list;
-Esc again closes it. `/model_settings PROVIDER:NAME` opens that model directly.
+Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
-`Ctrl+S` in `/add_model` opens the same editor. Edits save immediately and apply
-on the next prompt. `r` resets a field; Esc or Ctrl-C goes back. Fixed choices
+`Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
+from the model's next request, even in a running turn. `r` resets a field; Esc
+or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
-For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
+For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
 turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
@@ -2510,14 +2552,14 @@ It saves the active model's service tier for subsequent prompts and sessions,
 without changing reasoning effort or other preferences. It is absent from help
 and Tab completion on other models, and typing it there reports an unknown command.
 If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model_settings` rather than saving an ineffective change.
+with `/model settings` rather than saving an ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
 compatibility fix. Editing or resetting a known field preserves unknown fields
 in the store. New edits still reject unknown keys and invalid values.
 An invalid value in a known field stops that turn with a repair message, not the
-shell; use `/model_settings` to fix or reset it and try again. CLAI does not silently
+shell; use `/model settings` to fix or reset it and try again. CLAI does not silently
 run with different settings or delete saved preferences.
 
 Older branches must receive this fix too. The minimum read-side backport is

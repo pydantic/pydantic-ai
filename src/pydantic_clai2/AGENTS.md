@@ -34,10 +34,10 @@ and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
 `on_session_end`, `on_turn_start`, `on_turn_end`, and `on_plugin_load_failed` for CLAI's own moments. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
-(console, conversation, status, full screen, saved settings); it registers
-nothing. `docs/declarative-plugins.md` records the design. `PLUGINS.md` is the
-user contract. If code and `PLUGINS.md` disagree, fix one so they agree in the
-same PR.
+(console, conversation, `session_id`, status, full screen, saved settings); it
+registers nothing. `docs/declarative-plugins.md` records the design.
+`PLUGINS.md` is the user contract. If code and `PLUGINS.md` disagree, fix one so
+they agree in the same PR.
 
 ## Rules for the plugin API
 
@@ -76,8 +76,12 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **One `LoadedPlugin` per plugin.** It holds the instance and what its `get_*`
   methods returned, so unloading is "discard this `LoadedPlugin`". No
   `callback -> owner` map, no scanning registries for a plugin's name.
-- **Load and unload only between turns.** `/commands` already run between turns,
-  so this falls out for free; do not add a mid-run path.
+- **A running agent run never changes its plugins.** Core binds capabilities once
+  per run, so `/plugins` (the one `args_during_turn` command) may load and unload
+  mid-turn, but the run keeps the snapshot `run_turn` bound. `PluginLoader.turn()`
+  defers `on_session_end` of plugins unloaded meanwhile until the run is over,
+  shielded from cancellation. Do not swap capabilities inside a run; that needs
+  core support.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.
@@ -151,7 +155,7 @@ summary failure; other exceptions propagate.
 3. Document it in `PLUGINS.md` in the table it belongs to, and in
    `docs/declarative-plugins.md` if it changes the design.
 
-## The `/plugins`, `/set`, `/theme`, `/model`, and `/add_model` menus
+## The `/plugins`, `/set`, `/theme`, `/model`, and `/model add` menus
 
 Built on termflow's `MenuBuilder` (and `TextInputBuilder` for typed values),
 exactly like Code Puppy's `/agent`, `/mcp`, `/set`, and `/model` menus:
@@ -273,14 +277,15 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
-| `ui/menus/model_menu.py` | `/add_model`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
+| `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models; protects the current model and saved default |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
 | `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
-| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), project pick, write token saved in `/keys` |
+| `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
+| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
 | `commands.py` | `Command`, the registry, completion |
@@ -292,7 +297,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
 | `ui/prompt/prompt_buffer.py` | pure draft editing, history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
-| `ui/prompt/prompt_keys.py` | keyboard decoder attachment only; no prompt-toolkit Application or renderer |
+| `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |

@@ -16,14 +16,16 @@ from inline_snapshot import snapshot
 from pydantic import JsonValue
 from rich.console import Console
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ResolveModelId, Thinking
+from pydantic_ai import Agent, RunContext, Tool
+from pydantic_ai.capabilities import AbstractCapability, Capability, CapabilityOrdering, ResolveModelId, Thinking
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model, ModelResolutionContext
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RunUsage
 from pydantic_clai2._app import create_shell, create_stock_agent
 from pydantic_clai2.config import Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -118,7 +120,7 @@ class Case:
     """Whether the user chose the model; otherwise it is CLAI's default, the stock agent's own model."""
     saved: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     effective: ModelSettings = field(default_factory=ModelSettings)
-    run_level: ModelSettings | None = None
+    run_level: ModelSettings = field(default_factory=ModelSettings)
 
 
 CASES = [
@@ -136,7 +138,7 @@ CASES = [
                 'thinking': True,
             }
         ),
-        run_level=snapshot(None),
+        run_level=snapshot({}),
     ),
     Case(
         id='openai-reasoning-overrides',
@@ -193,7 +195,7 @@ CASES = [
                 'thinking': True,
             }
         ),
-        run_level=snapshot(None),
+        run_level=snapshot({}),
     ),
     Case(
         id='codex-default-fast',
@@ -277,7 +279,10 @@ async def test_effective_settings_unchanged(tmp_path: Path, case: Case, stock: b
     await Agent(before.resolve(case.model)).run('hello', model_settings=context.model_settings(case.model))
 
     assert after.calls == before.calls == [(case.model, case.effective)]
-    assert session.model_settings == case.run_level
+    # Read again before each request, as core resolves it, so edits saved mid-turn apply.
+    run_level = session.model_settings
+    assert callable(run_level)
+    assert run_level(RunContext(deps=None, model=TestModel(), usage=RunUsage())) == case.run_level
 
 
 async def test_capability_settings_beat_defaults_not_overrides(tmp_path: Path) -> None:
@@ -483,8 +488,12 @@ async def test_chosen_model_beats_capability_model(tmp_path: Path, source: str) 
     assert [called for called, _ in recorder.calls] == [name]
 
 
-async def test_set_model_chooses_and_reset_restores_default(tmp_path: Path) -> None:
-    """`/set model` makes a choice; resetting it, or changing another setting, leaves CLAI's default."""
+@pytest.mark.parametrize('command', ['/set model', '/model', '/model add', '/add_model'])
+async def test_set_model_chooses_and_reset_restores_default(tmp_path: Path, command: str) -> None:
+    """Every way to pick a model by name makes a choice; resetting it, or changing another setting, leaves CLAI's default.
+
+    `/model NAME` takes a model that is not in the saved list yet and adds it.
+    """
     store = SettingsStore(tmp_path / 'config.db')
     shell = create_shell(
         create_stock_agent(),
@@ -509,8 +518,47 @@ async def test_set_model_chooses_and_reset_restores_default(tmp_path: Path) -> N
 
     await shell.commands.execute_async('/set display.thinking false')
     assert await ran() == 'anthropic:claude-sonnet-4-6'
-    await shell.commands.execute_async('/set model openai:gpt-6-luna')
+    await shell.commands.execute_async(f'{command} openai:gpt-6-luna')
+    assert shell.session.model_chosen
     assert await ran() == 'openai:gpt-6-luna'
     shell.context.reset_setting('model')
     assert shell.session.model == 'openai-codex:gpt-6-astra'
     assert await ran() == 'anthropic:claude-sonnet-4-6'
+
+
+async def test_settings_saved_mid_turn_match_the_merged_settings(tmp_path: Path) -> None:
+    """A field saved or reset while a turn runs reaches its next request exactly as the merged settings would.
+
+    The run-level overrides and the family defaults beneath them both read the store again per request.
+    """
+    name = 'openai:gpt-6'
+    store = SettingsStore(tmp_path / 'config.db')
+    context, _ = make_context(tmp_path)
+    expected: list[ModelSettings] = []
+    store.save_model_settings(name, {'openai_reasoning_effort': 'high'})
+    # Reset back to the family default, then save another value.
+    edits: list[dict[str, JsonValue]] = [{}, {'openai_reasoning_effort': 'low'}]
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise NotImplementedError  # pragma: no cover
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        settings = ModelSettings(**(info.model_settings or {}))
+        if (thinking := info.model_request_parameters.thinking) is not None:
+            settings['thinking'] = thinking
+        recorded.append(settings)
+        if edits:
+            store.save_model_settings(name, edits.pop(0))
+            expected.append(context.model_settings(name) or ModelSettings())
+            yield {0: DeltaToolCall(name='noop', json_args='{}')}
+        else:
+            yield 'done'
+
+    recorded: list[ModelSettings] = []
+    model = FunctionModel(
+        respond, stream_function=stream, model_name=name, profile=ModelProfile(supports_thinking=True)
+    )
+    tool = Capability[None](tools=[Tool(lambda: 'ok', name='noop', takes_ctx=False)])
+    await run_turn(tmp_path, settings=resolve_settings({'model': name}), plugins=(tool,), resolve=lambda _: model)
+    assert recorded[1:] == expected
+    assert [settings['openai_reasoning_effort'] for settings in recorded] == ['high', 'medium', 'low']

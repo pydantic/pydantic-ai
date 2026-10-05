@@ -3,8 +3,9 @@
 import logging
 import os
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from contextlib import nullcontext
+from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -13,8 +14,8 @@ from uuid import uuid4
 
 from anyio import get_cancelled_exc_class, move_on_after
 
-from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
-from pydantic_ai.agent import AbstractAgent, AgentModelSettings
+from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
@@ -44,6 +45,23 @@ from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
+_CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
+
+
+def current_session_id() -> str | None:
+    """The saved conversation running in this task, including a background fork."""
+    return _CURRENT_SESSION_ID.get()
+
+
+@contextmanager
+def session_context(session_id: str) -> Generator[None]:
+    """Keep a saved conversation current through its run and shell lifecycle events."""
+    token = _CURRENT_SESSION_ID.set(session_id)
+    try:
+        yield
+    finally:
+        _CURRENT_SESSION_ID.reset(token)
+
 
 FamilyDefaults = Callable[[str], ModelSettings | None]
 """CLAI's family default settings for a model, given its name."""
@@ -257,9 +275,10 @@ class Session(Generic[DepsT, OutputT]):
         self.model_chosen = True
         """Whether the user chose `model`. A stock agent takes CLAI's default as its own model instead,
         so a capability that selects a model takes precedence over it; a chosen model is passed to each run."""
-        self.model_settings: ModelSettings | None = None
+        self.model_settings: AgentModelSettings[DepsT] | None = None
         """Settings the user chose for this session's model, passed to each run, where they take precedence
-        over all others. A request on another model, which a capability selected, does not get them."""
+        over all others. A request on another model, which a capability selected, does not get them. A
+        callable is resolved before every model request, so it can change mid-run."""
         self.model_defaults: FamilyDefaults | None = None
         """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
@@ -379,7 +398,13 @@ class Session(Generic[DepsT, OutputT]):
         if settings is None or own is None:
             return settings
         name = own if isinstance(own, str) else own.model_name
-        return lambda ctx: settings if _requested_model(ctx) == name else ModelSettings()
+
+        def for_own_model(ctx: RunContext[DepsT]) -> ModelSettings:
+            if _requested_model(ctx) != name:
+                return ModelSettings()
+            return settings(ctx) if callable(settings) else settings
+
+        return for_own_model
 
     def _bind(self) -> tuple[str | None, list[AgentCapability[DepsT]]]:
         """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first."""
@@ -435,90 +460,92 @@ class Session(Generic[DepsT, OutputT]):
         submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
-        try:
-            previous = self._messages
-            run_id = str(uuid4())
-            candidate = replace(self.summary, run_id=run_id, owner_pid=os.getpid(), model=self.model)
-            if self.conversations is not None:
-                if self.summary.revision == 0:
-                    title = ' '.join(''.join(c for c in (text or '') if c.isprintable() or c.isspace()).split())[:64]
-                    candidate = replace(candidate, title=title or 'New session')
-                accepted: list[ModelMessage] = [*previous, *submitted]
-                self.summary = await self.conversations.save(
-                    summary=replace(candidate, outcome='running'), messages=accepted
-                )
-                self._messages = accepted
-            with (
-                capture_run_messages() as messages,
-                self.delegations.bind() if self.delegations is not None else nullcontext(),
-            ):
-                try:
-                    run_model, capabilities = self._bind()
-                    if self.delegations is not None:
-                        capabilities.append(
-                            DelegationReports(
-                                self.delegations,
-                                conversation_id=self.summary.id,
-                                priority='asap' if text is None else 'when_idle',
-                            )
-                        )
-                    workspace: Literal['new'] | None = None
-                    configured = [*_agent_capabilities(self.agent), *self.plugins]
-                    if _supports_local_workspace() and not _supplies_workspace(configured, include_dynamic=False):
-                        if _supplies_workspace(configured):
-                            # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
-                            fallback = _LocalFallback[DepsT](self.workspace, env=_command_env(), id=None)
-                            capabilities.append(DynamicCapability[DepsT](lambda ctx: fallback))
-                        else:
-                            capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
-                        if _stale_local_workspace(previous, self.workspace):
-                            # A conversation resumed from another directory: work in this session's.
-                            workspace = 'new'
-                    result = await self.agent.run(
-                        content,
-                        deps=self.deps,
-                        model=run_model,
-                        model_settings=self._run_settings(),
-                        retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
-                        message_history=previous,
-                        conversation_id=self.summary.id,
-                        run_id=run_id,
-                        capabilities=capabilities,
-                        workspace=workspace,
-                        usage_limits=self.usage_limits,
-                        event_stream_handler=self._stream,
+        with session_context(self.summary.id):
+            try:
+                previous = self._messages
+                run_id = str(uuid4())
+                candidate = replace(self.summary, run_id=run_id, owner_pid=os.getpid(), model=self.model)
+                if self.conversations is not None:
+                    if self.summary.revision == 0:
+                        printable = ''.join(c for c in (text or '') if c.isprintable() or c.isspace())
+                        title = ' '.join(printable.split())[:64]
+                        candidate = replace(candidate, title=title or 'New session')
+                    accepted: list[ModelMessage] = [*previous, *submitted]
+                    self.summary = await self.conversations.save(
+                        summary=replace(candidate, outcome='running'), messages=accepted
                     )
-                    self._accepting_steering = False
-                    self._messages = result.all_messages()
-                    await self._save_turn(outcome='completed')
-                    return result
-                except get_cancelled_exc_class() as cancelled:
-                    self._accepting_steering = False
-                    # Core captures partial responses and tool results during cleanup.
-                    # If cancellation precedes graph startup, retain at least the prompt.
-                    self._messages = messages or [*previous, *submitted]
-                    self._mark_interrupted()
+                    self._messages = accepted
+                with (
+                    capture_run_messages() as messages,
+                    self.delegations.bind() if self.delegations is not None else nullcontext(),
+                ):
                     try:
-                        with move_on_after(5, shield=True):
-                            await self._save_turn(outcome='cancelled')
-                    except Exception as exc:  # noqa: BLE001 -- persistence failure must not swallow cancellation.
-                        if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
-                            cancelled.add_note(f'Could not save cancelled turn: {exc}')
-                        logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
-                    raise
-                except Exception as exc:
-                    self._accepting_steering = False
-                    self._report_setup_errors(exc)
-                    if self.conversations is not None:
-                        self._messages = messages or self._messages
+                        run_model, capabilities = self._bind()
+                        if self.delegations is not None:
+                            capabilities.append(
+                                DelegationReports(
+                                    self.delegations,
+                                    conversation_id=self.summary.id,
+                                    priority='asap' if text is None else 'when_idle',
+                                )
+                            )
+                        workspace: Literal['new'] | None = None
+                        configured = [*_agent_capabilities(self.agent), *self.plugins]
+                        if _supports_local_workspace() and not _supplies_workspace(configured, include_dynamic=False):
+                            if _supplies_workspace(configured):
+                                # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
+                                fallback = _LocalFallback[DepsT](self.workspace, env=_command_env(), id=None)
+                                capabilities.append(DynamicCapability[DepsT](lambda ctx: fallback))
+                            else:
+                                capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
+                            if _stale_local_workspace(previous, self.workspace):
+                                # A conversation resumed from another directory: work in this session's.
+                                workspace = 'new'
+                        result = await self.agent.run(
+                            content,
+                            deps=self.deps,
+                            model=run_model,
+                            model_settings=self._run_settings(),
+                            retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
+                            message_history=previous,
+                            conversation_id=self.summary.id,
+                            run_id=run_id,
+                            capabilities=capabilities,
+                            workspace=workspace,
+                            usage_limits=self.usage_limits,
+                            event_stream_handler=self._stream,
+                        )
+                        self._accepting_steering = False
+                        self._messages = result.all_messages()
+                        await self._save_turn(outcome='completed')
+                        return result
+                    except get_cancelled_exc_class() as cancelled:
+                        self._accepting_steering = False
+                        # Core captures partial responses and tool results during cleanup.
+                        # If cancellation precedes graph startup, retain at least the prompt.
+                        self._messages = messages or [*previous, *submitted]
                         self._mark_interrupted()
-                        await self._save_turn(outcome='failed')
-                    raise
-        finally:
-            self._accepting_steering = False
-            self._run_context = None
-            self._pending_steering.clear()
-            self._running = False
+                        try:
+                            with move_on_after(5, shield=True):
+                                await self._save_turn(outcome='cancelled')
+                        except Exception as exc:  # noqa: BLE001 -- persistence failure must not swallow cancellation.
+                            if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
+                                cancelled.add_note(f'Could not save cancelled turn: {exc}')
+                            logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
+                        raise
+                    except Exception as exc:
+                        self._accepting_steering = False
+                        self._report_setup_errors(exc)
+                        if self.conversations is not None:
+                            self._messages = messages or self._messages
+                            self._mark_interrupted()
+                            await self._save_turn(outcome='failed')
+                        raise
+            finally:
+                self._accepting_steering = False
+                self._run_context = None
+                self._pending_steering.clear()
+                self._running = False
 
     def _report_setup_errors(self, error: BaseException) -> None:
         """Tell `on_setup_error` about each setup failure from one of this session's guards; the turn still fails."""

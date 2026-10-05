@@ -1,10 +1,11 @@
 """Conversation-local settings and actions behind `/set`."""
 
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.commands import Command, set_completions
@@ -39,7 +40,7 @@ class CommandContext:
     plugin_models: Callable[[], Sequence[str]] = lambda: ()
     """Models loaded plugins offer with `PluginHost.model_provider`, as `PREFIX:NAME`."""
     settings_model: Callable[[str], str] = lambda model: model
-    """The model whose `/model_settings` controls a model takes; differs for a plugin's `settings_from`."""
+    """The model whose `/model settings` controls a model takes; differs for a plugin's `settings_from`."""
 
     def __post_init__(self) -> None:
         """Keep the configured model selectable, including preferences saved before the model list existed."""
@@ -95,16 +96,34 @@ class CommandContext:
 
         return model_settings_from_json(self.store.model_settings(model)).to_model_settings()
 
+    def live_model_overrides(self, model: str) -> Callable[[object], ModelSettings]:
+        """`model_overrides(model)` for a run, read again before each model request.
+
+        Core resolves a callable per request, so edits saved while a turn runs reach its next
+        request. Invalid saved settings raise `ValidationError` now, before the run starts; an
+        invalid read later keeps the last valid settings instead of failing the running turn.
+        """
+        current = self.model_overrides(model) or ModelSettings()
+
+        def resolve(_: object) -> ModelSettings:
+            nonlocal current
+            with suppress(ValidationError):
+                current = self.model_overrides(model) or ModelSettings()
+            return current
+
+        return resolve
+
     def model_defaults(self, model: str) -> 'FamilyDefaults':
         """Family defaults for a model name; for `model`, only those its saved overrides leave unset.
 
-        Merged beneath `model_overrides(model)`, they make `model_settings(model)`. The overrides are
-        read now, so a run does not read the store per request.
+        Merged beneath `live_model_overrides(model)`, they make `model_settings(model)`. The saved
+        overrides are read again on each call, so a field saved or reset mid-turn moves between the two.
         """
         from pydantic_clai2.models.model_settings import default_model_settings
 
-        saved = self.store.model_settings(model)
-        return lambda name: default_model_settings(model=name, saved=saved if name == model else {})
+        return lambda name: default_model_settings(
+            model=name, saved=self.store.model_settings(model) if name == model else {}
+        )
 
     def reset_setting(self, key: str) -> str:
         """Forget the saved override and apply the default now."""
