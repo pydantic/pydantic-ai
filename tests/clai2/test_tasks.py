@@ -658,7 +658,7 @@ async def test_background_completion_continues_parent_without_user_input(
         with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
             async with anyio.create_task_group() as group:
                 group.start_soon(shell.run)
-                pipe.send_text('launch\n')
+                pipe.send_text('launch\r')
                 await idle.wait()
                 shell.tasks.wake = None
                 release.set()
@@ -684,7 +684,7 @@ async def test_background_completion_continues_parent_without_user_input(
         async with anyio.create_task_group() as group:
             group.start_soon(shell.run)
             if timing != 'restored':
-                pipe.send_text('launch\n')
+                pipe.send_text('launch\r')
                 await child_started.wait()
                 if timing == 'idle':
                     await idle.wait()

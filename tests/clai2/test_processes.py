@@ -29,8 +29,20 @@ class StubProcess(asyncio.subprocess.Process):
             raise ProcessLookupError
 
 
+class StubTransport(asyncio.SubprocessTransport):
+    def __init__(self, process: StubProcess) -> None:
+        self.process = process
+
+    def get_pid(self) -> int:
+        return self.process.pid
+
+    def kill(self) -> None:
+        self.process.kill()
+
+
+@pytest.mark.parametrize('as_transport', [False, True])
 @pytest.mark.parametrize('missing', [False, True])
-async def test_posix_process_group(monkeypatch: pytest.MonkeyPatch, missing: bool) -> None:
+async def test_posix_process_group(monkeypatch: pytest.MonkeyPatch, missing: bool, as_transport: bool) -> None:
     signals: list[tuple[int, int]] = []
 
     def killpg(pid: int, signum: int) -> None:
@@ -40,13 +52,17 @@ async def test_posix_process_group(monkeypatch: pytest.MonkeyPatch, missing: boo
 
     monkeypatch.setattr('pydantic_clai2.runtime._processes.sys.platform', 'linux')
     monkeypatch.setattr('pydantic_clai2.runtime._processes.os.killpg', killpg, raising=False)
-    await kill_process_tree(StubProcess())
+    process = StubProcess()
+    await kill_process_tree(StubTransport(process) if as_transport else process)
     assert signals == [(12345, signal.SIGKILL)]
 
 
+@pytest.mark.parametrize('as_transport', [False, True])
 @pytest.mark.parametrize('outcome', ['success', 'failure', 'missing_executable'])
 @pytest.mark.parametrize('missing', [False, True])
-async def test_windows_process_tree(monkeypatch: pytest.MonkeyPatch, outcome: str, missing: bool) -> None:
+async def test_windows_process_tree(
+    monkeypatch: pytest.MonkeyPatch, outcome: str, missing: bool, as_transport: bool
+) -> None:
     process = StubProcess(missing=missing)
 
     async def taskkill(program: str, *args: str, stdin: int, stdout: int, stderr: int) -> StubProcess:
@@ -60,5 +76,5 @@ async def test_windows_process_tree(monkeypatch: pytest.MonkeyPatch, outcome: st
     monkeypatch.setenv('SystemRoot', r'D:\Win')
     monkeypatch.setattr('pydantic_clai2.runtime._processes.sys.platform', 'win32')
     monkeypatch.setattr('pydantic_clai2.runtime._processes.asyncio.create_subprocess_exec', taskkill)
-    await kill_process_tree(process)
+    await kill_process_tree(StubTransport(process) if as_transport else process)
     assert process.killed is (outcome != 'success')

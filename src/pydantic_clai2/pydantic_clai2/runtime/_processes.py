@@ -14,20 +14,21 @@ def taskkill_path() -> str:
     return ntpath.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'taskkill.exe')
 
 
-def signal_process_group(process: asyncio.subprocess.Process, signum: int) -> None:
+def signal_process_group(pid: int, signum: int) -> None:
     """Signal the process group, including descendants that have not left it."""
     with suppress(ProcessLookupError):
-        os.killpg(process.pid, signum)
+        os.killpg(pid, signum)
 
 
-async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
+async def kill_process_tree(process: asyncio.subprocess.Process | asyncio.SubprocessTransport) -> None:
     """Kill the process and its descendants; the caller must reap it afterwards."""
+    pid = process.pid if isinstance(process, asyncio.subprocess.Process) else process.get_pid()
     if sys.platform == 'win32':
         try:
             killer = await asyncio.create_subprocess_exec(
                 taskkill_path(),
                 '/PID',
-                str(process.pid),
+                str(pid),
                 '/T',
                 '/F',
                 stdin=subprocess.DEVNULL,
@@ -44,4 +45,4 @@ async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
                 process.kill()
     else:
         # Descendants that left the session with `setsid()` detached on purpose, as under any shell.
-        signal_process_group(process, signal.SIGKILL)
+        signal_process_group(pid, signal.SIGKILL)

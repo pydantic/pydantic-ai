@@ -41,7 +41,7 @@ async def login(*, console: Console) -> str:
         if path.exists()
         else 'Credentials saved in the OS credential store.'
     )
-    return f'GitHub login saved. {storage} Use /add_model > github-copilot to check Copilot access and choose a model.'
+    return f'GitHub login saved. {storage} Use /model add > github-copilot to check Copilot access and choose a model.'
 
 
 def token() -> str:
@@ -51,15 +51,15 @@ def token() -> str:
         try:
             connection = Connection.model_validate_json(raw)
         except ValidationError:
-            raise UserError('Stored Copilot credentials are invalid. Run /login copilot.') from None
+            raise UserError('Stored Copilot credentials are invalid. Run /login github-copilot.') from None
         lifetime = connection.credentials.expires_in
         if lifetime is not None and time.time() >= connection.issued_at + lifetime:
-            raise UserError('Copilot credentials expired. Run /login copilot.')
+            raise UserError('Copilot credentials expired. Run /login github-copilot.')
         return connection.credentials.access_token
     for name in ('GITHUB_COPILOT_API_KEY', 'GITHUB_COPILOT_API_TOKEN', 'COPILOT_GITHUB_TOKEN'):
         if value := os.getenv(name):
             return value
-    raise UserError('Copilot is not connected. Run /login copilot or set GITHUB_COPILOT_API_KEY.')
+    raise UserError('Copilot is not connected. Run /login github-copilot or set GITHUB_COPILOT_API_KEY.')
 
 
 def model(name: str) -> GitHubCopilotModel:
@@ -90,7 +90,7 @@ async def discover(*, transport: httpx2.AsyncBaseTransport | None = None) -> lis
         except APIError:
             raise UserError(
                 'Copilot model discovery failed. Check connectivity, your subscription and organization policy, '
-                'or run /login copilot again.'
+                'or run /login github-copilot again.'
             ) from None
         try:
             models = ModelList.model_validate_json(response.content)
