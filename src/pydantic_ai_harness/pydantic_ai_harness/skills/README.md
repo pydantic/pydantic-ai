@@ -278,15 +278,17 @@ result = await agent.run(review.render('src/app.py'))
 
 `load` reads the libraries as a run would, without emitting warnings: the
 catalog's `skipped` messages name each `SKILL.md` left out, malformed or named
-like a skill found earlier, for the host to show. Each `SkillDefinition` has the skill's `name`, `description`, `body`,
-`path`, and `directory`.
+like a skill found earlier, for the host to show. Each `SkillDefinition` has
+the skill's `name`, `description`, `body`, `path`, `directory`, and
+`in_run_workspace`.
 
 `render(arguments)` returns what loading the skill returns, with every
 `$ARGUMENTS` in the body replaced by `arguments`. A body without `$ARGUMENTS`
 gets `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude
 Code's indexed `$0` or `$ARGUMENTS[0]`, are left unchanged. `render()` without
-arguments leaves the body unchanged. The directory it names is a path in the
-workspace the skill was read from.
+arguments returns the instructions the model gets when it loads the skill,
+including leaving the directory out for a skill read from `workspace=`
+(`in_run_workspace` is `False`).
 
 ## Use an agent spec
 
