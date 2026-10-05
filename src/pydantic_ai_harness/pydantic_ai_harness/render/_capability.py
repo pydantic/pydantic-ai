@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Concatenate, Literal, ParamSpec, Protocol, TypeVar, overload
 
 from pydantic_ai.agent import AbstractAgent, EventStreamHandler
+from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     BaseDurabilityCapability,
@@ -31,8 +32,8 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import Model
-from pydantic_ai.tools import AgentDepsT, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset, WrapperToolset
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
 
 try:
     from render import Options, Retry, TaskContext, Workflows
@@ -47,15 +48,14 @@ except ModuleNotFoundError as _import_error:  # pragma: no cover
 
 from ._compat import (
     CapabilityMethodDeclaration,
+    RenderRunContext,
     RenderRunContextCodec,
     ToolsetCallToolParams,
     function_tool_original_name,
     prepare_function_call_params,
-    reject_unidentified_operation_capabilities,
 )
 from ._context import activate_task_context, current_task_context
 from ._operation_backend import RenderOperationBackend
-from ._toolset_ids import prepare_capability_toolset_ids
 from ._transports import (
     RenderCancelTransport,
     RenderCapabilityOperationTransport,
@@ -194,7 +194,6 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         )
         self._operation_backend: RenderOperationBackend[AgentDepsT] | None = None
         self._context_codec: RenderRunContextCodec[Any] | None = None
-        self._inline_toolsets: frozenset[int] = frozenset()
         # Task context belongs to the Workflow app. Explicitly configured child agents using
         # another RenderWorkflows instance for the same app can therefore start nested tasks.
         self._owner_token = app
@@ -218,24 +217,6 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
                 'An agent with `RenderWorkflows` must be constructed outside a Render workflow so '
                 'its operation tasks are registered before the worker starts.'
             )
-
-    @classmethod
-    def _check_single_capability(cls, agent: AbstractAgent[Any, Any]) -> None:
-        """Refuse a second `RenderWorkflows` while the agent is still being built.
-
-        `from_agent` is the engine's own lookup and already rejects a second instance, but
-        only once something asks for the bound capability. Asking here means the agent is
-        never constructed with two registered task sets and no defined answer for which
-        `Workflows` app a run dispatches to.
-        """
-        try:
-            cls.from_agent(agent)
-        except UserError as exc:
-            raise UserError(
-                'Attach exactly one `RenderWorkflows` capability to an agent. Each one registers a '
-                'full set of Render tasks against the `Workflows` app it was given, so a second '
-                'leaves the agent with two sets and nothing to say which app a run dispatches to.'
-            ) from exc
 
     # The async overload comes first so a coroutine function does not bind `R` to its coroutine.
     @overload
@@ -302,18 +283,8 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         return decorator(func)
 
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        self._check_single_capability(agent)
-
         if self._deps_type is None:
             self._deps_type = agent.deps_type
-
-        # Render task names are persisted workflow identity, so every leaf is named before
-        # the codec, the operation backend, and the event operation below start registering
-        # tasks: a name settled later would be a name nothing can go back and change.
-        self._inline_toolsets = prepare_capability_toolset_ids(agent.toolsets)
-        # Pydantic AI reaches the same check while registering capability operations, by
-        # which point this app is already holding tasks that nothing can unregister.
-        reject_unidentified_operation_capabilities(agent.root_capability)
 
         self._context_codec = RenderRunContextCodec(
             deps_type=self._deps_type,
@@ -326,17 +297,21 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
             agent_name=self.name,
             config=self._operation_config,
         )
-        # Toolset identity was settled above, so the base bind cannot reject an unnamed or
-        # duplicate ID after this event task is registered. Event binding must still come
-        # first because the durable wrappers created by the base bind capture it.
+        # Bind events first because the durable wrappers capture this operation.
+        # The backend queues SDK registration until all core binding checks succeed.
         if self._event_stream_handler is not None:
             self._bound_event_operation = self._bind_event_operation(self._operation_backend)
         super()._bind_to_agent(agent)
 
-    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
-        if id(ts) in self._inline_toolsets:
-            return None
-        return super()._wrap_leaf_toolset(ts)
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Register Render tasks after core has bound toolsets, capabilities, and workspaces."""
+        bound = super().for_agent(agent)
+        # Workspace support can wrap the bound engine in a CombinedCapability.
+        for leaf in leaf_capabilities(bound):
+            if isinstance(leaf, RenderWorkflows):
+                assert leaf._operation_backend is not None
+                leaf._operation_backend.register_tasks()
+        return bound
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[Options | None]:
         backend = self._operation_backend
@@ -365,6 +340,12 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         if agent is None:  # pragma: no cover - binding always supplies the agent
             raise UserError('`RenderWorkflows` must be bound before a function tool can run.')
         return await prepare_function_call_params(agent, toolset, params)
+
+    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        guarded = super()._durable_run_context(ctx)
+        if isinstance(ctx, RenderRunContext) and isinstance(guarded, RenderRunContext):
+            guarded.restore_snapshots(ctx)
+        return guarded
 
     def _workspace_call_transport(self) -> RenderWorkspaceCallTransport[AgentDepsT]:
         return RenderWorkspaceCallTransport(self._codec())

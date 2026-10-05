@@ -10,6 +10,7 @@ from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -318,3 +319,32 @@ async def test_unregistered_model_instance_is_rejected_before_dispatch() -> None
     with pytest.raises(UserError, match='was not registered with `RenderWorkflows`'):
         await pending
     assert context.task_names == []
+
+
+async def test_worker_context_keeps_availability_validation_and_enqueue_guards() -> None:
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent[None, str](
+        TestModel(call_tools=['inspect_context']),
+        name='worker-context-contract',
+        deps_type=type(None),
+        validation_context=lambda ctx: {'worker_run_id': ctx.run_id},
+        capabilities=[Hooks(id='visible'), runtime],
+    )
+
+    @agent.tool
+    def inspect_context(ctx: RunContext[None]) -> str:
+        assert ctx.available_tool_names == {'inspect_context'}
+        assert 'visible' in ctx.active_capability_ids
+        assert ctx.is_tool_available('inspect_context')
+        assert ctx.validation_context == {'worker_run_id': ctx.run_id}
+        with pytest.raises(UserError, match='not supported inside a durable task'):
+            ctx.enqueue('cannot be transferred to the parent')
+        with pytest.raises(UserError, match='not supported inside a durable task'):
+            ctx.cancel()
+        with pytest.raises(UserError, match="'messages' is not available"):
+            _ = ctx.messages
+        return 'context checked'
+
+    context = RecordingTaskContext()
+    assert 'context checked' in await run_agent_in_task(agent, runtime, context)
+    assert 'worker-context-contract__function_toolset__<agent>.call_tool' in context.task_names

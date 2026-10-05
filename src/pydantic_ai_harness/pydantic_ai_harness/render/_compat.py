@@ -1,11 +1,25 @@
-"""Compatibility boundary for unpublished Pydantic AI durability semantics.
+"""Private Pydantic AI contracts used at Render's process boundary.
 
-Cross-process operation parameters, capability ownership, capability-operation
-discovery, effective instrumentation settings, and partial `RunContext`
-reconstruction do not yet have public APIs.
-Their private imports and unavoidable dynamic typing stay here so an upstream
-change has one repair point. Vendor and general framework internals do not belong
-in this module.
+The backend and operation IDs use public durability APIs. The imports below supply
+contracts not exposed there, checked against upstream on 2026-10-05:
+
+* `_operation` and `_operation_backend`: typed operations, parameters and bound
+  calls for the JSON transports. Covered by `test_transports.py` and
+  `test_completion_contracts.py`.
+* `_capability_operation`: declarations and recovery projections for decorated
+  operations. Covered by `test_protocol.py` and `test_transports.py`.
+* `_workspace`: the core workspace call schema, rather than a copied schema.
+  Covered by `test_workspaces.py`.
+* `_run_context` and `_toolset`: availability evidence, enqueue rejection, tool
+  outcomes and validation-context reconstruction. Covered by `test_transports.py`,
+  `test_effects_contracts.py` and `test_workspaces.py`.
+
+Private context attributes and the effective tracer lookup also remain here.
+`test_local_runtime.py` checks context, usage, events and tracing in separate
+Render processes. Recheck these contracts when updating Pydantic AI; `JSON_CODEC`
+encodes values but does not rebuild a worker's `RunContext`.
+
+Public backend contract: https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/
 """
 
 from __future__ import annotations
@@ -19,9 +33,9 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeVar as TypeVarExtensions
 
 from pydantic_ai import Agent
-from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
+from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities, select_workspace
+from pydantic_ai.capabilities.abstract import AbstractCapability, select_workspace
 from pydantic_ai.durable_exec import JSON_CODEC
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
@@ -57,7 +71,6 @@ from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
@@ -71,7 +84,6 @@ __all__ = (
     'CallToolResult',
     'CapabilityMethodDeclaration',
     'CapabilityOperationParams',
-    'CapabilityOwnedToolset',
     'DynamicToolsResult',
     'DynamicToolsetCallToolParams',
     'DurableOperation',
@@ -104,7 +116,6 @@ __all__ = (
     'normalize_json_value',
     'operation_run_context',
     'prepare_function_call_params',
-    'reject_unidentified_operation_capabilities',
     'resolve_function_tool_for_definition',
     'resolve_mcp_tool_for_definition',
     'to_json_object',
@@ -123,6 +134,8 @@ WireT = TypeVar('WireT')
 ResultT = TypeVar('ResultT')
 AgentDepsT = TypeVarExtensions('AgentDepsT', default=object)
 ToolDepsT = TypeVar('ToolDepsT')
+CustomEventT = TypeVar('CustomEventT', bound=CustomEvent)
+CapabilityEventT = TypeVar('CapabilityEventT', bound=CapabilityEvent)
 
 _JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 _OPEN_OBJECT_ADAPTER: TypeAdapter[dict[object, object]] = TypeAdapter(dict[object, object])
@@ -390,34 +403,6 @@ def get_capability_operation_declaration(
         raise ValueError(f'Capability {type(capability).__name__!r} has no operation {operation!r}.') from exc
 
 
-def reject_unidentified_operation_capabilities(root_capability: AbstractCapability[Any]) -> None:
-    """Run Pydantic AI's capability-identity check ahead of any task registration.
-
-    `BaseDurabilityCapability.for_agent` reaches the same check in
-    `_bind_capability_operations`, which runs only after the engine has bound its
-    toolset, model, and event operations. Every one of those registers a task on the
-    `Workflows` app, and Render's public API cannot unregister a task, so a capability
-    rejected there leaves the app holding a partial, permanent task set. Running the
-    same traversal and the same collector first moves the rejection ahead of the first
-    `app.task` call.
-
-    The message is restated rather than reached through, because the check lives inside
-    the loop that performs the registration. It must be kept identical to the one in
-    `pydantic_ai.durable_exec._base.BaseDurabilityCapability._bind_capability_operations`.
-    """
-    for capability in leaf_capabilities(root_capability):
-        # A capability contributing no durable operations needs no `id`, so the collector
-        # runs first here exactly as it does upstream.
-        if not collect_capability_operations(capability):
-            continue
-        if capability.id is None:
-            raise UserError(
-                f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
-                '`id` because persisted operation identity and worker-side recovery must remain stable. '
-                f"Construct it as `{type(capability).__name__}(id='...')`."
-            )
-
-
 _STR_SET_ADAPTER: TypeAdapter[set[str]] = TypeAdapter(set[str])
 _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('usage', dict, TypeAdapter(RunUsage)),
@@ -482,6 +467,22 @@ class RenderRunContext(RunContext[AgentDepsT]):
         if name in _GUARDED_FIELDS and name not in object.__getattribute__(self, '__dataclass_fields__'):
             raise UserError(f'{name!r} is not available on {self.__class__.__name__!r} inside a Render child task.')
         return super().__getattribute__(name)
+
+    def restore_snapshots(self, source: RenderRunContext[AgentDepsT]) -> None:
+        """Preserve worker-only state after core guards copy the dataclass fields.
+
+        These snapshots are properties or wire metadata, so `dataclasses.replace`
+        omits them. Do not copy dataclass fields: core has just guarded those.
+        """
+        for name in (
+            'available_tool_names',
+            'active_capability_ids',
+            '_deferred_capability_ids',
+            'workspace_ref',
+            '_model_id',
+        ):
+            if name in source.__dict__:
+                self.__dict__[name] = source.__dict__[name]
 
     @property
     def available_tool_names(self) -> set[str]:

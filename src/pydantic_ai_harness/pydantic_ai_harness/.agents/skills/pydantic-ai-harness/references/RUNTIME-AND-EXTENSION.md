@@ -192,9 +192,11 @@ composing an agent. The setup and constraints that affect implementation are:
   and tools at module load time, using the same Render `Workflows` app. Call `agent.run(...)` inside that
   capability's `@workflows.task` entry function; a plain `@app.task` leaves agent operations inline. The live
   app object requires Python construction rather than a JSON or YAML agent spec.
-- Give agents and registered leaf toolsets stable names and IDs. Task options are fixed at registration.
-  For a delegated agent's operations to run as child tasks, attach its own `RenderWorkflows` instance using
-  the same app. A child-task retry can repeat that operation's side effects, so make external writes safe
+- Give agents and registered leaf toolsets stable names and IDs, including capability-owned toolsets.
+  Task options are fixed at registration. Return `False` from `resolve_tool_options` for `delegate_task`
+  and `read_tool_result` when using `SubAgents` and `ToolOutputLimits`, so those helpers retain the parent
+  task's live state. For a delegated agent's operations to run as child tasks, attach its own
+  `RenderWorkflows` instance using the same app. A child-task retry can repeat that operation's side effects, so make external writes safe
   to repeat.
 - Inputs and results crossing a task boundary must be JSON encodable, including `deps`. Workers need
   access to their own model credentials and external resources. Keep large artifacts in shared storage

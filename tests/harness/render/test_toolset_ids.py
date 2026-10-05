@@ -42,7 +42,10 @@ Agent(
     capabilities=[
         SubAgents(agents=[SubAgent(worker)], agent_folders=None),
         ToolOutputLimits(),
-        RenderWorkflows(app, deps_type=type(None)),
+        RenderWorkflows(
+            app, deps_type=type(None),
+            resolve_tool_options=lambda op, tool, name: False if name in {'delegate_task', 'read_tool_result'} else None,
+        ),
     ],
 )
 print('\\n'.join(sorted({name for name in app.registered_task_names if '__function_toolset__' in name and '<agent>' not in name})))
@@ -139,14 +142,13 @@ async def test_a_toolset_that_brought_its_own_id_registers_its_tasks_under_it() 
     assert 'support__function_toolset__handwritten.call_tool' in names
 
 
-async def test_an_unnamed_capability_toolset_stays_unnamed_and_runs_inline() -> None:
+def test_an_unnamed_capability_toolset_is_rejected_before_registration() -> None:
     notes = Notes(id='web_search')
-    agent, render_workflows = build_agent(notes, call_tools=['note'])
-
-    names = await recorded_task_names(agent, render_workflows, 'take a note')
-
+    app = RecordingWorkflows()
+    with pytest.raises(UserError, match='unique `id`'):
+        build_agent(notes, app=app)
     assert notes.toolset.id is None
-    assert not [name for name in names if '__function_toolset__' in name]
+    assert app.registered_task_names == []
 
 
 async def test_explicit_capability_and_user_toolset_ids_register_separately() -> None:
@@ -177,14 +179,11 @@ class ExternallyAnsweredNotes(Notes):
         return CombinedToolset([self.toolset, ExternalToolset[None]([ToolDefinition(name='answered_elsewhere')])])
 
 
-async def test_unnamed_capability_leaf_stays_inline_alongside_external_leaf() -> None:
-    notes = ExternallyAnsweredNotes(id='notes')
-    agent, render_workflows = build_agent(notes, call_tools=['note'])
-
-    names = await recorded_task_names(agent, render_workflows, 'take a note')
-
-    assert notes.toolset.id is None
-    assert not [name for name in names if '__function_toolset__notes' in name]
+def test_an_external_leaf_does_not_hide_an_unnamed_function_toolset() -> None:
+    app = RecordingWorkflows()
+    with pytest.raises(UserError, match='unique `id`'):
+        build_agent(ExternallyAnsweredNotes(), app=app)
+    assert app.registered_task_names == []
 
 
 class TwoToolsetNotes(Notes):
@@ -201,50 +200,36 @@ class TwoToolsetNotes(Notes):
         return CombinedToolset(self.leaves)
 
 
-async def test_two_unnamed_capability_leaves_stay_inline_and_unnamed() -> None:
-    notes = TwoToolsetNotes(id='notes')
-    agent, render_workflows = build_agent(notes, call_tools=['note', 'recall'])
-
-    names = await recorded_task_names(agent, render_workflows, 'take a note')
-
-    assert [leaf.id for leaf in notes.leaves] == [None, None]
-    assert not [name for name in names if '__function_toolset__' in name]
+def test_two_unnamed_capability_leaves_are_rejected_before_registration() -> None:
+    app = RecordingWorkflows()
+    with pytest.raises(UserError, match='unique `id`'):
+        build_agent(TwoToolsetNotes(), app=app)
+    assert app.registered_task_names == []
 
 
 def test_a_toolset_the_user_attached_without_an_id_is_refused_on_its_own_terms() -> None:
-    """Nothing derives a name for a toolset the user holds: they can pass one.
-
-    The capability-derived name exists because the toolset it names is unreachable. This
-    one is reachable, so the refusal says to name it rather than inventing a name for it.
-    """
-
     async def recall(topic: str) -> str:
         return topic
 
     app = RecordingWorkflows()
 
-    with pytest.raises(UserError, match='needs a unique `id`'):
+    with pytest.raises(UserError, match='unique `id`'):
         build_agent(Notes(toolset_id='notes'), app=app, toolsets=[FunctionToolset[None]([recall])])
 
     assert app.registered_task_names == []
 
 
-async def test_unnamed_leaf_under_unnamed_capability_stays_inline() -> None:
-    notes = Notes(id=None)
-    agent, render_workflows = build_agent(notes, call_tools=['note'])
-
-    names = await recorded_task_names(agent, render_workflows, 'take a note')
-
-    assert notes.toolset.id is None
-    assert not [name for name in names if '__function_toolset__' in name]
+def test_unnamed_leaf_under_unnamed_capability_is_rejected_before_registration() -> None:
+    app = RecordingWorkflows()
+    with pytest.raises(UserError, match='unique `id`'):
+        build_agent(Notes(id=None), app=app)
+    assert app.registered_task_names == []
 
 
 def test_two_toolsets_that_already_share_an_id_are_still_a_collision() -> None:
     async def recall(topic: str) -> str:
         return topic
 
-    # Both of these were named by whoever owns them, so there is nothing to derive and
-    # nothing to disambiguate: a genuine clash is Pydantic AI's answer, given earlier.
     app = RecordingWorkflows()
 
     with pytest.raises(UserError, match='Two toolsets have the same `id`'):
@@ -261,7 +246,7 @@ def test_two_independent_agents_register_the_same_explicit_task_names() -> None:
     assert first_app.registered_task_names == second_app.registered_task_names
 
 
-def test_explicit_names_are_process_stable_and_shared_capabilities_stay_inline() -> None:
+def test_explicit_names_are_process_stable_with_helper_opt_outs() -> None:
     names = probe_task_names()
 
     assert names == probe_task_names()
@@ -295,3 +280,39 @@ async def test_matching_id_does_not_admit_a_runtime_toolset() -> None:
     with pytest.raises(UserError, match='cannot be added at runtime'):
         await pending
     assert context.task_names == []
+
+
+@pytest.mark.parametrize('capability_owned', [False, True])
+def test_tool_opt_out_does_not_bypass_core_toolset_identity_checks(capability_owned: bool) -> None:
+    app = RecordingWorkflows()
+    notes = Notes()
+    runtime = RenderWorkflows[None](app, resolve_tool_options=lambda operation, tool, name: False)
+    with pytest.raises(UserError, match='unique `id`'):
+        Agent(
+            TestModel(),
+            name='unnamed-opt-out',
+            deps_type=type(None),
+            toolsets=[] if capability_owned else [notes.toolset],
+            capabilities=[notes, runtime] if capability_owned else [runtime],
+        )
+    assert app.registered_task_names == []
+
+
+class ResourceListingToolset(ExternalToolset[None]):
+    """A non-MCP toolset whose resource API must not change core's classification."""
+
+    async def list_resources(self) -> list[str]:
+        return []
+
+
+def test_list_resources_does_not_make_a_toolset_an_mcp_toolset() -> None:
+    app = RecordingWorkflows()
+    Agent(
+        TestModel(),
+        name='external-resources',
+        deps_type=type(None),
+        toolsets=[ResourceListingToolset([ToolDefinition(name='external')])],
+        capabilities=[RenderWorkflows[None](app)],
+    )
+    assert 'external-resources__model.request' in app.registered_task_names
+    assert not [name for name in app.registered_task_names if '__mcp_server__' in name]

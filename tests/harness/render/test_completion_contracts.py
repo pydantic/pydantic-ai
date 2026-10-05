@@ -152,7 +152,11 @@ def build_nested_agents() -> tuple[Agent[None, str], RenderWorkflows[None], Reco
     async def child_tool() -> str:
         return 'tool done'
 
-    parent_runtime = RenderWorkflows[None](app, deps_type=type(None))
+    parent_runtime = RenderWorkflows[None](
+        app,
+        deps_type=type(None),
+        resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
+    )
     parent = Agent[None, str](
         delegate_once('nested-child'),
         name='nested-parent',
@@ -218,7 +222,11 @@ def build_two_level_agents() -> tuple[Agent[None, str], RenderWorkflows[None], R
     async def grandchild_tool() -> str:
         return 'grandchild tool done'
 
-    child_runtime = RenderWorkflows[None](app, deps_type=type(None))
+    child_runtime = RenderWorkflows[None](
+        app,
+        deps_type=type(None),
+        resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
+    )
     child = Agent[None, str](
         FunctionModel(child_delegating_model),
         name='nested-child-two-level',
@@ -233,7 +241,11 @@ def build_two_level_agents() -> tuple[Agent[None, str], RenderWorkflows[None], R
     async def child_tool() -> str:
         return 'child tool done'
 
-    parent_runtime = RenderWorkflows[None](app, deps_type=type(None))
+    parent_runtime = RenderWorkflows[None](
+        app,
+        deps_type=type(None),
+        resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
+    )
     parent = Agent[None, str](
         delegate_once('nested-child-two-level'),
         name='nested-parent-two-level',
@@ -294,7 +306,11 @@ async def test_inline_subagents_charges_concurrent_max_calls_before_awaiting() -
         return ModelResponse(parts=[TextPart('worker done')])
 
     app = RecordingWorkflows()
-    runtime = RenderWorkflows[None](app, deps_type=type(None))
+    runtime = RenderWorkflows[None](
+        app,
+        deps_type=type(None),
+        resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
+    )
     worker = Agent[None, str](
         FunctionModel(worker_model),
         name='budget-worker',

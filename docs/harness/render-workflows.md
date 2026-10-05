@@ -279,18 +279,24 @@ can produce many child runs, which Render schedules and bills individually.
 
 ## Task names for capability toolsets
 
-Every registered leaf toolset needs a stable `id` because Render uses it in persisted task names. Duplicate IDs fail
-Pydantic AI's uniqueness check; the integration does not rename them. An unnamed supported toolset attached directly
-to an agent is rejected before any task definitions register.
+Every registered leaf toolset needs a stable `id` because Render uses it in persisted task names. Pydantic AI rejects
+missing or duplicate IDs before Render registers the tasks. This requirement also applies to toolsets contributed
+by capabilities and to tools you keep in the parent task with `resolve_tool_options`. When writing a custom
+capability, give the toolset returned by `get_toolset()` an ID, such as `FunctionToolset(id='search')`.
 
-Capability-owned toolsets can remain unnamed, in which case their tools execute inline in the entry task without
-separate run records or task options.
+The integration registers tasks after Pydantic finishes binding its durable operations. If the Render SDK itself
+fails during registration, the app can still contain a partial set of tasks. Discard that `Workflows` app and
+rebuild it after fixing the error.
 
 ## Sub-agent delegation
 
-`SubAgents` runs its `delegate_task` tool in the workflow entry task. To run a delegate's model requests and
-supported tools as Render tasks, construct the child `Agent` at module load time with its own `RenderWorkflows`
-instance, using the same `Workflows` app as the parent. A child without that configuration stays inline.
+Configure the parent's `resolve_tool_options` callback to return `False` for `delegate_task`, as shown in
+[Task options and tool opt-out](#task-options-and-tool-opt-out). This keeps delegation in the parent task, where
+`SubAgents` can track its call limits and access the active run state.
+
+To run a delegate's model requests and supported tools as Render tasks, construct the child `Agent` at module load
+time with its own `RenderWorkflows` instance, using the same `Workflows` app as the parent. A child without that
+configuration runs inside the parent task.
 
 Successful child operations contribute usage and buffered events to the parent run. Failed operations and
 `ModelRetry` attempts do not forward those updates. The delegation limit applies within one active parent task
@@ -300,9 +306,14 @@ Immediate capability events require a synchronous decision before their emitter 
 
 ## Large tool outputs
 
-`ToolOutputLimits` also contributes an unnamed helper toolset, so that helper remains inline. It measures and reduces a tool return after the registered tool task returns to the workflow entry task.
+`ToolOutputLimits` measures and reduces a tool return after the registered tool task returns to the parent task.
+Configure `resolve_tool_options` to return `False` for its `read_tool_result` helper so the helper reads from the
+same task that stored the result.
 
-In `Spill` mode, the capability writes the full payload to a filesystem-backed store and gives the model a handle for a later `read_tool_result` call. Because task runs execute in separate processes and can have isolated filesystems, the later task might not be able to read the file behind that handle.
+In `Spill` mode, the capability stores the full payload and gives the model a handle for a later `read_tool_result`
+call. A store backed by the parent's local filesystem works within that task, but a restarted entry task or another
+worker cannot rely on those files being present. Use a shared workspace or overflow store when results need to
+survive beyond the parent task.
 
 For large artifacts, return bounded JSON containing a key into object storage, a database, or another durable service that both tasks can reach. A later tool can then fetch the artifact from that shared store.
 
@@ -321,7 +332,7 @@ from pydantic_ai_harness import RenderWorkflows
 
 
 def resolve_tool_options(_operation_id, _tool, tool_name):
-    if tool_name == 'read_local_cache':
+    if tool_name in {'delegate_task', 'read_tool_result', 'read_local_cache'}:
         return False
     return None
 

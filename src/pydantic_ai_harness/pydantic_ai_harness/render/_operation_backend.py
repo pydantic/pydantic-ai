@@ -70,13 +70,18 @@ def _snapshot_options(options: Options) -> Options:
     )
 
 
-@dataclass(frozen=True)
+@dataclass
 class _RegisteredTask:
-    """One registered Render task and the options fixed on it at registration."""
+    """A task handle filled after core binding and its snapshotted options."""
 
     name: str
-    task: TaskDefinition[[OperationRequest], OperationResult]
     options: Options | None
+    definition: TaskDefinition[[OperationRequest], OperationResult] | None = None
+
+    @property
+    def task(self) -> TaskDefinition[[OperationRequest], OperationResult]:
+        assert self.definition is not None, 'Render tasks must be registered before an operation runs.'
+        return self.definition
 
 
 def _routed_tool_name(params: object) -> str | None:
@@ -183,6 +188,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         self._runtime = runtime
         self._agent_name = agent_name
         self._per_tool_task_names: set[str] = set()
+        self._pending_registrations: list[Callable[[], None]] = []
 
     def register(
         self,
@@ -196,7 +202,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
             bound = RenderBoundOperation(
                 operation,
                 operation_name=name,
-                shared=self._register_task(operation, name=name, config=config),
+                shared=self._prepare_task(operation, name=name, config=config),
                 runtime=self._runtime,
             )
         else:
@@ -207,7 +213,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 operation,
                 operation_name=name,
                 per_tool={
-                    tool_name: self._register_task(
+                    tool_name: self._prepare_task(
                         operation,
                         name=self._per_tool_task_name(prefix, tool_name, suffix),
                         config=tool_config,
@@ -216,11 +222,11 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 },
                 runtime=self._runtime,
             )
-        # `app.task` has already registered the task definitions. The generic backend's second
-        # return value is for worker-registration callables, not task runs, so it is empty here.
+        # RenderWorkflows.for_agent registers the queued SDK definitions after core binding.
+        # The Render SDK needs no additional worker-registration callables.
         return bound, ()
 
-    def _register_task(
+    def _prepare_task(
         self,
         operation: DurableOperation[ParamsT, WireT, ResultT],
         *,
@@ -264,13 +270,27 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         options = registered_config or Options()
         # A `None` field intentionally lets the public Workflows API resolve its app default
         # when this task is registered; only explicit per-operation values are snapshotted here.
-        task = self._app.task(
-            name=name,
-            retry=options.retry,
-            timeout_seconds=options.timeout_seconds,
-            plan=options.plan,
-        )(operation_task)
-        return _RegisteredTask(name=name, task=task, options=registered_config)
+        registered = _RegisteredTask(name=name, options=registered_config)
+
+        def commit() -> None:
+            registered.definition = self._app.task(
+                name=name,
+                retry=options.retry,
+                timeout_seconds=options.timeout_seconds,
+                plan=options.plan,
+            )(operation_task)
+
+        self._pending_registrations.append(commit)
+        return registered
+
+    def register_tasks(self) -> None:
+        """Commit the pending definitions after core binding succeeds.
+
+        The SDK cannot roll back registrations. Discard the app if an SDK call fails.
+        """
+        for commit in self._pending_registrations:
+            commit()
+        self._pending_registrations.clear()
 
     def _per_tool_options(
         self,

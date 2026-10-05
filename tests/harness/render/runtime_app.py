@@ -178,6 +178,8 @@ grandchild = Agent[RuntimeDeps, str](
 @grandchild.tool
 async def grandchild_lookup(ctx: RunContext[RuntimeDeps]) -> ToolEvidence:
     """Retry once, then return grandchild tool-process evidence."""
+    assert 'grandchild_lookup' in ctx.available_tool_names
+    assert ctx.is_tool_available('grandchild_lookup')
     if ctx.retry == 0:
         raise ModelRetry(f'retry remote grandchild attempt from pid {os.getpid()}')
     return ToolEvidence(
@@ -198,7 +200,11 @@ async def record_runtime_effect(ctx: RunContext[RuntimeDeps], event: RuntimeEffe
     _seen_events.append(RuntimeEventEvidence(label=event.label, sequence=event.sequence))
 
 
-child_runtime = RenderWorkflows[RuntimeDeps](workflows, deps_type=RuntimeDeps)
+child_runtime = RenderWorkflows[RuntimeDeps](
+    workflows,
+    deps_type=RuntimeDeps,
+    resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
+)
 child = Agent[RuntimeDeps, str](
     FunctionModel(child_model, stream_function=stream_child_model, model_name='runtime-child-model'),
     name='runtime-child',
@@ -230,7 +236,11 @@ async def child_beta(ctx: RunContext[RuntimeDeps]) -> ToolEvidence:
     return await _sibling_effect(ctx, 'beta', 5)
 
 
-parent_runtime = RenderWorkflows[RuntimeDeps](workflows, deps_type=RuntimeDeps)
+parent_runtime = RenderWorkflows[RuntimeDeps](
+    workflows,
+    deps_type=RuntimeDeps,
+    resolve_tool_options=lambda _operation, _tool, name: False if name == 'delegate_task' else None,
+)
 parent = Agent[RuntimeDeps, str](
     FunctionModel(parent_model, model_name='runtime-parent-model'),
     name='runtime-parent',

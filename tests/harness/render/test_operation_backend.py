@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterable
+
 import pytest
 from render.workflows import Options, Retry, Workflows
 
-from pydantic_ai import Agent, FunctionToolset, RunContext
+from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
@@ -140,3 +142,63 @@ async def test_registered_task_options_are_snapshotted_when_the_agent_is_bound()
 
     with pytest.raises(UserError, match='fixed when an agent is bound'):
         await run_agent_in_task(agent, runtime, RecordingTaskContext())
+
+
+@pytest.mark.parametrize('with_events', [False, True])
+def test_options_resolver_failure_registers_no_tasks_and_app_can_be_reused(with_events: bool) -> None:
+    """Even late per-tool configuration failures leave the app usable for a corrected agent."""
+    app = RecordingWorkflows()
+
+    async def events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    def lookup() -> str:
+        return 'found'
+
+    def invalid_options(operation: object, tool: object | None, name: str) -> None:
+        if name == 'lookup':
+            raise ValueError('invalid lookup options')
+
+    with pytest.raises(ValueError, match='invalid lookup options'):
+        Agent(
+            TestModel(),
+            name='resolver-failure',
+            deps_type=type(None),
+            toolsets=[FunctionToolset([lookup], id='lookup')],
+            capabilities=[
+                RenderWorkflows[None](
+                    app,
+                    event_stream_handler=events if with_events else None,
+                    resolve_tool_options=invalid_options,
+                )
+            ],
+        )
+    assert app.registered_task_names == []
+
+    Agent(
+        TestModel(),
+        name='resolver-failure',
+        deps_type=type(None),
+        toolsets=[FunctionToolset([lookup], id='lookup')],
+        capabilities=[RenderWorkflows[None](app)],
+    )
+    assert 'resolver-failure__function_toolset__lookup.call_tool' in app.registered_task_names
+    assert len(app.registered_task_names) == len(set(app.registered_task_names))
+
+
+async def test_reused_capability_registers_each_agents_tasks_once() -> None:
+    app = RecordingWorkflows()
+    runtime = RenderWorkflows[None](app)
+    agents = [
+        Agent(TestModel(), name=name, deps_type=type(None), capabilities=[runtime]) for name in ('first', 'second')
+    ]
+    registered_names = app.registered_task_names.copy()
+    assert len(registered_names) == len(set(registered_names))
+    for agent in agents:
+        context = RecordingTaskContext()
+        with runtime.activate(context):
+            await agent.run('go')
+        assert context.task_names == [f'{agent.name}__model.request']
+    # Running the bound copies must not register additional operations.
+    assert [name for name in app.registered_task_names if '__' in name] == registered_names
