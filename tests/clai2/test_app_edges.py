@@ -235,7 +235,7 @@ async def test_unknown_saved_model_settings_do_not_break_chat(tmp_path: Path, mo
 async def test_invalid_saved_model_settings_can_be_repaired_without_exiting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_key: str
 ) -> None:
-    inputs(monkeypatch, ['first attempt', '/model_settings test', 'second attempt', '/exit'])
+    inputs(monkeypatch, ['first attempt', '/model settings test', 'second attempt', '/exit'])
     store = SettingsStore(tmp_path / 'config.db')
     if invalid_key == 'temperature':
         store.save_model_settings('test', {'temperature': 'private-invalid-value', 'future_setting': True})
@@ -253,7 +253,7 @@ async def test_invalid_saved_model_settings_can_be_repaired_without_exiting(
         reset = menu.reset_marker(object(), MenuItem('Custom params', value='custom_params'))
         script = Script(lists=[reset, MenuResult(cancelled=True)], choices=[], texts=[])
 
-    async def edit_settings(context: CommandContext, args: list[str]) -> str:
+    async def edit_settings(context: CommandContext, args: list[str], *, runners: Runners) -> str:
         return await model_settings_command(context, args, runners=script.runners)
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.model_settings_command', edit_settings)
@@ -275,7 +275,7 @@ async def test_invalid_saved_model_settings_can_be_repaired_without_exiting(
     assert requests == ['request']
     text = output.getvalue()
     assert 'Invalid saved model settings for test' in text
-    assert '/model_settings test' in text
+    assert 'Fix or reset them with /model settings test.' in text
     assert ('temperature:' if invalid_key == 'temperature' else 'custom_params:') in text
     assert 'private-invalid-value' not in text
     assert 'Recovered successfully.' in text
@@ -316,9 +316,9 @@ async def test_codex_login_and_turns_share_lazy_auth(tmp_path: Path, monkeypatch
 
 
 async def test_lazy_add_model_menu_and_named_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    inputs(monkeypatch, ['/add_model', '/add_model test', '/exit'])
+    inputs(monkeypatch, ['/model add', '/add_model test', '/exit'])
 
-    async def add_model(context: CommandContext) -> str:
+    async def add_model(context: CommandContext, *, runners: Runners) -> str:
         return await open_add_model_menu(context, run=lambda menu: [])
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.open_add_model_menu', add_model)

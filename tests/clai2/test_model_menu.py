@@ -1,11 +1,14 @@
-"""The `/add_model` menu, the catalog behind it, and per-model settings."""
+"""The `/model` commands and menus, the catalog behind it, and per-model settings."""
 
 import sys
+from io import StringIO
 from pathlib import Path
 
 import pytest
 from pydantic import JsonValue, ValidationError
+from rich.console import Console
 from termflow.tui import MenuItem
+from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
@@ -14,8 +17,10 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session
+from pydantic_clai2._app import create_shell
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.model_catalog import catalog, genai_prices_models, runnable_providers
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_settings_from_json
@@ -201,6 +206,18 @@ async def test_open_add_model_menu_and_settings_reach_the_run(tmp_path: Path) ->
     assert seen == [{'max_tokens': 3, 'seed': 7}]
 
 
+def test_live_model_settings_follow_saves_and_keep_the_last_valid_ones(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    live = context.live_model_settings('test')
+    assert live(None) == {}
+    context.store.save_model_settings('test', {'seed': 7})
+    assert live(None) == {'seed': 7}
+    context.store.save_model_settings('test', {'temperature': 'hot'})
+    assert live(None) == {'seed': 7}
+    with pytest.raises(ValidationError):
+        context.live_model_settings('test')
+
+
 def test_added_models_persist_independently_of_settings(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
     original = context.settings.model
@@ -220,7 +237,9 @@ async def test_saved_model_picker_and_completion(tmp_path: Path) -> None:
     original = context.settings.model
     assert original is not None
     context.store.add_model(name='test')
-    assert model_completions(context, ['']) == sorted([original, 'test'])
+    assert model_completions(context, ['']) == ['add', 'settings', *sorted([original, 'test'])]
+    assert model_completions(context, ['settings', '']) == sorted([original, 'test'])
+    assert 'openai-codex:' in model_completions(context, ['add', ''])
     assert model_completions(context, ['test', 'extra']) == []
     widget = build_model_picker(context)
     assert widget.highlighted == MenuItem(f'{original} (current)', value=original)
@@ -228,11 +247,44 @@ async def test_saved_model_picker_and_completion(tmp_path: Path) -> None:
     assert await model_command(context, [], runners=script.runners) == 'Saved model. Applied.'
     assert context.settings.model == 'test' and applied == ['model']
     assert await model_command(context, [original]) == 'Saved model. Applied.'
-    with pytest.raises(ValueError, match=r'Model not added: unknown. Use /add_model'):
-        await model_command(context, ['unknown'])
-    with pytest.raises(ValueError, match='Usage: /model'):
+    with pytest.raises(ValueError, match=r'Usage: /model \[NAME\] \| /model add \[NAME\]'):
         await model_command(context, ['test', 'extra'])
-    assert 'unknown' not in context.store.models()
+    with pytest.raises(ValueError, match='Usage: /model'):
+        await model_command(context, ['add', 'test', 'extra'])
+
+
+@pytest.mark.parametrize('args', [['unsaved:model'], ['add', 'unsaved:model']])
+async def test_model_name_not_yet_saved_is_added_and_selected(tmp_path: Path, args: list[str]) -> None:
+    context, applied = make_context(tmp_path)
+    assert await model_command(context, args) == 'Saved model. Applied.'
+    assert context.settings.model == 'unsaved:model' and applied == ['model']
+    reopened = SettingsStore(context.store.path)
+    assert 'unsaved:model' in reopened.models() and reopened.load().model == 'unsaved:model'
+
+
+async def test_model_add_subcommand_opens_add_flow(tmp_path: Path) -> None:
+    context, applied = make_context(tmp_path)
+    script = Script(lists=[pick('anthropic'), pick('anthropic:claude-sonnet-4-5')], choices=[], texts=[])
+    assert await model_command(context, ['add'], runners=script.runners) == 'Saved model. Applied.'
+    assert context.settings.model == 'anthropic:claude-sonnet-4-5' and applied == ['model']
+
+
+async def test_model_settings_subcommand(tmp_path: Path) -> None:
+    context, applied = make_context(tmp_path)
+    model = context.settings.model
+    assert model is not None
+    direct = Script(lists=[pick('max_tokens'), MenuResult(cancelled=True)], choices=[], texts=[typed('42')])
+    assert await model_command(context, ['settings', model], runners=direct.runners) == (
+        f'Saved max_tokens for {model}. Applies when this model is selected.'
+    )
+    assert context.store.model_settings(model) == {'max_tokens': 42}
+    picked = Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[])
+    assert await model_command(context, ['settings'], runners=picked.runners) == 'No changes.'
+    with pytest.raises(ValueError, match=r'Model not added: unsaved:model. Use /model add unsaved:model first.'):
+        await model_command(context, ['settings', 'unsaved:model'])
+    with pytest.raises(ValueError, match=r'Usage: /model settings \[NAME\]'):
+        await model_command(context, ['settings', model, 'extra'])
+    assert context.settings.model == model and applied == []
 
 
 @pytest.mark.parametrize('result', [MenuResult(cancelled=True), MenuResult(), pick(0)])
@@ -252,7 +304,7 @@ def test_empty_model_picker(tmp_path: Path) -> None:
         clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
-    assert model_completions(context, []) == []
+    assert model_completions(context, []) == ['add', 'settings']
     widget = build_model_picker(context)
     assert widget.highlighted is not None
     assert not widget.highlighted.disabled
@@ -334,10 +386,8 @@ async def test_delete_model_through_picker_keys(
     assert applied == []
     assert SettingsStore(context.store.path).models() == [original]
     assert context.store.model_settings('unused:model') == {}
-    assert model_completions(context, []) == [original]
+    assert model_completions(context, ['settings', '']) == [original]
     assert 'Deleted unused:model.' in capsys.readouterr().out
-    with pytest.raises(ValueError, match='Model not added: unused:model'):
-        await model_command(context, ['unused:model'])
 
 
 def test_model_picker_search_still_accepts_d(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -522,3 +572,38 @@ async def test_select_model_whose_provider_sdk_is_missing_fails_before_saving(
     assert model_row.key == 'model'
     assert SettingsSource(context).problem(model_row, model) == message
     assert SettingsSource(context).apply(model_row, model) == f'model: {message}'
+
+
+async def test_shell_registers_model_subcommands_and_deprecated_aliases(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=Settings(model='test'),
+        store=store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    commands = shell.commands
+
+    def completions(text: str) -> list[str]:
+        return [c.text for c in commands.get_completions(Document(text), CompleteEvent())]
+
+    help_text = await commands.execute_async('/help')
+    assert '/add_model: Deprecated: use /model add' in help_text
+    assert '/model_settings: Deprecated: use /model settings' in help_text
+    assert completions('/model ') == ['add', 'settings', 'test']
+    assert completions('/model settings ') == completions('/model_settings ') == ['test']
+    assert 'openai-codex:' in completions('/model add ') and completions('/model add ') == completions('/add_model ')
+    mid_turn = ('/model', '/model add', '/model settings', '/add_model', '/model_settings')
+    assert all(commands.runs_during_turn(text) for text in mid_turn)
+    assert not commands.runs_during_turn('/model add test')
+    assert await commands.execute_async('/model unsaved:one') == 'Saved model. Applied.'
+    assert await commands.execute_async('/add_model unsaved:two') == 'Saved model. Applied.'
+    assert store.models() == ['test', 'unsaved:one', 'unsaved:two'] and store.load().model == 'unsaved:two'
+    with pytest.raises(ValueError, match='Use /model add unsaved:three first'):
+        await commands.execute_async('/model_settings unsaved:three')

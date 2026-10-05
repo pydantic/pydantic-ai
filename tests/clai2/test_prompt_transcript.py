@@ -47,6 +47,17 @@ def test_tabs_carriage_returns_crlf_and_non_sgr_controls() -> None:
     assert '\x1b[2J' not in ''.join(buffer.frame(width=80, height=24).rows)
 
 
+def test_clear_forgets_lines_partial_tail_and_style() -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('\x1b[1mold\npartial')
+    buffer.clear()
+    assert plain(buffer) == ['']
+    buffer.write('new\n')
+    snapshot = buffer.frame(width=80, height=24)
+    assert [Text.from_ansi(row).plain for row in snapshot.rows] == ['new', '']
+    assert snapshot.continuation_style == ''
+
+
 @pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])
 @pytest.mark.parametrize('split', [False, True])
 def test_hyperlinks_survive_wrapping_and_replay(*, terminator: str, split: bool) -> None:

@@ -20,6 +20,7 @@ from pydantic_clai2.config.api_keys import KeyReference, prompt_api_key, resolve
 from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.openrouter_auth import OpenRouterAuth
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 
@@ -74,25 +75,19 @@ def model(name: str) -> OpenRouterModel:
     """Resolve a saved OpenRouter selection through core, without global API-key fallbacks."""
     raw = load_codex_credentials(account='openrouter')
     if raw is None:
-        raise UserError('Connect first through /add_model > openrouter.')
+        raise UserError('Connect first through /model add > openrouter.')
     try:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
-        raise UserError('Stored connection is invalid. Reconfigure through /add_model > openrouter.') from None
+        raise UserError('Stored connection is invalid. Reconfigure through /model add > openrouter.') from None
     provider = OpenRouterProvider(api_key=resolve_key(token=connection.token))
     return OpenRouterModel(name.removeprefix('openrouter:'), provider=provider)
 
 
 def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.
     """Pick one discovered model in Termflow."""
-    result = (
-        MenuBuilder('OpenRouter models')
-        .items([MenuItem(name, value=name) for name in names])
-        .searchable()
-        .key_source(menu_key)
-        .build()
-        .run()
-    )
+    builder = MenuBuilder('OpenRouter models').items([MenuItem(name, value=name) for name in names])
+    result = slash_search(builder, footer='enter select · esc cancel', key_source=menu_key).run()
     return result.item.value if not result.cancelled and result.item and isinstance(result.item.value, str) else None
 
 
