@@ -371,7 +371,7 @@ MCP tools can include metadata that provides additional information about the to
 
 [`MCPToolset`][pydantic_ai.mcp.MCPToolset] additionally exposes a `task: bool` flag indicating whether the toolset will use [task-augmented execution](#background-tasks) for the tool. For tools where task support is optional, this reflects the `prefer_tasks` setting.
 
-Tools that an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) server hides from the model, with a `_meta.ui.visibility` of `["app"]` or `[]`, are not exposed to the model.
+Tools with an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) `_meta.ui.visibility` of `["app"]` or `[]` are not exposed to the model, since the server meant them only for its own UI.
 
 ## Background tasks
 
