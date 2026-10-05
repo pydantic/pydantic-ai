@@ -509,8 +509,17 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # Exact names, not prefixes: GPT-5.6 Cyber is Mantle-only, unlike Sol/Luna/Terra.
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
     # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
-    if model_name in {'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'}:
+    if model_name in {
+        'gpt-5.6-sol',
+        'gpt-5.6-luna',
+        'gpt-5.6-terra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-6.1-sol',
+    }:
         # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
         return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
