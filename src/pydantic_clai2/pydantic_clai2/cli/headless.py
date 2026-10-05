@@ -41,6 +41,9 @@ async def run_headless(
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
     """
+    if resume == '':
+        # The browser needs a terminal, which a headless run has none of.
+        raise ValueError('A headless run needs an explicit `resume` (`--resume SESSION-ID`)')
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     load_plugins = agent is None
     agent = create_agent() if agent is None else agent
