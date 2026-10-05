@@ -14,7 +14,7 @@ from uuid import uuid4
 from anyio import get_cancelled_exc_class, move_on_after
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
-from pydantic_ai.agent import AbstractAgent
+from pydantic_ai.agent import AbstractAgent, AgentModelSettings
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
@@ -115,6 +115,11 @@ class _LocalFallback(LocalWorkspace[DepsT]):
         return None if other is not None else super().get_workspace(ctx, ref=ref)
 
 
+def _requested_model(ctx: RunContext[DepsT]) -> str:
+    """The name a request's model goes by: what it was selected as, or its own name for an instance."""
+    return ctx.model_id or ctx.model.model_name
+
+
 @dataclass
 class _ModelDefaults(AbstractCapability[DepsT]):
     """CLAI's default settings for the model each request uses, beneath other capabilities' settings.
@@ -132,7 +137,7 @@ class _ModelDefaults(AbstractCapability[DepsT]):
         return CapabilityOrdering(position='outermost')
 
     def get_model_settings(self) -> Callable[[RunContext[DepsT]], ModelSettings]:
-        return lambda ctx: self.defaults(ctx.model_id or ctx.model.model_name) or ModelSettings()
+        return lambda ctx: self.defaults(_requested_model(ctx)) or ModelSettings()
 
 
 def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
@@ -238,7 +243,8 @@ class Session(Generic[DepsT, OutputT]):
         """Whether the user chose `model`. A stock agent takes CLAI's default as its own model instead,
         so a capability that selects a model takes precedence over it; a chosen model is passed to each run."""
         self.model_settings: ModelSettings | None = None
-        """Settings the user chose, passed to each run, where they take precedence over all others."""
+        """Settings the user chose for this session's model, passed to each run, where they take precedence
+        over all others. A request on another model, which a capability selected, does not get them."""
         self.model_defaults: Callable[[str], ModelSettings | None] | None = None
         """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
@@ -348,6 +354,15 @@ class Session(Generic[DepsT, OutputT]):
         model = self.resolve_model(self.model)
         return await model if isinstance(model, Awaitable) else model
 
+    def _run_settings(self) -> AgentModelSettings[DepsT] | None:
+        """`model_settings` for requests on this session's model only."""
+        settings = self.model_settings
+        own = self.model if self.model is not None else self.agent.model
+        if settings is None or own is None:
+            return settings
+        name = own if isinstance(own, str) else own.model_name
+        return lambda ctx: settings if _requested_model(ctx) == name else ModelSettings()
+
     def _bind(self) -> tuple[str | None, list[AgentCapability[DepsT]]]:
         """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first."""
         run_model = self.model
@@ -443,7 +458,7 @@ class Session(Generic[DepsT, OutputT]):
                         content,
                         deps=self.deps,
                         model=run_model,
-                        model_settings=self.model_settings,
+                        model_settings=self._run_settings(),
                         retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
                         message_history=previous,
                         conversation_id=self.summary.id,
