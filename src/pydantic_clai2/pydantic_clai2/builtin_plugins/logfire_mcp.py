@@ -375,7 +375,7 @@ async def _configure(source: LogfireMCPSource) -> str:
             return [f'Logfire uses {KEY_NAME} from the environment or /keys, then browser sign-in.']
         return [f'Logfire uses the saved key {key.name}. Manage it in /keys.']
 
-    # Before these settings are first saved (saving writes every option), start from the Logfire last set up.
+    # Until this plugin has any saved setting, start from the Logfire last set up; saving writes every option.
     last: Destination | None = None
 
     def pick_url() -> list[str]:
@@ -393,8 +393,10 @@ async def _configure(source: LogfireMCPSource) -> str:
     def flow() -> list[str]:
         nonlocal last
         # In the worker: the rows read `/keys` (a cross-process lock) and the keyring, and `remembered` a file.
-        last = None if URL in source.settings.model_fields_set else remembered()
+        last = None if source.settings.model_fields_set else remembered()
         seeded = _seed(source, last)
+        if seeded:
+            last = None  # Now the saved choice, which a reset must be able to move off.
         return [*seeded, *run_flow(FieldMenu(source), RUNNERS, submenus={'key': pick_key, URL: pick_url})]
 
     return '\n'.join(await run_worker(flow)) or 'Logfire settings unchanged.'

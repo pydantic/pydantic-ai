@@ -592,7 +592,7 @@ Esc goes back to the list, and Esc there cancels without changing anything.
 Whichever Logfire you last chose in either plugin is remembered, in
 `~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
 so the other starts from it: the picker highlights it. Opening this plugin's menu
-before its settings were ever saved also switches it to that Logfire, and says so,
+before any of its settings were saved also switches it to that Logfire, and says so,
 when it is Logfire US or EU; any other Logfire is only highlighted, so a key you
 already use is never sent to a server you did not pick for it.
 

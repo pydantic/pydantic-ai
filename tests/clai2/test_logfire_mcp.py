@@ -32,7 +32,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, DeviceAuth, SignInError, Tokens
 from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.ui.menus.field_menu import Runners, is_save_and_close
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners, is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import Script, pick, typed
 
@@ -598,7 +598,7 @@ async def test_the_settings_menu_reads_keys_and_sign_in_off_the_event_loop(
 async def test_a_new_setup_starts_from_the_logfire_last_set_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pick the region once: observability setup, or this menu, remembers it for the other."""
     remember(REGIONS['Logfire EU'])
-    shell = Shell(tmp_path, {'oauth': False})
+    shell = Shell(tmp_path)
     await shell.loader.enable('logfire_mcp')
     script(monkeypatch, lists=[])
     assert await shell.loader.configure('logfire_mcp') == (
@@ -615,10 +615,50 @@ async def test_a_new_setup_starts_from_the_logfire_last_set_up(tmp_path: Path, m
 
 async def test_the_same_logfire_remembered_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     remember(REGIONS['Logfire US'])
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    script(monkeypatch, lists=[])
+    assert await shell.loader.configure('logfire_mcp') == 'Logfire settings unchanged.'
+
+
+async def test_any_saved_setting_keeps_the_logfire_it_has(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings given as JSON without `url` chose the default on purpose, so a remembered region does not move it."""
+    remember(REGIONS['Logfire EU'])
     shell = Shell(tmp_path, {'oauth': False})
     await shell.loader.enable('logfire_mcp')
     script(monkeypatch, lists=[])
     assert await shell.loader.configure('logfire_mcp') == 'Logfire settings unchanged.'
+    assert shell.capability().url == LOGFIRE_US_MCP_URL
+
+
+async def test_resetting_a_seeded_logfire_starts_the_picker_from_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remember(REGIONS['Logfire EU'])
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    host = PluginHost[None](name='logfire_mcp', console=Console(file=io.StringIO()), settings={})
+    # Its rows read the keyring, so the menu is built off the event loop, as `configure` builds it.
+    menu = await anyio.to_thread.run_sync(FieldMenu, LogfireMCPSource(host))
+    reset = menu.reset_marker(None, MenuItem('Which Logfire', value='url'))
+    highlighted: list[object] = []
+    shown = script(monkeypatch, lists=[reset, pick('url')], choices=[CLOSE])
+    run_choice = shown.run_choice
+
+    def watch(menu: Menu) -> MenuResult:
+        highlighted.append(menu.highlighted.value if menu.highlighted else None)
+        return run_choice(menu)
+
+    monkeypatch.setattr(
+        'pydantic_clai2.builtin_plugins.logfire_mcp.RUNNERS',
+        Runners(run_list=shown.run_list, run_choice=watch, run_text=shown.run_text),
+    )
+    assert await shell.loader.configure('logfire_mcp') == (
+        'Logfire tools connect to Logfire EU, the Logfire you last set up. Change it under Which Logfire.\n'
+        'Reset Which Logfire.'
+    )
+    assert highlighted == [REGIONS['Logfire US']]
+    assert shell.saved()['url'] == LOGFIRE_US_MCP_URL
 
 
 @pytest.mark.parametrize('url', [LOGFIRE_US_MCP_URL, 'https://logfire.example.com/custom/mcp'])
