@@ -367,9 +367,10 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `openai_voice`, which native-audio models like `gpt-realtime` also accept under Voice Live.
     """
     azure_voice_live_temperature: float
-    """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
+    """Sampling temperature for a Voice Live session; only applies when the session uses Voice Live.
 
-    The GA realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
+    Microsoft documents a range of 0.6 to 1.2 (default 0.8), but Voice Live accepts 0 to 2. The GA
+    realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
     warning while a reasoning model like `gpt-5` is reasoning, since those models then accept only the
     default.
     """
@@ -456,9 +457,33 @@ class _VoiceLiveSessionCreated(BaseModel):
     session: _VoiceLiveSession
 
 
+class _VoiceLiveWarning(BaseModel):
+    message: str
+    code: str | None = None
+    param: str | None = None
+
+
+class _VoiceLiveWarningEvent(BaseModel):
+    """Voice Live's `warning` event: informational, and the session goes on."""
+
+    warning: _VoiceLiveWarning
+
+
 def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map Voice Live's beta text events and delegate the remaining OpenAI-compatible events."""
     event_type = data.get('type')
+    if event_type == 'warning':
+        # Nothing in the conversation changes, so it isn't a session event; surface it as a Python warning
+        # rather than dropping it, as the shared OpenAI mapper does with event types it doesn't know.
+        warning = _VoiceLiveWarningEvent.model_validate(data).warning
+        details = ', '.join(
+            f'{name}={value!r}' for name, value in (('code', warning.code), ('param', warning.param)) if value
+        )
+        warnings.warn(
+            f'Azure AI Voice Live warning: {warning.message}' + (f' ({details})' if details else ''),
+            UserWarning,
+        )
+        return None
     if event_type in ('response.text.delta', 'response.text.done'):
         is_final = event_type == 'response.text.done'
         content = data.get('text' if is_final else 'delta')

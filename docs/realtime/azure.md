@@ -314,7 +314,7 @@ model = AzureRealtimeModel(
 | Manual turns | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk) |
 | Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Limited parameter support | Requires a [compatible transcription deployment](#input-transcription-deployment) in the Azure resource |
-| Native tools | Unsupported | The API offers remote MCP servers, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Native tools | Unsupported | The API offers remote MCP servers (plus Foundry tools and agents on Voice Live) but no web or file search; Pydantic AI doesn't expose the MCP support yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)), so configure [local fallbacks](tools.md#native-tools) |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 
@@ -328,3 +328,5 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
   otherwise.
 - Azure AI Voice Live rides the same model behind `azure_voice_live=True`, against its own
   resource and beta session protocol; browser WebRTC is GA-only for now.
+- Voice Live's informational `warning` events are raised as Python `UserWarning`s, so escalating
+  warnings to errors ends the session.
