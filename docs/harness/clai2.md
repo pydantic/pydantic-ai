@@ -53,7 +53,9 @@ The choice is saved in SQLite and used for the next prompt without restarting.
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
-For API-key providers, set the provider's API key environment variable before starting.
+For API-key providers, export the provider's API key before starting, or put it in
+a `.env` in the launch directory. See [Environment variables](#environment-variables)
+for discovery, precedence, and trust requirements.
 Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
 can read and modify files and execute commands with your user permissions. Run it
 in a workspace you trust. CLAI does not add a sandbox or approval layer.
@@ -62,6 +64,24 @@ The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
 pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
+
+## Environment variables
+
+CLAI trusts the launch directory and its parents for automatic dotenv loading.
+A `.env` can change provider endpoints while reusing your exported API keys, and
+alter how tool subprocesses execute. Set `PYTHON_DOTENV_DISABLED=1` in your
+environment before launching CLAI in an untrusted directory.
+
+CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
+settings or importing agents and plugins. It searches the launch directory first,
+then its parents, and loads only the first file found. The search is not limited
+to Git repository boundaries. With `--worktree`, loading happens before switching
+directories. Missing files and named pipes are ignored. Unreadable or non-UTF-8
+files are skipped with a diagnostic on stderr.
+
+Use `.env` for provider API keys and settings such as `CLAI_MODEL` or
+`CLAI_NO_SPLASH`. Existing environment variables take precedence, including empty
+values. Keep `.env` files containing credentials out of version control.
 
 ## Git worktrees
 

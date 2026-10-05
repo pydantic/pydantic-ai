@@ -114,6 +114,10 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
+  Default-on CLI `.env` loading is a deliberate exception to this repository-content
+  trust rule: it assumes trusted launch and parent directories, without plugin
+  approval. [Environment variables](README.md#environment-variables) documents the
+  scope and opt-out.
 - **A load failure leaves the session as it was.** Import, construction, or
   `get_*` errors are reported and the plugin stays unloaded; nothing it declared
   is kept. When construction succeeded, `on_session_end` runs with
