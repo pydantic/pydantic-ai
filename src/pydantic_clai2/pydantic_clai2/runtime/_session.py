@@ -124,8 +124,8 @@ def _requested_model(ctx: RunContext[DepsT]) -> str:
 class _ModelDefaults(AbstractCapability[DepsT]):
     """CLAI's default settings for the model each request uses, beneath other capabilities' settings.
 
-    Merged first among capabilities, so another capability's settings and the run's own take
-    precedence. An agent's own `model_settings` merge before any capability's, so these defaults
+    Merged first among capabilities, wrapping every other one, even another `outermost` one, so
+    another capability's settings and the run's own take precedence. An agent's own `model_settings` merge before any capability's, so these defaults
     still override them, as they did when CLAI passed them to the run. Resolved per request, so
     the defaults follow a model a capability selects.
     """
@@ -134,7 +134,7 @@ class _ModelDefaults(AbstractCapability[DepsT]):
     """The defaults for a model, given its name: the run's model name when the run selected it by name."""
 
     def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='outermost')
+        return CapabilityOrdering(position='outermost', wraps=[AbstractCapability])
 
     def get_model_settings(self) -> Callable[[RunContext[DepsT]], ModelSettings]:
         return lambda ctx: self.defaults(_requested_model(ctx)) or ModelSettings()

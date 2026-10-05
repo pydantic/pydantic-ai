@@ -17,7 +17,7 @@ from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, ResolveModelId, Thinking
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ResolveModelId, Thinking
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -309,6 +309,27 @@ async def test_capability_settings_beat_defaults_not_overrides(tmp_path: Path) -
             )
         ]
     )
+
+
+@dataclass
+class Outermost(Published):
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+
+@pytest.mark.parametrize('stock', [True, False], ids=['stock', 'supplied'])
+async def test_outermost_capability_settings_beat_defaults(tmp_path: Path, stock: bool) -> None:
+    """CLAI's family defaults sit beneath a capability's settings even when that capability is `outermost` too."""
+    recorder = Recorder()
+    outermost = Outermost(settings=OpenAIResponsesModelSettings(openai_reasoning_effort='low'))
+    await run_turn(
+        tmp_path,
+        settings=Settings() if stock else Settings(model=None),
+        plugins=(outermost,),
+        agent=None if stock else Agent(recorder.resolve('openai-codex:gpt-6-astra'), deps_type=type(None)),
+        recorder=recorder,
+    )
+    assert [settings.get('openai_reasoning_effort') for _, settings in recorder.calls] == ['low']
 
 
 async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
