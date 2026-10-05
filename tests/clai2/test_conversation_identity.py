@@ -208,6 +208,14 @@ async def test_background_names_wait_for_the_terminal(tmp_path: Path) -> None:
             assert events == []
         await anyio.wait_all_tasks_blocked()
         assert events == [ConversationChanged(conversation_id=session.conversation_id, title='Renderer fix')]
+        # A manual rename made while a generated name waits for the terminal wins.
+        async with shell.forks.busy():
+            tasks.start_soon(shell.sessions.named, session.conversation_id, 'Generated')
+            await anyio.wait_all_tasks_blocked()
+            await session.renamed(conversation_id=session.conversation_id, title='Mine')
+        await anyio.wait_all_tasks_blocked()
+    assert session.title == 'Mine'
+    assert events[-1] == ConversationChanged(conversation_id=session.conversation_id, title='Mine')
 
 
 async def test_headless_resume_precedes_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

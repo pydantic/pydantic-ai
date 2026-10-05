@@ -54,8 +54,11 @@ class Sessions(Generic[DepsT, OutputT]):
         """Retitle the current conversation after background naming, once the terminal is free."""
         if conversation_id != self.session.conversation_id:
             return
+        before = self.session.title
         async with self.quiet():
-            await self.session.renamed(conversation_id=conversation_id, title=title)
+            # A rename in `/resume` while this waited wins over the generated name.
+            if self.session.title == before:
+                await self.session.renamed(conversation_id=conversation_id, title=title)
 
     async def generate(self, prompt: str) -> NamingResult | None:
         """Resolve credentials on the owning loop, without loading any coding plugins."""
