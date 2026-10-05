@@ -283,8 +283,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             prepare=self._prepare_delegate,
             metadata=metadata,
         )
-        self.add_function(self.stop_task, prepare=self._prepare_task_control, metadata=metadata)
-        self.add_function(self.list_tasks, prepare=self._prepare_task_control, metadata=metadata)
+        for control in (self.stop_task, self.list_tasks):
+            # A delegate tool already named like a control tool keeps working; that control tool is left out.
+            if control.__name__ != tool_name:
+                self.add_function(control, prepare=self._prepare_task_control, metadata=metadata)
 
     def _prepare_delegate(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         """Shape the delegate tool's `model` argument to the configured menu, or hide it at `max_depth`.

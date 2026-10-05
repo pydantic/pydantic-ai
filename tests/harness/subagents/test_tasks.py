@@ -995,3 +995,22 @@ async def test_by_default_an_owned_delegate_does_not_delegate() -> None:
     (record,) = owner.records.values()
     assert record.output == 'subtask done'
     assert offered == {'go': ['delegate_task', 'stop_task', 'list_tasks'], 'subtask': []}
+
+
+async def test_a_delegate_tool_named_like_a_task_control_keeps_its_name() -> None:
+    offered: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.extend(tool.name for tool in info.function_tools)
+        return ModelResponse(parts=[TextPart('done')])
+
+    child = Agent(TestModel(), deps_type=object, name='worker')
+    owner = DelegationTasks()
+    async with owner.opened():
+        with owner.bind():
+            agent = Agent(
+                FunctionModel(respond),
+                capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None, tool_name='stop_task')],
+            )
+            await agent.run('go', conversation_id='root')
+    assert offered == ['stop_task', 'list_tasks']
