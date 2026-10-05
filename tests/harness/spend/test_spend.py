@@ -2092,7 +2092,9 @@ class TestFallbackAttempts:
         ctx = _guard_ctx(guard)
         await _record(guard, ctx=ctx, response=replace(_response(), failed_attempts=[_attempt()]))
 
-        events = [event for event in ctx._event_stream_buffer if isinstance(event, SpendRecordedEvent)]  # pyright: ignore[reportPrivateUsage]
+        buffer = ctx._event_stream_buffer  # pyright: ignore[reportPrivateUsage]
+        assert buffer is not None
+        events = [event for event in buffer if isinstance(event, SpendRecordedEvent)]
         assert [(event.model, event.failed_attempt) for event in events] == [('gpt-4o-mini', True), ('gpt-4.1', False)]
 
     async def test_an_attempt_without_a_price_uses_the_cost_core_calculated(self):

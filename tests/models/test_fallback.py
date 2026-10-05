@@ -2067,7 +2067,7 @@ async def test_unanswered_attempts_of_a_nested_fallback_model_are_recorded_once(
         await Agent(outer, capabilities=[spy]).run('test')
 
     assert spy.in_wrapper == tuple(exc_info.value.attempts)
-    assert [attempt.model_name for attempt in spy.in_wrapper] == ['a', 'b', 'fallback:a,b', 'c']
+    assert [attempt.model_name for attempt in spy.in_wrapper or ()] == ['a', 'b', 'fallback:a,b', 'c']
 
 
 async def test_unanswered_attempts_of_a_failed_stream_are_on_the_request_context() -> None:
