@@ -42,7 +42,10 @@ from ._utils import (
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
     dump_provider_metadata,
+    dump_text_metadata,
+    iter_citation_source_chunks,
     iter_metadata_chunks,
+    merged_text_citations,
     tool_return_output,
 )
 from .request_types import RequestData
@@ -127,6 +130,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     `output-error` with no input announcement in between.
     """
 
+    _text_parts: list[TextPart] = field(default_factory=list[TextPart])
+    """Text parts streamed so far into the current UI text part."""
+    _source_urls: set[str] = field(default_factory=set[str])
+    """Web source URLs already emitted as `source-url` chunks, so each source is listed once per message."""
+
     @property
     def response_headers(self) -> Mapping[str, str] | None:
         return VERCEL_AI_DSP_HEADERS
@@ -202,6 +210,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             message_id = self.message_id
         else:
             message_id = self.new_message_id()
+            self._text_parts = []
             yield TextStartChunk(id=message_id, provider_metadata=provider_metadata)
 
         if part.content:
@@ -215,11 +224,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             yield TextDeltaChunk(id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata)
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseChunk]:
+        # Consecutive text parts stream into one UI text part, whose metadata is sent on its `text-end` chunk.
+        self._text_parts.append(part)
         if not followed_by_text:
-            provider_metadata = dump_provider_metadata(
-                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
-            )
-            yield TextEndChunk(id=self.message_id, provider_metadata=provider_metadata)
+            yield TextEndChunk(id=self.message_id, provider_metadata=dump_text_metadata(self._text_parts))
+            for chunk in iter_citation_source_chunks(merged_text_citations(self._text_parts), self._source_urls):
+                yield chunk
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False

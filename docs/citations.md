@@ -130,6 +130,8 @@ An Anthropic or Bedrock document citation is only sent back while the cited docu
 and the cited text still matches it. Everything else, including all citations from a different provider, is sent as
 plain text. Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the text.
 
+The [Vercel AI adapter](ui/vercel-ai.md#citations) keeps citations when the frontend holds the message history.
+
 !!! warning "The model may not see the source"
     A follow-up such as "Tell me more about source [1]" may reach a model that sees the `[1]` marker but not its URL
     or excerpt. If the model needs the source, include it in the new prompt or let the model retrieve it again.
