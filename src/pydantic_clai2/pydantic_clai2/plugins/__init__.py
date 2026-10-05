@@ -177,7 +177,8 @@ class PluginLogin:
 
     For sign-ins that store credentials, such as the subscription behind a `ModelProvider`. Keep
     secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
-    NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
+    Name it after the model prefix it unlocks, as CLAI's own `openai-codex` and `github-copilot` are.
+    NAME cannot be a sign-in CLAI ships (including the earlier `codex` and `copilot`); when two
     plugins add one name, the later one wins. Unloading the plugin removes it. Once the sign-in
     succeeds, `models` (as `PREFIX:NAME`, such as a `ModelProvider`'s `names`) are added to the saved
     model list, so `/model` and `/model_settings` offer them without `/add_model`.
@@ -443,7 +444,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return None
 
     async def configure(self) -> str:
-        """A settings menu, opened by `/plugins configure NAME`, `C` in `/plugins`, and on enable or add.
+        """A settings menu, opened by `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
 
         Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
         change with `host.save_settings` as the user makes it and return a line to show. When the

@@ -15,11 +15,12 @@ from pydantic_clai2.plugins.describe import describe
 from pydantic_clai2.plugins.loader import PluginEntry, PluginError, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, is_save_and_close, save_and_close_item
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 Apply = Callable[[Coroutine[object, object, object]], None]
-_HINT = '↑/↓ move · space on/off · c configure · r reload · d remove · enter/q close'
+_HINT = 'space on/off · c configure · r reload · d remove · esc close'
 _RESET = '\x1b[0m'
 _UNDIM = '\x1b[22m'
 """Termflow dims row descriptions; the status word cancels that so its colour reads clearly."""
@@ -75,7 +76,10 @@ class PluginMenu(Generic[DepsT]):
         """Read once per plugin, since the panel repaints on every key; reload reads again."""
 
     def items(self) -> list[MenuItem]:
-        """One row per plugin, `●` when loaded, with a coloured status and origin; then Save & close."""
+        """One row per plugin, `●` when loaded, with a coloured status and origin; then Save & close.
+
+        A plugin another loaded plugin includes is a greyed-out row naming that plugin.
+        """
         entries = self._loader.entries()
         if not entries:
             hint = f'No plugins. Use /plugins add, or drop a file in {self._loader.plugins_dir}'
@@ -83,6 +87,11 @@ class PluginMenu(Generic[DepsT]):
         width = self._name_width()
         rows: list[MenuItem] = []
         for entry in entries:
+            if entry.included_in is not None:
+                # Greyed out and skipped by the cursor: the plugin that includes it already provides it.
+                label = f'○ {entry.name:<{width}}  {"off":<{_STATUS_WIDTH}} in {entry.included_in}'
+                rows.append(MenuItem(label, value=entry.name, disabled=True))
+                continue
             word, role = _status(entry)
             status = f'{_UNDIM}{theme.sgr(role)}{word:<{_STATUS_WIDTH}}{_RESET}'
             rows.append(
@@ -162,21 +171,15 @@ class PluginMenu(Generic[DepsT]):
 
     def build(self) -> Menu:
         """Wire rows, details, and keys into a termflow menu."""
-        return (
+        builder = (
             MenuBuilder('Plugins')
             .style(markdown_style())
             .items(self.items())
             .list_width(self._list_width())
             .preview(self.details)
-            .on_key(' ', self.toggle)
-            .on_key('c', self.configure)
-            .on_key('r', self.reload)
-            .on_key('d', self.remove)
-            .on_key('q', self.close)
-            .footer_hint(_HINT)
-            .key_source(menu_key)
-            .build()
         )
+        hotkeys = {' ': self.toggle, 'c': self.configure, 'r': self.reload, 'd': self.remove, 'q': self.close}
+        return slash_search(builder, footer=_HINT, key_source=menu_key, hotkeys=hotkeys)
 
     def _name_width(self) -> int:
         return max((len(entry.name) for entry in self._loader.entries()), default=0)
