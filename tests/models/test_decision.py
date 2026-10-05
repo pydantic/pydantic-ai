@@ -905,6 +905,37 @@ async def test_profile_score_limit_overrides_the_class(allow_model_requests: Non
     assert isinstance(model.requests[0].questions['score'], ScoreQuestion)
 
 
+class InstructedDecisionModel(InMemoryDecisionModel):
+    requires_instructions = True
+
+
+@pytest.mark.parametrize(
+    ('model', 'instructions'),
+    [
+        pytest.param(InMemoryDecisionModel(), None, id='class-default'),
+        pytest.param(InstructedDecisionModel(), 'Which of these applies?', id='class'),
+        pytest.param(
+            InMemoryDecisionModel(profile=DecisionModelProfile(decision_requires_instructions=True)),
+            'Which of these applies?',
+            id='profile',
+        ),
+        pytest.param(
+            InstructedDecisionModel(profile=DecisionModelProfile(decision_requires_instructions=False)),
+            None,
+            id='profile-overrides-class',
+        ),
+    ],
+)
+async def test_requires_instructions(
+    model: InMemoryDecisionModel, instructions: str | None, allow_model_requests: None
+):
+    """A model that requires instructions, by its class or its profile, gets a generic question when nothing is asked."""
+    await Agent(model, output_type=Literal['billing', 'bug']).run('Charged twice.')
+    question = model.requests[0].questions['response']
+    assert isinstance(question, ChoiceQuestion)
+    assert question.instructions == instructions
+
+
 async def test_levels_over_score_limit_can_be_optional(allow_model_requests: None):
     model = TenLevelDecisionModel()
     result = await Agent(model, output_type=OptionalElevenLevelReview).run('Score this.')

@@ -143,6 +143,7 @@ Each model has limits of its own, such as how many options a pick-one can have o
 
 - `decision_max_choice_options`: a pick-one with more options is refused before a request is sent.
 - `decision_max_score_levels`: whole numbers with more levels are [asked as a pick-one](decision.md#what-each-field-type-does) instead of a rubric.
+- `decision_requires_instructions`: on unless the profile turns it off, as the API's schema requires `instructions` on every question. A pick-one, a rubric, or a yes/no with described answers with nothing else to ask is sent with `'Which of these applies?'`; set it to `False` for a server that accepts such a question without `instructions`.
 
 Set them with `profile=`. [Ollama](#ollama), for example, takes at most 26 options in a pick-one and 26 levels in a rubric:
 
