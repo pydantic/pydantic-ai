@@ -355,7 +355,7 @@ not a second tracing instance. If both names were saved, the `observability`
 declaration takes precedence; edits and removal apply to that one shared entry.
 
 Manage it with `/plugins disable observability`, `/plugins enable observability`, or
-`/plugins reload observability`. `/plugins configure observability` (or `C` on
+`/plugins reload observability`. `/plugins configure observability` (or `c` on
 `observability` in `/plugins`) opens its settings menu: **Logfire project** runs the
 setup described below, and the other rows edit the options listed here. Each edit
 saves at once, and the plugin is loaded again when you close the menu, so the next
@@ -413,7 +413,7 @@ The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the
 of Linear's hosted MCP server through harness
 [`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
 it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
-and `/plugins configure linear` (or C in `/plugins`) opens it again later:
+and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 
 ```text
  Linear settings
@@ -472,7 +472,7 @@ permissions of the Notion account it connects as. That includes tools that
 change pages.
 
 `/plugins enable notion` loads it and opens its settings menu. To change the
-settings later, run `/plugins configure notion` or press `C` on it in
+settings later, run `/plugins configure notion` or press `c` on it in
 `/plugins`; you never need to reinstall it. The menu is the shared field editor
 `/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
 Each change is saved as soon as you make it, and the plugin loads again when the
@@ -530,7 +530,7 @@ the tools of Logfire's hosted MCP server through harness
 [`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
-`/plugins configure logfire_mcp` or `C` in `/plugins`.
+`/plugins configure logfire_mcp` or `c` in `/plugins`.
 
 Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
 the menu, and the plugin loads again with the new settings. Esc backs out of any
@@ -926,7 +926,7 @@ The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model 
 MCP server, acting as the account behind a token. It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
-press `C` on it in `/plugins`.
+press `c` on it in `/plugins`.
 You never need to reinstall it.
 
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
@@ -997,7 +997,7 @@ through harness [`GoogleWorkspace`](../../docs/harness/google-workspace.md). It 
 Google OAuth access token whose scopes cover the products you select.
 
 Turning it on (Space in `/plugins`, or `/plugins enable google_workspace`) opens
-its settings menu. Open it again later with `C` in `/plugins`,
+its settings menu. Open it again later with `c` in `/plugins`,
 `/plugins configure google_workspace`, or:
 
 ```text
@@ -1067,7 +1067,7 @@ in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 #### Configuring Pylon
 
 Turning the plugin on opens its settings menu, like any plugin with a
-[`configure`](#offer-a-settings-menu-async-def-configureself) menu. `C` in
+[`configure`](#offer-a-settings-menu-async-def-configureself) menu. `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
 change anything, including the key. Type to filter the rows. Enter edits a row,
 `R` restores its default, and **Save & close** or Esc leaves the menu. Each
@@ -1129,7 +1129,7 @@ the tools of Day AI's hosted MCP server: search and update CRM records, read
 meeting context, and draft emails. It needs a paid Day AI Agent tier.
 
 `/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
-at any time with `/plugins configure day_ai`, or `C` on `day_ai` in `/plugins`.
+at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
 Type to filter the rows, press Enter to change one, `R` to reset it to its
 default, and Esc to close. Each change is saved as soon as you make it, and the
 plugin loads again with the new settings when the menu closes. The menu has
@@ -1186,7 +1186,7 @@ If you had enabled or disabled the former `pydantic_ai_harness.ordinal:Ordinal`
 catalog entry, that choice carries over to this plugin.
 
 Set it up in its settings menu. Turning it on (Space in `/plugins`,
-`/plugins enable ordinal`, or `/plugins add`) opens the menu, and so do `/plugins configure ordinal` and `C` in `/plugins`
+`/plugins enable ordinal`, or `/plugins add`) opens the menu, and so do `/plugins configure ordinal` and `c` in `/plugins`
 later, so you can change anything without reinstalling. It is the same field
 editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
 **Save & close** or Esc closes.
@@ -1236,7 +1236,7 @@ in its place and keeps your choice. A declaration with your own
 settings is left as it is.
 
 Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
-or pressing `C` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
+or pressing `c` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
 reopens it later, with no reinstall. The list is searchable, Enter edits the
 highlighted row, `R` resets it, and **Save & close** or Esc closes. Every change is saved as you make it:
 
@@ -1315,7 +1315,7 @@ write** in the Tools row. The equivalent typed command is
 `posthog` (`pydantic_clai2.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
 server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
 `/plugins enable posthog` loads it and opens its settings menu. To change the
-settings later, run `/plugins configure posthog` or press `C` on it in
+settings later, run `/plugins configure posthog` or press `c` on it in
 `/plugins`. You never need to reinstall it.
 
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
@@ -1378,7 +1378,7 @@ turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
 settings menu. Until you have opened the menu once or picked a key, loading it
 prints a line pointing there.
 
-`/grain`, `C` in `/plugins`, or `/plugins configure grain` opens the settings
+`/grain`, `c` in `/plugins`, or `/plugins configure grain` opens the settings
 menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
 close** leaves the menu. Each change is saved to the plugin's settings at once
 and applies to the next prompt. Reopen it any time to change a setting or pick a
@@ -1446,6 +1446,7 @@ for `/agent` and `/mcp`:
 
 ```text
  Plugins
+ search: (type to filter)
 
  > ● coder    on      built-in   │ coder
    ● notify   on      drop-in    │ on · built-in
@@ -1454,7 +1455,7 @@ for `/agent` and `/mcp`:
    Save & close                  │ provides 1 capability
                                  │ settings press c to configure
 
- ↑/↓ move · space on/off · c configure · r reload · d remove · enter/q close
+ / search · space on/off · c configure · r reload · d remove · esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -1465,14 +1466,22 @@ one: a description, its source, what it registered, whether it has a settings
 menu, and the last error if loading failed. The description is the first
 paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
-plugin that is off runs no code to describe itself. Every key
-acts immediately; there is no pending save step, so the **Save & close** row,
-Enter, Q, Esc, and Ctrl-C all just close.
+plugin that is off runs no code to describe itself.
+
+Space turns the highlighted plugin on or off; `c` configures it, `r` reloads
+it, and `d` removes it. Press `/` to search: while searching, every key you type
+filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
+Backspace edits the search, and Up and Down move between matches. Enter ends the
+search and keeps the matches, so the keys above act on them; `/` resumes the
+search. Esc clears the search, or the matches Enter kept, including when nothing
+matches; with no filter, Esc closes. Changes apply immediately; there is no
+pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
+close.
 
 Turning a plugin on with Space opens its settings menu straight away when it
 offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
-the details panel. `C` opens the settings menu of a plugin that is already on.
+the details panel. `c` opens the settings menu of a plugin that is already on.
 Turning a plugin off never opens a menu, and a plugin without a settings menu
 just turns on.
 Closing returns to the prompt without printing the plugin list. Use `/plugins list`
@@ -2053,7 +2062,7 @@ values from then on.
 
 Override `configure` with an async method that shows a settings menu and returns
 a line to show afterwards. CLAI opens it when the plugin is turned on (Space in
-`/plugins`, `/plugins enable`, or `/plugins add`), on `C` in `/plugins`, and on
+`/plugins`, `/plugins enable`, or `/plugins add`), on `c` in `/plugins`, and on
 `/plugins configure NAME`. Save each change with `self.host.save_settings(model)` as
 the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
 and save only a key's name: let the user pick one with
