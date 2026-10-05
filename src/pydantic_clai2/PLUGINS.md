@@ -425,13 +425,20 @@ instance, as spans and logs in the `clai2` instrumentation scope, which session
 roots and plugin load failures share: menus opened and how they closed, slash
 commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
-resume. Attributes carry names and listed choices, never prompt text, typed
-values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
+resume. Attributes carry names and listed choices, never typed values or
+secrets. The exception follows `include_content`, like agent spans: while it is
+on, a `prompt submitted` record also carries the prompt's text as `prompt`, cut
+to 64,000 characters (`chars` keeps the full length). A `!` line records only
+its kind and length: it never reaches the agent, and it can hold a secret such
+as `!export KEY=...`. A slash command records only its name, never its
+arguments, because any plugin can add a command and its arguments can hold a
+secret. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
 `run_worker` opens every menu's span, so a new menu is covered without extra
 code.
 With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `setting`, `key_name`, ...) are exempt from scrubbing, since names like
-`OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.
+`OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted. So is
+`prompt`, which agent spans already record unscrubbed.
 
 Unload flushes and shuts down only this plugin's providers. Reload creates a new
 instance. The supplied agent and global providers are unchanged, and the existing
@@ -2198,11 +2205,13 @@ again. Services with Dynamic Client Registration need none of this: add them as
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
-`await commit_messages(...)` persists and swaps it between turns, and
-`resolved_model()` is the model the next prompt will use. Local `!command`
-executions append a user message with the command, stdout, stderr, and
-completion status. They do not start an agent turn or fire turn hooks; the
-context reaches the model on the next prompt.
+`await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
+model CLAI or the user selected for the next prompt. A capability that selects a model, such as
+Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
+status row still name the selected one, and `/compact` and session naming (without a
+`sessions.naming_model`) run on it. Local `!command` executions append a user message
+with the command, stdout, stderr, and completion status. They do not start an
+agent turn or fire turn hooks; the context reaches the model on the next prompt.
 
 `host.session_id` is the current saved conversation ID, following `/clear` and
 `/resume`. During a run it identifies that run's conversation, including a
@@ -2599,7 +2608,13 @@ GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
 default to `thinking=true`, `service_tier=default`, reasoning effort `medium`,
 context `all_turns`, mode `standard`, summary `detailed`, and verbosity `low`.
 Explicit per-model values win; reset restores the family default without saving
-it as an override. Other models keep their existing defaults. Provider-specific
+it as an override. Other models keep their existing defaults. Family defaults
+follow the model each request uses and sit beneath the settings of
+capabilities, a plugin's or your agent's, so a capability can change them; an
+agent's own `model_settings` stay beneath the defaults. The values you saved for
+the session's model (the one you chose, or CLAI's default) are passed to each run
+and win over everything else on requests to that model; a request on a model a
+capability selected instead gets only that model's family defaults. Provider-specific
 fields are consumed only by APIs that support them; this does not add Responses
 controls to Chat Completions or other protocols.
 

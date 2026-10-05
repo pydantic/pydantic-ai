@@ -75,7 +75,8 @@ class LogfireSettings(BaseModel):
     )
     ui_events: bool = Field(
         default=False,
-        description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions.',
+        description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions. '
+        'With message content included, submitted prompts carry their text.',
     )
 
 
@@ -145,7 +146,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             self._clai2,
             root=self._session_tracing.root,
             ui=self.settings.ui_events,
-            content=self.settings.include_content,
+            include_content=self.settings.include_content,
         )
         if self.settings.ui_events:
             model = event.settings.model or 'agent default'

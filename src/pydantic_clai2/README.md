@@ -332,6 +332,10 @@ Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
+Until you choose one, the default is the agent's own model, so a plugin
+capability that selects a model replaces it. A model you choose with `-m`,
+`CLAI_MODEL`, the project file, `/set model`, or `/model` is passed to every
+run and wins.
 
 Without installing, run `uvx pydantic-clai2`. The package also installs a
 `pydantic-clai2` command that is an alias for `clai2`.
@@ -623,14 +627,17 @@ An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`.
 
 While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
-`/theme`, and `/spinner` typed without further arguments open their menu right
-away instead of queueing.
+`/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
+`/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
+arguments open right away instead of queueing.
 The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
 running turn ends. `/model settings` edits to the running model apply to its
-next model request in the same turn. With arguments, these commands queue like
-any other.
+next model request in the same turn. `/resume` can browse, rename, and delete
+sessions mid-turn, but a running conversation cannot be swapped out: picking one
+tells you to enter `/resume ID`, which restores it once the turn ends. With
+arguments, these commands queue like any other.
 
 `/plugins` runs right away during a turn too, with or without arguments, so
 `/plugins disable NAME` does not wait behind the turn or your queued messages.
@@ -766,7 +773,13 @@ GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
 default to `thinking=true`, `service_tier=default`, reasoning effort `medium`,
 context `all_turns`, mode `standard`, summary `detailed`, and verbosity `low`.
 Explicit per-model values win; reset restores the family default without saving
-it as an override. Other models keep their existing defaults. Provider-specific
+it as an override. Other models keep their existing defaults. Family defaults
+follow the model each request uses and sit beneath the settings of
+capabilities, a plugin's or your agent's, so a capability can change them; an
+agent's own `model_settings` stay beneath the defaults. The values you saved for
+the session's model (the one you chose, or CLAI's default) are passed to each run
+and win over everything else on requests to that model; a request on a model a
+capability selected instead gets only that model's family defaults. Provider-specific
 fields are consumed only by APIs that support them; this does not add Responses
 controls to Chat Completions or other protocols.
 
@@ -1882,8 +1895,11 @@ Two more options choose where telemetry goes and what it covers. `token` names a
 rather than falling back. `ui_events` (default `false`) adds spans and logs in the
 `clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
-clear, and resume. They record names and listed choices, never prompt text, typed
-values, or secrets.
+clear, and resume. They record names and listed choices, never typed values or
+secrets. The one exception: while `include_content` is on, a submitted prompt also
+carries its text as `prompt`, cut to 64,000 characters. `!` lines record only
+that they were shell commands and their length, and slash-command arguments are
+never recorded, since both can hold secrets such as `/plugins add` settings.
 
 ### Setting up where traces go
 

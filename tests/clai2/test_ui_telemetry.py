@@ -1,4 +1,4 @@
-"""UI telemetry: the shared chokepoints record what the user chose, nested, and never what they typed."""
+"""UI telemetry: the shared chokepoints record what the user chose, nested, and typed text only as content."""
 
 import io
 import json
@@ -51,7 +51,17 @@ Recorded = tuple[str, dict[str, object]]
 
 @pytest.fixture
 def exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
-    """A local Logfire instance subscribed to UI telemetry, exporting to memory."""
+    """A local Logfire instance subscribed to UI telemetry without message content, exporting to memory."""
+    yield from _subscribed(tmp_path, include_content=False)
+
+
+@pytest.fixture
+def content_exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
+    """The same, subscribed with message content, as the `observability` plugin does by default."""
+    yield from _subscribed(tmp_path, include_content=True)
+
+
+def _subscribed(tmp_path: Path, *, include_content: bool) -> Generator[InMemorySpanExporter]:
     spans = InMemorySpanExporter()
     propagator = propagate.get_global_textmap()
     instance = logfire.configure(
@@ -66,7 +76,9 @@ def exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(logfire.Logfire(config=instance.config, otel_scope=telemetry.SCOPE))
+    unsubscribe = telemetry.subscribe(
+        logfire.Logfire(config=instance.config, otel_scope=telemetry.SCOPE), include_content=include_content
+    )
     try:
         yield spans
     finally:
@@ -254,7 +266,7 @@ def test_nothing_is_recorded_without_a_subscriber() -> None:
     telemetry.handled_error('ignored', RuntimeError('not recorded'))
 
 
-async def test_unexpected_command_errors_are_recorded_under_the_command(exporter: InMemorySpanExporter) -> None:
+async def test_unexpected_command_errors_are_recorded_under_the_command(content_exporter: InMemorySpanExporter) -> None:
     def rate_limited(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, json={'message': 'API rate limit exceeded'})
 
@@ -277,13 +289,13 @@ async def test_unexpected_command_errors_are_recorded_under_the_command(exporter
     with pytest.raises(UserError):
         await commands.execute_async('/login')
     # Usage errors keep only their type on the command's span; the unexpected failure is logged with its traceback.
-    assert recorded(exporter) == [
+    assert recorded(content_exporter) == [
         ('command /update failed', {'command': 'update'}),
         ('command /update', {'command': 'update', 'arguments': 0, 'error': 'HTTPStatusError'}),
         ('command /update', {'command': 'update', 'arguments': 1, 'error': 'ValueError'}),
         ('command /login', {'command': 'login', 'arguments': 0, 'error': 'UserError'}),
     ]
-    failed, command, *usage = exporter.get_finished_spans()
+    failed, command, *usage = content_exporter.get_finished_spans()
     assert failed.parent == command.context
     assert failed.status.status_code is StatusCode.ERROR
     [exception] = failed.events
@@ -295,7 +307,7 @@ async def test_unexpected_command_errors_are_recorded_under_the_command(exporter
 
 
 async def test_rejected_plugin_settings_are_usage_errors(
-    exporter: InMemorySpanExporter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    content_exporter: InMemorySpanExporter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     package = tmp_path / 'site' / 'clai_strict_telemetry'
     package.mkdir(parents=True)
@@ -318,12 +330,12 @@ async def test_rejected_plugin_settings_are_usage_errors(
     with pytest.raises(PluginError, match='could not start'):
         await harness.commands.execute_async("""/plugins add strict clai_strict_telemetry '{"fail_on_start":true}'""")
     # Rejected settings can quote a pasted secret, so only a plugin that fails to start is recorded with its message.
-    assert recorded(exporter) == [
+    assert recorded(content_exporter) == [
         ('command /plugins', {'command': 'plugins', 'arguments': 4, 'error': 'PluginSettingsError'}),
         ('command /plugins failed', {'command': 'plugins'}),
         ('command /plugins', {'command': 'plugins', 'arguments': 4, 'error': 'PluginError'}),
     ]
-    events = [dict(event.attributes or {}) for span in exporter.get_finished_spans() for event in span.events]
+    events = [dict(event.attributes or {}) for span in content_exporter.get_finished_spans() for event in span.events]
     assert [event['exception.message'] for event in events] == ["Plugin 'strict': RuntimeError: could not start"]
     assert 's3cr3t' not in json.dumps(events)
 
@@ -344,7 +356,7 @@ def test_handled_errors_do_not_need_ui_events(exporter: InMemorySpanExporter, tm
     )
     propagate.set_global_textmap(propagator)
     unsubscribe = telemetry.subscribe(
-        logfire.Logfire(config=errors_only.config, otel_scope=telemetry.SCOPE), ui=False, content=content
+        logfire.Logfire(config=errors_only.config, otel_scope=telemetry.SCOPE), ui=False, include_content=content
     )
     try:
         telemetry.record('a UI event')
@@ -493,3 +505,48 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
         ('prompt steer', {'steered': True, 'source': 'queue'}),
         ('prompt steer', {'steered': True, 'source': 'draft'}),
     ]
+
+
+async def test_only_prompt_text_is_recorded_with_content(
+    content_exporter: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With content on, prompts keep their words unscrubbed; `!` lines and command arguments stay out."""
+    monkeypatch.setattr(telemetry, 'MAX_CONTENT_CHARS', 20)
+    commands = Commands()
+    commands.register(Command(name='plugins', description='Plugins', handler=lambda args: ''))
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+        live = LivePrompt(
+            console=Console(file=io.StringIO(), force_terminal=True, width=80, height=24),
+            commands=commands,
+            history=InMemoryHistory(),
+            images=ImageInput(),
+            interrupts=Interrupts(),
+            toolbar=lambda: [('', 'ready')],
+            clock=lambda: 0,
+        )
+        async with live.opened():
+            for text in (
+                'fix the session bug',
+                'a prompt longer than twenty characters',
+                '!export TOKEN=sk-y',
+                '/plugins add x m {"token": "sk-x"}',
+            ):
+                live.buffer.replace(text)
+                live.feed('enter')
+                assert await live.read() == text
+    assert recorded(content_exporter) == [
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 19, 'prompt': 'fix the session bug'},
+        ),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 38, 'prompt': 'a prompt longer than'},
+        ),
+        ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'shell', 'chars': 18}),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'command', 'command': 'plugins', 'chars': 34},
+        ),
+    ]
+    assert 'sk-' not in json.dumps([own for _, own in recorded(content_exporter)])

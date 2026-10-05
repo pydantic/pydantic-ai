@@ -7,8 +7,9 @@ the `clai2` instrumentation scope, like everything else CLAI emits itself.
 
 Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the plugin loader,
 `/keys`, the prompt editor) rather than individual menus, so a new menu is covered without extra code.
-Attributes name what was chosen (a command, a menu, a setting, a plugin, a key's name), never what was typed:
-prompt text, secrets, and free-text values stay out.
+Attributes name what was chosen (a command, a menu, a setting, a plugin, a key's name), not what was typed:
+secrets and free-text values stay out. The one exception is a submitted prompt's text, added through
+`prompt_text` only when the subscriber records message content, as agent spans do.
 """
 
 from collections.abc import Callable, Generator, Mapping
@@ -27,6 +28,10 @@ SCOPE = 'clai2'
 
 NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'label', 'key_name', 'new_key_name'})
 """Attributes that only ever hold names and listed choices, which `keep_names` exempts from scrubbing."""
+PROMPT = 'prompt'
+"""The submitted prompt, which `keep_names` also keeps: agent spans carry the same text unscrubbed."""
+MAX_CONTENT_CHARS = 64_000
+"""Typed text beyond this is cut, so a huge paste cannot make the exporter drop the whole record."""
 
 
 @dataclass(kw_only=True)
@@ -34,7 +39,7 @@ class _Sink:
     instance: logfire.Logfire
     root: Callable[[], Span | None]
     ui: bool
-    content: bool
+    include_content: bool
 
 
 _sinks: list[_Sink] = []
@@ -48,15 +53,16 @@ def subscribe(
     *,
     root: Callable[[], Span | None] = lambda: None,
     ui: bool = True,
-    content: bool = True,
+    include_content: bool = False,
 ) -> Callable[[], None]:
     """Send telemetry to `sink` until the returned function is called; calling it again does nothing.
 
     The caller supplies an instance in `SCOPE`. Handled errors go to the most recently subscribed instance, and UI
     telemetry to the most recent one with `ui`, so each destination gets whole, correctly nested traces; when it
-    unsubscribes, the previous one takes over. Without `content`, handled errors keep only the exception's type.
+    unsubscribes, the previous one takes over. Without `include_content`, handled errors keep only the exception's type and `prompt_text`
+    adds nothing, like `InstrumentationSettings.include_content`.
     """
-    subscribed = _Sink(instance=sink, root=root, ui=ui, content=content)
+    subscribed = _Sink(instance=sink, root=root, ui=ui, include_content=include_content)
     _sinks.append(subscribed)
 
     def unsubscribe() -> None:
@@ -89,6 +95,14 @@ def _exempt() -> Generator[None]:
         _emitting.reset(token)
 
 
+def prompt_text(text: str) -> dict[str, Attribute]:
+    """A submitted prompt as the `PROMPT` attribute, cut to `MAX_CONTENT_CHARS`, if the subscriber records content."""
+    sink = _ui_sink()
+    if sink is None or not sink.include_content:
+        return {}
+    return {PROMPT: text[:MAX_CONTENT_CHARS]}
+
+
 def record(msg_template: str, /, **attributes: Attribute) -> None:
     """Log one UI interaction, such as a setting change or a key saved."""
     if (sink := _ui_sink()) is not None:
@@ -106,7 +120,7 @@ def handled_error(msg_template: str, error: BaseException, /, **attributes: Attr
     if _sinks:
         sink = _sinks[-1]
         with parent_span(sink.root()), _exempt():
-            log_error(sink.instance, msg_template, error, content=sink.content, attributes=attributes)
+            log_error(sink.instance, msg_template, error, content=sink.include_content, attributes=attributes)
 
 
 def log_error(
@@ -216,13 +230,14 @@ def keep_names(match: logfire.ScrubMatch) -> object:
 
     A setting such as `sessions.naming`, a key's name such as `OPENAI_API_KEY`, or a field such as `auth` trips
     Logfire's default patterns. Only the top-level `NAMES` attributes of UI records, and the message placeholders
-    filled from them, are kept; everything else, including every agent span, is scrubbed as usual.
+    filled from them, are kept, along with `PROMPT`, whose words would otherwise trip the same patterns ("the
+    session bug"). Everything else, including every agent span, is scrubbed as usual.
     """
     if (
         _emitting.get()
         and len(match.path) == 2
         and match.path[0] in ('attributes', 'message')
-        and match.path[1] in NAMES
+        and (match.path[1] in NAMES or match.path[1] == PROMPT)
     ):
         return match.value
     return None
