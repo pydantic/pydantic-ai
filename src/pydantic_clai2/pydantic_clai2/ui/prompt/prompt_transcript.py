@@ -164,6 +164,14 @@ class TranscriptBuffer:
             prefix, self._pending = self._pending[:cutoff], self._pending[cutoff:]
             self._decoder.decode_line(prefix)
 
+    def clear(self) -> None:
+        """Forget all retained output, as after the screen is cleared."""
+        self._lines.clear()
+        self._chars = 0
+        self._pending = ''
+        self._discard_until_newline = False
+        self._decoder = TranscriptDecoder()
+
     @contextmanager
     def capture(self, console: Console) -> Generator[None]:
         """Record startup/lifecycle output outside the live editor without duplication."""

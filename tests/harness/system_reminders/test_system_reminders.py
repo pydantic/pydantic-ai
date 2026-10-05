@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -26,7 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness.planning import Planning
 from pydantic_ai_harness.system_reminders import (
     DynamicReminder,
@@ -697,7 +698,9 @@ class TestLLMReminder:
 
         assert _fired_text(seen) == 'generated from snapshot'
 
-    async def test_generation_operation_failure_falls_back_to_goal_reanchor(self) -> None:
+    async def test_generation_operation_failure_falls_back_to_goal_reanchor(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         operation = 'system_reminders__capability__system_reminders.generate_reminder'
         seen: dict[str, list[ModelMessage]] = {}
 
@@ -712,12 +715,18 @@ class TestLLMReminder:
         durability = RecordingDurability(fail_operations=frozenset({operation}))
         agent = Agent(FunctionModel(model), name='system_reminders', capabilities=[capability, durability])
 
-        await agent.run('ship the durable fix')
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            await agent.run('ship the durable fix')
 
         assert 'Check that your next action advances it.' in _all_text(seen['messages'])
         assert operation in {name for name, _ in durability.calls}
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert record.name == 'pydantic_ai_harness.system_reminders._capability'
+        assert record.getMessage() == 'LLMReminder generation operation failed; using GoalReanchor text instead'
+        assert record.exc_info is not None
 
-    async def test_generation_error_is_journaled_as_goal_reanchor(self) -> None:
+    async def test_generation_error_is_journaled_as_goal_reanchor(self, caplog: pytest.LogCaptureFixture) -> None:
         operation = 'system_reminders__capability__system_reminders.generate_reminder'
         seen: dict[str, list[ModelMessage]] = {}
 
@@ -741,10 +750,52 @@ class TestLLMReminder:
             ],
         )
 
-        await agent.run('ship the durable fix')
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            await agent.run('ship the durable fix')
 
         assert operation in {name for name, _ in durability.calls}
         assert 'Check that your next action advances it.' in _all_text(seen['messages'])
+        # A misconfigured reminder model fails every turn; the operator sees why.
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
+        assert record.exc_info is not None and str(record.exc_info[1]) == 'reminder unavailable'
+
+    async def test_reserved_request_is_journaled_without_generation_or_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        operation = 'system_reminders__capability__system_reminders.generate_reminder'
+        generated: dict[str, str] = {}
+        seen: dict[str, list[ModelMessage]] = {}
+
+        def model(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            seen['messages'] = messages
+            return ModelResponse(parts=[TextPart('done')])
+
+        durability = RecordingDurability()
+        agent = Agent(
+            FunctionModel(model),
+            name='system_reminders',
+            capabilities=[
+                SystemReminders(
+                    id='system_reminders',
+                    dynamic_reminders=[LLMReminder(model=_capture_model(generated))],
+                ),
+                durability,
+            ],
+        )
+
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            await agent.run(
+                'ship the durable fix',
+                usage=RunUsage(requests=1),
+                usage_limits=UsageLimits(request_limit=2),
+            )
+
+        assert operation in {name for name, _ in durability.calls}
+        assert generated == {}
+        assert 'Check that your next action advances it.' in _all_text(seen['messages'])
+        assert caplog.records == []
 
     async def test_generates_from_transcript(self) -> None:
         store: dict[str, str] = {}
@@ -791,15 +842,59 @@ class TestLLMReminder:
         reminder = LLMReminder(model=_capture_model(store, output='   '))
         assert await reminder(_ctx(messages=[ModelRequest(parts=[UserPromptPart('g')])])) is None
 
-    async def test_falls_back_on_error(self) -> None:
+    async def test_falls_back_on_error(self, caplog: pytest.LogCaptureFixture) -> None:
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('model down')
 
         reminder = LLMReminder(model=FunctionModel(boom))
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('ship the fix')])]
-        result = await reminder(_ctx(messages=messages))
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            result = await reminder(_ctx(messages=messages))
         assert result is not None
         assert 'ship the fix' in result  # GoalReanchor fallback text
+        [record] = caplog.records
+        assert record.levelno == logging.WARNING
+        assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
+        assert record.exc_info is not None and str(record.exc_info[1]) == 'model down'
+
+    async def test_failure_is_logged_once_per_run(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A model that fails every turn logs one warning per run, not one per model request."""
+
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model down')
+
+        reminder = LLMReminder(model=FunctionModel(boom))
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('ship the fix')])]
+        first_run = _ctx(messages=messages)
+        first_run.run_id = 'run-1'
+        no_run_id = _ctx(messages=messages)
+        no_run_id.run_id = None
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            await reminder(first_run)
+            await reminder(first_run)
+            second_run = _ctx(messages=messages)
+            second_run.run_id = 'run-2'
+            await reminder(second_run)
+            await reminder(no_run_id)
+            await reminder(no_run_id)
+        assert len(caplog.records) == 4  # run-1 once, run-2 once, and each failure without a run id
+
+    async def test_remembers_a_bounded_number_of_runs(self, caplog: pytest.LogCaptureFixture) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model down')
+
+        reminder = LLMReminder(model=FunctionModel(boom))
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('ship the fix')])]
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            for index in range(258):
+                ctx = _ctx(messages=messages)
+                ctx.run_id = f'run-{index}'
+                await reminder(ctx)
+            oldest = _ctx(messages=messages)
+            oldest.run_id = 'run-0'
+            await reminder(oldest)
+        # 258 distinct runs, then the oldest again: it was evicted, so it warns a second time.
+        assert len(caplog.records) == 259
 
     def test_zero_max_context_messages_raises(self) -> None:
         with pytest.raises(ValueError, match='max_context_messages must be >= 1'):
@@ -811,7 +906,7 @@ class TestLLMReminder:
         await LLMReminder(model=_capture_model(store))(ctx)
         assert ctx.usage.requests == 1
 
-    async def test_reserves_a_request_for_the_pending_parent_call(self) -> None:
+    async def test_reserves_a_request_for_the_pending_parent_call(self, caplog: pytest.LogCaptureFixture) -> None:
         """The last slot belongs to the parent request that already cleared its preflight check."""
         store: dict[str, str] = {}
         ctx = _ctx(
@@ -819,10 +914,32 @@ class TestLLMReminder:
             usage=RunUsage(requests=1),
             usage_limits=UsageLimits(request_limit=2),
         )
-        result = await LLMReminder(model=_capture_model(store))(ctx)
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            result = await LLMReminder(model=_capture_model(store))(ctx)
         assert result is not None
         assert 'ship the fix' in result  # GoalReanchor fallback, no nested request spent
         assert ctx.usage.requests == 1
+        # Skipping generation on a spent budget is documented behavior, not a failure to warn about.
+        assert caplog.records == []
+
+    async def test_other_usage_limit_failure_is_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        def over_limit(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('generated')], usage=RequestUsage(input_tokens=1))
+
+        reminder = LLMReminder(model=FunctionModel(over_limit))
+        ctx = _ctx(
+            messages=[ModelRequest(parts=[UserPromptPart('ship the fix')])],
+            usage_limits=UsageLimits(input_tokens_limit=0),
+        )
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            result = await reminder(ctx)
+
+        assert result is not None
+        assert 'ship the fix' in result
+        [record] = caplog.records
+        assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
+        assert record.exc_info is not None
+        assert 'input_tokens_limit' in str(record.exc_info[1])
 
     async def test_generates_while_budget_remains(self) -> None:
         store: dict[str, str] = {}

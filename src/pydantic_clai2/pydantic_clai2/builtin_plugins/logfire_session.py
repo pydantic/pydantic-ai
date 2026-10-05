@@ -11,6 +11,7 @@ from opentelemetry.trace import Span
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapRunHandler
+from pydantic_clai2.plugins import SessionEndReason
 from pydantic_clai2.ui.telemetry import SCOPE, parent_span
 
 
@@ -62,7 +63,7 @@ class SessionTracing(AbstractCapability[None]):
             self._roots[session_id] = pending
         return session_id
 
-    def end(self, reason: str) -> None:
+    def end(self, reason: SessionEndReason) -> None:
         self._bind_identity()
         self._active = False
         for span in self._roots.values():

@@ -1,10 +1,11 @@
 """Conversation-local settings and actions behind `/set`."""
 
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.commands import Command, set_completions
@@ -36,7 +37,7 @@ class CommandContext:
     plugin_models: Callable[[], Sequence[str]] = lambda: ()
     """Models loaded plugins offer with `PluginHost.model_provider`, as `PREFIX:NAME`."""
     settings_model: Callable[[str], str] = lambda model: model
-    """The model whose `/model_settings` controls a model takes; differs for a plugin's `settings_from`."""
+    """The model whose `/model settings` controls a model takes; differs for a plugin's `settings_from`."""
 
     def __post_init__(self) -> None:
         """Keep the configured model selectable, including preferences saved before the model list existed."""
@@ -84,6 +85,23 @@ class CommandContext:
         from pydantic_clai2.models.model_settings import model_settings_from_json
 
         return model_settings_from_json(self.store.model_settings(model), model=model).to_model_settings()
+
+    def live_model_settings(self, model: str) -> Callable[[object], ModelSettings]:
+        """`model_settings` for a run, read again before each model request.
+
+        Core resolves a callable per request, so edits saved while a turn runs reach its next
+        request. Invalid saved settings raise `ValidationError` now, before the run starts; an
+        invalid read later keeps the last valid settings instead of failing the running turn.
+        """
+        current = self.model_settings(model) or ModelSettings()
+
+        def resolve(_: object) -> ModelSettings:
+            nonlocal current
+            with suppress(ValidationError):
+                current = self.model_settings(model) or ModelSettings()
+            return current
+
+        return resolve
 
     def reset_setting(self, key: str) -> str:
         """Forget the saved override and apply the default now."""
