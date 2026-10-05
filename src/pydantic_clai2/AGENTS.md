@@ -34,10 +34,10 @@ and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
 `on_session_end`, `on_turn_start`, `on_turn_end`, and `on_plugin_load_failed` for CLAI's own moments. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
-(console, conversation, status, full screen, saved settings); it registers
-nothing. `docs/declarative-plugins.md` records the design. `PLUGINS.md` is the
-user contract. If code and `PLUGINS.md` disagree, fix one so they agree in the
-same PR.
+(console, conversation, `session_id`, status, full screen, saved settings); it
+registers nothing. `docs/declarative-plugins.md` records the design.
+`PLUGINS.md` is the user contract. If code and `PLUGINS.md` disagree, fix one so
+they agree in the same PR.
 
 ## Rules for the plugin API
 
@@ -114,12 +114,24 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
+  Default-on CLI `.env` loading is a deliberate exception to this repository-content
+  trust rule: it assumes trusted launch and parent directories, without plugin
+  approval. [Environment variables](README.md#environment-variables) documents the
+  scope and opt-out.
 - **A load failure leaves the session as it was.** Import, construction, or
   `get_*` errors are reported and the plugin stays unloaded; nothing it declared
   is kept. When construction succeeded, `on_session_end` runs with
   `reason='error'` under a shield with a five-second cooperative timeout before a
   failed/cancelled load drops the plugin. Cleanup must tolerate an incomplete
   `on_session_start`.
+
+**Overlapping plugins go in the compatibility matrix.** `plugins/compatibility.py`
+maps a plugin's factory to the factories it already includes (`coder` includes
+`compaction`, and harness `SubAgents` while it binds one, which it does with
+`sub_agents` on). While the including plugin is loaded, the
+loader keeps the included ones unloaded and refuses to enable them, and `/plugins`
+greys their rows out. Their saved `enabled` flag is untouched, so turning the
+including plugin off loads them again. Add a row there; do not special-case ids.
 
 Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
@@ -137,12 +149,14 @@ summary failure; other exceptions propagate.
 3. Document it in `PLUGINS.md` in the table it belongs to, and in
    `docs/declarative-plugins.md` if it changes the design.
 
-## The `/plugins`, `/set`, `/theme`, `/model`, and `/add_model` menus
+## The `/plugins`, `/set`, `/theme`, `/model`, and `/model add` menus
 
 Built on termflow's `MenuBuilder` (and `TextInputBuilder` for typed values),
 exactly like Code Puppy's `/agent`, `/mcp`, `/set`, and `/model` menus:
-alternate screen, a `.preview` panel on the right, `.on_key` for single-key
-actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
+alternate screen, a `.preview` panel on the right, `markdown_style()` for
+colours. Single-key actions and the key legend go through `slash_search`'s
+`hotkeys` and `footer` in a searchable menu, `.on_key` and `.footer_hint` in
+one that is not.
 
 - Split it in two: a pure `build_plugins_menu(...)` that returns the menu (so
   tests drive it headless, no terminal), and a thin async runner that owns the
@@ -158,6 +172,11 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
+- Make a new or changed menu searchable with `slash_search`
+  (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
+  hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
+  `hotkeys` so they type into the search instead of firing while the user
+  searches.
 - A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers
@@ -201,8 +220,9 @@ Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences and theme previews. Default diff colours stay unchanged; bundled
-palettes get diff lines from `theme.diff_renderer()`, tinted from the palette.
+streamed fences and theme previews. The default theme's diff lines use Claude Code's
+green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
+from the palette.
 
 ## Source layout
 
@@ -243,20 +263,23 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
+| `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
+| `ui/menus/slash_search.py` | `slash_search`: plain-letter hotkeys plus `/` to search, for any termflow menu |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
-| `ui/menus/model_menu.py` | `/add_model`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
+| `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models; protects the current model and saved default |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
 | `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
-| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), project pick, write token saved in `/keys` |
+| `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
+| `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
 | `commands.py` | `Command`, the registry, completion |
@@ -268,7 +291,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
 | `ui/prompt/prompt_buffer.py` | pure draft editing, history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
-| `ui/prompt/prompt_keys.py` | keyboard decoder attachment only; no prompt-toolkit Application or renderer |
+| `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |

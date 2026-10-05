@@ -221,7 +221,7 @@ details.
 uv run clai2
 ```
 
-Run `/login github-copilot`, then open `/add_model` and choose `github-copilot`.
+Run `/login github-copilot`, then open `/model add` and choose `github-copilot`.
 The provider menu also starts login when no credentials exist. No application
 registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -239,7 +239,7 @@ GitHub authorization does not establish Copilot access: the menu queries your
 account's catalog and keeps only picker-enabled `/chat/completions` models.
 The shared model menu includes details and `Ctrl+S` settings. Subscription and
 organization policy still control inference access. A known ID also works with
-`/add_model github-copilot:claude-haiku-4.5`.
+`/model github-copilot:claude-haiku-4.5`.
 
 The `github-copilot` keyring account is separate from Codex and named API keys.
 Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
@@ -355,7 +355,7 @@ not a second tracing instance. If both names were saved, the `observability`
 declaration takes precedence; edits and removal apply to that one shared entry.
 
 Manage it with `/plugins disable observability`, `/plugins enable observability`, or
-`/plugins reload observability`. `/plugins configure observability` (or `C` on
+`/plugins reload observability`. `/plugins configure observability` (or `c` on
 `observability` in `/plugins`) opens its settings menu: **Logfire project** runs the
 setup described below, and the other rows edit the options listed here. Each edit
 saves at once, and the plugin is loaded again when you close the menu, so the next
@@ -379,21 +379,39 @@ be recorded. Logfire's usual scrubbing is enabled.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
 `LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
-sets `token`, `base_url`, and `send_to_logfire` for you (`R` on it clears `token`
-and `base_url` again): it asks
-where traces go, runs Logfire's own device sign-in there (the one behind
-`logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
-accepts), lists the projects you can write to, and saves a new write token for
-the one you pick in `/keys`. The sign-in token is used only during setup. The flow
-lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+sets `token`, `base_url`, `account`, and `send_to_logfire` for you (`R` on it
+clears `token`, `base_url`, and `account` again): it asks where traces go, runs
+Logfire's own device sign-in there (the one behind `logfire auth`, not
+`logfire_mcp`'s MCP OAuth, whose tokens only the MCP server accepts), reads your
+account's email, lists the projects you can write to, and saves a new write
+token for the one you pick in `/keys`. The sign-in token is used only during
+setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+
+Agent runs and UI records nest under a `CLAI session` root whose
+`agent_session_id` is the saved conversation ID. `/clear` selects a new root;
+`/resume` reuses that conversation's root if this plugin instance already opened
+it. Unloading the plugin ends its roots; reloading starts new traces with the
+same saved conversation IDs.
+
+`user_tag` (default `logfire-account`) tags each session root, and only the
+root, with your email, as a Logfire tag and the `user.email` attribute.
+`logfire-account` uses the email in `account`, the account that signed in during
+the **Logfire project** setup, while `token` still names the key that setup
+saved. A token from elsewhere, a setup made before this setting existed, or a
+server that does not report the email leaves roots untagged until setup runs
+again. `git-email` uses `git config user.email` (Git is queried only then), and
+`false` turns the tag off. Set **User tag** in
+`/plugins configure observability`.
 
 `ui_events` (default `false`) also records CLAI's UI interactions on the same
-instance, as spans and logs tagged `clai2-ui`: menus opened and how they closed,
-slash commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
+instance, as spans and logs in the `clai2` instrumentation scope, which session
+roots and plugin load failures share: menus opened and how they closed, slash
+commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
 resume. Attributes carry names and listed choices, never prompt text, typed
 values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
-`run_worker` opens every menu's span, so a new menu is covered without extra code.
+`run_worker` opens every menu's span, so a new menu is covered without extra
+code.
 With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `setting`, `key_name`, ...) are exempt from scrubbing, since names like
 `OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.
@@ -413,7 +431,7 @@ The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the
 of Linear's hosted MCP server through harness
 [`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
 it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
-and `/plugins configure linear` (or C in `/plugins`) opens it again later:
+and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 
 ```text
  Linear settings
@@ -472,7 +490,7 @@ permissions of the Notion account it connects as. That includes tools that
 change pages.
 
 `/plugins enable notion` loads it and opens its settings menu. To change the
-settings later, run `/plugins configure notion` or press `C` on it in
+settings later, run `/plugins configure notion` or press `c` on it in
 `/plugins`; you never need to reinstall it. The menu is the shared field editor
 `/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
 Each change is saved as soon as you make it, and the plugin loads again when the
@@ -530,7 +548,7 @@ the tools of Logfire's hosted MCP server through harness
 [`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
-`/plugins configure logfire_mcp` or `C` in `/plugins`.
+`/plugins configure logfire_mcp` or `c` in `/plugins`.
 
 Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
 the menu, and the plugin loads again with the new settings. Esc backs out of any
@@ -549,7 +567,7 @@ its default.
 
 Plugin settings are stored as plaintext in SQLite, so they hold only the key's
 name, never its value. Enter on **API key** opens the same picker as
-`/add_model`:
+`/model add`:
 
 - **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
   connections can name one key, so one Logfire API key saved once serves them all.
@@ -838,6 +856,13 @@ repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
 [Project settings](README.md#project-settings).
 
+Some plugins already include others. `coder` includes context management and
+task delegation, so while `coder` is on, `compaction` stays off, and so does a
+harness `SubAgents` row (such as `subagents`) unless `coder` has `sub_agents`
+turned off: `/plugins` shows them greyed out with
+`in coder`, `/plugins list` says `included in coder`, and enabling one says to
+disable `coder` first. Turning `coder` off loads any of them you had enabled.
+
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
 same chain unconditionally. Its optional focus is free text, not shell arguments:
@@ -919,7 +944,7 @@ The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model 
 MCP server, acting as the account behind a token. It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
-press `C` on it in `/plugins`.
+press `c` on it in `/plugins`.
 You never need to reinstall it.
 
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
@@ -990,7 +1015,7 @@ through harness [`GoogleWorkspace`](../../docs/harness/google-workspace.md). It 
 Google OAuth access token whose scopes cover the products you select.
 
 Turning it on (Space in `/plugins`, or `/plugins enable google_workspace`) opens
-its settings menu. Open it again later with `C` in `/plugins`,
+its settings menu. Open it again later with `c` in `/plugins`,
 `/plugins configure google_workspace`, or:
 
 ```text
@@ -1060,7 +1085,7 @@ in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 #### Configuring Pylon
 
 Turning the plugin on opens its settings menu, like any plugin with a
-[`configure`](#offer-a-settings-menu-async-def-configureself) menu. `C` in
+[`configure`](#offer-a-settings-menu-async-def-configureself) menu. `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
 change anything, including the key. Type to filter the rows. Enter edits a row,
 `R` restores its default, and **Save & close** or Esc leaves the menu. Each
@@ -1122,7 +1147,7 @@ the tools of Day AI's hosted MCP server: search and update CRM records, read
 meeting context, and draft emails. It needs a paid Day AI Agent tier.
 
 `/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
-at any time with `/plugins configure day_ai`, or `C` on `day_ai` in `/plugins`.
+at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
 Type to filter the rows, press Enter to change one, `R` to reset it to its
 default, and Esc to close. Each change is saved as soon as you make it, and the
 plugin loads again with the new settings when the menu closes. The menu has
@@ -1179,7 +1204,7 @@ If you had enabled or disabled the former `pydantic_ai_harness.ordinal:Ordinal`
 catalog entry, that choice carries over to this plugin.
 
 Set it up in its settings menu. Turning it on (Space in `/plugins`,
-`/plugins enable ordinal`, or `/plugins add`) opens the menu, and so do `/plugins configure ordinal` and `C` in `/plugins`
+`/plugins enable ordinal`, or `/plugins add`) opens the menu, and so do `/plugins configure ordinal` and `c` in `/plugins`
 later, so you can change anything without reinstalling. It is the same field
 editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
 **Save & close** or Esc closes.
@@ -1229,7 +1254,7 @@ in its place and keeps your choice. A declaration with your own
 settings is left as it is.
 
 Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
-or pressing `C` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
+or pressing `c` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
 reopens it later, with no reinstall. The list is searchable, Enter edits the
 highlighted row, `R` resets it, and **Save & close** or Esc closes. Every change is saved as you make it:
 
@@ -1308,7 +1333,7 @@ write** in the Tools row. The equivalent typed command is
 `posthog` (`pydantic_clai2.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
 server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
 `/plugins enable posthog` loads it and opens its settings menu. To change the
-settings later, run `/plugins configure posthog` or press `C` on it in
+settings later, run `/plugins configure posthog` or press `c` on it in
 `/plugins`. You never need to reinstall it.
 
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
@@ -1371,7 +1396,7 @@ turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
 settings menu. Until you have opened the menu once or picked a key, loading it
 prints a line pointing there.
 
-`/grain`, `C` in `/plugins`, or `/plugins configure grain` opens the settings
+`/grain`, `c` in `/plugins`, or `/plugins configure grain` opens the settings
 menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
 close** leaves the menu. Each change is saved to the plugin's settings at once
 and applies to the next prompt. Reopen it any time to change a setting or pick a
@@ -1439,6 +1464,7 @@ for `/agent` and `/mcp`:
 
 ```text
  Plugins
+ search: (type to filter)
 
  > ● coder    on      built-in   │ coder
    ● notify   on      drop-in    │ on · built-in
@@ -1447,7 +1473,7 @@ for `/agent` and `/mcp`:
    Save & close                  │ provides 1 capability
                                  │ settings press c to configure
 
- ↑/↓ move · space on/off · c configure · r reload · d remove · enter/q close
+ / search · space on/off · c configure · r reload · d remove · esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -1458,14 +1484,22 @@ one: a description, its source, what it registered, whether it has a settings
 menu, and the last error if loading failed. The description is the first
 paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
-plugin that is off runs no code to describe itself. Every key
-acts immediately; there is no pending save step, so the **Save & close** row,
-Enter, Q, Esc, and Ctrl-C all just close.
+plugin that is off runs no code to describe itself.
+
+Space turns the highlighted plugin on or off; `c` configures it, `r` reloads
+it, and `d` removes it. Press `/` to search: while searching, every key you type
+filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
+Backspace edits the search, and Up and Down move between matches. Enter ends the
+search and keeps the matches, so the keys above act on them; `/` resumes the
+search. Esc clears the search, or the matches Enter kept, including when nothing
+matches; with no filter, Esc closes. Changes apply immediately; there is no
+pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
+close.
 
 Turning a plugin on with Space opens its settings menu straight away when it
 offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
-the details panel. `C` opens the settings menu of a plugin that is already on.
+the details panel. `c` opens the settings menu of a plugin that is already on.
 Turning a plugin off never opens a menu, and a plugin without a settings menu
 just turns on.
 Closing returns to the prompt without printing the plugin list. Use `/plugins list`
@@ -1860,8 +1894,11 @@ queued follow-up to the active run through core's
 tools, or changing the draft. Each press sends one message. If the run is no
 longer accepting steering, the message stays queued. Slash commands and exit
 signals are not steered or skipped over. With no queued message, Alt+Enter does
-nothing. When idle, Enter starts a turn. Shift-Enter inserts a newline.
-Modified-key reporting is enabled only while the editor owns input.
+nothing. When idle, Enter starts a turn. Shift-Enter inserts a newline when the
+terminal distinguishes it from Enter. Ctrl-J inserts a newline on terminals
+that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty keyboard
+reporting is enabled only while the editor owns input and released for menus
+and on exit.
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
@@ -2046,7 +2083,7 @@ values from then on.
 
 Override `configure` with an async method that shows a settings menu and returns
 a line to show afterwards. CLAI opens it when the plugin is turned on (Space in
-`/plugins`, `/plugins enable`, or `/plugins add`), on `C` in `/plugins`, and on
+`/plugins`, `/plugins enable`, or `/plugins add`), on `c` in `/plugins`, and on
 `/plugins configure NAME`. Save each change with `self.host.save_settings(model)` as
 the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
 and save only a key's name: let the user pick one with
@@ -2134,15 +2171,27 @@ again. Services with Dynamic Client Registration need none of this: add them as
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
-`await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model the next prompt will use. `host.status` is the footer's state:
-`context_tokens` and `context_window` render as compact used/max, such as
-`128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
-not an assumed fallback. Set `context_alert` to paint the figure in the warning
-colour. The built-in `compaction` plugin fills these fields from Harness usage
-events, including an explicit window override, and clears the window when unloaded. A host built outside the shell gets an in-memory
-`Transcript` and a detached `Status`, so tests need no special case. The status
-row itself is CLAI's; a plugin adds to it with `get_status_segments`.
+`await commit_messages(...)` persists and swaps it between turns, and
+`resolved_model()` is the model the next prompt will use. Local `!command`
+executions append a user message with the command, stdout, stderr, and
+completion status. They do not start an agent turn or fire turn hooks; the
+context reaches the model on the next prompt.
+
+`host.session_id` is the current saved conversation ID, following `/clear` and
+`/resume`. During a run it identifies that run's conversation, including a
+background fork. It is `None` while startup resume is selecting a conversation,
+or for a host without session persistence. Custom hosts can supply a
+`session_id` callback to read their current ID.
+
+`host.status` is the footer's state: `context_tokens` and `context_window`
+render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
+`context_window` for a known capacity, not an assumed fallback. Set
+`context_alert` to paint the figure in the warning colour. The built-in
+`compaction` plugin fills these fields from Harness usage events, including an
+explicit window override, and clears the window when unloaded. A host built
+outside the shell gets an in-memory `Transcript` and a detached `Status`, so
+tests need no special case. The status row itself is CLAI's; a plugin adds to it
+with `get_status_segments`.
 
 The double-Esc rewind menu also uses `commit_messages` between turns. It removes
 the selected prompt and later history, but does not undo plugin state, file
@@ -2221,8 +2270,8 @@ class MyService(Plugin):
         return (ModelProvider(prefix='my-service', resolve=resolve, models=('fast', 'smart')),)
 ```
 
-`models` are listed under the prefix in `/add_model` and completed by `/set model`
-and `/add_model`; any other `my-service:NAME` can still be typed. `resolve` gets
+`models` are listed under the prefix in `/model add` and completed by `/set model`
+and `/model add`; any other `my-service:NAME` can still be typed. `resolve` gets
 `NAME` without the prefix. CLAI calls it in a worker thread before every run with
 one of these models, so reading the keyring there is fine, and a sign-in made
 since the last run applies. Raise `UserError` naming the setup step when it cannot
@@ -2240,7 +2289,7 @@ again. Users can remove an unused model and its saved settings with **Ctrl+D** o
 select another model or change the default with `/set model NAME` first. Deleting
 a model does not unload its plugin or delete provider credentials.
 
-`/model_settings` offers generic controls (max tokens, temperature, custom
+`/model settings` offers generic controls (max tokens, temperature, custom
 parameters) for plugin models. When `resolve` returns a model class of a provider
 CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'`
 (or `'openai'`, `'openai-chat'`, `'google'`) on the `ModelProvider` and these
@@ -2282,8 +2331,8 @@ and cannot be one of CLAI's sign-ins, which raises `ValueError`; when two plugin
 add one name, the later one wins. Unloading the plugin removes it.
 
 Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
-`names`) are added to the saved model list, so `/model` and `/model_settings`
-offer them without an `/add_model` first. A failed sign-in adds nothing.
+`names`) are added to the saved model list, so `/model` and `/model settings`
+offer them without adding them first. A failed sign-in adds nothing.
 
 ## Rules that keep plugins predictable
 
@@ -2332,11 +2381,11 @@ declared. A plugin that reads the history gets a `Transcript` by default; pass
 
 ## vllm connection
 
-Open `/add_model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
 ## openrouter connection
 
-Open `/add_model`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -2344,6 +2393,10 @@ The connection is saved in the configured Python keyring backend after selection
 
 
 ## Saved API keys
+
+Startup [`.env` loading](README.md#environment-variables) makes values available to
+providers and plugins that read the environment. It does not import credentials
+into `/keys` or replace a plugin's saved-key picker.
 
 Open `/keys` to browse and manage saved API keys in a full-screen menu.
 Use A to add, Enter to replace a value, R to rename, and D to delete with
@@ -2398,17 +2451,21 @@ each connection. Replacing it then updates all of them.
 
 Existing connections with inline credentials, manually entered connection keys,
 and browser logins remain unchanged. To switch an existing connection to a
-reference, reconfigure it through `/add_model` and select a saved key. Changes do not
+reference, reconfigure it through `/model add` and select a saved key. Changes do not
 alter an already running request or revoke credentials at the provider.
 
 ### Adding and selecting models
 
-`/add_model` opens the provider catalog, connection setup, and per-model settings.
-`/add_model PROVIDER:NAME` adds a model directly. Adding a model also selects it
-for the next prompt. `/model` is a flat picker of added models, and `/model NAME`
-selects one without the menu. Choose **Add a model...** in `/model` to browse
-providers and select a new model, including when the saved list is empty.
-Its Tab suggestions contain only added models.
+`/model` is a flat picker of added models. Choose **Add a model...** in it, or
+run `/model add`, to open the provider catalog, connection setup, and per-model
+settings, including when the saved list is empty. `/model PROVIDER:NAME` selects
+any model without the menu: one not yet in the list is added first, without
+checking that the provider serves it, so a wrong name fails on the next prompt.
+`/model add PROVIDER:NAME` does the same. Adding a model also selects it for the
+next prompt. `/model settings [NAME]` edits a model's settings. Tab suggests the
+`add` and `settings` subcommands and added models; model names normally start
+with a provider, so no real model is called `add` or `settings`. `/add_model`
+and `/model_settings` remain as deprecated spellings.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 
@@ -2456,11 +2513,11 @@ defaults. Plugins cannot register custom palettes. Theme selection adds no model
 requests, hooks, or telemetry.
 ### Model settings and custom parameters
 
-`/model_settings` opens a searchable list of added models. Enter configures a
+`/model settings` opens a searchable list of added models. Enter configures a
 model without changing the active model. Esc returns from settings to this list;
-Esc again closes it. `/model_settings PROVIDER:NAME` opens that model directly.
+Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
-`Ctrl+S` in `/add_model` opens the same editor. Edits save immediately and apply
+`Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
 from the model's next request, even in a running turn. `r` resets a field; Esc
 or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
@@ -2468,7 +2525,7 @@ open a picker; numeric fields accept typed values, and empty input resets.
 The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
-For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
+For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
 turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
@@ -2484,14 +2541,14 @@ It saves the active model's service tier for subsequent prompts and sessions,
 without changing reasoning effort or other preferences. It is absent from help
 and Tab completion on other models, and typing it there reports an unknown command.
 If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model_settings` rather than saving an ineffective change.
+with `/model settings` rather than saving an ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
 compatibility fix. Editing or resetting a known field preserves unknown fields
 in the store. New edits still reject unknown keys and invalid values.
 An invalid value in a known field stops that turn with a repair message, not the
-shell; use `/model_settings` to fix or reset it and try again. CLAI does not silently
+shell; use `/model settings` to fix or reset it and try again. CLAI does not silently
 run with different settings or delete saved preferences.
 
 Older branches must receive this fix too. The minimum read-side backport is
