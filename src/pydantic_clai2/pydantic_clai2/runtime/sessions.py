@@ -41,8 +41,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self.session = session
         self.store = store
         self.context = context
-        self.chosen = False
-        """Whether launch options picked the conversation; see `SessionStart.conversation_chosen`."""
+        self._launched: str | None = None
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = bare_screen
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
         self.namer = SessionNamer(
@@ -95,8 +94,14 @@ class Sessions(Generic[DepsT, OutputT]):
             notice = f'{notice}\n{await self.session.fork(session_id)}'
         elif session_id is not None:
             await self.session.clear(session_id)
-        self.chosen = self.chosen or bool(notice) or session_id is not None
+        if notice or session_id is not None:
+            self._launched = self.session.conversation_id
         return notice
+
+    @property
+    def chosen(self) -> bool:
+        """Whether launch options picked the current conversation; see `SessionStart.conversation_chosen`."""
+        return self._launched == self.session.conversation_id
 
     async def command(self, args: list[str]) -> str:
         """Shared command/startup resolver; loading history never executes pending tools."""
