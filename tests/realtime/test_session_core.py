@@ -948,7 +948,7 @@ def test_retained_audio_eviction_passes_over_what_is_not_recorded() -> None:
     )
     assert _retained(session_core) == [('user', 'Question 5.', True), ('assistant', 'Answer 6.', False)]
     # The turn, recorded now, is next in line: its audio is the oldest left.
-    assert session_core._recorded_audio == [session_core._turns['u5']]  # pyright: ignore[reportPrivateUsage]
+    assert list(session_core._recorded_audio) == [session_core._turns['u5']]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_input_audio_cut_for_a_turn_before_its_send_failed_is_taken_back_from_the_turn() -> None:
@@ -1024,7 +1024,11 @@ def test_a_failed_send_of_audio_trimmed_by_the_budget_leaves_nothing_of_it() -> 
 
 
 def test_audio_taken_back_from_a_turn_no_longer_waiting_leaves_it_alone() -> None:
-    """Once its turn is recorded (or its audio evicted), there is nothing left to take back."""
+    """Once its turn is recorded, the core doesn't change the message to take the audio back.
+
+    A known gap, not the intent (the current session core has it too): a turn recorded while the send of its last
+    chunk is still under way keeps that chunk's audio if the send then fails.
+    """
     session_core = feed(
         core(input_transcription_enabled=False, retain_input_audio=True),
         AudioSent(data=b'\x01\x00'),
@@ -1038,7 +1042,11 @@ def test_audio_taken_back_from_a_turn_no_longer_waiting_leaves_it_alone() -> Non
 
 
 def test_retained_audio_eviction_does_not_walk_what_waits_or_has_no_audio(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A turn waiting for its transcript ahead of many recorded messages doesn't make each chunk walk them again."""
+    """A turn waiting for its transcript ahead of many recorded messages doesn't make each chunk walk them again.
+
+    Counts the strips, so the work of passing over messages; taking from the front of the queue is constant
+    work as it is a deque.
+    """
     strips = 0
     strip = RetainedAudioBudget.strip
 
@@ -1078,4 +1086,22 @@ def test_retained_audio_eviction_keeps_a_message_that_still_has_audio_in_line() 
         ('One.', False),
         ('Two.', True),
     ]
-    assert session_core._recorded_audio == [session_core._responses['r1']]  # pyright: ignore[reportPrivateUsage]
+    assert list(session_core._recorded_audio) == [session_core._responses['r1']]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_turn_recorded_after_the_reply_to_it_is_evicted_before_that_reply() -> None:
+    session_core = feed(
+        _budget_core(1),
+        AudioSent(data=_tenth_of_a_second(1)),
+        RealtimeInputSpeechStartEvent(item_id='u1'),
+        UserTurnStarted(turn_id='u1'),
+        RealtimeInputSpeechEndEvent(item_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+        started('r1'),
+        AudioDelta(_tenth_of_a_second(101), response_id='r1', item_id='a1'),
+        said('r1', 'Answer.', item_id='a1'),
+        ended('r1'),
+        InputTranscript('Question.', item_id='u1', is_final=True),
+    )
+    turn, response = session_core._turns['u1'], session_core._responses['r1']  # pyright: ignore[reportPrivateUsage]
+    assert list(session_core._recorded_audio) == [turn, response]  # pyright: ignore[reportPrivateUsage]

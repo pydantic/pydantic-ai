@@ -24,7 +24,7 @@ sits directly after the response that called it, as request-response APIs requir
 from __future__ import annotations as _annotations
 
 from bisect import insort
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TypeAlias
@@ -343,7 +343,7 @@ class SessionCore:
         self._open_audio: dict[str, _Response] = {}
         """Responses with output audio coming in for a part, oldest first."""
         self._open_audio_bytes = 0
-        self._recorded_audio: list[_Response | _UserTurn] = []
+        self._recorded_audio: deque[_Response | _UserTurn] = deque()
         """Recorded entities whose message still has audio, in the order they joined the conversation: what eviction
         takes audio from first, oldest first, without passing over anything that has none or isn't recorded yet."""
         self._unsent_audio: tuple[_UserTurn | None, int] | None = None
@@ -863,7 +863,7 @@ class SessionCore:
                 entry.message = stripped
             excess -= freed
             if not freed or not _has_audio(stripped):
-                self._recorded_audio.pop(0)
+                self._recorded_audio.popleft()
         return excess
 
     def _place(self, entry: _Entry) -> None:
@@ -875,8 +875,14 @@ class SessionCore:
 
     def _record_audio(self, entry: _Response | _UserTurn, message: ModelMessage) -> None:
         """`entry` is recorded as `message`: if that has audio, it is evicted in conversation order."""
-        if _has_audio(message):
-            insort(self._recorded_audio, entry, key=lambda recorded: recorded.placed_at)
+        if not _has_audio(message):
+            return
+        queue = self._recorded_audio
+        if not queue or queue[-1].placed_at < entry.placed_at:
+            queue.append(entry)
+        else:
+            # Recorded after something that joined the conversation later (a turn whose transcript came late).
+            insort(queue, entry, key=lambda recorded: recorded.placed_at)
 
     def _lose_open_responses(self) -> None:
         for response in [response for response in self._responses.values() if response.status is None]:
