@@ -1987,7 +1987,7 @@ class RealtimeSession:
             # boundary later cuts this into that turn's own segment (see `_segment_input_audio`); only the
             # exact split at the boundary is approximate (see `audio_retention`).
             previous_length = len(self._input_audio)
-        chunk: bytes | None = None
+        sent_to_core = False
         try:
             # The extend lives inside the try so a chunk that is not bytes-like (possible since
             # `send_audio` accepts an async iterable of chunks) rolls the user-turn state back below
@@ -1999,16 +1999,16 @@ class RealtimeSession:
             self._audio_uncommitted = True
             if self._core is not None:
                 # Before the send, as for this session's own buffer: the pump can end the turn while it goes out.
-                chunk = bytes(data)
-                self._apply_core(AudioSent(data=chunk))
+                self._apply_core(AudioSent(data=bytes(data)))
+                sent_to_core = True
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
         except BaseException as e:
             self._user_turn_active = user_turn_was_active
             self._audio_uncommitted = audio_was_uncommitted
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):
                 del self._input_audio[previous_length:]
-            if chunk is not None:
-                self._apply_core(AudioUnsent(data=chunk))
+            if sent_to_core:
+                self._apply_core(AudioUnsent())
             if (
                 isinstance(e, RealtimeError)
                 and isinstance(e.__cause__, self._connection.transport_errors)

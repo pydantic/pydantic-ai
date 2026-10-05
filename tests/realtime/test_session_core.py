@@ -899,10 +899,9 @@ def test_input_audio_that_never_went_out_is_taken_back() -> None:
         core(input_transcription_enabled=False, retain_input_audio=True),
         AudioSent(data=b'\x01\x00'),
         AudioSent(data=b'\x02\x00'),
-        AudioUnsent(data=b'\x02\x00'),
-        # Not the latest audio (or nothing at all): nothing to take back.
-        AudioUnsent(data=b'\x09\x00'),
-        AudioUnsent(data=b''),
+        AudioUnsent(),
+        # Only the latest chunk is taken back, once.
+        AudioUnsent(),
         UserTurnStarted(turn_id='u1'),
         UserTurnEnded(turn_id='u1'),
     )
@@ -948,8 +947,8 @@ def test_retained_audio_eviction_passes_over_what_is_not_recorded() -> None:
         InputTranscript('Question 5.', item_id='u5', is_final=True),
     )
     assert _retained(session_core) == [('user', 'Question 5.', True), ('assistant', 'Answer 6.', False)]
-    # It resumes at the turn, which is recorded now.
-    assert session_core._eviction_cursor == 1  # pyright: ignore[reportPrivateUsage]
+    # The turn, recorded now, is next in line: its audio is the oldest left.
+    assert session_core._recorded_audio == [session_core._turns['u5']]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_input_audio_cut_for_a_turn_before_its_send_failed_is_taken_back_from_the_turn() -> None:
@@ -961,8 +960,7 @@ def test_input_audio_cut_for_a_turn_before_its_send_failed_is_taken_back_from_th
         UserTurnStarted(turn_id='u1'),
         # The speech end cuts the turn's audio while the last chunk is still on its way, and its send then fails.
         RealtimeInputSpeechEndEvent(item_id='u1'),
-        AudioUnsent(data=b'\x02\x00'),
-        AudioUnsent(data=b'\x09\x00'),
+        AudioUnsent(),
         UserTurnEnded(turn_id='u1'),
         InputTranscript('Hi.', item_id='u1', is_final=True),
     )
@@ -994,3 +992,71 @@ def test_retained_audio_trims_the_oldest_audio_coming_in_first() -> None:
     }
     # r1's first tenth went first, then r2's (older than r1's second): only r1's newest audio fits.
     assert by_transcript == {'One.': _tenth_of_a_second(3), 'Two.': None}
+
+
+def test_retained_audio_evicted_is_let_go_by_the_core_too() -> None:
+    """Evicted audio isn't held anywhere else in the core: not as a turn's PCM, nor in a response's parts."""
+    session_core = feed(_budget_core(0.2), *(item for turn in range(5) for item in _answered_turn(turn)))
+    assert [audio for _, _, audio in _retained(session_core)] == [False] * 8 + [True] * 2
+    turns = session_core._turns.values()  # pyright: ignore[reportPrivateUsage]
+    responses = session_core._responses.values()  # pyright: ignore[reportPrivateUsage]
+    assert all(not turn.audio for turn in turns)
+    assert all(not response.parts for response in responses)
+    # What is left: the last question and answer, in history alone.
+    assert session_core._audio_budget.tracked_parts == 2  # pyright: ignore[reportPrivateUsage]
+    assert len(session_core._recorded_audio) == 2  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_failed_send_of_audio_trimmed_by_the_budget_leaves_nothing_of_it() -> None:
+    """A chunk longer than the whole budget is trimmed before its send fails: what is left of it is taken back."""
+    session_core = feed(
+        core(input_transcription_enabled=False, retain_input_audio=True, retain_audio_max_seconds=0.1),
+        AudioSent(data=_tenth_of_a_second(1) * 2),
+        AudioUnsent(),
+        AudioSent(data=b'\x05\x00'),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+    )
+    [request] = session_core.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.audio is not None
+    assert part.audio.data[44:] == b'\x05\x00'
+
+
+def test_audio_taken_back_from_a_turn_no_longer_waiting_leaves_it_alone() -> None:
+    """Once its turn is recorded (or its audio evicted), there is nothing left to take back."""
+    session_core = feed(
+        core(input_transcription_enabled=False, retain_input_audio=True),
+        AudioSent(data=b'\x01\x00'),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1'),
+        AudioUnsent(),
+    )
+    [request] = session_core.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.audio is not None
+
+
+def test_retained_audio_eviction_does_not_walk_what_waits_or_has_no_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A turn waiting for its transcript ahead of many recorded messages doesn't make each chunk walk them again."""
+    strips = 0
+    strip = RetainedAudioBudget.strip
+
+    def counting_strip(self: RetainedAudioBudget, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+        nonlocal strips
+        strips += 1
+        return strip(self, message, excess)
+
+    session_core = feed(
+        _budget_core(0.3),
+        AudioSent(data=_tenth_of_a_second(9)),
+        RealtimeInputSpeechStartEvent(item_id='held'),
+        UserTurnStarted(turn_id='held'),
+        RealtimeInputSpeechEndEvent(item_id='held'),
+        UserTurnEnded(turn_id='held'),
+        *(item for turn in range(20) for item in _answered_turn(turn)),
+    )
+    monkeypatch.setattr(RetainedAudioBudget, 'strip', counting_strip)
+    feed(session_core, *(AudioSent(data=bytes(480)) for _ in range(50)))
+    # Each chunk strips a message that still has audio, at most: it never passes over those that don't.
+    assert strips <= 50
