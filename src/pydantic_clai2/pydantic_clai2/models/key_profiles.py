@@ -9,7 +9,7 @@ their existing setup: `/model add` connections, or core's environment variables.
 import inspect
 import json
 from functools import partial
-from typing import Protocol, TypeGuard
+from typing import Annotated, Protocol, TypeGuard
 
 from anyio import to_thread
 from prompt_toolkit import PromptSession
@@ -29,7 +29,8 @@ CONNECTIONS = ('openrouter', 'vllm')
 class KeyConnection(BaseModel):
     """A profile's key: a `/keys` reference, or a key typed at sign-in."""
 
-    token: SecretStr | KeyReference = Field(default_factory=lambda: SecretStr(''))
+    token: Annotated[SecretStr, Field(min_length=1)] | KeyReference
+    """Required and never empty: an empty key would let the provider fall back to the environment's key."""
 
 
 class KeyedProvider(Protocol):

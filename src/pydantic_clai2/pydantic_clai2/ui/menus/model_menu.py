@@ -175,7 +175,7 @@ class ModelMenu:
             for model in catalog(
                 include=[context.settings.model or '', *context.plugin_models()], discovered=self._discovered
             )
-            if provider is None or model.name.partition(':')[0] == provider
+            if provider is None or model.provider == provider
         ]
 
     @property
@@ -242,9 +242,7 @@ class ModelMenu:
 
     def providers(self) -> list[str]:
         """Unique provider prefixes from the merged catalog."""
-        return sorted(
-            {model.name.partition(':')[0] for model in self.models} | {'github-copilot', 'openrouter', 'vllm'}
-        )
+        return sorted({model.provider for model in self.models} | {'github-copilot', 'openrouter', 'vllm'})
 
     def build_providers(self) -> Menu:
         """Choose a provider before browsing its models."""

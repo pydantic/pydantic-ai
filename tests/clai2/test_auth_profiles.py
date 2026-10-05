@@ -217,9 +217,11 @@ async def test_core_providers_need_a_profile_and_an_api_key(monkeypatch: pytest.
         key_profiles.build_provider('snowflake', key='sk-x')
     with pytest.raises(UserError, match=r'openai@work is not connected. Run /login openai@work.'):
         key_profiles.model('openai@work:gpt-5')
-    save_codex_credentials(account='openai@work', value='not json')
-    with pytest.raises(UserError, match='Stored openai@work credentials are invalid'):
-        key_profiles.model('openai@work:gpt-5')
+    # An empty or missing key would let the provider fall back to the environment's key.
+    for stored in ('not json', '{}', '{"token": ""}'):
+        save_codex_credentials(account='openai@work', value=stored)
+        with pytest.raises(UserError, match='Stored openai@work credentials are invalid'):
+            key_profiles.model('openai@work:gpt-5')
     with pytest.raises(UserError, match=r'no longer exists\. Select a saved key again through /login openai@work'):
         save_key_connection(account='openai@work', token=KeyReference(name='GONE'), value='{}')
 
@@ -385,6 +387,10 @@ def test_chain_command(tmp_path: Path) -> None:
     assert store.chains() == {}
     assert 'chain:pool' not in store.models()
     assert store.model_settings('chain:pool') == {}
+    # Deleting it from the `/model` list removes the chain too, so `/chain` cannot still run it.
+    store.save_chain(name='pool', models=['openai:gpt-5', 'openai@work:gpt-5'])
+    assert store.remove_model(name='chain:pool')
+    assert store.chains() == {}
 
 
 def test_chains_and_profiles_take_their_model_settings(tmp_path: Path) -> None:

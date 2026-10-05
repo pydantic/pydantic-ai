@@ -39,7 +39,7 @@ def chain_command(store: SettingsStore, args: list[str]) -> str:
     if args[0] == 'remove':
         if len(args) != 2 or args[1] not in chains:
             raise ValueError(USAGE if len(args) != 2 else f'No chain named {args[1]}.')
-        if not store.delete_chain(name=args[1]):
+        if not store.remove_model(name=f'chain:{args[1]}'):
             raise ValueError(f'chain:{args[1]} is the saved default model. Select another model first.')
         return f'Removed chain:{args[1]}.'
     name = check_name(args[0], kind='Chain name')

@@ -110,8 +110,7 @@ def catalog(*, include: Iterable[str] = (), discovered: Iterable[CatalogModel] =
         *include,
     ):
         if name and name not in models:
-            provider, _, label = name.partition(':')
-            models[name] = CatalogModel(name=name, provider=provider, label=label)
+            models[name] = CatalogModel(name=name, provider=provider_of(name), label=name.partition(':')[2])
     discovered = tuple(discovered)
     providers = {model.provider for model in discovered}
     models = {name: model for name, model in models.items() if model.provider not in providers}

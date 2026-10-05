@@ -134,6 +134,9 @@ class SettingsStore:
             return False
         connection.execute('DELETE FROM models WHERE name = ?', (name,))
         connection.execute('DELETE FROM model_settings WHERE model = ?', (name,))
+        if name.startswith('chain:'):
+            # Removing a chain from `/model` removes the chain itself, so `/chain` cannot still run it.
+            connection.execute('DELETE FROM model_chains WHERE name = ?', (name.removeprefix('chain:'),))
         return True
 
     def chains(self) -> dict[str, list[str]]:
@@ -155,17 +158,6 @@ class SettingsStore:
                 (name, _CHAIN.dump_json(models).decode()),
             )
             connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (f'chain:{name}',))
-
-    def delete_chain(self, *, name: str) -> bool:
-        """Forget a chain, its model-list entry, and its settings; `False` if it is the saved default.
-
-        One transaction, so another session cannot make the chain its default between the check and the delete.
-        """
-        with self._connect() as connection:
-            if not self._remove_model(connection, f'chain:{name}'):
-                return False
-            connection.execute('DELETE FROM model_chains WHERE name = ?', (name,))
-        return True
 
     def reset(self, key: str) -> None:
         """Remove a setting override, restoring its default."""
