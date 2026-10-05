@@ -411,7 +411,7 @@ def create_shell(
     commands.register(
         Command(
             name='login',
-            description='Sign in to a subscription: codex, copilot, or one a plugin adds',
+            description='Sign in to a subscription: openai-codex, github-copilot, or one a plugin adds',
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
         )
