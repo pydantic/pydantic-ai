@@ -12,12 +12,16 @@ from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
 from termflow import Parser, Renderer
+from termflow.ansi import UNDERLINE_OFF, UNDERLINE_ON, fg_color, make_link
 from termflow.parser.events import (
     CodeBlockEndEvent,
     CodeBlockLineEvent,
     CodeBlockStartEvent,
+    HeadingEvent,
     ParseEvent,
 )
+from termflow.parser.inline import CODE_SPAN_RE, IMAGE_RE, LINK_RE
+from termflow.render.heading import _heading_codes  # pyright: ignore[reportPrivateUsage]
 from termflow.render.style import RenderFeatures, RenderStyle
 from termflow.stream import SmoothWriter
 from termflow.syntax import LANGUAGE_ALIASES
@@ -59,6 +63,67 @@ def markdown_style() -> RenderStyle:
         link=theme.AQUA,
         error=theme.CALCIUM,
     )
+
+
+_URL_RE = re.compile(r'<(https?://[^\s<>]+)>|(?<![\w/])https?://[^\s<>`]+')
+_URL_START, _URL_END = '\ufdd0', '\ufdd1'
+"""Marks around a URL while Termflow formats the line.
+
+Model text cannot forge them: `terminal_text` escapes these noncharacters, and the
+HTML entity decoding Termflow applies turns `&#xFDD0;` into nothing.
+"""
+_MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
+
+
+def _trim_url(url: str) -> str:
+    """Leave trailing punctuation and unbalanced closing brackets out of a bare URL, as GFM does."""
+    unopened = {')': url.count(')') - url.count('('), ']': url.count(']') - url.count('[')}
+    end = len(url)
+    while url[end - 1] in '.,;:!?\'"*_~)]':
+        char = url[end - 1]
+        if char in unopened:
+            if unopened[char] <= 0:
+                break
+            unopened[char] -= 1
+        end -= 1
+    return url[:end]
+
+
+class MarkdownRenderer(Renderer):
+    """Termflow's renderer, also highlighting bare `https://` and `<https://...>` URLs as links."""
+
+    _enclosing = ''
+    """Codes that restore the style a link interrupts, for headings Termflow styles around the inline text."""
+
+    def render(self, event: ParseEvent) -> None:
+        """Render one event, remembering a heading's style for links inside it."""
+        self._enclosing = _heading_codes(event.level, self.style)[0] if isinstance(event, HeadingEvent) else ''
+        super().render(event)
+
+    def _format_inline(self, text: str) -> str:
+        # Each pattern's matches are disjoint, so marking them is linear in the line length.
+        taken = bytearray(len(text))
+        for pattern in (CODE_SPAN_RE, IMAGE_RE, LINK_RE):
+            for match in pattern.finditer(text):
+                taken[match.start() : match.end()] = b'\x01' * (match.end() - match.start())
+
+        def mark(match: re.Match[str]) -> str:
+            if taken[match.start()]:
+                return match[0]
+            url = match[1] or _trim_url(match[0])
+            rest = '' if match[1] else match[0][len(url) :]
+            return f'{_URL_START}{url}{_URL_END}{rest}'
+
+        return _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
+
+    def _link(self, match: re.Match[str]) -> str:
+        url = match[1]
+        if '\x1b' in url:  # Other formatting split the URL; leave it as Termflow styled it.
+            return url
+        # Reset only the foreground so surrounding bold and thinking dim continue after the link.
+        label = f'{fg_color(self.style.link)}{url}\x1b[39m'
+        link = make_link(url, label) if self.features.hyperlinks else f'{UNDERLINE_ON}{label}{UNDERLINE_OFF}'
+        return link + self._enclosing
 
 
 class LinkOutput(io.StringIO):
@@ -105,7 +170,7 @@ class MarkdownPipeline:
         self.console = console
         self.thinking = thinking
         self._parser = Parser()
-        self._renderer = Renderer(
+        self._renderer = MarkdownRenderer(
             output=output,  # pyright: ignore[reportArgumentType] -- Termflow annotates TextIO but only writes and flushes.
             width=console.width,
             style=markdown_style(),
@@ -157,7 +222,7 @@ def render_markdown(*, source: str, width: int, thinking: bool) -> str:
     console = Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=width)
     if thinking and source:
         output.write(thinking_heading(console))
-    markdown = MarkdownPipeline(output=output, console=console, thinking=thinking, hyperlinks=True)
+    markdown = MarkdownPipeline(output=LinkOutput(output=output), console=console, thinking=thinking, hyperlinks=True)
     *lines, rest = source.split('\n')
     for line in lines:
         markdown.line(line)

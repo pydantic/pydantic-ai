@@ -270,7 +270,7 @@ class MarkdownBlock(io.StringIO):
         key = (width, theme.name())
         if self.source is None or key == self._key:
             return self._stream.all()
-        rendered = _Lines()
+        rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)
         rendered.write(self._render(source=self.source, width=width))
         return rendered.all()
 

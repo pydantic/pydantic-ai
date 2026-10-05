@@ -377,3 +377,18 @@ def test_live_transcript_rebinds_nested_markdown_state_without_resetting_output(
     transcript.write('latest\n')
     assert plain(transcript, width=40) == ['latest', '']
     assert transcript.printed(width=40) == 'latest\n'
+
+
+@pytest.mark.parametrize('repaint', ['width', 'theme'])
+def test_markdown_repaint_respects_configured_character_and_line_limits(repaint: str) -> None:
+    transcript = TranscriptBuffer(max_chars=8, max_lines=1)
+
+    def render(*, source: str, width: int) -> str:
+        return 'one\ntwo\nthree\n'
+
+    block = transcript.markdown(render=render, width=40, changed=lambda: None)
+    block.extend('x')
+    block.write('ok\n')
+    assert plain(transcript, width=40) == ['ok', '']
+    with theme.use(lambda: 'github_light' if repaint == 'theme' else 'default'):
+        assert plain(transcript, width=20 if repaint == 'width' else 40) == ['three', '']

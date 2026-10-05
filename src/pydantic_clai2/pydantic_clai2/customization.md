@@ -175,11 +175,12 @@ Other options are service_name (default pydantic-clai2), send_to_logfire
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
 then receives the telemetry), and ui_events (default false: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
-submissions, by name and never by content). /plugins configure observability opens
-a settings menu that edits these options. Its Logfire project row sets token and
-base_url for you, and turns sending on: pick Logfire US, EU, or
-a self-hosted URL, sign in in the browser, and pick a project; its new write
-token is saved in /keys. This explicit option overrides
+submissions, by name; while include_content is on, a submitted prompt also
+carries its text, but ! lines and slash-command arguments never do).
+/plugins configure observability opens a settings menu that edits these options.
+Its Logfire project row sets token and base_url for you, and turns sending on:
+pick Logfire US, EU, or a self-hosted URL, sign in in the browser, and pick a
+project; its new write token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
 $XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
 Both SDK configuration and credentials are read from that user directory, not
