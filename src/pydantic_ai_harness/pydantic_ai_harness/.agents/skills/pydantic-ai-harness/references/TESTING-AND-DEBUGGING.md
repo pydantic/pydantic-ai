@@ -34,7 +34,7 @@ with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox` attached: no sandbox is create
 - `Advisor` under an overridden `FunctionModel` or `TestModel` runs as a local `advisor` function
   tool, so the scripted model sees and can call a tool named `advisor`.
 - Assert through `result.all_messages()`: `ToolCallPart` is in `ModelResponse.parts`, `ToolReturnPart`
-  and `RetryPromptPart` in `ModelRequest.parts`.
+  in `ModelRequest.parts`. A call that asked for a retry is a `ToolReturnPart` with `outcome='retried'`.
 
 ## FileSystem, Shell, and Coder on a Temp Workspace
 
@@ -317,8 +317,8 @@ attach the capability for that provider or pass `workspace='new'`.
 the install command, e.g. `pydantic-monty is required for CodeMode. Install it with: pip install
 "pydantic-ai-harness[code-mode]"`. Install the extra from that capability's reference or docs page.
 
-**Monty restrictions.** Generated code that breaks a sandbox rule surfaces as a `RetryPromptPart` on
-`run_code`, and the run keeps going until `max_retries` is used up. Typical contents:
+**Monty restrictions.** Generated code that breaks a sandbox rule surfaces as a `ToolReturnPart` with
+`outcome='retried'` on `run_code`, and the run keeps going until `max_retries` is used up. Typical contents:
 `ModuleNotFoundError: No module named 'numpy'` (third-party import) and
 `RuntimeError: 'datetime.now' is not supported in this environment` (clock without `os_access`). See
 [Code Mode](./CODE-MODE.md#sandbox-restrictions) for the rules and how to grant host access.

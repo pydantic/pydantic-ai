@@ -44,6 +44,7 @@ from .._utils import generate_tool_call_id
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
+    ERROR_OUTCOMES,
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AudioUrl,
     BinaryAudio,
@@ -66,7 +67,8 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -78,9 +80,15 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import ModelRequestParameters, download_item
+from ..models import (
+    ModelRequestParameters,
+    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
@@ -386,9 +394,8 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     google_supports_seeding_function_parts: bool
     """Whether seeded tool calls and results go in as native function parts. Default: `False`.
 
-    When `True`, prior [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s,
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]s, and tool
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]s are seeded as `function_call` and
+    When `True`, prior [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s and
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]s are seeded as `function_call` and
     `function_response` parts, sent as the session's initial history (`history_config`), rather than
     projected as readable text. True of the Gemini 3.8 Live models. `gemini-2.5-flash-native-audio-*`
     rejects function parts in seeded turns, and `gemini-3.1-flash-live-preview` loses history seeded
@@ -598,6 +605,11 @@ async def _seed_request_parts(
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
+        # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one
+        # of them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and
+        # reads exactly like the retried return the framework emits for the same failure.
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            part = _translate_legacy_retry_part(part)
         if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
@@ -628,7 +640,7 @@ async def _seed_request_parts(
                 # Gemini's function response has an `error` key for a failed call, as on a standard request.
                 response = (
                     {'error': part.model_response_str(wrap_if_error=False)}
-                    if part.outcome == 'failed'
+                    if part.outcome in ERROR_OUTCOMES
                     else {'output': output}
                 )
                 parts.append(
@@ -650,20 +662,19 @@ async def _seed_request_parts(
                         )
                     )
                 )
-        elif isinstance(part, RetryPromptPart):
-            output = part.model_response()
-            if part.tool_name is None:
-                parts.append(genai_types.Part(text=output))
-            elif function_parts:
-                parts.append(
-                    genai_types.Part(
-                        function_response=genai_types.FunctionResponse(
-                            id=part.tool_call_id, name=part.tool_name, response={'error': output}
-                        )
-                    )
+        elif isinstance(part, RetryFeedbackPart):
+            # A seeded turn has no system role — a `SystemPromptPart` is hoisted to
+            # `system_instruction` instead — and a retry answers one response rather than standing
+            # over the session, so hoisting it there would be wrong. Feedback bound for the system
+            # voice takes the same `<system>` tagging every model without a mid-conversation system
+            # message gets, which is what keeps the model from reading it as something a person said
+            # (https://github.com/pydantic/pydantic-ai/issues/6404).
+            text = part.model_response()
+            parts.append(
+                genai_types.Part(
+                    text=_wrap_in_system_tags(text) if _retry_feedback_speaks_for_the_harness(part) else text
                 )
-            else:
-                parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'))
+            )
         else:
             assert_never(part)
     return parts

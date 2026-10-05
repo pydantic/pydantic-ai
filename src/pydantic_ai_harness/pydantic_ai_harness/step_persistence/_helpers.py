@@ -7,7 +7,7 @@ from typing import Any
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     ToolCallPart,
     ToolReturnPart,
 )
@@ -22,14 +22,17 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
 
     A history passes when:
 
-    1. Every `ToolCallPart` has a matching `ToolReturnPart` or
-       tool-bound `RetryPromptPart` later in the conversation, and
-    2. Every tool return / tool-bound retry resolves a currently-open
-       tool call (no orphans, duplicates, or out-of-order returns).
+    1. Every `ToolCallPart` has a matching `ToolReturnPart` later in the
+       conversation, and
+    2. Every tool return resolves a currently-open tool call (no orphans,
+       duplicates, or out-of-order returns).
 
-    A `RetryPromptPart` with `tool_name is None` is an output-validation
-    retry -- providers map it as a regular user message, not a tool result,
-    so it does not need to resolve an open call.
+    A retry that answers a call is that call's `ToolReturnPart` carrying
+    `outcome='retried'`, so it settles the pairing like any other return. A
+    `RetryFeedbackPart` answers no call at all -- providers render it as
+    conversation, not as a tool result -- so it needs no open call. A
+    tool-bound legacy `RetryPromptPart` in a caller-passed history pairs the
+    same way a retried return does.
 
     Since pydantic-ai 2.10 repairs broken pairing before every model request,
     a failing history is still sendable via `Agent.run(message_history=...)`;
@@ -48,7 +51,8 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
                     if part.tool_call_id not in open_calls:
                         return False
                     open_calls.discard(part.tool_call_id)
-                elif isinstance(part, RetryPromptPart) and part.tool_name is not None:
+                # TODO(v3): remove `RetryPromptPart`
+                elif isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
                     if part.tool_call_id not in open_calls:
                         return False
                     open_calls.discard(part.tool_call_id)

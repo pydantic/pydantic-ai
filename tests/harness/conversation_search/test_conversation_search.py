@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from pydantic_core import ErrorDetails
 
 import pydantic_ai.messages as messages_module
 from pydantic_ai import Agent
@@ -25,7 +26,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -62,6 +63,7 @@ from pydantic_ai_harness.step_persistence import (
     SqliteStepStore,
     StepPersistence,
 )
+from tests.conftest import legacy_retry_prompt_part
 
 
 def _run_context(conversation_id: str | None = None) -> RunContext[None]:
@@ -785,7 +787,7 @@ class TestSearchScope:
                     SystemPromptPart(content='system guidance ' * 30),
                     UserPromptPart(content='find the ZEBRA passphrase mango'),
                     ToolReturnPart(tool_name='readfile', content='X' * 600, tool_call_id='c1'),
-                    RetryPromptPart(content='please retry', tool_name='readfile', tool_call_id='c1'),
+                    ToolReturnPart(tool_name='readfile', content='please retry', tool_call_id='c1', outcome='retried'),
                 ]
             ),
             ModelResponse(
@@ -806,8 +808,64 @@ class TestSearchScope:
         assert '[Compaction summary]' in rendered
         assert 'Tool Call [search]' in rendered
         assert 'Tool [readfile]' in rendered
-        assert 'Retry [readfile]: please retry' in rendered  # RetryPromptPart is searchable
+        assert 'Retry [readfile]: please retry' in rendered  # a retried tool return is searchable
         assert '...' in rendered  # truncation applied to the long tool return / args
+
+    async def test_retry_feedback_is_indexed(self) -> None:
+        """A retry that named no tool is recalled like one that did."""
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='mango question'),
+                    RetryFeedbackPart(
+                        content=[{'type': 'missing', 'loc': ('mango',), 'msg': 'Field required', 'input': {}}],
+                        cause='validation_error',
+                    ),
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='mango answer')]),
+        ]
+        source = _StubSource({'r1': messages})
+
+        rendered = await _search(source, 'mango')
+
+        # `model_response()`, not `str(part.content)`: the latter would index a Python repr of the
+        # error list rather than the rendering the model was shown.
+        assert 'Retry: ' in rendered
+        assert "{'type': 'missing'" not in rendered
+
+    async def test_retry_feedback_truncates_but_stays_searchable(self) -> None:
+        """The display excerpt is capped while the index keeps the full text."""
+        errors: list[ErrorDetails] = [
+            {'type': 'missing', 'loc': (f'field_{i}',), 'msg': 'Field required', 'input': {}} for i in range(40)
+        ]
+        errors.append({'type': 'missing', 'loc': ('rambutan',), 'msg': 'Field required', 'input': {}})
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[RetryFeedbackPart(content=errors, cause='validation_error')]),
+        ]
+        source = _StubSource({'r1': messages})
+
+        rendered = await _search(source, 'rambutan')
+
+        assert 'Retry: ' in rendered
+        assert '...' in rendered
+
+    async def test_a_hand_built_legacy_retry_prompt_part_is_indexed(self) -> None:
+        """Code that still builds one and passes it as `message_history` reaches the indexer.
+
+        A stored history loads as one of the two parts above, and the model translates an
+        in-memory instance before the request goes out, but the index reads the history first.
+        """
+        content = 'please retry mango ' + 'padding ' * 80 + 'rambutan'
+        part = legacy_retry_prompt_part(content, tool_name='readfile', tool_call_id='c1')
+        source = _StubSource({'r1': [ModelRequest(parts=[part])]})
+
+        rendered = await _search(source, 'rambutan')
+
+        # `rambutan` sits past the display cutoff: matching on it proves the index kept the full
+        # text, and the ellipsis proves the excerpt did not.
+        assert 'Retry [readfile]: please retry mango' in rendered
+        assert '...' in rendered
 
     async def test_tool_availability_delta_is_not_indexed(self) -> None:
         """Tool-list bookkeeping is not conversation content, so it contributes no line.
@@ -832,8 +890,8 @@ class TestSearchScope:
 
         assert 'User: mango question' in rendered
         assert 'Assistant: mango answer' in rendered
-        # The delta contributes nothing. Before it was recognized it fell through to the
-        # `RetryPromptPart` branch, which reads `part.tool_name` and raised `AttributeError`.
+        # The delta contributes nothing. Before it was recognized it fell through to the retry
+        # branch, which read `part.tool_name` and raised `AttributeError`.
         assert 'Retry [' not in rendered
 
     async def test_user_and_text_parts_truncate_but_stay_searchable(self) -> None:

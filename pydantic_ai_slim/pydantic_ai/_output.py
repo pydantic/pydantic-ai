@@ -121,9 +121,52 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
         return origin is not None and isinstance(value, origin)
 
 
-def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
-    m = _messages.RetryPromptPart.from_error(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
-    return ToolRetryError(m)
+def build_retried_tool_return(
+    error: ValidationError | ModelRetry, *, tool_name: str, tool_call_id: str | None = None
+) -> _messages.ToolReturnPart:
+    """Build the result a tool call that has to be retried is answered with.
+
+    This is the exact result the model receives when the agent loop handles the failure, so anything
+    else presenting the same failure (an instrumentation span, say) must build it the same way.
+
+    A `ValidationError`'s details travel as structured tool-result content, serialized the same way a
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]'s are, so the two channels show the
+    model the same JSON: `ctx` is dropped by `include_context=False`, and `input` is kept once per
+    distinct value.
+    """
+    content: list[dict[str, Any]] | str
+    if isinstance(error, ValidationError):
+        content = _messages._dump_error_details(  # pyright: ignore[reportPrivateUsage]
+            error.errors(include_url=False, include_context=False)
+        )
+    else:
+        content = error.message
+
+    part = _messages.ToolReturnPart(tool_name=tool_name, content=content, outcome='retried')
+    if tool_call_id:
+        part.tool_call_id = tool_call_id
+    return part
+
+
+def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+    """Build the retry signal for output that failed validation or asked to be retried.
+
+    An output *tool* call answers its own call, so its retry is a tool result. Text, native and
+    prompted output have no call to answer, so theirs is harness feedback the model renders in its
+    own voice rather than as a fabricated user turn.
+    """
+    if run_context.tool_name is None:
+        if isinstance(e, ValidationError):
+            return ToolRetryError(
+                _messages.RetryFeedbackPart(
+                    content=e.errors(include_url=False, include_context=False), cause='validation_error'
+                )
+            )
+        return ToolRetryError(_messages.RetryFeedbackPart(content=e.message, cause='model_retry'))
+
+    return ToolRetryError(
+        build_retried_tool_return(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
+    )
 
 
 async def run_output_validate_hooks(
@@ -165,7 +208,7 @@ async def run_output_validate_hooks(
         )
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
-            raise _make_retry_prompt(e, run_context) from e
+            raise _make_retry_signal(e, run_context) from e
         raise
 
 
@@ -214,7 +257,7 @@ async def run_output_process_hooks(
         raise  # Already wrapped, propagate
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
-            raise _make_retry_prompt(e, run_context) from e
+            raise _make_retry_signal(e, run_context) from e
         raise
 
 
@@ -385,10 +428,10 @@ async def execute_output_function(
         return await function_schema.call(args, run_context)
     except ModelRetry as r:
         if wrap_validation_errors:
-            m = _messages.RetryPromptPart.from_error(
-                r, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id
-            )
-            raise ToolRetryError(m) from r
+            # Only text, native and prompted output wrap here: an output *tool* call reaches this
+            # with `wrap_validation_errors=False` and rebuilds the retry from its own call in
+            # `_make_retry_signal`, so there is never a call for this one to answer.
+            raise ToolRetryError(_messages.RetryFeedbackPart(content=r.message, cause='model_retry')) from r
         else:
             raise
 

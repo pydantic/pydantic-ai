@@ -40,7 +40,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -197,7 +196,7 @@ def _script(
         run.expected = {name: expected for name, _, expected in calls}
         for message in this_run:
             for part in message.parts:
-                if isinstance(part, (ToolReturnPart, RetryPromptPart)) and part.tool_name:
+                if isinstance(part, ToolReturnPart):
                     run.outputs[part.tool_name] = str(part.content)
         runs.append(run)
         return ModelResponse(parts=[TextPart('Done.')])

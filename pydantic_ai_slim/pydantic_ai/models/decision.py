@@ -33,13 +33,12 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -55,7 +54,8 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 
@@ -428,6 +428,10 @@ class DecisionModel(Model[InterfaceClient]):
     The profile's `decision_max_score_levels` takes precedence where it is set. Whole numbers from 0 with more levels than this are not a rubric, so a field of them is asked as a pick-one
     instead, and counts against `max_choice_options`.
     """
+
+    # Retry feedback is a step taken for the prompt, so it goes along as a `retry` entry: translated, a validation
+    # error would become the user text judged as the request, and a `ModelRetry` message a system prompt.
+    _renders_retry_feedback = True
 
     @cached_property
     def profile(self) -> ModelProfile:
@@ -1948,8 +1952,8 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
     A tool whose result is already in the turn is not offered again. A decision model judges the text in front of it
     and has no notion of having made a call: with a call and its result in view, the text still calls for the tool, so
     left on offer it is picked again until the usage limit, even with the result set apart under `done`. That goes for
-    a call made by a model behind this one too, since this model would propose it again on the same text. A call that
-    produced no result, because the tool asked for a retry, leaves the tool on offer. The turn is everything since the
+    a call made by a model behind this one too, since this model would propose it again on the same text. A call whose
+    result asked for a retry (`outcome='retried'`) leaves the tool on offer. The turn is everything since the
     last user prompt, which is the nearest thing to a run boundary the history has: a result from an earlier turn does
     not withhold the tool, but a judged history that ends in another agent's call to a tool of the same name does.
     """
@@ -1964,9 +1968,9 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
                 # previous turn's.
                 returned.clear()
                 retried = False
-            elif isinstance(part, ToolReturnPart):
+            elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                 returned.add(part.tool_name)
-            elif isinstance(part, RetryPromptPart):
+            elif isinstance(part, ToolReturnPart | RetryFeedbackPart):
                 retried = True
     return [tool for tool in tools if tool.name not in returned], bool(returned) or retried
 
@@ -2080,10 +2084,10 @@ def _request_entry(part: ModelRequestPart) -> JsonValue:
         return {'user': _prompt_text(part)}
     elif isinstance(part, ToolReturnPart):
         return _tool_return_entry(part)
-    elif isinstance(part, RetryPromptPart):
+    elif isinstance(part, RetryFeedbackPart):
         return {'retry': part.model_response()}
-    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-        raise _unsynthesized_tool_availability_delta_error()
+    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+        raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
         raise _unconverted_speech_part_error()

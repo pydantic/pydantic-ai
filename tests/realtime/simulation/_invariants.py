@@ -72,7 +72,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
     SpeechPart,
     TextPart,
     ToolCallPart,
@@ -135,14 +134,14 @@ def request_keys(message: ModelRequest) -> list[str]:
             keys += [item if isinstance(item, str) else getattr(item, 'base64', '')[-12:] for item in contents]
         elif isinstance(part, SpeechPart) and part.transcript:
             keys.append(part.transcript)
-        elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
+        elif isinstance(part, ToolReturnPart):
             keys.append(part.tool_call_id)
     return keys
 
 
 def is_tool_return_request(message: ModelMessage) -> bool:
     """A request carrying tool returns (and the content that follows them), which is placed after its call."""
-    return isinstance(message, ModelRequest) and isinstance(message.parts[0], (ToolReturnPart, RetryPromptPart))
+    return isinstance(message, ModelRequest) and isinstance(message.parts[0], ToolReturnPart)
 
 
 def is_user_speech_request(message: ModelMessage) -> bool:
@@ -536,7 +535,7 @@ class Checker:
             for position, message in enumerate(messages)
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, (ToolReturnPart, RetryPromptPart))
+            if isinstance(part, ToolReturnPart)
         ]
         violations: list[Violation] = [
             (f'a return for {call_id!r}, which no recorded response called', {'call': call_id})

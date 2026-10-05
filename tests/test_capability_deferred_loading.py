@@ -36,7 +36,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
@@ -841,13 +840,14 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=[
-                            {'type': 'missing', 'loc': ('id',), 'msg': 'Field required', 'input': {'name': 'refunds'}}
+                            {'type': 'missing', 'loc': ['id'], 'msg': 'Field required', 'input': {'name': 'refunds'}}
                         ],
                         tool_name='load_capability',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -860,7 +860,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=81, output_tokens=10),
+                usage=RequestUsage(input_tokens=75, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -884,7 +884,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=86, output_tokens=11),
+                usage=RequestUsage(input_tokens=80, output_tokens=11),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -1270,15 +1270,25 @@ def _secret_op_returns(messages: list[ModelMessage]) -> list[object]:
     return [
         part.content
         for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
-        if part.tool_name == 'secret_op'
+        if part.tool_name == 'secret_op' and part.outcome != 'retried'
+    ]
+
+
+def _refusals(messages: list[ModelMessage]) -> list[str]:
+    """The refused calls' feedback: a refusal answers its call as a return carrying `outcome='retried'`."""
+    return [
+        str(part.content)
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
     ]
 
 
 def _call_secret_op_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
     """Call `secret_op` on the first request, then finish however that call was answered."""
     answered = any(
-        part.tool_name == 'secret_op' for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
-    ) or any(True for _ in iter_message_parts(messages, ModelRequest, RetryPromptPart))
+        part.tool_name == 'secret_op' or part.outcome == 'retried'
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+    )
     if answered:
         return ModelResponse(parts=[TextPart('done')])
     return ModelResponse(parts=[ToolCallPart('secret_op', {}, tool_call_id='call-1')])
@@ -1325,7 +1335,7 @@ async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_
     result = await agent.run('call secret_op')
 
     assert _secret_op_returns(result.all_messages()) == []
-    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    refusals = _refusals(result.all_messages())
     if inject_load:
         # The capability is active, so its own filter decides — and it removed the tool.
         assert prepare_tools_calls[0] == snapshot(['secret_op'])
@@ -1369,9 +1379,7 @@ async def test_processor_injected_load_makes_capability_tool_callable() -> None:
     result = await agent.run('call secret_op')
 
     assert _secret_op_returns(result.all_messages()) == snapshot(['EXECUTED'])
-    assert [
-        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-    ] == snapshot([])
+    assert _refusals(result.all_messages()) == snapshot([])
 
 
 async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement() -> None:
@@ -1429,9 +1437,7 @@ async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement
     assert advertised[0] == snapshot(['load_capability'])
     # ...and the call the stub makes anyway is refused, rather than running ungoverned.
     assert _secret_op_returns(result.all_messages()) == []
-    assert [
-        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-    ] == snapshot(
+    assert _refusals(result.all_messages()) == snapshot(
         [
             "Tool 'secret_op' is not available yet: it belongs to capability 'secrets'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
         ]
@@ -1480,9 +1486,9 @@ async def test_processor_injected_load_is_governed_when_resuming_a_suspended_res
     assert _secret_op_returns(result.all_messages()) == []
     assert prepare_tools_calls[0] == snapshot(['secret_op'])
     assert loaded_ids_seen[0] == snapshot(['secrets'])
-    assert [
-        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-    ] == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])
+    assert _refusals(result.all_messages()) == snapshot(
+        ["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"]
+    )
 
 
 async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_revealed() -> None:
@@ -1546,7 +1552,7 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         wire_tools.append(sorted(tool.name for tool in info.function_tools))
-        if list(iter_message_parts(messages, ModelRequest, RetryPromptPart)):
+        if [part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried']:
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
 
@@ -1559,10 +1565,18 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
     result = await agent.run('guess the hidden tool')
 
     assert result.output == 'done'
-    returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
-    assert returns == []
-    retries = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
-    assert [str(part.content) for part in retries] == snapshot(
+    executions = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome != 'retried'
+    ]
+    assert executions == []
+    refusals = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ]
+    assert [str(part.content) for part in refusals] == snapshot(
         [
             "Tool 'hidden_tool' is not available yet: search for it first, then call it again once you've seen its schema."
         ]
@@ -2356,12 +2370,12 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
-        # Give up on the first signal of tool feedback — either a `ToolReturnPart`
-        # (success, which can't happen here) or a `RetryPromptPart` (the framework
+        # Give up on the first signal of tool feedback — a `ToolReturnPart`, whether it
+        # succeeded (which can't happen here) or carries `outcome='retried'` (the framework
         # signaling the bad cap id). Without the retry branch, we'd loop past
         # `max_retries` and raise `UnexpectedModelBehavior` instead of giving up.
         if not any(
-            isinstance(part, (ToolReturnPart, RetryPromptPart))
+            isinstance(part, ToolReturnPart)
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -2389,7 +2403,7 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     )
     history_parts = [part for message in result.all_messages() for part in message.parts]
     assert not any(isinstance(part, LoadCapabilityReturnPart) for part in history_parts)
-    [retry] = [part for part in history_parts if isinstance(part, RetryPromptPart)]
+    [retry] = [part for part in history_parts if isinstance(part, ToolReturnPart) and part.outcome == 'retried']
     assert retry.content == snapshot("No capability found with id 'missing'.")
 
 
@@ -2444,7 +2458,7 @@ async def test_load_capability_retries_for_already_available_capability() -> Non
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and isinstance(part.content, str)
         ]
         if retries:
             retry_messages.extend(retries)
@@ -2486,7 +2500,7 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and isinstance(part.content, str)
         ]
         if retries:
             retry_messages.extend(retries)
@@ -2558,20 +2572,16 @@ async def test_load_capability_called_twice_in_one_response_loads_once(mode: Par
 
     assert result.output == 'done'
     messages = result.all_messages()
-    tool_results = [
-        part
-        for part in messages[2].parts
-        if isinstance(part, LoadCapabilityReturnPart | RetryPromptPart | ToolAvailabilityDeltaPart)
-    ]
+    tool_results = [part for part in messages[2].parts if isinstance(part, ToolReturnPart | ToolAvailabilityDeltaPart)]
     assert [(type(part).__name__, part.tool_call_id) for part in tool_results] == [
         ('LoadCapabilityReturnPart', 'first'),
         ('ToolAvailabilityDeltaPart', 'first'),
         ('LoadCapabilityReturnPart', 'other'),
-        ('RetryPromptPart', 'duplicate'),
+        ('ToolReturnPart', 'duplicate'),
     ]
     first, _, other_return, duplicate = tool_results
     assert isinstance(first, LoadCapabilityReturnPart) and first.instructions == 'Dyn runbook.'
     assert isinstance(other_return, LoadCapabilityReturnPart) and other_return.instructions == 'Other runbook.'
-    assert isinstance(duplicate, RetryPromptPart)
+    assert isinstance(duplicate, ToolReturnPart) and duplicate.outcome == 'retried'
     assert duplicate.content == LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id='dyn')
     assert parse_loaded_capabilities(messages) == {'dyn', 'other'}

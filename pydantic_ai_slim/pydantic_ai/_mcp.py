@@ -8,6 +8,10 @@ from typing_extensions import assert_never
 
 from . import exceptions, messages
 from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field
+from .models import (
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+)
 
 try:
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
@@ -141,22 +145,14 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                             content=[
                                 mcp_types.TextContent(type='text', text=part.model_response_str(wrap_if_error=False))
                             ],
-                            isError=part.outcome == 'failed',
+                            isError=part.outcome in messages.ERROR_OUTCOMES,
                         )
                     )
-                elif isinstance(part, messages.RetryPromptPart):
-                    content = mcp_types.TextContent(type='text', text=part.model_response())
-                    if part.tool_name is None:
-                        add_msg('user', content)
-                    else:
-                        tool_results.append(
-                            mcp_types.ToolResultContent(
-                                type='tool_result', toolUseId=part.tool_call_id, content=[content], isError=True
-                            )
-                        )
                 elif isinstance(part, (messages.SpeechPart, messages.ToolAvailabilityDeltaPart)):
                     # These parts are not currently sent to MCP sampling.
                     continue
+                elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                    raise _unprepared_part_error(part)
                 else:
                     assert_never(part)
             if tool_results:

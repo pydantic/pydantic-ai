@@ -499,7 +499,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 
 **Model request hooks** (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`):
 
-- The retry message is sent back to the model as a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]
+- The retry message is sent back to the model as a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], rendered in Pydantic AI's own voice rather than the user's — see [Feedback that belongs to no tool call](retries.md#feedback-that-belongs-to-no-tool-call)
 - `before_model_request`: no response is saved, since the model wasn't called. The next request adds the retry message to the existing history, and `before_model_request` hooks run again for it, so a hook that always raises uses up the retry budget
 - `after_model_request`: the original response is preserved in message history so the model can see what it said
 - `wrap_model_request`: the response is preserved only if the handler was called
@@ -507,12 +507,12 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 
 **Tool hooks** (`before/after_tool_validate`, `wrap_tool_validate`, `on_tool_validate_error`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
 
-- Converted to tool retry prompts, same as when a tool function raises `ModelRetry`
+- Converted to retried tool results, same as when a tool function raises `ModelRetry`
 - Retries count against the tool's `max_retries` limit
 
 **Output hooks** (`before/after_output_validate`, `wrap_output_validate`, `on_output_validate_error`, `before/after_output_process`, `wrap_output_process`, `on_output_process_error`):
 
-- Converted to retry prompts, same as when an output function raises `ModelRetry`
+- Converted to retries, same as when an output function raises `ModelRetry`
 - For tool output, retries count against the tool's `max_retries` limit
 - For text output, retries count against the output side of the agent's retry budget
 
