@@ -265,7 +265,8 @@ class Session(Generic[DepsT, OutputT]):
         """Save a copy of this conversation under `conversation_id`, or a random ID, and continue in the copy.
 
         The original is left as it was saved. Raises `ValueError` when a saved conversation already
-        uses `conversation_id`.
+        uses `conversation_id`. This is `--fork-session`, named after Claude Code's flag: unlike
+        `/fork`, which runs a copy in the background, this session switches into the copy.
         """
         if self._running:
             raise RuntimeError('Cannot fork a running conversation')

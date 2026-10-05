@@ -140,9 +140,9 @@ async def test_launch_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert session.conversation_id == saved
 
     # The Python API refuses what the CLI refuses, before changing the conversation.
-    with pytest.raises(ValueError, match='only be combined with --resume when --fork-session'):
+    with pytest.raises(ValueError, match=r'can only be combined with `resume` \(`--resume`\) when `fork_session`'):
         await service.start(resume=saved, session_id=THIRD_ID)
-    with pytest.raises(ValueError, match='--fork-session requires --resume'):
+    with pytest.raises(ValueError, match=r'`fork_session` \(`--fork-session`\) requires `resume` \(`--resume`\)'):
         await service.start(resume=None, fork=True)
     with pytest.raises(ValueError, match="'not-a-uuid' is not a valid UUID"):
         await service.start(resume=None, session_id='not-a-uuid')
@@ -152,9 +152,20 @@ async def test_launch_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert session.conversation_id == THIRD_ID
 
 
+async def test_headless_refuses_the_browser(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r'explicit `resume` \(`--resume SESSION-ID`\)'):
+        await headless.run_headless(
+            text='go',
+            settings=Settings(model=None),
+            store=SettingsStore(tmp_path / 'config.db'),
+            project=ProjectSettings(),
+            resume='',
+        )
+
+
 async def test_chat_checks_launch_options_before_drawing(tmp_path: Path) -> None:
     output = StringIO()
-    with pytest.raises(ValueError, match='--fork-session requires --resume'):
+    with pytest.raises(ValueError, match=r'`fork_session` \(`--fork-session`\) requires `resume` \(`--resume`\)'):
         await chat(
             Agent(TestModel()),
             deps=None,
