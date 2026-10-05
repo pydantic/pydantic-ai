@@ -23,7 +23,8 @@ Every capability package must, or CI fails:
 Also add the page to `docs/navigation.yml`, in its category subsection under "Capabilities". A
 durable-execution backend goes in the "Durable Execution" section instead (like
 `harness/aws-lambda.md`). An interface goes in the "Interfaces" section instead (like
-`harness/acp.md`). No test checks the `docs/navigation.yml` entry.
+`harness/acp.md`). `tests/test_docs_navigation.py` fails for a page that has no entry and is not
+listed in that test's `UNPUBLISHED_PAGES`.
 
 ## Sidebar Source Of Truth
 

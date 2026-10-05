@@ -4873,8 +4873,8 @@ class RealtimeSessionReconnectEvent:
 
     Session configuration (instructions, tools, voice, ...) is restored on every reconnect.
     Conversation state is restored either by the provider's native session resumption (Gemini Live
-    when enabled, xAI Grok Voice) or by the session replaying its local history into the fresh
-    server-side conversation (OpenAI/Azure OpenAI).
+    when enabled, xAI Grok Voice, a stored OpenAI GPT-Live session) or by the session replaying its local
+    history into the fresh server-side conversation (OpenAI/Azure OpenAI, an unstored GPT-Live session).
     """
 
     _: KW_ONLY
