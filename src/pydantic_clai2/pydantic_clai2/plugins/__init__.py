@@ -419,8 +419,8 @@ class Plugin(Generic[SettingsT, DepsT]):
         """Read what the `get_*` methods need, such as files on disk, before CLAI calls them.
 
         Called once per load, after `__init__` and before the `get_*` methods, so commands and
-        capabilities can depend on what it finds. A failure fails the load. `load_plugin` does not
-        call it; a test awaits it before `collect`.
+        capabilities can depend on what it finds. A failure fails the load. `load_plugin` raises
+        `TypeError` for a plugin that overrides it; a test calls `from_host`, awaits `prepare`, then `collect`.
         """
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
