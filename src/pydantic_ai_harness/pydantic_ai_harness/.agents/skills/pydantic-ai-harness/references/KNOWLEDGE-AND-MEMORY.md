@@ -228,14 +228,15 @@ duplicate_names='error', workspace=None)`. `directories` is one path or a sequen
 directories (not individual skill folders), in precedence order.
 
 To layer project and personal libraries as coding agents do, pass
-`missing_directories='skip'` (absent folders are left out) and `duplicate_names='keep_first'` (the
-earlier directory's skill wins, the other is skipped with a `UserWarning`).
+`missing_directories='skip'` (absent folders are left out; a file in their place still fails) and
+`duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
+a `UserWarning`).
 
 A host that lets a person invoke a skill (a `/code-review src/app.py` command) reads the catalog
 with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
 `skill.render(arguments)` as the prompt: `$ARGUMENTS` in the body is substituted, else
-`ARGUMENTS: ...` is appended. `catalog.skipped` lists the `SKILL.md` files left out, for the host to show;
-`load` emits no warnings itself.
+`ARGUMENTS: ...` is appended (indexed forms like `$0` are not). `catalog.skipped` lists the
+`SKILL.md` files left out, for the host to show; `load` emits no warnings itself.
 
 Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
@@ -244,13 +245,15 @@ Gotchas:
   works in a sandbox.
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
-  `SKILL.md` count. A skill found twice (symlink or identical copy) counts once.
+  `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are
+  not compared) counts once.
 - `include` and `exclude` are mutually exclusive; unknown names fail at run start, and so do
   duplicate selected names and missing library paths with the default `'error'` options.
   Malformed frontmatter or a name not matching its directory warns and skips that skill.
 - With no skills found, `Skills` adds no instructions and no `load_capability` tool.
-- `description` is required. The loaded instructions name the skill's directory, so a model with
-  file or shell tools can follow `references/` or run `scripts/`; `Skills` itself never reads or
+- `description` is required. The loaded instructions name the skill's directory in the run's
+  workspace (not for a `workspace=` library), so a model with file or shell tools can follow
+  `references/` or run `scripts/`; `Skills` itself never reads or
   runs them, and `${CLAUDE_SKILL_DIR}` is not substituted. Fields like `allowed-tools`, `model`,
   `hooks` are accepted but not implemented (one aggregated `UserWarning`).
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are

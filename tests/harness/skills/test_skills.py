@@ -161,7 +161,8 @@ class TestSkills:
 
         await agent.run('go')
 
-        assert run.loaded == _loaded(tmp_path.resolve() / 'app' / 'skills', 'alpha', 'Alpha directions.')
+        # `/app` is not where the model's file tools work, so the skill's directory is not named.
+        assert run.loaded == '# Skill: alpha\n\nAlpha directions.'
 
     def test_own_workspace_must_be_a_backend(self, tmp_path: Path) -> None:
         with pytest.raises(TypeError, match=r'takes a workspace backend.*LocalWorkspaceBackend\('):
@@ -600,14 +601,30 @@ class TestSkillLibraryLayering:
 
     async def test_missing_directories_can_be_skipped(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / '.claude' / 'skills', 'review')
-        (tmp_path / '.agents').mkdir()
-        (tmp_path / '.agents' / 'skills').write_text('not a directory', encoding='utf-8')
 
         names = await _names(
             Skills(['.agents/skills', '.claude/skills', 'missing'], missing_directories='skip'), tmp_path
         )
 
         assert names == ['review']
+
+    async def test_skipping_missing_directories_still_rejects_a_file(self, tmp_path: Path) -> None:
+        (tmp_path / '.agents').mkdir()
+        (tmp_path / '.agents' / 'skills').write_text('not a directory', encoding='utf-8')
+
+        with pytest.raises(ValueError, match='is not a directory'):
+            await _run(Skills('.agents/skills', missing_directories='skip'), tmp_path)
+
+    async def test_an_invalid_earlier_skill_does_not_hide_a_valid_one(self, tmp_path: Path) -> None:
+        broken = tmp_path / 'project' / 'review'
+        broken.mkdir(parents=True)
+        (broken / 'SKILL.md').write_text('no frontmatter', encoding='utf-8')
+        _write_skill(tmp_path / 'personal', 'review', description='Personal review.')
+
+        with pytest.warns(UserWarning, match='project/review/SKILL.md must start with YAML frontmatter'):
+            listed = await _descriptions(Skills(['project', 'personal'], duplicate_names='keep_first'), tmp_path)
+
+        assert listed == '- review: Personal review.'
 
     async def test_no_skills_add_no_instructions_or_tools(self, tmp_path: Path) -> None:
         run = await _run(Skills(['.agents/skills', '.claude/skills'], missing_directories='skip'), tmp_path)
@@ -640,9 +657,9 @@ class TestSkillsLoad:
         assert catalog.skills[1].ignored_behavioral_fields == ('allowed-tools',)
         assert catalog.skills[0].directory == f'{workspace}/project/review'
         assert catalog.skipped == (
+            IsStr(regex=rf'(?s)Skipping {workspace}/personal/broken/SKILL.md: Invalid YAML frontmatter.*'),
             f"Skipping {workspace}/personal/review/SKILL.md: skill name 'review' is already taken by "
             f'{workspace}/project/review/SKILL.md.',
-            IsStr(regex=rf'(?s)Skipping {workspace}/personal/broken/SKILL.md: Invalid YAML frontmatter.*'),
         )
 
     async def test_load_reads_a_configuration_with_its_own_workspace(self, tmp_path: Path) -> None:

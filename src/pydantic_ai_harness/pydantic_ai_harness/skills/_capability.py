@@ -21,6 +21,7 @@ from pydantic_ai_harness.skills._loader import (
     SkillDefinition,
     duplicate_name,
     load_skill_libraries,
+    render_skill,
     same_skill,
 )
 
@@ -46,12 +47,12 @@ class _Skill(AbstractCapability[AgentDepsT]):
     Instructions only, with no toolset, so a durable engine accepts it although it is built per run.
     """
 
-    def __init__(self, skill: SkillDefinition) -> None:
+    def __init__(self, skill: SkillDefinition, *, with_directory: bool) -> None:
         self.id = skill.name
         # Continuation lines are indented so a multiline description doesn't read as separate catalog entries.
         self.description = skill.description.replace('\n', '\n  ')
         self.defer_loading = True
-        self.instructions = skill.render()
+        self.instructions = render_skill(skill, None, with_directory=with_directory)
 
     def get_instructions(self) -> str:
         return self.instructions
@@ -68,9 +69,9 @@ class Skills(AbstractCapability[AgentDepsT]):
 
     Each selected immediate child containing `SKILL.md` becomes a deferred capability named after
     the skill: the model sees its name and description, and loads its Markdown body, with the
-    skill's directory, with `load_capability`. Bundled files are not loaded or executed.
-    Descriptions longer than the Agent Skills limit are preserved and emit a warning. A
-    skill found twice, through a symlink or as an identical copy, counts once.
+    skill's directory in the run's workspace, with `load_capability`. Bundled files are not loaded
+    or executed. Descriptions longer than the Agent Skills limit are preserved and emit a warning.
+    A skill found twice, through a symlink or as a byte-identical `SKILL.md`, counts once.
 
     `load` reads the same skills outside a run, for a host that lets a person invoke a skill
     itself; render one with `SkillDefinition.render`.
@@ -226,10 +227,15 @@ class Skills(AbstractCapability[AgentDepsT]):
         """
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
-        catalog = await self._load(ctx.workspace)
-        for message in (*catalog.skipped, *self._advice(catalog.skills)):
+        loaded, skipped = await self._load(ctx.workspace)
+        for message in (*skipped, *self._advice(tuple(skill for skill, _ in loaded))):
             warnings.warn(message, UserWarning, stacklevel=2)
-        return CombinedCapability([_Skill[AgentDepsT](skill) for skill in catalog.skills]) if catalog.skills else self
+        if not loaded:
+            return self
+        # A library read from `workspace=` is not where the model's file tools work, so its path is left out.
+        return CombinedCapability(
+            [_Skill[AgentDepsT](skill, with_directory=from_run_workspace) for skill, from_run_workspace in loaded]
+        )
 
     async def load(self, workspace: WorkspaceBackend | None = None) -> SkillCatalog:
         """Read the selected skills now, as a run does at its start, without emitting warnings.
@@ -252,10 +258,12 @@ class Skills(AbstractCapability[AgentDepsT]):
             raise UserError(
                 '`Skills.load()` needs the workspace the libraries are in, such as `LocalWorkspaceBackend(".")`.'
             )
-        return await self._load(run_workspace)
+        loaded, skipped = await self._load(run_workspace)
+        return SkillCatalog(skills=tuple(skill for skill, _ in loaded), skipped=tuple(skipped))
 
-    async def _load(self, run_workspace: Workspace | None) -> SkillCatalog:
-        by_name: dict[str, tuple[Workspace, SkillDefinition]] = {}
+    async def _load(self, run_workspace: Workspace | None) -> tuple[list[tuple[SkillDefinition, bool]], list[str]]:
+        """Each selected skill, with whether it came from the run's workspace, and what was skipped."""
+        by_name: dict[str, tuple[Workspace, SkillDefinition, bool]] = {}
         messages: list[str] = []
         for source in self._sources:
             workspace = source.workspace or run_workspace
@@ -272,14 +280,14 @@ class Skills(AbstractCapability[AgentDepsT]):
             for skill in skills:
                 previous = by_name.get(skill.name)
                 if previous is None:
-                    by_name[skill.name] = (workspace, skill)
+                    by_name[skill.name] = (workspace, skill, source.workspace is None)
                     continue
-                previous_workspace, previous_skill = previous
+                previous_workspace, previous_skill, _ = previous
                 if previous_workspace is not workspace or not await same_skill(
                     workspace, previous_skill.path, skill.path
                 ):
                     messages.append(duplicate_name(skill.name, previous_skill.path, skill.path, source.duplicate_names))
-        return SkillCatalog(skills=tuple(skill for _, skill in by_name.values()), skipped=tuple(messages))
+        return [(skill, from_run_workspace) for _, skill, from_run_workspace in by_name.values()], messages
 
     @staticmethod
     def _advice(definitions: tuple[SkillDefinition, ...]) -> list[str]:

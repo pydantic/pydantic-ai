@@ -209,28 +209,33 @@ skills = Skills(
 ```
 
 - `missing_directories='skip'` leaves out a library directory that does not
-  exist, instead of failing the run.
+  exist, instead of failing the run. A path that exists but is not a directory
+  still fails.
 - `duplicate_names='keep_first'` keeps the skill from the earlier directory when
-  two different `SKILL.md` files share a name, and skips the other with a
-  `UserWarning`.
+  two valid skills with different `SKILL.md` files share a name, and skips the
+  other with a `UserWarning`. An invalid `SKILL.md` is skipped first, so it does
+  not hide a valid skill with its name.
 
 Directories are listed in precedence order. Paths are workspace paths, and `~`
 is not expanded, because the workspace may be a sandbox with a home directory of
 its own; spell out the absolute path for a library on this machine.
 
-If `.agents/skills` is a symlink to `.claude/skills`, or holds identical copies
-of its skills, as in many repositories, each skill is listed once.
+If `.agents/skills` is a symlink to `.claude/skills`, or holds byte-identical
+copies of its `SKILL.md` files, as in many repositories, each skill is listed
+once. Only `SKILL.md` is compared: the first directory's bundled files are the
+ones the model is pointed at.
 
 ## Bundled files
 
 Agent Skill packages can contain directories such as `references/`, `assets/`,
 and `scripts/`. `Skills` does not enumerate, read, or execute those files.
 
-The loaded instructions name the skill's directory in the workspace, so a model
-with file or shell tools, such as those from `FileSystem` or `Shell`, can follow
-a relative reference like `references/guide.md` or run `scripts/check.py`.
-Placeholders such as `${CLAUDE_SKILL_DIR}` remain unchanged in the body; the
-directory line is what resolves them.
+The loaded instructions name the skill's directory in the run's workspace, so a
+model with file or shell tools, such as those from `FileSystem` or `Shell`, can
+follow a relative reference like `references/guide.md` or run
+`scripts/check.py`. Skills read from a `workspace=` backend are not where those
+tools work, so their instructions leave the directory out. Placeholders such as
+`${CLAUDE_SKILL_DIR}` remain unchanged in the body.
 
 `Skills` reads the libraries itself: the model does not need `FileSystem` or
 `Shell` to load a skill, and adding either does not change which files `Skills`
@@ -278,8 +283,10 @@ like a skill found earlier, for the host to show. Each `SkillDefinition` has the
 
 `render(arguments)` returns what loading the skill returns, with every
 `$ARGUMENTS` in the body replaced by `arguments`. A body without `$ARGUMENTS`
-gets `ARGUMENTS: <arguments>` appended, as in Claude Code. `render()` without
-arguments leaves the body unchanged.
+gets `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude
+Code's indexed `$0` or `$ARGUMENTS[0]`, are left unchanged. `render()` without
+arguments leaves the body unchanged. The directory it names is a path in the
+workspace the skill was read from.
 
 ## Use an agent spec
 
