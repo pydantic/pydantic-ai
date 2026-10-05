@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
@@ -154,12 +154,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key='temporal',
+        # Workflow code and `@workflow.signal` handlers share Temporal's deterministic event loop, so a
+        # token created in the workflow and fired from a signal handler cancels the run at the same
+        # point on replay.
+        accepts_cancellation_token=True,
     )
-
-    # Workflow code and `@workflow.signal` handlers share Temporal's deterministic event loop, so a
-    # token created in the workflow and fired from a signal handler cancels the run at the same point
-    # on replay.
-    _accepts_cancellation_token: ClassVar[bool] = True
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
     """The `TemporalRunContext` subclass used to serialize/deserialize the run context."""

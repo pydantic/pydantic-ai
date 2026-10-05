@@ -108,7 +108,8 @@ The public [`DurabilityEngineSpec`][pydantic_ai.durable_exec.DurabilityEngineSpe
 declarative engine surface in one immutable object. Its required fields name the engine, durable
 unit, and durable container. Its optional fields select the codec, wrapped toolset kinds, lifecycle
 policy, upgrade compatibility, durable discovery, sequential tool execution, unsupported runtime
-toolsets, and per-tool configuration key. The default lifecycle policy enters function and MCP
+toolsets, per-tool configuration key, and whether a run inside the container may take a
+`CancellationToken`. The default lifecycle policy enters function and MCP
 toolsets for every run and never enters dynamic toolsets.
 
 Define every field whose engine behavior differs from the defaults. The spec validates non-empty
