@@ -20,6 +20,7 @@ from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, Capability, CapabilityOrdering, ResolveModelId, Thinking
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import Model, ModelResolutionContext
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 from pydantic_ai.models.test import TestModel
@@ -123,6 +124,11 @@ class Case:
     run_level: ModelSettings = field(default_factory=ModelSettings)
 
 
+ANTHROPIC_CACHE = AnthropicModelSettings(
+    anthropic_cache='5m', anthropic_cache_instructions='5m', anthropic_cache_tool_definitions='5m'
+)
+"""CLAI's Anthropic family default: prompt caching on the messages, instructions, and tool definitions."""
+
 CASES = [
     Case(
         id='openai-reasoning',
@@ -167,6 +173,9 @@ CASES = [
         },
         effective=snapshot(
             {
+                'anthropic_cache': '5m',
+                'anthropic_cache_instructions': '5m',
+                'anthropic_cache_tool_definitions': '5m',
                 'anthropic_effort': 'high',
                 'anthropic_thinking': {'type': 'adaptive', 'display': 'updates'},
                 'extra_headers': {'anthropic-beta': 'thinking-display-updates-2026-08-18'},
@@ -346,7 +355,7 @@ async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
     recorder, session = await run_turn(
         tmp_path, settings=Settings(), plugins=(Published(model='anthropic:claude-sonnet-4-6'),)
     )
-    assert recorder.calls == snapshot([('anthropic:claude-sonnet-4-6', {})])
+    assert recorder.calls == [('anthropic:claude-sonnet-4-6', ANTHROPIC_CACHE)]
     selected = await session.resolved_model()
     assert isinstance(selected, Model) and selected.model_name == 'openai-codex:gpt-6-astra'
 
@@ -367,7 +376,8 @@ async def test_saved_settings_stay_with_their_model(tmp_path: Path, stock: bool)
         agent=None if stock else Agent(recorder.resolve(name), deps_type=type(None), capabilities=[published]),
         recorder=recorder,
     )
-    assert recorder.calls == [(other, {})]
+    # The selected model gets its own family defaults, here Anthropic's prompt caching, and none of the saved ones.
+    assert recorder.calls == [(other, ANTHROPIC_CACHE)]
 
 
 async def test_agent_capability_settings_beat_family_defaults(tmp_path: Path) -> None:
