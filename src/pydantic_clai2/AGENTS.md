@@ -125,6 +125,14 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   failed/cancelled load drops the plugin. Cleanup must tolerate an incomplete
   `on_session_start`.
 
+**Overlapping plugins go in the compatibility matrix.** `plugins/compatibility.py`
+maps a plugin's factory to the factories it already includes (`coder` includes
+`compaction`, and harness `SubAgents` while it binds one, which it does with
+`sub_agents` on). While the including plugin is loaded, the
+loader keeps the included ones unloaded and refuses to enable them, and `/plugins`
+greys their rows out. Their saved `enabled` flag is untouched, so turning the
+including plugin off loads them again. Add a row there; do not special-case ids.
+
 Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
 threshold math or an orchestrator in CLAI. Register the usage gauge after the
@@ -248,6 +256,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
+| `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |

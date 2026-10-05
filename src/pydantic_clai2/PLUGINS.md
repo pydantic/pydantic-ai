@@ -838,6 +838,13 @@ repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
 [Project settings](README.md#project-settings).
 
+Some plugins already include others. `coder` includes context management and
+task delegation, so while `coder` is on, `compaction` stays off, and so does a
+harness `SubAgents` row (such as `subagents`) unless `coder` has `sub_agents`
+turned off: `/plugins` shows them greyed out with
+`in coder`, `/plugins list` says `included in coder`, and enabling one says to
+disable `coder` first. Turning `coder` off loads any of them you had enabled.
+
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
 same chain unconditionally. Its optional focus is free text, not shell arguments:
