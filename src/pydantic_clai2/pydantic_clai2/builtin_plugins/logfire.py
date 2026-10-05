@@ -53,7 +53,7 @@ class LogfireSettings(BaseModel):
     user_tag: Literal['logfire-account', 'git-email', False] = Field(
         default='logfire-account',
         description='Tag session roots with the email of the Logfire account that signed in during project setup, '
-        'or with git config user.email. Never added to child spans or logs.',
+        'or with git config user.email. Only the root and its `CLAI session opened` log carry it.',
     )
     account: LogfireAccount | None = Field(
         default=None,

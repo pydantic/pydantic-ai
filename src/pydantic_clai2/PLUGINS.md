@@ -391,10 +391,12 @@ Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
 `/resume` reuses that conversation's root if this plugin instance already opened
 it. Unloading the plugin ends its roots; reloading starts new traces with the
-same saved conversation IDs.
+same saved conversation IDs. A root is exported only when it ends, at exit, so a
+`CLAI session opened` log under it carries its `agent_session_id` and email
+from the start.
 
 `user_tag` (default `logfire-account`) tags each session root, and only the
-root, with your email, as a Logfire tag and the `user.email` attribute.
+root and its `CLAI session opened` log, with your email, as a Logfire tag and the `user.email` attribute.
 `logfire-account` uses the email in `account`, the account that signed in during
 the **Logfire project** setup, while `token` still names the key that setup
 saved. A token from elsewhere, a setup made before this setting existed, or a

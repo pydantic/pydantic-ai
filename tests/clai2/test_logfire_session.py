@@ -96,6 +96,10 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     assert children
     assert all(span.context is not None and span.context.trace_id == root.context.trace_id for span in children)
     assert all(span.parent is not None for span in children)
+    # Only the root and the log announcing it carry the identity; that log is queryable before the root ends.
+    opened = [span for span in children if span.name == 'CLAI session opened']
+    assert [(span.attributes or {}).get('user.email') for span in opened] == [email] * len(opened)
+    children = [span for span in children if span.name != 'CLAI session opened']
     assert all({'logfire.tags', 'user.email'}.isdisjoint(span.attributes or {}) for span in children)
     if email:
         assert email not in json.dumps([dict(span.attributes or {}) for span in children])
@@ -148,13 +152,23 @@ async def test_user_tag_chooses_the_root_email_and_only_git_email_runs_git(
         return 'developer@example.com'
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.git_email', configured_email)
-    plugin = load_logfire(make_host(**settings))
+    host = PluginHost(
+        name='observability', console=Console(file=io.StringIO()), settings=settings, session_id=lambda: 'session-1'
+    )
+    plugin = load_logfire(host)
     await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
     await close(plugin)
     assert looked_up is (settings.get('user_tag') == 'git-email')
     root = next(span for span in recorder.spans() if span.name == 'CLAI session')
     assert (root.attributes or {})['logfire.tags'] == ((email,) if email else ())
     assert (root.attributes or {}).get('user.email') == email
+    # The root is exported only at exit, so a log under it carries the identity while the session runs.
+    [opened] = [span for span in recorder.spans() if span.name == 'CLAI session opened']
+    assert opened.parent is not None and root.context is not None
+    assert opened.parent.span_id == root.context.span_id
+    assert (opened.attributes or {})['agent_session_id'] == (root.attributes or {})['agent_session_id']
+    assert (opened.attributes or {}).get('logfire.tags') == ((email,) if email else None)
+    assert (opened.attributes or {}).get('user.email') == email
 
 
 async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: Recorder, tmp_path: Path) -> None:
