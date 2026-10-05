@@ -47,6 +47,8 @@ async def test_markdown_link_labels(*, terminal: bool, thinking: bool) -> None:
         (f'- **{URL}**', URL, ''),
         ('| link |\n|---|\n| https://ai.pydantic.dev |', 'https://ai.pydantic.dev', ' '),
         ('(https://en.wikipedia.org/wiki/Foo_(bar)).', 'https://en.wikipedia.org/wiki/Foo_(bar)', ').'),
+        ('(see http://[::1]).', 'http://[::1]', ').'),
+        ('[see https://ai.pydantic.dev]', 'https://ai.pydantic.dev', ']'),
     ],
 )
 @pytest.mark.parametrize('terminal', [False, True])

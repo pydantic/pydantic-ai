@@ -75,7 +75,8 @@ _MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
 def _trim_url(url: str) -> str:
     """Leave trailing punctuation and unbalanced closing brackets out of a bare URL, as GFM does."""
     while url[-1] in '.,;:!?\'"*_~)]':
-        if url[-1] == ')' and url.count('(') >= url.count(')'):
+        opener = {')': '(', ']': '['}.get(url[-1])
+        if opener and url.count(opener) >= url.count(url[-1]):
             break
         url = url[:-1]
     return url
