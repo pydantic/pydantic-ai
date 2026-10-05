@@ -2846,18 +2846,24 @@ def _record_tool_population_changes(
     this doesn't change.
 
     The delta goes on each of `requests` (see `_history_recording_targets`). They are empty on a
-    continuation, which completes a turn the provider has already seen and so must not grow; newcomers are
-    still marked there, so an earlier delta keeps its channel.
+    continuation, which completes a turn the provider has already seen and so must not grow. A
+    continuation is always its run's first request (a turn suspended mid-run is continued inside the
+    model request), so the population it carries is what establishes `established_tool_names`: the only
+    newcomers there are tools an earlier delta named, which are still marked so they keep their channel.
+
+    When no plainly visible tool is declared — on the first request, or because every established tool
+    has left the population — there is no `tools` section to protect, so the tools present establish it
+    without a delta.
     """
     immediate = [tool.name for tool in parameters.function_tools if not tool.defer_loading]
     discovered = ctx.deps.discovered_tool_names
     established = ctx.deps.established_tool_names
     if established is None:
         established = ctx.deps.established_tool_names = {name for name in immediate if name not in discovered}
-    if not established and not parameters.output_tools and not parameters.native_tools:
-        # Nothing plainly visible has been declared yet, so there is no `tools` section to protect — and
-        # a request whose only tools are deferred is one Anthropic rejects. The first tools to appear
-        # establish it.
+    if established.isdisjoint(immediate) and not parameters.output_tools and not parameters.native_tools:
+        # Nothing plainly visible is declared — none yet, or every established tool has since left — so
+        # there is no `tools` section to protect, and a request whose only tools are deferred is one
+        # Anthropic rejects. The tools present now establish it.
         established.update(immediate)
     introduced = [name for name in immediate if name not in established]
     if not introduced:

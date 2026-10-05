@@ -1041,6 +1041,8 @@ A tool can also join a run without being searched for or loaded. It might be add
 | Anthropic | A `defer_loading` declaration plus a `tool_addition` block (or a `tool_reference` result on models without mid-conversation tool changes) | **Stable** once the request already declares a deferred tool. Otherwise, on some models (Claude Opus 4.8, for example) the first deferred declaration adds a one-time preamble, which moves the prefix on that request only |
 | Others | Added to `tools[]`, plus a note in the conversation that it's now available | **Breaks** from the tool definitions onward on the request where it appears |
 
+There is one exception: when nothing the model was already given is left to keep stable, because the run started with no plainly visible tools (text output and only deferred tools, say, or an MCP server with an empty list) or every tool it started with has since left, the tools present go into `tools[]` directly and nothing is recorded. This also keeps a request from carrying only deferred tools, which Anthropic rejects.
+
 The record lives in the message history, so a retried request or a later run over the same history doesn't announce the tool again. After [compaction](capabilities/compaction.md) summarizes the record away, the tool is announced once more without changing `tools[]`.
 
 Only tools that appear within a single run are detected. A tool that's new to a later run over the same history, such as one unlocked after a [tool approval](deferred-tools.md#human-in-the-loop-tool-approval), is sent in `tools[]` from that run's first request. Tools that disappear, and tools whose definition changes under the same name, are also sent as-is.

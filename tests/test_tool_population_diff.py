@@ -472,6 +472,87 @@ async def test_hook_filtered_tool_is_diffed_as_sent():
     assert seen[1].tool_visibility == {'unlock': 'visible', 'later': 'via_history'}
 
 
+async def test_continuation_establishes_fresh_tools_and_keeps_announced_ones_on_their_channel():
+    """A continuation is its run's first request and can't grow, so it establishes the tools it finds.
+
+    A tool an earlier delta named keeps its addition channel; one that appeared since the turn was
+    suspended joins `tools` and stays there on later steps, rather than moving to the addition channel.
+    """
+    seen: list[ModelRequestParameters] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters)
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('fresh', {}, tool_call_id='c2')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('go')]),
+        ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('unlock', 'unlocked', tool_call_id='c1'),
+                ToolAvailabilityDeltaPart(tools_added=['later']),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('paused')], state='suspended'),
+    ]
+    agent = Agent(FunctionModel(model_fn, profile={'tool_addition_mode': 'with_definitions'}))
+    agent.tool_plain(name='unlock')(lambda: 'unlocked')
+    agent.tool_plain(name='later')(_later)
+    agent.tool_plain(name='fresh')(lambda: 'fresh ran')
+
+    result = await agent.run(message_history=history)
+
+    assert result.output == 'done'
+    assert _deltas(result.all_messages()) == [['later']]
+    assert [params.introduced_tool_names for params in seen] == [{'later'}, {'later'}]
+    assert [params.tool_visibility for params in seen] == [
+        {'unlock': 'visible', 'later': 'via_history', 'fresh': 'visible'}
+    ] * 2
+
+
+async def test_rotating_out_every_visible_tool_establishes_the_newcomers(allow_model_requests: None):
+    """When every established tool leaves, the tools present establish a new `tools` section instead of all going deferred.
+
+    Otherwise a revealed newcomer on Anthropic would be the request's only tool, with `defer_loading=True`,
+    which Anthropic rejects.
+    """
+    usage = BetaUsage(input_tokens=1, output_tokens=1)
+    client = MockAnthropic.create_mock(
+        [
+            completion_message([BetaToolUseBlock(id='c1', input={}, name='unlock', type='tool_use')], usage),
+            completion_message([BetaToolUseBlock(id='c2', input={}, name='later', type='tool_use')], usage),
+            completion_message([BetaTextBlock(text='done', type='text')], usage),
+        ]
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
+    state = {'unlocked': False}
+    before = FunctionToolset[Any]()
+
+    @before.tool_plain
+    def unlock() -> str:
+        state['unlocked'] = True
+        return 'unlocked'
+
+    after = FunctionToolset[Any]()
+    after.add_function(_later, name='later')
+    agent = Agent(model)
+
+    @agent.toolset
+    def rotating(ctx: RunContext[Any]) -> AbstractToolset[Any]:
+        return after if state['unlocked'] else before
+
+    result = await agent.run('go')
+
+    assert result.output == 'done'
+    assert _deltas(result.all_messages()) == []
+    assert [
+        [(tool['name'], tool.get('defer_loading', False)) for tool in kwargs['tools']]
+        for kwargs in get_mock_chat_completion_kwargs(client)
+    ] == [[('unlock', False)], [('later', False)], [('later', False)]]
+
+
 def _responses_text() -> Any:
     return response_message(
         [

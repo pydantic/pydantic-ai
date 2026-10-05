@@ -169,6 +169,8 @@ Tools may join a run after its first request: `FunctionToolset.add_function()`/`
 - Anthropic delivers it as a `defer_loading` declaration plus a `tool_addition` block (or a synthesized `tool_reference` result). This is stable once a deferred tool is already declared; some models (e.g. Opus 4.8) add a one-time preamble with the first deferred declaration.
 - Every other provider appends it to `tools[]` and adds a one-line announcement.
 
+Exception: when no plainly visible tool is left to keep stable (the run started with no visible function, output or native tools, or every tool it started with has since left), the tools present go straight into `tools[]` with no delta, which also keeps Anthropic from receiving a request whose tools are all deferred.
+
 Replays, retries and later runs over the same history don't re-announce it; compaction re-announces once. The comparison is per run, so a tool that is new to a later run (e.g. unlocked by an approval) goes into `tools[]` from that run's first request. Callability is unchanged: the tool is callable as soon as it exists. Under Temporal, tools run in activities, which aren't re-executed on replay, so drive mid-run changes from workflow-side code (a `prepare_tools` keyed on run state, a dynamic toolset) rather than from inside a tool.
 
 ## Control Tool Execution When an Output Tool Is Called
