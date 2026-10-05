@@ -309,13 +309,14 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     is set, the Voice Live session config is built from the fields Voice Live's beta session object
     has a counterpart for: `instructions`, `openai_voice` (by name, unless `azure_voice_live_voice` is
     set), `turn_detection` (or `openai_turn_detection`, or `azure_voice_live_turn_detection`),
-    `openai_input_noise_reduction` (or `azure_voice_live_noise_reduction`), `thinking` (as `reasoning_effort`, on models whose profile reports
+    `openai_input_noise_reduction` (or `azure_voice_live_noise_reduction`), `thinking` (as
+    `reasoning_effort`, on models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]),
-    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools, plus the
-    `azure_voice_live_*` settings.
+    `input_transcription_model`, `output_modality`, `max_tokens`, `parallel_tool_calls`, `tool_choice`,
+    and tools, plus the `azure_voice_live_*` settings.
 
-    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, and
-    `parallel_tool_calls` — are **silently ignored** under Voice Live; they still apply on the GA path.
+    The remaining inherited fields — `openai_output_speed` and `openai_truncation` — are **silently
+    ignored** under Voice Live; they still apply on the GA path.
     Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
     `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """
@@ -410,6 +411,21 @@ def _voice_live_turn_detection(
             'interrupt_response': turn_detection.get('interrupt_response', True),
         }
     return turn_detection_config(turn_detection)
+
+
+def _voice_live_audio_processing(settings: AzureRealtimeModelSettings, *, cascade: bool) -> dict[str, Any]:
+    """The Voice Live session's input noise reduction and echo cancellation, when set."""
+    config: dict[str, Any] = {}
+    if (noise_reduction := settings.get('azure_voice_live_noise_reduction')) is not None:
+        config['input_audio_noise_reduction'] = {'type': noise_reduction}
+    elif (openai_noise_reduction := settings.get('openai_input_noise_reduction')) is not None:
+        # `near_field`/`far_field` are for the native-audio models; a cascade uses Azure's own.
+        config['input_audio_noise_reduction'] = {
+            'type': 'azure_deep_noise_suppression' if cascade else openai_noise_reduction
+        }
+    if settings.get('azure_voice_live_echo_cancellation'):
+        config['input_audio_echo_cancellation'] = {'type': 'server_echo_cancellation'}
+    return config
 
 
 def _cascade_model_is_reasoning(model_name: str, thinking: ThinkingLevel | None) -> bool:
@@ -716,15 +732,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         }
         if transcription_model is not None:
             config['input_audio_transcription'] = {'model': transcription_model}
-        if (noise_reduction := settings.get('azure_voice_live_noise_reduction')) is not None:
-            config['input_audio_noise_reduction'] = {'type': noise_reduction}
-        elif (openai_noise_reduction := settings.get('openai_input_noise_reduction')) is not None:
-            # `near_field`/`far_field` are for the native-audio models; a cascade uses Azure's own.
-            config['input_audio_noise_reduction'] = {
-                'type': 'azure_deep_noise_suppression' if cascade else openai_noise_reduction
-            }
-        if settings.get('azure_voice_live_echo_cancellation'):
-            config['input_audio_echo_cancellation'] = {'type': 'server_echo_cancellation'}
+        config.update(_voice_live_audio_processing(settings, cascade=cascade))
         if (azure_voice := settings.get('azure_voice_live_voice')) is not None:
             config['voice'] = (
                 AzureVoiceLiveVoice(type='azure-standard', name=azure_voice)
@@ -745,6 +753,10 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['tools'] = [tool_def_to_openai(tool) for tool in advertised_tools]
         if (max_tokens := settings.get('max_tokens')) is not None:
             config['max_response_output_tokens'] = max_tokens
+        if settings.get('parallel_tool_calls') is False:
+            # Voice Live defaults to parallel calls, and `gpt-realtime`/`-mini`/`-1.5` reject an explicit
+            # `True`, so only `False` is sent.
+            config['parallel_tool_calls'] = False
         if tool_choice is not None:
             config['tool_choice'] = tool_choice_config(tool_choice)
         thinking = settings.get('thinking')

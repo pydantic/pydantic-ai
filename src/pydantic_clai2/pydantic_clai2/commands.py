@@ -68,8 +68,17 @@ class Command:
 
     Only for menus whose changes the running turn cannot observe, such as settings that
     take effect on the next turn. The run's output is held while the menu owns the screen.
-    With arguments the command still queues, keeping its order among queued follow-ups.
+    With arguments the command still queues, keeping its order among queued follow-ups,
+    unless the only argument is one of `during_turn_subcommands` or `args_during_turn` is set.
     """
+    args_during_turn: bool = False
+    """Also run the command with any arguments as soon as it is entered mid-turn, instead of queueing it.
+
+    For commands whose every form applies as soon as it is safe, such as `/plugins`. The command
+    then runs ahead of queued follow-ups instead of in order among them.
+    """
+    during_turn_subcommands: tuple[str, ...] = ()
+    """Subcommands, like `add` in `/model add`, whose bare form also opens its menu mid-turn."""
 
 
 class Commands(Completer):
@@ -119,12 +128,16 @@ class Commands(Completer):
         return command.handler(shlex.split(rest))
 
     def runs_during_turn(self, text: str) -> bool:
-        """Whether `text` is a bare command that opted into opening its menu mid-turn."""
-        words = text.split()
-        if len(words) != 1 or not is_command_input(text):
+        """Whether `text` runs mid-turn: a `during_turn` bare command or subcommand, or any `args_during_turn` use."""
+        if not is_command_input(text):
             return False
+        words = text.split()
         command = self._commands.get(words[0][1:])
-        return command is not None and command.available() and command.during_turn
+        if command is None or not command.available():
+            return False
+        if len(words) == 1:
+            return command.during_turn
+        return command.args_during_turn or (len(words) == 2 and words[1] in command.during_turn_subcommands)
 
     async def execute_async(self, text: str) -> str:
         """Await asynchronous plugin commands without blocking the event loop.
