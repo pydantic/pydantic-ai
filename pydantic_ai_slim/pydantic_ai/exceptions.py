@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-from builtins import ExceptionGroup as ExceptionGroup
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -16,6 +15,8 @@ from ._warnings import (
     PydanticAIDeprecationWarning as PydanticAIDeprecationWarning,
     UsageExtractionFailedWarning as UsageExtractionFailedWarning,
 )
+
+ExceptionGroup = ExceptionGroup  # noqa: F821
 
 if TYPE_CHECKING:
     from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
