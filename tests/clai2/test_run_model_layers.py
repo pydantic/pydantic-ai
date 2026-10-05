@@ -29,6 +29,7 @@ from pydantic_clai2.config import Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
+from pydantic_clai2.runtime._session import Session
 from tests.clai2.menu_script import make_context
 
 
@@ -84,8 +85,8 @@ async def run_turn(
     plugins: tuple[AbstractCapability[None], ...] = (),
     agent: Agent[None, str] | None = None,
     recorder: Recorder | None = None,
-) -> tuple[Recorder, ModelSettings | None]:
-    """One shell turn, on the stock agent unless `agent` is given; returns what the model saw and the run's settings."""
+) -> tuple[Recorder, Session[None, str]]:
+    """One shell turn, on the stock agent unless `agent` is given; returns what the model saw and the session."""
     store = SettingsStore(tmp_path / 'config.db')
     for name, values in (saved or {}).items():
         store.save_model_settings(name, values)
@@ -105,7 +106,7 @@ async def run_turn(
     shell.session.resolve_model = recorder.resolve
     ended = await shell.run_turn(TurnStart(text='hello'), headless=True)
     assert ended.outcome == 'completed', ended.error
-    return recorder, shell.session.model_settings
+    return recorder, shell.session
 
 
 @dataclass(frozen=True)
@@ -266,7 +267,7 @@ async def test_effective_settings_unchanged(tmp_path: Path, case: Case, stock: b
     else:
         agent = Agent(None if case.chosen else after.resolve(case.model))
         settings = resolve_settings({'model': case.model}) if case.chosen else Settings(model=None)
-    _, run_level = await run_turn(
+    _, session = await run_turn(
         tmp_path, settings=settings, saved={case.model: case.saved}, agent=agent, recorder=after
     )
 
@@ -275,7 +276,7 @@ async def test_effective_settings_unchanged(tmp_path: Path, case: Case, stock: b
     await Agent(before.resolve(case.model)).run('hello', model_settings=context.model_settings(case.model))
 
     assert after.calls == before.calls == [(case.model, case.effective)]
-    assert run_level == case.run_level
+    assert session.model_settings == case.run_level
 
 
 async def test_capability_settings_beat_defaults_not_overrides(tmp_path: Path) -> None:
@@ -315,25 +316,11 @@ async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
     `resolved_model()`, which `/compact` and session naming run on, still names the selected model,
     as `PLUGINS.md` documents.
     """
-    store = SettingsStore(tmp_path / 'config.db')
-    shell = create_shell(
-        create_stock_agent(),
-        deps=None,
-        plugins=(Published(model='anthropic:claude-sonnet-4-6'),),
-        usage_limits=None,
-        console=Console(file=StringIO()),
-        settings=store.load(),
-        store=store,
-        builtin_plugins=(),
-        project=ProjectSettings(),
-        headless=True,
+    recorder, session = await run_turn(
+        tmp_path, settings=Settings(), plugins=(Published(model='anthropic:claude-sonnet-4-6'),)
     )
-    recorder = Recorder()
-    shell.session.resolve_model = recorder.resolve
-    ended = await shell.run_turn(TurnStart(text='hello'), headless=True)
-    assert ended.outcome == 'completed', ended.error
     assert recorder.calls == snapshot([('anthropic:claude-sonnet-4-6', {})])
-    selected = await shell.session.resolved_model()
+    selected = await session.resolved_model()
     assert isinstance(selected, Model) and selected.model_name == 'openai-codex:gpt-6-astra'
 
 

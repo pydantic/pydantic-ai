@@ -348,7 +348,10 @@ class Session(Generic[DepsT, OutputT]):
         )
 
     async def resolved_model(self) -> Model | str | None:
-        """The selected model after `resolve_model`, else the agent's own; a capability may replace a default per request."""
+        """The selected model after `resolve_model`, else the agent's own (CLAI's default).
+
+        A capability that selects a model can replace that default per request, so a run may use another.
+        """
         if self.model is None:
             return self.agent.model
         model = self.resolve_model(self.model)
