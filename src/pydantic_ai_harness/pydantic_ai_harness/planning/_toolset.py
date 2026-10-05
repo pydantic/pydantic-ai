@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from pydantic import BaseModel
 
-import pydantic_ai.durable_exec as durable_exec
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai_harness.planning._events import (
@@ -413,7 +413,7 @@ def _runs_function_tools_in_workflow_code(ctx: RunContext[AgentDepsT]) -> bool:
 
     def check(capability: AbstractCapability[AgentDepsT]) -> None:
         nonlocal in_workflow_code
-        if isinstance(capability, durable_exec.BaseDurabilityCapability):
+        if isinstance(capability, BaseDurabilityCapability):
             in_workflow_code = 'function' not in capability.engine_spec.wrapped_toolset_kinds
 
     ctx.root_capability.apply(check)

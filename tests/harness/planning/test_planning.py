@@ -70,6 +70,13 @@ def _ctx() -> RunContext[None]:
     return cast(RunContext[None], ctx)
 
 
+def _run_ctx(root_capability: AbstractCapability[None] | None = None) -> RunContext[None]:
+    """A real run context, as `call_tool` needs, whose emitted events go nowhere."""
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), root_capability=root_capability)
+    object.__setattr__(ctx, 'emit', AsyncMock())
+    return ctx
+
+
 def _toolset(*, subtasks: bool = False, store: InMemoryPlanStore | None = None) -> PlanningToolset[None]:
     cap = Planning[None](store=store or InMemoryPlanStore(), enable_subtasks=subtasks)
     return PlanningToolset[None](cap)
@@ -246,8 +253,7 @@ async def test_direct_call_in_a_worker_tree_uses_one_store() -> None:
 
     planning = Planning[None](store_resolver=resolve)
     toolset = cast(PlanningToolset[None], planning.get_toolset())
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), root_capability=planning)
-    object.__setattr__(ctx, 'emit', AsyncMock())
+    ctx = _run_ctx(planning)
 
     result = await toolset.write_plan(ctx, [PlanItem(content='step')])
 
@@ -266,8 +272,7 @@ async def test_worker_tree_resolves_the_store_once_per_tool_call() -> None:
     planning = Planning[None](store_resolver=resolve)
     toolset = cast(PlanningToolset[None], planning.get_toolset())
     # A worker's tree: the construction-time capability, with no run copy holding a store.
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), root_capability=planning)
-    object.__setattr__(ctx, 'emit', AsyncMock())
+    ctx = _run_ctx(planning)
     tools = await toolset.get_tools(ctx)
 
     result = await toolset.call_tool('write_plan', {'items': [PlanItem(content='step')]}, ctx, tools['write_plan'])
@@ -1347,6 +1352,7 @@ class TestEndToEnd:
 
 
 async def test_plan_tools_update_and_remove_through_the_recorded_store() -> None:
+    """An agent run whose plan tools update and remove a step through the durable store operations."""
     turns = iter(
         [
             ToolCallPart('write_plan', {'items': [{'id': 'a', 'content': 'Write the migration'}]}),
@@ -1368,10 +1374,10 @@ async def test_plan_tools_update_and_remove_through_the_recorded_store() -> None
 
 
 async def test_standalone_toolset_without_operations_calls_the_store_directly() -> None:
+    """A unit test, since an `Agent` always builds its `PlanningToolset` with the capability's operations."""
     store = InMemoryPlanStore()
     toolset = PlanningToolset[None](Planning[None](store=store))
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-    object.__setattr__(ctx, 'emit', AsyncMock())
+    ctx = _run_ctx()
     tools = await toolset.get_tools(ctx)
 
     await toolset.call_tool('write_plan', {'items': [PlanItem(content='step')]}, ctx, tools['write_plan'])
