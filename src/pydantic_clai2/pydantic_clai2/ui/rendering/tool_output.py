@@ -55,7 +55,7 @@ def print_shell_header(console: Console, command: str) -> None:
     head.append('shell ', style=theme.color(theme.ACCENT))
     indent = Text(' ' * head.cell_len)
     body = Text(terminal_text(command.strip('\n')), style=muted)
-    rows = body.wrap(console, max(console.width - head.cell_len, 20), overflow='fold')
+    rows = body.wrap(console, max(console.width - head.cell_len, 1), overflow='fold')
     for index, row in enumerate(rows[:SHELL_COMMAND_ROWS]):
         row.rstrip()
         console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)

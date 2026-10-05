@@ -174,6 +174,15 @@ async def test_long_shell_command_wraps_under_a_hanging_indent() -> None:
     )
 
 
+async def test_shell_command_wraps_rather_than_clips_on_a_narrow_console() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=16), stop_loading=lambda: None)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo abcdefghijkl'}, tool_call_id='narrow'))
+    )
+    assert output.getvalue() == '● shell echo\n        abcdefgh\n        ijkl\n\n'
+
+
 async def test_shell_command_rows_beyond_the_limit_are_counted() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
