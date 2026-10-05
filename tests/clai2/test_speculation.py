@@ -184,6 +184,20 @@ class TestChord:
             assert live.buffer.text == 'a'
             assert plain(live.frame()[-1]).startswith('ready')
 
+    def test_a_single_key_chord_acts_at_once_and_keeps_the_draft(self) -> None:
+        presses: list[str] = []
+
+        def promote() -> str:
+            presses.append('ctrl-b')
+            return '1 task(s) moved to background. /tasks to inspect.'
+
+        with live_prompt(height=24, pinned=lambda: 'PINNED ROW', chords={'ctrl-b': promote}) as live:
+            live.feed('a')
+            live.feed('ctrl-b')
+            assert presses == ['ctrl-b']
+            assert live.buffer.text == 'a'
+            assert plain(live.frame()[-1]) == '1 task(s) moved to background. /tasks to inspect.'
+
     @pytest.mark.parametrize(('height', 'shown'), [(6, False), (7, True)])
     def test_pinned_row_only_takes_a_spare_row(self, height: int, shown: bool) -> None:
         with live_prompt(height=height, pinned=lambda: 'PINNED ROW') as live:

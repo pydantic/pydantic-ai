@@ -11,7 +11,7 @@ import os
 import shutil
 import socket
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import anyio
@@ -188,6 +188,74 @@ async def test_ssh_directory_inside_the_working_dir_is_mounted_read_only(tools: 
     assert tools.bwrap_calls[1].count(mount) == 1
 
 
+async def test_shell_startup_files_inside_the_working_dir_are_mounted_read_only(tools: FakeRemoteTools) -> None:
+    """The next SSH login runs `~/.bashrc` and friends on the host, so a command must not be able to write them."""
+    (tools.home / '.bashrc').write_text('export KEEP=1\n')
+    (tools.home / '.cshrc').write_text('setenv KEEP 1\n')
+    workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tools.home)))
+
+    await workspace.run(['true'])
+
+    home = tools.home.resolve()
+    # Existing files are kept, missing ones are created empty, and tcsh keeps reading `~/.cshrc`.
+    assert (home / '.bashrc').read_text() == 'export KEEP=1\n'
+    assert (home / '.cshrc').read_text() == 'setenv KEEP 1\n'
+    assert (home / '.tcshrc').read_text() == 'source ~/.cshrc\n'
+    assert (home / '.zshenv').read_text() == ''
+    assert (home / '.pam_environment').read_text() == ''
+    assert (home / '.config' / 'fish').is_dir()
+    mounts = ' '.join(
+        [
+            f'--ro-bind {home}/.bashrc {home}/.bashrc',
+            # A mount point can't be renamed, so a command can't move `~/.config` aside to plant its own.
+            f'--bind {home}/.config {home}/.config',
+            f'--ro-bind {home}/.config/fish {home}/.config/fish',
+            f'--ro-bind {home}/.cshrc {home}/.cshrc',
+            f'--ro-bind {home}/.pam_environment {home}/.pam_environment',
+            f'--ro-bind {home}/.ssh {home}/.ssh',
+            f'--ro-bind {home}/.tcshrc {home}/.tcshrc',
+            f'--ro-bind {home}/.zshenv {home}/.zshenv',
+        ]
+    )
+    assert f'--bind {home} {home} {mounts} --chdir {home} --' in tools.bwrap_calls[0]
+
+
+async def test_a_home_directory_inside_the_working_dir_is_pinned(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """Renaming `~` aside would leave a command free to make a new one, so it is a mount point too."""
+    home = tmp_path / 'home'
+    home.mkdir()
+    workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path, env={'HOME': str(home)})))
+
+    await workspace.run(['true'])
+
+    resolved = home.resolve()
+    assert f'--bind {resolved} {resolved} --ro-bind {resolved}/.bashrc ' in tools.bwrap_calls[0]
+
+
+@pytest.mark.parametrize(
+    ('login_path', 'link', 'reason'),
+    [
+        ('.bashrc', Path.symlink_to, r'\.bashrc is a symbolic link'),
+        ('.config/fish/config.fish', Path.symlink_to, r'config\.fish is a symbolic or hard link'),
+        ('.bashrc', Path.hardlink_to, r'\.bashrc is a symbolic or hard link'),
+    ],
+)
+async def test_a_linked_startup_file_inside_the_working_dir_is_unavailable(
+    tmp_path: Path, login_path: str, link: Callable[[Path, Path], None], reason: str
+) -> None:
+    """A read-only mount over a link doesn't stop a command from replacing it or writing its target's other name."""
+    home = tmp_path / 'home'
+    target = home / 'dotfiles' / 'startup'
+    target.parent.mkdir(parents=True)
+    target.write_text('')
+    (home / login_path).parent.mkdir(parents=True, exist_ok=True)
+    link(home / login_path, target)
+    backend = LocalWorkspaceBackend(home, env={'HOME': str(home)})
+
+    with pytest.raises(WorkspaceUnavailableError, match=reason):
+        await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+
 async def test_the_ssh_directory_itself_is_mounted_read_only(tools: FakeRemoteTools, tmp_path: Path) -> None:
     """The writable directory can be `~/.ssh`, not merely a parent of it."""
     home = tmp_path / 'home'
@@ -227,6 +295,63 @@ async def test_a_relative_home_directory_is_unavailable(tmp_path: Path) -> None:
     backend = LocalWorkspaceBackend(tmp_path, env={'HOME': 'relative'})
 
     with pytest.raises(WorkspaceUnavailableError, match='could not read the host account'):
+        await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+
+async def test_zdotdir_inside_the_working_dir_is_mounted_read_only(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """ZDOTDIR overrides HOME for zsh startup, so sshd_config SetEnv could escape the sandbox through it."""
+    work, home = tmp_path / 'work', tmp_path / 'home'
+    zdotdir = work / 'zsh'
+    zdotdir.mkdir(parents=True)
+    home.mkdir()
+    backend = LocalWorkspaceBackend(work, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)})
+    workspace = BubblewrapWorkspace(Workspace(backend))
+
+    await workspace.run(['true'])
+
+    resolved = str(zdotdir.resolve())
+    # The ZDOTDIR directory is a parent mount so it cannot be renamed aside.
+    assert tools.bwrap_calls[0].count(f'--bind {resolved} {resolved}') == 1
+    # The .zshenv inside it is read-only.
+    assert tools.bwrap_calls[0].count(f'--ro-bind {resolved}/.zshenv {resolved}/.zshenv') == 1
+
+
+async def test_zdotdir_same_as_home_uses_standard_protection(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """When ZDOTDIR equals HOME, no extra mounts are needed since HOME protection already covers it."""
+    home = tmp_path / 'home'
+    home.mkdir()
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': str(home)})
+    workspace = BubblewrapWorkspace(Workspace(backend))
+
+    await workspace.run(['true'])
+
+    resolved = str(home.resolve())
+    # Only one .zshenv mount (from HOME protection), not two.
+    assert tools.bwrap_calls[0].count(f'--ro-bind {resolved}/.zshenv {resolved}/.zshenv') == 1
+
+
+async def test_zdotdir_outside_working_dir_needs_no_extra_protection(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """A ZDOTDIR outside the writable directory cannot be planted by a sandboxed command."""
+    work, home, zdotdir = tmp_path / 'work', tmp_path / 'home', tmp_path / 'zsh'
+    for directory in (work, home, zdotdir):
+        directory.mkdir()
+    backend = LocalWorkspaceBackend(work, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)})
+    workspace = BubblewrapWorkspace(Workspace(backend))
+
+    await workspace.run(['true'])
+
+    # No mounts for ZDOTDIR since it's outside the working directory.
+    assert str(zdotdir.resolve()) not in tools.bwrap_calls[0]
+
+
+async def test_a_relative_zdotdir_is_unavailable(tmp_path: Path) -> None:
+    """A relative ZDOTDIR would resolve against the working directory, allowing a sandbox escape."""
+    # The home directory must exist, or the sandbox fails on resolving it before it ever reads `ZDOTDIR`.
+    home = tmp_path / 'home'
+    home.mkdir()
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': 'relative'})
+
+    with pytest.raises(WorkspaceUnavailableError, match='relative ZDOTDIR'):
         await BubblewrapWorkspace(Workspace(backend)).run(['true'])
 
 
@@ -276,7 +401,7 @@ async def test_an_ssh_path_that_is_not_a_directory_is_unavailable(tmp_path: Path
     (home / '.ssh').write_text('nope')
     backend = LocalWorkspaceBackend(home, env={'HOME': str(home)})
 
-    with pytest.raises(WorkspaceUnavailableError, match='could not make'):
+    with pytest.raises(WorkspaceUnavailableError, match=r'could not make .*\.ssh is not a directory'):
         await BubblewrapWorkspace(Workspace(backend)).run(['true'])
 
 
@@ -478,6 +603,42 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
         finally:
             server.close()
             shutil.rmtree(directory)
+
+    async def test_commands_cannot_change_what_the_next_login_runs(self, tmp_path: Path) -> None:
+        home = tmp_path / 'home'
+        home.mkdir()
+        workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(home, env={'HOME': str(home)})))
+
+        for attack in (
+            'echo touch pwned >> .bashrc',
+            'rm -f .zshenv && echo touch pwned > .zshenv',
+            'mv .config .moved && mkdir -p .config/fish && echo touch pwned > .config/fish/config.fish',
+            'echo touch pwned > .ssh/rc',
+        ):
+            assert (await workspace.run(attack, shell=True)).exit_code != 0
+        assert (await workspace.run('printf ok > notes.txt', shell=True)).exit_code == 0
+
+        assert (home / '.bashrc').read_text() == ''
+        assert (home / '.zshenv').read_text() == ''
+        assert not (home / '.config' / 'fish' / 'config.fish').exists()
+        assert not (home / '.ssh' / 'rc').exists()
+
+    async def test_commands_cannot_write_to_zdotdir_zshenv(self, tmp_path: Path) -> None:
+        """ZDOTDIR override from sshd_config SetEnv cannot escape the sandbox through zsh startup."""
+        home = tmp_path / 'home'
+        home.mkdir()
+        zdotdir = tmp_path / 'zsh'
+        zdotdir.mkdir()
+        workspace = BubblewrapWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path, env={'HOME': str(home), 'ZDOTDIR': str(zdotdir)}))
+        )
+
+        attack = await workspace.run(f'echo touch pwned >> {zdotdir}/.zshenv', shell=True)
+        normal = await workspace.run('printf ok > notes.txt', shell=True)
+
+        assert attack.exit_code != 0
+        assert normal.exit_code == 0
+        assert (zdotdir / '.zshenv').read_text() == ''
 
     async def test_host_daemon_sockets_are_hidden(self, tmp_path: Path) -> None:
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))

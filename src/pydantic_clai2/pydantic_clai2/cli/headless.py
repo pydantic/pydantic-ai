@@ -9,7 +9,7 @@ from rich.console import Console
 
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.usage import UsageLimits
-from pydantic_clai2._app import DEFAULT_PLUGINS, create_agent, create_shell
+from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_shell, create_stock_agent as create_agent
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -51,7 +51,7 @@ async def run_headless(
             console=Console(file=sink, force_terminal=False),
             settings=settings,
             store=store,
-            builtin_plugins=DEFAULT_PLUGINS,
+            builtin_plugins=STOCK_PLUGINS if load_plugins else DEFAULT_PLUGINS,
             project=project,
             headless=True,
             load_plugins=load_plugins,
@@ -79,7 +79,7 @@ async def run_headless(
                     assert ended.result is not None
                     answer = str(ended.result.output)
                     reason = 'exit'
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 -- CLI boundary, stdout must remain answer-only.
                     Console(stderr=True).print(error_message(exc), markup=False, highlight=False)
                     return 1
                 finally:

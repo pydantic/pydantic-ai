@@ -5,16 +5,8 @@ emits a `DeprecationWarning`. Import from `pydantic_ai_harness.subagents` instea
 """
 
 from pydantic_ai_harness.experimental._warn import warn_moved
-from pydantic_ai_harness.subagents import (
-    MINIMUM_EFFORT_FLOOR,
-    AgentOverride,
-    ModelOption,
-    SubAgent,
-    SubAgents,
-    SubAgentToolset,
-    ToolResolver,
-    clamp_effort,
-)
+from pydantic_ai_harness.subagents import AgentOverride, ModelOption, SubAgent, SubAgents, SubAgentToolset, ToolResolver
+from pydantic_ai_harness.subagents._effort import MINIMUM_EFFORT_FLOOR, clamp_effort
 
 warn_moved('subagents', 'subagents')
 

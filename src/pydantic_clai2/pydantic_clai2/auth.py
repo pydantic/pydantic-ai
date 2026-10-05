@@ -2,14 +2,17 @@
 
 import asyncio
 import webbrowser
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from functools import partial
 from urllib.parse import parse_qs, urlparse
 
+import anyio
 from anyio import fail_after
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from pydantic import TypeAdapter, ValidationError
 from rich.console import Console
+from termflow.tui import MenuBuilder, MenuItem
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai_codex import OpenAICodexModel
@@ -20,8 +23,13 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexProvider,
 )
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.models import github_copilot
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
+from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
+from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
@@ -29,13 +37,58 @@ _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 ReadLine = Callable[[str], Awaitable[str]]
 
 
-async def login_command(args: list[str], *, codex: 'CodexAuth') -> str:
-    """Keep bare `/login` compatible with Codex while accepting an explicit subscription provider."""
-    if args == ['github-copilot']:
+async def login_command(
+    args: list[str],
+    *,
+    codex: 'CodexAuth',
+    plugins: Mapping[str, PluginLogin] | None = None,
+    store: SettingsStore | None = None,
+    runners: Runners = TERMINAL,
+) -> str:
+    """`/login NAME` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` asks which.
+
+    A plugin sign-in that succeeds saves its `models` to `store`.
+    """
+    plugins = plugins or {}
+    if len(args) > 1:
+        raise ValueError(_login_usage(plugins))
+    if args:
+        name = LOGIN_ALIASES.get(args[0], args[0])
+    elif (picked := await _pick_login(plugins, runners)) is None:
+        return ''
+    else:
+        name = picked
+    if name == 'openai-codex':
+        return await codex.login([])
+    if name == 'github-copilot':
         return await github_copilot.login(console=codex.console)
-    if args not in ([], ['openai-codex']):
-        raise ValueError('Usage: /login [openai-codex|github-copilot]')
-    return await codex.login(args)
+    if (login := plugins.get(name)) is not None:
+        message = await login.handler()
+        if store is not None:
+            for model in login.models:
+                store.add_model(name=model)
+        return message
+    raise ValueError(_login_usage(plugins))
+
+
+def _login_usage(plugins: Mapping[str, PluginLogin]) -> str:
+    return f'Usage: /login [{"|".join(login_names(plugins))}]'
+
+
+async def _pick_login(plugins: Mapping[str, PluginLogin], runners: Runners) -> str | None:
+    """Ask which sign-in to run; `None` when cancelled."""
+    menu = (
+        MenuBuilder('Sign in')
+        .style(markdown_style())
+        .items([MenuItem(name, value=name) for name in login_names(plugins)])
+        .footer_hint('Enter sign in - Esc cancel')
+        .key_source(menu_key)
+        .build()
+    )
+    result = await run_worker(lambda: runners.run_list(menu))
+    if result.cancelled or result.item is None or not isinstance(result.item.value, str):
+        return None
+    return result.item.value
 
 
 async def read_line(message: str) -> str:
@@ -64,7 +117,7 @@ class CodexCredentials(OpenAICodexCredentialSource):
 
     async def load(self) -> OpenAICodexCredentials:
         """Load credentials without falling back to another application's tokens."""
-        value = await asyncio.to_thread(load_codex_credentials)
+        value = await anyio.to_thread.run_sync(load_codex_credentials, abandon_on_cancel=True)
         if value is None:
             raise UserError('Codex is not connected. Run /login openai-codex.')
         try:
@@ -75,7 +128,7 @@ class CodexCredentials(OpenAICodexCredentialSource):
     async def save(self, credentials: OpenAICodexCredentials) -> None:
         """Persist login or refresh results using the configured OS credential backend."""
         value = _CREDENTIALS.dump_json(credentials).decode()
-        await asyncio.to_thread(save_codex_credentials, value=value)
+        await anyio.to_thread.run_sync(partial(save_codex_credentials, value=value), abandon_on_cancel=True)
 
 
 class CodexAuth:
@@ -105,7 +158,7 @@ class CodexAuth:
 
         # Launching in a thread keeps the loop available for core's callback listener.
         async def open_browser() -> None:
-            await asyncio.to_thread(webbrowser.open, flow.authorization_url())
+            await anyio.to_thread.run_sync(webbrowser.open, flow.authorization_url(), abandon_on_cancel=True)
 
         browser = asyncio.create_task(open_browser())
         try:

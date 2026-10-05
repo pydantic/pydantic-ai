@@ -79,7 +79,7 @@ Other Grok Voice models ignore the setting.
 | Audio format | Limited parameter support | Mono PCM16 at 24 kHz by default, input and output; the other PCM rates xAI lists (8 to 48 kHz) by setting `audio_input_sample_rate` and `audio_output_sample_rate` through [`profile=`](overview.md#provider-support). The API also offers G.711 and Opus, which Pydantic AI does not expose |
 | Text output | Unsupported | Grok Voice always produces audio |
 | Image input | Unsupported | Grok Voice doesn't see images: xAI accepts an image item but ignores it, so [`send()`][pydantic_ai.realtime.RealtimeSession.send] rejects images with a `UserError` before sending |
-| Manual turns | Limited parameter support | `turn_detection=False` plus [`commit_audio()`](turns.md#push-to-talk); xAI replies as soon as audio is committed, so a committed turn can't wait for `create_response()` |
+| Manual turns | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk) |
 | Interruption | Limited parameter support | [`interrupt()`](turns.md#barge-in) works, and `played_bytes=` also discards the unheard audio; `played_ms` raises, because [xAI's truncation](#provider-specific-quirks) is unreliable at barge-in |
 | Input transcription | Full feature support | [Dedicated provider path](audio.md#input-transcription); `'auto'` by default |
 | Native tools | Unsupported | xAI offers web search, X search, file search, and MCP tools, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
@@ -103,6 +103,10 @@ turns and suppresses the provider's replay burst from the local event stream. Th
 conversation ID, and xAI keeps the conversation for 30 minutes of inactivity, but Pydantic AI holds
 the ID only in memory, so another process can't resume it yet
 ([#7302](https://github.com/pydantic/pydantic-ai/issues/7302)).
+
+A conversation that runs past xAI's maximum duration ends with a `max_duration` error. Resuming it
+would only run into the same limit, so the session raises a
+[`RealtimeError`][pydantic_ai.realtime.RealtimeError] instead of reconnecting.
 
 ## Provider-specific quirks
 
