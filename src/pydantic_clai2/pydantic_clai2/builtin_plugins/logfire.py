@@ -3,8 +3,8 @@
 The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
 
 The same instance records failures CLAI reports and recovers from: startup plugin load failures, failed turns,
-failed slash commands other than usage errors, and failing plugin handlers; with `include_content` off, the last
-three keep only the exception's type. With `ui_events` on, it also records
+failed slash commands other than usage errors, and failing plugin handlers; with `include_content` off, these
+keep only the exception's type. With `ui_events` on, it also records
 CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 
@@ -154,8 +154,12 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         with telemetry.parent_span(self._session_tracing.root()):
-            self._clai2.log(
-                'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
+            telemetry.log_error(
+                self._clai2,
+                'Plugin {plugin!r} failed to load',
+                event.error,
+                content=self.settings.include_content,
+                attributes={'plugin': event.plugin},
             )
 
     async def on_turn_end(self, event: TurnEnd) -> None:

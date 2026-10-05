@@ -16,9 +16,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
+from typing import Literal
 
 import logfire
-from opentelemetry.trace import Span, SpanKind, get_current_span, use_span
+from opentelemetry.trace import Span, SpanKind, Status, StatusCode, get_current_span, use_span
 
 Attribute = str | int | float | bool
 SCOPE = 'clai2'
@@ -116,10 +117,11 @@ def log_error(
     content: bool,
     attributes: Mapping[str, Attribute] | None = None,
 ) -> None:
-    """Log `error` at `error` level: with `content`, as an exception event with its message and traceback.
+    """Log `error` at `error` level with ERROR status and an `exception` event holding its message and traceback.
 
-    Both can quote a prompt or a pasted secret, so without `content` only the exception's type is kept, as
-    the `exception.type` attribute, as core `Instrumentation` does on agent spans with `include_content=False`.
+    Both can quote a prompt or a pasted secret, so without `content` the event keeps only the exception's type,
+    as core `Instrumentation` does on agent spans with `include_content=False`. That record is an error-level
+    span with no duration, since a Logfire log cannot carry an event without the exception's message.
     """
     if content:
         instance.log('error', msg_template, attributes=dict(attributes or {}), exc_info=error)
@@ -128,7 +130,10 @@ def log_error(
     name = error_type.__qualname__
     if error_type.__module__ != 'builtins':
         name = f'{error_type.__module__}.{name}'
-    instance.log('error', msg_template, attributes={**(attributes or {}), 'exception.type': name})
+    with _open(instance, msg_template, dict(attributes or {}), level='error'):
+        current = get_current_span()
+        current.add_event('exception', {'exception.type': name, 'exception.escaped': 'False'})
+        current.set_status(Status(StatusCode.ERROR))
 
 
 class UiSpan:
@@ -170,13 +175,19 @@ def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
                 opened.__exit__(None, None, None)
 
 
-def _open(sink: logfire.Logfire, msg_template: str, attributes: dict[str, Attribute]) -> logfire.LogfireSpan:
+def _open(
+    sink: logfire.Logfire,
+    msg_template: str,
+    attributes: dict[str, Attribute],
+    *,
+    level: Literal['error'] | None = None,
+) -> logfire.LogfireSpan:
     # Every underscored option is spelled out, so no attribute can be mistaken for one.
     return sink.span(
         msg_template,
         _tags=(),
         _span_name=None,
-        _level=None,
+        _level=level,
         _links=(),
         _span_kind=SpanKind.INTERNAL,
         **attributes,

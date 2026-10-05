@@ -383,12 +383,11 @@ async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(
     assert failed.status.status_code is trace.StatusCode.ERROR
     assert failed.instrumentation_scope is not None and failed.instrumentation_scope.name == 'clai2'
     if not content:
-        # Like core's agent spans, only the type is kept: the message and traceback can quote the prompt.
-        assert [(span.attributes or {})['exception.type'] for span in (failed, reused)] == [
-            'pydantic_ai.exceptions.UserError',
-            'RuntimeError',
+        # Like core's agent spans, the event keeps only the type: the message and traceback can quote the prompt.
+        assert [dict(event.attributes or {}) for span in (failed, reused) for event in span.events] == [
+            {'exception.type': 'pydantic_ai.exceptions.UserError', 'exception.escaped': 'False'},
+            {'exception.type': 'RuntimeError', 'exception.escaped': 'False'},
         ]
-        assert all(not span.events for span in (failed, reused))
         return
     assert [(event.attributes or {}).get('exception.type') for event in reused.events] == ['RuntimeError']
     [exception] = failed.events

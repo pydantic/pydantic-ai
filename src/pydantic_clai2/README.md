@@ -1669,7 +1669,7 @@ Other errors CLAI shows you and recovers from are sent the same way: a failed tu
 fails unexpectedly (for example, `/update` hitting a GitHub rate limit), and a plugin
 handler that fails. Usage errors, such as a mistyped command, are not sent. An error
 inside the agent run is already on the run's span, so it is not sent twice. With
-`include_content` off, these records keep only the exception's type.
+`include_content` off, these records and load failures keep only the exception's type.
 
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing

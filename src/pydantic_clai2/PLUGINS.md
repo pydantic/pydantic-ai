@@ -351,9 +351,9 @@ with their exception and traceback, also without `ui_events`:
 - A plugin handler that fails without stopping CLAI (`on_turn_end`, `on_session_end`,
   `on_plugin_load_failed`), with the plugin's name.
 
-The exception message and traceback get Logfire's normal scrubbing. They can quote a prompt,
-so with `include_content: false` these records keep only the exception's type, as the
-`exception.type` attribute, as agent spans do.
+The exception message and traceback get Logfire's normal scrubbing. They can quote a prompt
+or a pasted secret, so with `include_content: false` these records, and startup load
+failures, keep only the exception's type in their `exception` event, as agent spans do.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
 in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to

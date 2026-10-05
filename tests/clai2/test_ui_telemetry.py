@@ -356,12 +356,14 @@ def test_handled_errors_do_not_need_ui_events(exporter: InMemorySpanExporter, tm
     assert recorded(exporter) == [('a UI event', {})]
     [error] = other.get_finished_spans()
     assert error.status.status_code is StatusCode.ERROR
-    if not content:
-        # Without content only the type is kept: a handler's message can quote the prompt.
-        assert recorded(other) == [('plugin alpha failed', {'plugin': 'alpha', 'exception.type': 'RuntimeError'})]
-        assert not error.events
-        return
     assert recorded(other) == [('plugin alpha failed', {'plugin': 'alpha'})]
+    assert (error.attributes or {})['logfire.level_num'] == 17
+    if not content:
+        # Without content the event keeps only the type: a handler's message can quote the prompt.
+        assert [dict(event.attributes or {}) for event in error.events] == [
+            {'exception.type': 'RuntimeError', 'exception.escaped': 'False'}
+        ]
+        return
     assert [(event.attributes or {}).get('exception.message') for event in error.events] == ['handler failed']
 
 

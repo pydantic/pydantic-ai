@@ -192,3 +192,29 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
         await harness.loader.close('exit')
     root = next(span for span in recorder.spans() if span.name == 'CLAI session')
     assert observer_failed.parent == root.context
+
+
+async def test_startup_errors_keep_only_their_type_without_content(tmp_path: Path, recorder: Recorder) -> None:
+    harness = Harness(
+        tmp_path,
+        builtin=(
+            PluginSettings(
+                id='observability',
+                factory='pydantic_clai2.builtin_plugins.logfire',
+                settings={'include_content': False},
+            ),
+        ),
+    )
+    (harness.store.plugins_dir / 'broken.py').write_text('raise ImportError("missing pasted-token dependency")\n')
+    try:
+        await harness.loader.load_all()
+        assert "Plugin 'broken': ImportError: missing pasted-token dependency" in harness.text
+        [error] = recorder.spans()
+        assert (error.attributes or {})['plugin'] == 'broken'
+        assert error.status.status_code is trace.StatusCode.ERROR
+        # The message can quote saved settings, so like agent spans without content the event keeps only the type.
+        assert [dict(event.attributes or {}) for event in error.events] == [
+            {'exception.type': 'ImportError', 'exception.escaped': 'False'}
+        ]
+    finally:
+        await harness.loader.close('exit')
