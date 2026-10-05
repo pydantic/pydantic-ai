@@ -743,9 +743,11 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         spent, so dropping them would leave a token ceiling understating what the model
         was asked to do -- the same reasoning `on_unpriced='raise'` already follows.
 
-        `known_cost` is a registry price core already calculated, from a response this
-        one only summarizes: an attempt's `usage.cost` was priced with the provider URL the
-        rejected response carried, which the summary does not. `price` still comes first.
+        `known_cost` is the cost core already put on a response this one only summarizes:
+        an attempt's `usage.cost` was priced with the provider URL the rejected response
+        carried, which the summary does not. `price` still comes first. Core never overwrites
+        a cost the model set itself, so a negative or non-finite one is not trusted and the
+        summary is priced from the registry instead.
         """
         if self.price is not None:
             try:
@@ -764,7 +766,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     # closes. Corrections belong in the store, not here.
                     return Decimal(0), False, f'returned a negative amount ({supplied})'
                 return supplied, True, None
-        if known_cost is not None:
+        if known_cost is not None and known_cost.is_finite() and known_cost >= 0:
             return known_cost, True, None
         if response.model_name:
             try:

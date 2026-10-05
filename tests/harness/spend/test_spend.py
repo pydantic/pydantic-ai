@@ -2104,6 +2104,23 @@ class TestFallbackAttempts:
         assert spent.usd == Decimal('0.001') + answer.cost().total_price
         assert spent.unpriced_requests == 0
 
+    @pytest.mark.parametrize('model_cost', [Decimal('-1'), Decimal('NaN'), Decimal('Infinity')])
+    async def test_an_attempt_cost_that_is_not_a_valid_amount_is_not_trusted(self, model_cost: Decimal):
+        """Core keeps a cost the model set itself, so one that would credit or poison a budget falls to the registry.
+
+        The registry cannot price the attempt here, so it is recorded as unpriced rather than at the model's figure.
+        """
+        guard = SpendLimits[None](budgets=[Budget(window='total')])
+        result = await Agent(
+            _rejecting_fallback(primary_cost=model_cost), deps_type=type(None), capabilities=[guard]
+        ).run('hi')
+
+        answer = result.all_messages()[-1]
+        assert isinstance(answer, ModelResponse)
+        assert (await guard.status())[0].spent == Spent(
+            usd=answer.cost().total_price, tokens=132, requests=2, unpriced_requests=1
+        )
+
     async def test_every_rejected_response_is_charged_when_every_model_fails(self):
         """An attempt that raised before the provider answered carries no usage and is not charged."""
 
