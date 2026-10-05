@@ -47,6 +47,9 @@ AGENTS.override.md
 !.agents/skills/pushing-commits-to-the-repo/
 .agents/skills/pushing-commits-to-the-repo/*
 !.agents/skills/pushing-commits-to-the-repo/SKILL.md
+!.agents/skills/docs-parity-reviewer/
+.agents/skills/docs-parity-reviewer/*
+!.agents/skills/docs-parity-reviewer/SKILL.md
 .claude/*
 !.claude/plans/
 !.claude/skills/
@@ -57,6 +60,7 @@ AGENTS.override.md
 !.claude/skills/i-have-adhd
 !.claude/skills/poweruser-feature-audit
 !.claude/skills/pushing-commits-to-the-repo
+!.claude/skills/docs-parity-reviewer
 !.claude/skills/address-feedback/
 .claude/skills/address-feedback/*
 !.claude/skills/address-feedback/SKILL.md

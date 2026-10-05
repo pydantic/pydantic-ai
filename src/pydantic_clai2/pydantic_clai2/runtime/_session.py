@@ -402,7 +402,7 @@ class Session(Generic[DepsT, OutputT]):
                     try:
                         with move_on_after(5, shield=True):
                             await self._save_turn(outcome='cancelled')
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 -- persistence failure must not swallow cancellation.
                         if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
                             cancelled.add_note(f'Could not save cancelled turn: {exc}')
                         logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)

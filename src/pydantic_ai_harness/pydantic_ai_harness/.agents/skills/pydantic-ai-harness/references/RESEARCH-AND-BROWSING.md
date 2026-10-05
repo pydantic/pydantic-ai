@@ -25,9 +25,15 @@ and `pydantic-ai-slim[web-fetch]`).
 Tool-name collisions: core `WebSearch` (its native tool on Anthropic models), `ExaSearch`, `YouSearch`, and
 `KeenableSearch` all expose a tool named `web_search`; `ExaSearch`, `YouSearch`, and `KeenableSearch` all expose
 `get_page`. Use one search capability
-per agent, wrap extras in core `PrefixTools(wrapped=..., prefix='cb')`, or use `WebSearch(native=False, local=True)`
+per agent, wrap extras in core `PrefixTools(wrapped=..., prefix='cb')` (a second instance of the same
+class also needs its own `id=`, since each carries a default one), or use `WebSearch(native=False, local=True)`
 (needs the `pydantic-ai-slim[duckduckgo]` extra) whose DuckDuckGo tool is `duckduckgo_search`. `Researcher` includes core `WebSearch`, so do not add
 `ExaSearch`/`YouSearch`/`KeenableSearch` next to it on Anthropic models without `PrefixTools`.
+
+To use the provider's native search where the model has one and Exa or You.com elsewhere, set
+`ExaSearch(native=True)` / `YouSearch(native=True)` (their `web_search` is then only sent to models without
+native search; `get_page` stays), or pass `WebSearch(local=ExaSearch().web_search_tool())` to keep core
+`WebSearch`'s native options.
 
 ## Researcher
 
@@ -115,6 +121,8 @@ Gotchas:
 - Citations: each tool returns a `ToolReturn` whose `metadata['sources']` is a list of `ExaSource`
   (`url`, `title`), read from `ToolReturnPart.metadata` (not sent to the model).
 - Agent spec: `custom_capability_types=[ExaSearch, ExaAgent]`; `client`/`runs` are not serializable.
+- Durable execution (Temporal, DBOS, Prefect) records each Exa request, so recovery does not repeat it.
+  The records are named after the default `id` (`exa_search`, `exa_agent`); keep it stable once deployed.
 - Tests: pass `client=` any object satisfying the exported `ExaClient` protocol
   (`pydantic_ai_harness.exa`), which needs two async methods, `search(query, *, contents, num_results,
   type, output_schema, include_domains, exclude_domains)` and `get_contents(urls, *, text)`, both
@@ -184,6 +192,8 @@ Gotchas:
 - `finance_research` ignores the domain/freshness/country filters.
 - A no-match `web_search` returns `No results found for ...` (not an error); 401/402/403 stop the run.
 - Citations under `metadata['sources']` as `YouSource`, like Exa.
+- Durable execution records each You.com request under the default `id` (`you_search`, `you_research`),
+  like Exa.
 
 ## KeenableSearch
 

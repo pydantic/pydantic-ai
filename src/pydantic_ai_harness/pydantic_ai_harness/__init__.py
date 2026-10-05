@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from ._mcp import MCPReadOnlyNoToolsWarning
 from ._warn import HarnessDeprecationWarning
 
 if TYPE_CHECKING:
@@ -106,6 +107,7 @@ __all__ = [
     'LLM_API_KEY_ENV_PATTERNS',
     'KeenableSearch',
     'LocalStack',
+    'MCPReadOnlyNoToolsWarning',
     'Macroscope',
     'ManagedPrompt',
     'Memory',

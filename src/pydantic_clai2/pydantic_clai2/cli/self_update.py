@@ -2,8 +2,10 @@
 
 `stable` follows PyPI releases. `bleeding` follows the newest commit on `main` that touches CLAI. It downloads
 that commit's source archive over HTTPS, so it needs no `git`, and installs CLAI with the harness and core
-packages from the same archive, whose exact dev pins are not on PyPI. On Windows, which locks the files
-of a running program, the install runs in a new PowerShell window after CLAI exits.
+packages from the same archive, whose exact dev pins are not on PyPI. A source checkout is updated the same
+way: the install becomes a `uv tool` CLAI. CLAI then restarts as the new build and resumes the conversation.
+On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
+CLAI exits.
 """
 
 import base64
@@ -34,11 +36,11 @@ DISTRIBUTION = 'pydantic-clai2'
 REPOSITORY = 'https://github.com/pydantic/pydantic-ai'
 PACKAGES = {
     'pydantic-clai2': 'src/pydantic_clai2',
-    'pydantic-ai-harness': 'src/pydantic_ai_harness',
-    'pydantic-ai-slim': 'pydantic_ai_slim',
+    'pydantic-ai-harness[coder]': 'src/pydantic_ai_harness',
+    'pydantic-ai-slim[anthropic,mcp,openai]': 'pydantic_ai_slim',
     'pydantic-graph': 'pydantic_graph',
 }
-"""Source subdirectories installed together from one commit's archive."""
+"""Requirements and source subdirectories installed together from one commit's archive."""
 VERSION_BYPASS = 'UV_DYNAMIC_VERSIONING_BYPASS'
 """The build backend reads versions from Git history, which an archive lacks; this supplies one instead."""
 _ARCHIVE = re.compile(re.escape(REPOSITORY) + r'/archive/([0-9a-f]{40})\.tar\.gz')
@@ -141,19 +143,19 @@ class Update:
         return f'{name} @ {REPOSITORY}/archive/{self.target}.tar.gz#subdirectory={PACKAGES[name]}'
 
     def overrides(self) -> str:
-        """Replace CLAI's exact pins on the other packages with the same archive; uv keeps these in its receipt."""
-        return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES if name != DISTRIBUTION)
+        """Install CLAI and its pinned packages from one archive, preserving extras that uv overrides replace."""
+        return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def environment(self) -> dict[str, str]:
         """Variables uv's build needs: a version for the Git-less archive, `0.0.0` with the commit attached."""
-        return {} if self.channel == 'stable' else {VERSION_BYPASS: f'0.0.0+{self.label}'}
+        return {} if self.channel == 'stable' else {VERSION_BYPASS: f'0.0.0+{self.target}'}
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
         """The `uv tool install` that replaces the current install; bleeding reads `overrides`."""
         if self.channel == 'stable':
             return [uv, 'tool', 'install', '--force', f'{DISTRIBUTION}=={self.target}']
         assert overrides is not None, 'a bleeding install needs the overrides file'
-        return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), self.requirement(DISTRIBUTION)]
+        return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), DISTRIBUTION]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
@@ -231,6 +233,25 @@ def install_after_exit(
     start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded])
 
 
+class Relaunch(SystemExit):
+    """Raised by `chat` once the shell has closed after `/update`: the CLI starts `executable` in its place.
+
+    A `SystemExit`, so a caller other than the CLI exits as it did before CLAI restarted itself.
+    """
+
+    def __init__(self, *, executable: str, session_id: str | None) -> None:
+        super().__init__(0)
+        self.executable = executable
+        self.session_id = session_id
+
+
+async def tool_executable(uv: str) -> str | None:
+    """The `clai2` that `uv tool install` just wrote to uv's tool bin directory, if it is there."""
+    result = await run_process([uv, 'tool', 'dir', '--bin'], check=False)
+    path = Path(result.stdout.decode().strip(), 'clai2')
+    return str(path) if result.returncode == 0 and path.is_file() else None
+
+
 def _in_thread(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name='clai-update-check', daemon=True).start()
 
@@ -263,8 +284,12 @@ class Updates:
     windows: bool = os.name == 'nt'
     hand_off: Callable[[str], None] = install_after_exit
     """Starts the Windows install that runs after CLAI exits."""
+    locate: Callable[[str], Awaitable[str | None]] = tool_executable
+    """Finds the installed `clai2` from the uv executable."""
     restart_required: bool = False
     """Set after a successful install: the running environment was replaced, so the shell exits."""
+    relaunch: str | None = None
+    """The new `clai2` to start once the shell has exited, when the install found one."""
     _checked: UpdateChannel | None = field(default=None, init=False)
     _found: Update | None = field(default=None, init=False)
 
@@ -290,7 +315,7 @@ class Updates:
             self._found = find_update(channel, self.current, self.fetch(channel))
 
     async def command(self, args: list[str]) -> str:
-        """Install the newest CLAI on the current channel into this `uv tool` environment."""
+        """Install the newest CLAI on the current channel with `uv tool install`, then restart into it."""
         if args:
             raise ValueError('Usage: /update. Pick the channel with /set updates.channel stable|bleeding.')
         channel = self.channel()
@@ -301,13 +326,13 @@ class Updates:
         overrides = _write_overrides(update.overrides()) if channel == 'bleeding' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         environment = update.environment()
-        if uv is None or not self.current.tool:
+        if uv is None:
             # Keep the overrides file: the printed command reads it.
             variables = ''.join(f'{name}={shlex.quote(value)} ' for name, value in environment.items())
             shown = powershell(command, environment) if self.windows else variables + shlex.join(command)
             return (
-                f'CLAI {update.label} is available on the {channel} channel. CLAI updates itself only when installed '
-                f'with `uv tool install` and uv is on PATH. To update by hand, run:\n{shown}'
+                f'CLAI {update.label} is available on the {channel} channel. CLAI updates itself only when uv is '
+                f'on PATH. To update by hand, run:\n{shown}'
             )
         if self.windows:
             # The script removes the overrides file once uv has read it.
@@ -328,4 +353,7 @@ class Updates:
         if code != 0:
             return f'uv exited with status {code}; see its output above.'
         self.restart_required = True
-        return f'Updated CLAI to {update.label} ({channel}). Exiting; start clai2 again to use it.'
+        self.relaunch = await self.locate(uv)
+        if self.relaunch is None:
+            return f'Updated CLAI to {update.label} ({channel}). Exiting; start clai2 again to use it.'
+        return f'Updated CLAI to {update.label} ({channel}). Restarting...'

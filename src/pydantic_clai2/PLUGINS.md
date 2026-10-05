@@ -206,7 +206,7 @@ Output-validation and HTTP transport retry budgets are unchanged.
 
 ## Credentials
 
-CLAI's `/login codex`, `/login copilot`, and the vllm and openrouter connections store tokens
+CLAI's `/login openai-codex`, `/login github-copilot`, and the vllm and openrouter connections store tokens
 in the configured keyring backend, not plugin settings. Plugins that need an API key, such as
 [`posthog`](#posthog-posthog-analytics-signed-in-for-clai), keep it in `/keys` and save only its name. Large token bundles use
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
@@ -221,7 +221,7 @@ details.
 uv run clai2
 ```
 
-Run `/login copilot`, then open `/add_model` and choose `github-copilot`.
+Run `/login github-copilot`, then open `/add_model` and choose `github-copilot`.
 The provider menu also starts login when no credentials exist. No application
 registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -244,7 +244,7 @@ organization policy still control inference access. A known ID also works with
 The `github-copilot` keyring account is separate from Codex and named API keys.
 Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
 fallback, created with mode `0600`. Tokens and issuance time stay out of settings,
-history, and login output. Expiring tokens require another `/login copilot`;
+history, and login output. Expiring tokens require another `/login github-copilot`;
 there is no automatic refresh. Failed or cancelled authorization preserves the
 previous login.
 
@@ -254,7 +254,7 @@ no login is saved. Copilot login does not read `GH_TOKEN`, `GITHUB_TOKEN`, the
 `GITHUB_TOKEN` key in `/keys`, or another application's token files; that key
 belongs to the separate [`github` plugin](#github-tools-from-githubs-hosted-mcp-server). This is shell-owned authentication, not a plugin API.
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
-Bare `/login` continues to sign in to Codex.
+Bare `/login` asks which sign-in to run.
 
 ## Herdr integration
 
@@ -331,6 +331,12 @@ hooks. Agent/model/tool spans include timing, token usage, failures, text conten
 and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
 the configured telemetry destination first.
+
+Startup plugin load failures reported in the terminal, including missing optional dependencies,
+are recorded with their exception and traceback through this same instance. This does not require
+`ui_events`. Reporting waits until startup loading finishes, so failures before the
+observability plugin loaded are included. Disabling observability stops this reporting;
+the existing terminal messages remain.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
 in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
@@ -972,7 +978,7 @@ The token is looked up on every run. If none is available when the plugin loads
 loads, prints a warning, and keeps its settings menu available. Until you sign
 in or save a key, each run fails with an error saying how to fix it, so the agent
 never runs as the wrong account. `/keys` does not stop you renaming or deleting a
-key that a plugin uses. Neither sign-in uses your `/login copilot` login,
+key that a plugin uses. Neither sign-in uses your `/login github-copilot` login,
 and Copilot does not read the `GITHUB_TOKEN` key. The plugin emits no telemetry
 of its own; tool calls appear in core's spans.
 
@@ -1538,6 +1544,9 @@ pip install 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 
+With `uv tool`, extra packages installed using `--with` must be added again after
+`/update`. See [Updating](README.md#updating) for how CLAI installs updates.
+
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
 ```
@@ -1608,16 +1617,16 @@ contributes nothing:
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, and its
 saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`
 
-Four `async` methods fire outside the agent run, in the shell:
+Five `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -1625,6 +1634,14 @@ Four `async` methods fire outside the agent run, in the shell:
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
+| `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
+
+`on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
+name and original exception. Every successfully loaded plugin receives it, regardless
+of load order. It covers startup loading, not individual `/plugins` actions. Declarations
+whose own module is not installed stay quiet, as on the terminal; a missing dependency
+inside an available plugin is reported. A handler failure is printed without stopping
+startup or preventing other handlers from running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -1635,7 +1652,7 @@ A prompt cancelled by `on_turn_start` never starts an agent run and is not retai
 `/fork` fires both handlers for its background run too: an `on_turn_start` that cancels
 the prompt refuses the fork, and `on_turn_end` runs when the fork finishes.
 
-Codex token-refresh failures show `/login codex` recovery advice, including
+Codex token-refresh failures show `/login openai-codex` recovery advice, including
 when the SDK wraps them as connection errors. This changes only the terminal
 message: `TurnEnd.error` still contains the original exception and its chain.
 Headless runs show the same advice on stderr and exit with code 1.
@@ -1801,11 +1818,12 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 
 Built-in tool rendering shows one summary line per call by default, clipped to
 the terminal width and followed by a blank line. Tool names are pink; arguments
-and bullet markers are muted grey. Shell output and completion details, grep results, and file
-diffs are hidden from the terminal, not from the model. Set
-`/set display.tool_output true` to restore detailed output; `display.shell_lines`
-and `display.grep_lines` then control preview lengths (20 lines each by default).
-This setting does not suppress plugin renderers or interactive questions.
+and bullet markers are muted grey. Successful file writes and edits show their
+diffs even in compact mode. Shell output and completion details and grep results
+are hidden from the terminal, not from the model. Set `/set display.tool_output true`
+to show those details; `display.shell_lines` and `display.grep_lines` then control
+preview lengths (20 lines each by default). This setting does not suppress file
+diffs, plugin renderers, or interactive questions.
 
 CLAI shows unknown tool calls as `● tool_name`, with the name in pink. To show something
 better, return a Rich renderable (a `str` is fine). Return `None` to say "not mine,
@@ -2126,6 +2144,10 @@ events, including an explicit window override, and clears the window when unload
 `Transcript` and a detached `Status`, so tests need no special case. The status
 row itself is CLAI's; a plugin adds to it with `get_status_segments`.
 
+The double-Esc rewind menu also uses `commit_messages` between turns. It removes
+the selected prompt and later history, but does not undo plugin state, file
+changes, or other tool side effects. It never replays tools or fires turn hooks.
+
 ### Add to the status row: `get_status_segments()`
 
 Each segment is a function that takes no arguments and returns a short string. It
@@ -2213,7 +2235,10 @@ and hyphens. It cannot be one Pydantic AI or CLAI already runs, aliases included
 `my-service` is never routed to the plugin. When two plugins register one prefix, the later one
 wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
-again.
+again. Users can remove an unused model and its saved settings with **Ctrl+D** or **Delete** in
+`/model`, after confirmation. The current model and saved default are protected;
+select another model or change the default with `/set model NAME` first. Deleting
+a model does not unload its plugin or delete provider credentials.
 
 `/model_settings` offers generic controls (max tokens, temperature, custom
 parameters) for plugin models. When `resolve` returns a model class of a provider
@@ -2224,9 +2249,10 @@ effort. Any other value raises `ValueError`.
 
 ### Add a sign-in to `/login`: `get_logins()`
 
-`/login NAME` signs in to a subscription: `codex` (bare `/login`) and `copilot`
-ship with CLAI, and `openai-codex` and `github-copilot` still work. A plugin whose
-models need a sign-in adds its own name next to them:
+`/login NAME` signs in to a subscription: `openai-codex` and `github-copilot`
+ship with CLAI, named after the model prefix each one unlocks (the earlier `codex`
+and `copilot` still work), and bare `/login` asks which one to run. A plugin whose
+models need a sign-in adds its own name next to them, ideally its model prefix:
 
 ```python
 from collections.abc import Sequence
@@ -2575,7 +2601,8 @@ is labeled **SELECT PROJECT** or **SELECT SESSION**, with matching key hints.
 
 The browser groups existing Git worktrees by repository and labels session cards
 with the current branch or detached worktree name. This is display metadata only;
-saved workspace paths and cross-directory confirmation are unchanged. See
+saved workspace paths are unchanged. Selecting a session resumes immediately in
+the current directory, without confirmation. See
 [Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first

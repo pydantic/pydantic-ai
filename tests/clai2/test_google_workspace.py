@@ -28,6 +28,7 @@ from pydantic_clai2.config.credential_store import load_codex_credentials, save_
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus import field_menu
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu
 from tests.clai2.menu_script import Script, pick
 
@@ -321,6 +322,23 @@ def test_declared_as_a_disabled_builtin_that_enables_from_the_menu(tmp_path: Pat
     assert redraw.items[0].label.startswith('○ google_workspace')
     assert plugins.capabilities() == []
     asyncio.run(plugins.close('exit'))
+
+
+async def test_plugins_configure_opens_the_google_workspace_menu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`/plugins configure google_workspace` opens the same terminal menu as `/google_workspace`."""
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: 'escape')
+    [declaration] = [plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'google_workspace']
+    plugins = loader(
+        SettingsStore(tmp_path / 'settings.db'), builtin=(declaration.model_copy(update={'enabled': True}),)
+    )
+    await plugins.load_all()
+    try:
+        assert plugins.configurable('google_workspace')
+        assert await plugins.command(['configure', 'google_workspace']) == 'No changes.'
+    finally:
+        await plugins.close('exit')
 
 
 def test_the_former_catalog_entry_saved_by_the_menu_loads_the_builtin(tmp_path: Path) -> None:
