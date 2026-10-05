@@ -60,7 +60,7 @@ class TestSwitch:
         assert switch.row() == ''
         assert switch.capabilities([]) == []
 
-        assert switch.toggle() == 'Speculative execution on from the next turn. Ctrl+X Ctrl+S toggles it.'
+        assert switch.toggle() == 'Speculative execution on. Ctrl+X Ctrl+S toggles it.'
         assert SettingsStore(tmp_path / 'config.db').overrides() == {'run.speculative_code_mode': True}
         assert plain(switch.row()).startswith('Speculative Execution  0 hits')
 
@@ -70,6 +70,22 @@ class TestSwitch:
         assert switch.capabilities([]) == []
         switch.toggle()
         assert plain(switch.row()).startswith('Speculative Execution  2 hits')
+
+    @pytest.mark.parametrize('bound', [False, True])
+    def test_toggle_during_a_turn_keeps_its_row_and_marks_the_next_prompt(self, tmp_path: Path, bound: bool) -> None:
+        switch = speculation(tmp_path)
+        if bound:
+            switch.toggle()
+        with switch.turn():
+            assert switch.toggle().endswith('from the next prompt; this turn keeps its tools.')
+            # The row stays while either the running turn or the next prompt speculates.
+            pending = 'off' if bound else 'on'
+            assert plain(switch.row()) == f'{plain(switch.counters.row())}    {pending} from the next prompt'
+            assert switch.toggle() == f'Speculative execution {"on" if bound else "off"}. Ctrl+X Ctrl+S toggles it.'
+            assert (switch.row() != '') is bound
+            switch.toggle()
+        assert (switch.row() == '') is bound
+        assert 'next prompt' not in plain(switch.row())
 
     def test_missing_sandbox_dependency_warns_and_runs_natively(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
