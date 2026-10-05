@@ -235,8 +235,9 @@ a `UserWarning`).
 A host that lets a person invoke a skill (a `/code-review src/app.py` command) reads the catalog
 with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
 `skill.render(arguments)` as the prompt: `$ARGUMENTS` in the body is substituted, else
-`ARGUMENTS: ...` is appended (indexed forms like `$0` and `$ARGUMENTS[0]` are left as-is). `catalog.skipped` lists the
-`SKILL.md` files left out, for the host to show; `load` emits no warnings itself.
+`ARGUMENTS: ...` is appended (indexed forms like `$0` and `$ARGUMENTS[0]` are left as-is).
+`catalog.skipped` lists the `SKILL.md` files left out, for the host to show; `load` emits no
+warnings itself.
 
 Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
