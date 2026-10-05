@@ -418,8 +418,9 @@ async def test_selected_model_resolves_through_clai_first(tmp_path: Path, stock:
     assert elsewhere.calls == []
 
 
-async def test_names_clai_does_not_handle_are_left_to_other_resolvers(tmp_path: Path) -> None:
-    """A model a capability selects by an alias only its own resolver knows still resolves there."""
+@pytest.mark.parametrize('chosen', [False, True], ids=['capability', 'chosen'])
+async def test_names_clai_does_not_handle_are_left_to_other_resolvers(tmp_path: Path, chosen: bool) -> None:
+    """An alias only a plugin's resolver knows still resolves there, whether a capability or the user selected it."""
     recorder = Recorder()
 
     @dataclass
@@ -430,8 +431,8 @@ async def test_names_clai_does_not_handle_are_left_to_other_resolvers(tmp_path: 
     default = Settings().model
     await run_turn(
         tmp_path,
-        settings=Settings(),
-        plugins=(Alias(model='my-alias'),),
+        settings=resolve_settings({'model': 'my-alias'}) if chosen else Settings(),
+        plugins=(Alias(model=None if chosen else 'my-alias'),),
         recorder=recorder,
         # Like CLAI's resolver, which returns a name it has no integration for unchanged.
         resolve=lambda name: recorder.resolve(name) if name == default else name,
