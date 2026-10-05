@@ -241,6 +241,14 @@ running turn ends. `/model settings` edits to the running model apply to its
 next model request in the same turn. With arguments, these commands queue like
 any other.
 
+`/plugins` runs right away during a turn too, with or without arguments, so
+`/plugins disable NAME` does not wait behind the turn or your queued messages.
+Commands, status segments, and model providers change at once. The running turn
+keeps the tools and hooks it started with, because the agent binds them when a
+run begins; the change reaches the agent on your next prompt, and CLAI says so.
+A plugin turned off mid-turn finishes its cleanup when the turn ends. While a
+delegated task is running, `/plugins` still refuses changes, as between turns.
+
 ## Models and their settings
 
 `/model` selects from models you have already added. Choose **Add a model...**

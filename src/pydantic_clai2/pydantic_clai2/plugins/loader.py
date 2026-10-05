@@ -1,8 +1,9 @@
-"""Load, unload, and reload plugins between turns. Discarding a host unloads its plugin."""
+"""Load, unload, and reload plugins, between turns or during one. Discarding a host unloads its plugin."""
 
 import asyncio
 import importlib
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -90,6 +91,9 @@ _RETIRED_BUILTINS: dict[str, PluginSettings] = {
     'grain': PluginSettings(id='grain', factory='pydantic_ai_harness.grain:Grain', enabled=False),
 }
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
+
+
+TURN_NOTICE = 'The running turn keeps the plugins it started with; the agent sees the change on the next prompt.'
 
 
 class PluginError(Exception):
@@ -196,6 +200,8 @@ class PluginLoader(Generic[DepsT]):
         # The capability CLAI built from a `module:Class` declaration's settings, by plugin.
         self._from_settings: dict[str, AbstractCapability[DepsT]] = {}
         self._guards: dict[str, PluginGuard[DepsT]] = {}
+        # Plugins unloaded while a turn runs, with their `session_end` reasons; `None` between turns.
+        self._retired: list[tuple[str, LoadedPlugin[DepsT], SessionEndReason]] | None = None
         self.enabled = enabled
 
     @property
@@ -529,16 +535,51 @@ class PluginLoader(Generic[DepsT]):
         await checkpoint()
 
     async def unload(self, name: str, *, reason: SessionEndReason = 'exit') -> None:
-        """Fire `session_end`, then drop everything the plugin registered."""
+        """Fire `session_end`, then drop everything the plugin registered.
+
+        During a turn the plugin is dropped now, but `session_end` waits for the turn to end:
+        the running agent still uses the capabilities it bound when the turn started.
+        """
         entry = self._entry(name)
-        if entry.loaded is None:
+        loaded = entry.loaded
+        if loaded is None:
+            return
+        if self._retired is not None:
+            self._drop(entry)
+            self._retired.append((name, loaded, reason))
             return
         try:
-            await entry.loaded.dispatch(SessionEnd(reason=reason))
-        except Exception as exc:  # noqa: BLE001 -- unloading must finish even if the plugin misbehaves.
-            self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
+            await self._end(name, loaded, reason=reason)
         finally:
             self._drop(entry)
+
+    async def _end(self, name: str, loaded: LoadedPlugin[DepsT], *, reason: SessionEndReason) -> None:
+        try:
+            await loaded.dispatch(SessionEnd(reason=reason))
+        except Exception as exc:  # noqa: BLE001 -- unloading must finish even if the plugin misbehaves.
+            self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
+
+    @property
+    def in_turn(self) -> bool:
+        """Whether a turn is running, so plugin changes reach the agent only on the next prompt."""
+        return self._retired is not None
+
+    @asynccontextmanager
+    async def turn(self) -> AsyncGenerator[None]:
+        """Hold back `session_end` for plugins unloaded while a turn runs, then end them in order.
+
+        Capabilities are bound once per agent run, so a plugin unloaded mid-turn may still have
+        tools, hooks, or transports in use. Its teardown runs once the run is over, even if it was
+        cancelled. Everything else the plugin declared is gone at once.
+        """
+        self._retired = []
+        try:
+            yield
+        finally:
+            retired, self._retired = self._retired, None
+            with CancelScope(shield=True):
+                for name, loaded, reason in retired:
+                    await self._end(name, loaded, reason=reason)
 
     def _drop(self, entry: PluginEntry[DepsT]) -> None:
         if entry.loaded is not None:
@@ -702,7 +743,18 @@ class PluginLoader(Generic[DepsT]):
         return await self._configure_new(name, f'Replaced {kind} {name}.')
 
     async def command(self, args: list[str]) -> str:
-        """Back `/plugins` with arguments; changes apply now and are saved."""
+        """Back `/plugins` with arguments; changes apply now and are saved.
+
+        During a turn, a change to what the agent gets says that it waits for the next prompt.
+        """
+        before = self.capabilities()
+        message = await self._command(args)
+        after = self.capabilities()
+        if self.in_turn and (len(after) != len(before) or any(new is not old for new, old in zip(after, before))):
+            return f'{message}\n{TURN_NOTICE}'
+        return message
+
+    async def _command(self, args: list[str]) -> str:
         if not args or args == ['list']:
             return (
                 '\n'.join(f'{entry.name}: {entry.source} ({entry.state})' for entry in self.entries()) or 'No plugins.'
