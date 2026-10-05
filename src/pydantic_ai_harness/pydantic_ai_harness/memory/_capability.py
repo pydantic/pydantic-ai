@@ -115,6 +115,9 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
+    _toolset: MemoryToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    """The one `memory` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
+
     def __post_init__(self) -> None:
         _validate_positive('max_tokens', self.max_tokens)
         _validate_non_negative('max_lines', self.max_lines)
@@ -168,8 +171,10 @@ class Memory(AbstractCapability[AgentDepsT]):
         return store, scope
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Provide the memory toolset, identified by this instance's `agent_name` scope."""
-        return MemoryToolset(self)
+        """Provide the memory toolset, identified by this instance's `agent_name` scope and shared with per-run copies."""
+        if self._toolset is None:
+            self._toolset = MemoryToolset(self)
+        return self._toolset
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide trusted static guidance about using memory.
@@ -204,6 +209,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         # Scope-qualify the marker so several `Memory` capabilities on one agent
         # each refresh only their own injection instead of clobbering each other.
         marker = f'{_MEMORY_PART_METADATA}:{scope_hash}'
+        self._remove_previous_injection(ctx.messages, marker)
         self._remove_previous_injection(request_context.messages, marker)
         if not self.inject_memory:
             return request_context

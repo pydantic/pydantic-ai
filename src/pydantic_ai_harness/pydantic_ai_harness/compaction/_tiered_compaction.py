@@ -6,10 +6,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
@@ -183,7 +182,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Escalate through the tiers when the conversation exceeds the target."""
-        messages: list[ModelMessage] = list(request_context.messages)
+        messages: list[ModelMessage] = list(ctx.messages)
         # The tiers get the request's context, not the run's: a tier that resolves a model --
         # a summarizing one, or a `TieredCompaction` nested inside this one -- has to reach the
         # same conclusion this gate did.
@@ -206,10 +205,10 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             compact=lambda: self._escalate(messages, request_ctx, target, request_context.model_request_parameters),
             tokenizer=self.tokenizer,
         )
+        ctx.messages[:] = compacted
         record_compaction_reclaim(
-            request_context,
+            ctx,
             estimate_token_count(messages, self.tokenizer),
             estimate_token_count(compacted, self.tokenizer),
         )
-        request_context.messages = compacted
-        return request_context
+        return replace(request_context, messages=compacted)

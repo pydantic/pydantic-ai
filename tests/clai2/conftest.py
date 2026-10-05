@@ -6,8 +6,10 @@ from pathlib import Path
 
 import keyring
 import pytest
+from keyring.errors import PasswordDeleteError
 
 from pydantic_ai import models
+from pydantic_clai2.config import credential_store
 
 
 @pytest.fixture
@@ -56,7 +58,7 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
         fake.opened.append(url)
         return True
 
-    monkeypatch.setattr('pydantic_clai2.github.OPEN_BROWSER', open_browser)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.OPEN_BROWSER', open_browser)
     return fake
 
 
@@ -86,9 +88,40 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         credentials[service, account] = value
 
     def delete_password(service: str, account: str) -> None:
-        del credentials[service, account]
+        if credentials.pop((service, account), None) is None:
+            raise PasswordDeleteError(account)
 
     monkeypatch.setattr(keyring, 'get_password', get_password)
     monkeypatch.setattr(keyring, 'set_password', set_password)
     monkeypatch.setattr(keyring, 'delete_password', delete_password)
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
+    # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
+    credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+def stored_accounts() -> set[str]:
+    """Accounts with a saved credential: each is an encrypted file, while the keyring only holds their key."""
+    directory = credential_store.credentials_path().parent
+    return {path.stem.removeprefix('credentials-') for path in directory.glob('credentials-*.enc')}
+
+
+@pytest.fixture
+def vault(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], str]:
+    """A keyring that also deletes, for tests that sign out."""
+    entries: dict[tuple[str, str], str] = {}
+
+    def get(service: str, account: str) -> str | None:
+        return entries.get((service, account))
+
+    def set_value(service: str, account: str, value: str) -> None:
+        entries[service, account] = value
+
+    def delete(service: str, account: str) -> None:
+        if (service, account) not in entries:
+            raise PasswordDeleteError('Not found')  # pragma: no cover
+        del entries[service, account]
+
+    monkeypatch.setattr(keyring, 'get_password', get)
+    monkeypatch.setattr(keyring, 'set_password', set_value)
+    monkeypatch.setattr(keyring, 'delete_password', delete)
+    return entries

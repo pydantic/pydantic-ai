@@ -683,10 +683,6 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     def _root_place(self, scope: _Scope) -> str:
         return 'the project' if self._root_spelling is None else f'`{scope.root}`'
 
-    async def _real_path_inside(self, scope: _Scope, path: str) -> bool:
-        """Whether a path a walk reached still leads inside the root once symlinks are resolved."""
-        return not scope.checks_realpath or _contains(scope.root, await scope.workspace.realpath(path))
-
     def _check_access(self, path: str, *, write: bool = False, check_allowed: bool = True) -> None:
         """Validate path against allow/deny/read-only patterns.
 

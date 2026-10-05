@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_clai2.worktrees import offer_worktree_cleanup
+from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup
 
 
 def git(directory: Path, *args: str) -> str:

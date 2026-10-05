@@ -26,7 +26,7 @@ Each capability package should normally have:
 - `_capability.py` for the public capability class
 - `_toolset.py` only if the capability needs toolset behavior
 - `README.md` with focused usage docs (serves GitHub and PyPI)
-- a unified-docs page at `docs/<capability>.md` (the `docs/` folder is flat --
+- a unified-docs page at `docs/harness/<capability>.md` (the `docs/harness/` folder is flat --
   no `capabilities/` or `experimental/` subdirectories). It mirrors the README
   for the docs site, drops badges, links other harness pages and Pydantic AI
   docs with relative `.md` links (`../toolsets.md`), links its
@@ -34,28 +34,28 @@ Each capability package should normally have:
   with a `::: pydantic_ai_harness.<Class>` autodoc block. The README and this
   page are kept in sync (see `review-checklist.md` "Docs").
 - an entry in the `pydantic-ai-harness` agent skill
-  (`pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`): a row in the
+  (`src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`): a row in the
   `SKILL.md` routing tables and a section in the matching `references/` file
-- mirrored tests under `tests/<capability>/`
+- mirrored tests under `tests/harness/<capability>/`
 
-The root `pydantic_ai_harness/__init__.py` should re-export stable public
+The root `src/pydantic_ai_harness/pydantic_ai_harness/__init__.py` should re-export stable public
 capabilities. Keep implementation helpers private unless users need them.
 
 ### Capability Submodules And Exports
 
 The `experimental` tier is retired. ACP is the sole remaining experimental
-capability (`pydantic_ai_harness/experimental/acp/`); do not add new capabilities
+capability (`src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/`); do not add new capabilities
 there.
 
-New capabilities land as a top-level submodule `pydantic_ai_harness/<name>/`
-AND are re-exported **lazily** from the root `pydantic_ai_harness/__init__.py` —
+New capabilities land as a top-level submodule `src/pydantic_ai_harness/pydantic_ai_harness/<name>/`
+AND are re-exported **lazily** from the root `src/pydantic_ai_harness/pydantic_ai_harness/__init__.py` —
 top-level importability is the norm (ruled 8/13): every public capability class
 (and public constants like `DEFAULT_ALLOWED_COMMANDS`) is added to `__all__`,
 to the `TYPE_CHECKING` import block, and to the `__getattr__` dispatch. The lazy
 `__getattr__` pattern is what makes this safe with optional dependencies:
 importing the root package pulls in nothing, and accessing an extra-gated name
 without its extra installed raises the standard install-hint `ImportError`.
-`tests/test_placeholder.py::test_all_exports_are_importable` enforces the
+`tests/harness/test_placeholder.py::test_all_exports_are_importable` enforces the
 contract — a new-capability PR that skips the root export fails it. The sole
 exception is `experimental` (ACP), which stays submodule-only. Docs and examples
 prefer the top-level import (`from pydantic_ai_harness import <Name>`).
@@ -105,9 +105,9 @@ tool) rather than guessing -- a name is a public commitment once shipped.
 When a class or module is renamed, keep the old name working for at least one
 release: a renamed module keeps a shim package at its old path, and a renamed
 class keeps a module-level `__getattr__` alias, both emitting
-`HarnessDeprecationWarning` via the helpers in `pydantic_ai_harness/_warn.py`.
+`HarnessDeprecationWarning` via the helpers in `src/pydantic_ai_harness/pydantic_ai_harness/_warn.py`.
 
-Top-level re-exports in `pydantic_ai_harness/__init__.py` (`CodeMode`,
+Top-level re-exports in `src/pydantic_ai_harness/pydantic_ai_harness/__init__.py` (`CodeMode`,
 `FileSystem`, `Shell`, `ManagedPrompt`) are the exception, not the rule. Once an
 export has shipped in a published release it is a backward-compatibility
 commitment: do not move, rename, or break it. Do not add new top-level
@@ -146,7 +146,7 @@ the capability name lets a reader trace spend straight back to the
 capability without knowing its internals.
 
 Test it through `instrument_all_agents` + `agent_run_names(capfire)` from
-`tests/conftest.py`; per-agent `instrument=` on the outer agent does not reach
+`tests/harness/conftest.py`; per-agent `instrument=` on the outer agent does not reach
 the inner one.
 
 ### Policy Lives In The Pluggable Component
@@ -187,6 +187,17 @@ Before treating a capability as done, check how it composes with:
 
 `CodeMode` is a useful reference for wrapper-toolset composition, tool
 selection, `ToolSearch` interaction, public docs, and test depth.
+
+### Identify Tools By Kind, Not Name
+
+A capability that needs to recognize another capability's tool (the tool search
+tool, `load_capability`, a file reader) matches it by what it is: `isinstance`
+on its typed part (`ToolSearchCallPart`, `LoadCapabilityReturnPart`, ...) or
+`ToolDefinition.tool_kind`. Never compare `tool_name` against a hard-coded
+name: tools can be renamed or prefixed (`PrefixTools`, MCP prefixes), and the
+check then silently stops matching. When text names such a tool, use the name
+it actually has in the run. If a tool you need to recognize has no kind yet,
+propose one in core rather than matching its name.
 
 ### Deciding What Two Of It Mean
 
@@ -257,7 +268,7 @@ agent = Agent(
 The model then sees `hr_bamboohr_list_employees` and
 `crm_bamboohr_list_employees`, and each routes to its own account.
 
-Record the choice in `tests/test_capability_combine.py`;
+Record the choice in `tests/harness/test_capability_combine.py`;
 `test_every_capability_declares_a_combine_policy` fails until you do. Write the
 reason from what the capability actually does, not from what would be
 convenient: a reason like "one per rooted directory" is wrong if the toolset's
@@ -332,9 +343,10 @@ When a capability needs machinery of that weight:
   to a CI `environment` that holds the secret, so checkout and setup steps never
   see it.
 
-The `localstack` capability's `localstack-integration` job is the reference for
-this shape. Whether the heavy job blocks merges (listed in `check`'s `needs`) or
-only signals is the capability owner's call; state which in the PR.
+The `harness-integration-changes` and `harness-mongodb-integration` jobs in
+`.github/workflows/ci.yml` show the path scoping and the `check` wiring. Whether
+the heavy job blocks merges (listed in `check`'s `needs`) or only signals is the
+capability owner's call; state which in the PR.
 
 ## External-Service Assumptions And Refresh
 

@@ -1,8 +1,8 @@
 """Keep the README honest about what ships.
 
 Every capability package must document itself with a `README.md` and be linked
-from the top-level `README.md`. A capability cannot land without showing up in
-the docs, so the "what's available today" tables cannot silently fall behind the
+from `src/pydantic_ai_harness/README.md`. A capability cannot land without showing up in
+the docs, so the capability tables cannot silently fall behind the
 code. This is the mechanical half of docs parity; the semantic half (does the
 prose match the code as written) is a review-time concern, not a unit test.
 """
@@ -80,15 +80,15 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
     # anywhere (prose or an unrelated URL would otherwise satisfy the check).
     linked = any(t.startswith(link_target) for t in _markdown_link_targets(top_readme))
     assert linked, (
-        f'{package.relative_to(_ROOT)} is not linked from the top-level README.md. '
-        f'Add a row for it (linking `{link_target}`) to the "What\'s available today" or "Roadmap" tables '
+        f'{package.relative_to(_ROOT)} is not linked from src/pydantic_ai_harness/README.md. '
+        f'Add a row for it (linking `{link_target}`) to the matching category table under "Capabilities" '
         'so the README stays in step with the code.'
     )
 
 
-# --- Unified-docs page checks (docs/*.md) -----------------------------------
+# --- Unified-docs page checks (docs/harness/*.md) ---------------------------
 #
-# The flat pages under `docs/` render on the unified site. These mechanical
+# The flat pages under `docs/harness/` render on the unified site. These mechanical
 # checks encode the capability-authoring rules agreed in the 2026-07-10 team
 # sync: purpose-first leads, a source link on every page, names that match the
 # capability, and no leftover "experimental" framing on graduated capabilities.
@@ -97,8 +97,11 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 _DOCS_DIR = _ROOT / '../../docs/harness'
 # `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
 # `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `durable-execution.md` is a
-# guide across capabilities, so the capability-page checks do not apply to them.
+# guide across capabilities, so the capability-page checks do not apply to them. `AGENTS.md` (and its
+# `CLAUDE.md` link) holds the directory's agent instructions.
 _NON_CAPABILITY_PAGES = {
+    'AGENTS.md',
+    'CLAUDE.md',
     'clai2.md',
     'durable-execution.md',
     'examples.md',
@@ -133,6 +136,7 @@ _CAPABILITY_PAGE_META = {
     'advisor.md': ('advisor', 'Advisor'),
     'ask-user.md': ('ask_user', 'Ask User'),
     'aws-lambda.md': ('aws_lambda', 'AWS Lambda Durability'),
+    'absurd.md': ('absurd', 'Absurd Durability'),
     'background-tools.md': ('background_tools', 'Background Tools'),
     'code-mode.md': ('code_mode', 'Code Mode'),
     'coder.md': ('coder', 'Coder'),
@@ -158,6 +162,7 @@ _CAPABILITY_PAGE_META = {
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
+    'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
@@ -364,8 +369,9 @@ def test_capability_readme_links_source(package: Path) -> None:
 
 
 # The Coder blown-out example is repeated on four markdown surfaces (plus, parameterized,
-# in examples/coding_agent.py). They must stay byte-identical so no page drifts from what
-# `coder_agent` actually is; see agent_docs/docs-conventions.md.
+# in src/pydantic_ai_harness/examples/coding_agent.py). They must stay byte-identical so no
+# page drifts from what `coder_agent` actually is; see
+# src/pydantic_ai_harness/agent_docs/docs-conventions.md.
 _BLOWN_OUT_MARKER = '<!-- Keep this blown-out example in sync across'
 _BLOWN_OUT_SURFACES = (
     '../../docs/harness/coder.md',

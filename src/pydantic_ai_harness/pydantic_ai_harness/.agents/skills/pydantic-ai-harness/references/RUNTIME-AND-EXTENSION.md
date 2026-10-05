@@ -1,11 +1,11 @@
 # Runtime and Extension
 
 How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
-resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), harness
-capabilities under core durable execution, Logfire-managed agent configuration (`AgentControl`) and
-instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
-capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
-Agentic Workflow.
+resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
+tasks (`AbsurdDurability`), harness capabilities under core durable execution, Logfire-managed agent
+configuration (`AgentControl`) and instructions (`ManagedPrompt`), agent-written capabilities
+(`CapabilityCreation`), loading harness capabilities from YAML/JSON specs, serving an agent to editors
+over ACP, and running one as a GitHub Agentic Workflow.
 
 ## Choose
 
@@ -14,6 +14,7 @@ Agentic Workflow.
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
+| Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
 | Edit an agent's instructions, model, settings, and tool descriptions from Logfire | `AgentControl` |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
@@ -230,6 +231,49 @@ Gotchas:
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
 - Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 
+## AbsurdDurability
+
+Checkpoints every model request, function tool call, and MCP call as a step of an
+[Absurd](https://github.com/earendil-works/absurd) task, stored in Postgres. When a worker dies, the
+task re-runs from the top and completed steps return their stored results.
+
+```bash
+uv add "pydantic-ai-harness[absurd]" "pydantic-ai-slim[openai]"
+```
+
+```python {test="skip"}
+from absurd_sdk import AsyncAbsurd, AsyncTaskContext, JsonValue
+from pydantic_ai import Agent
+
+from pydantic_ai_harness.absurd import AbsurdDurability
+
+absurd = AsyncAbsurd('postgresql://localhost/absurd', queue_name='agents')
+agent = Agent('openai:gpt-5', name='analyst', capabilities=[AbsurdDurability()])
+
+
+@absurd.register_task(name='analyse')
+async def analyse(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:
+    assert isinstance(params, dict)
+    result = await agent.run(params['prompt'])
+    return {'output': result.output}
+```
+
+Parameters: `AbsurdDurability(*, models=None, event_stream_handler=None, name=None,
+parallel_execution_mode='sequential')`. `models` maps ids to extra models for `agent.run(model='<id>')`.
+`parallel_execution_mode` also accepts `'parallel_ordered_events'`, but not `'parallel'`.
+
+Gotchas:
+
+- A run is durable only inside an async Absurd task handler; a synchronous `TaskContext` raises
+  `UserError`.
+- The agent needs a `name` (or `name=`), and every function, MCP, or dynamic toolset needs a unique
+  `id`. Both are part of every step name, so renaming either makes in-flight tasks re-run those steps.
+- Tool return values are stored as JSON. `ModelRetry`, `ToolFailed`, `CallDeferred`, and
+  `ApprovalRequired` are not checkpointed, and `DynamicToolset`s are not wrapped, so that work re-runs.
+- Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;
+  `ExternalToolset` is fine.
+- Keep tool side effects idempotent: a crash after a tool runs but before its step is saved re-runs it.
+
 ## AgentControl
 
 Resolves one Logfire-managed agent configuration per run. Published sections patch the agent's
@@ -370,12 +414,15 @@ agent = Agent.from_spec(spec, custom_capability_types=[Planning, StepPersistence
 `Agent.from_file('agent.yaml', custom_capability_types=[...])` works the same way (install
 `pydantic-ai-slim[spec]` for YAML). Capability entries take the forms `Name`, `{Name: positional_arg}`,
 or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted out (they hold callables
-or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `CapabilityCreation`,
-`DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`, `SystemReminders`,
-`ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an `answerer` callable, so in
-practice it is passed in code too. Pass those instances with the `capabilities=` keyword of
-`Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list. Keep secrets out of spec files
-and let capabilities read their env vars.
+or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
+`CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
+`SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
+`answerer` callable, so in practice it is passed in code too. Pass those instances with the
+`capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
+Keep secrets out of spec files and let capabilities read their env vars.
+
+`ToolCallJudge` is spec-loadable when its model is a string and `tools` is `'all'`, a name list, or a
+metadata match. A live model, predicate selector, and `on_verdict` callback are code-only.
 
 A spec whose `model` is a provider string (`'openai:gpt-5'`) needs that provider's API key when the
 agent is built. In tests, pass `defer_model_check=True` and run under `agent.override(model='test')`.
@@ -436,8 +483,8 @@ loop. Silence the warning with `warnings.filterwarnings('ignore', category=Harne
 ## GitHub Agentic Workflows
 
 The gh-aw `pydantic-ai` engine runs a Pydantic AI agent in GitHub Actions on issues, PRs, or a schedule.
-In the workflow `.md`, import `pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main`, set
-`engine: {id: pydantic-ai, model: openai/gpt-5}` (`provider/model` is required), and point
+In the workflow `.md`, import `pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`,
+set `engine: {id: pydantic-ai, model: openai/gpt-5}` (`provider/model` is required), and point
 `engine.env.PAI_AGENT` at `module:variable` (for example `my_agent:agent`), at
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
 `Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the
@@ -451,6 +498,7 @@ capabilities, because the CLI passes no `custom_capability_types`. Use a Python 
 - https://pydantic.dev/docs/ai/harness/step-persistence/
 - https://pydantic.dev/docs/ai/harness/durable-execution/
 - https://pydantic.dev/docs/ai/harness/aws-lambda/
+- https://pydantic.dev/docs/ai/harness/absurd/
 - https://pydantic.dev/docs/ai/harness/managed-prompt/
 - https://pydantic.dev/docs/ai/harness/capability-creation/
 - https://pydantic.dev/docs/ai/harness/acp/

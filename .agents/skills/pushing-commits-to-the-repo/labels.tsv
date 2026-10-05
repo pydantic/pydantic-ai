@@ -1,0 +1,178 @@
+AG-UI
+DBOS	DBOS durable execution integration
+HTTP
+MCP
+OpenTelemetry
+Stale
+UI adapters
+a2a
+agentic-workflows
+alibaba
+anthropic
+area:ui-adapters
+asyncio
+attention-delivered	A delivered channel escalation is waiting for GitHub state cleanup
+attention-escalated	The maintainer attention request is cooling down after escalation
+attention-pinged	The assigned maintainer has received one reminder
+awaiting author revision
+azure
+bedrock
+better ai	improvements to infra that aids ai coding agents in developing pydantic-ai (and with - pydantic-ai)
+breaking change
+bug	Report that something isn't working, or PR implementing a fix
+caching	Prompt caching, cache retention, cached-token usage, and cache-bust detection.
+cancellation/interruption
+capability-solveable	Addressable as a userland capability or via hooks — no core change required
+cerebras	Cerebras provider
+chore
+ci:fast	Use Depot 4-core runners for bottleneck CI jobs
+ci:slow	Force standard GitHub runners (bypass Depot)
+citations
+cli
+cohere
+community contribution
+community snippets
+community-backed	Real users are asking for this
+compatibility impact	Version-policy-permitted change that may require existing code to migrate
+cp-plugin-selftest
+cross-model-provider-mapping	x-model/provider translation: when using a message history from one model with another one
+deepseek
+deferred-tools
+dependencies	Pull requests that update a dependency file
+dependency
+digest:considered	Surfaced in a weekly feature digest; the digest will not surface it again
+docs	Improvements or additions to documentation
+docs-drift
+documentation
+douwebot	reviews the PR that gets labeled and removes the label at the end
+duplicate	This issue or pull request already exists
+durable exec
+embeddings
+enhancement
+examples
+feature	New feature request, or PR implementing a feature (enhancement)
+feedback wanted
+fix
+gateway
+genai-prices
+github_actions	Pull requests that update GitHub Actions code
+google-cloud
+google-gemini
+groq
+harness-ref:deprecate-retry-prompt-part	harness compat runs against harness branch deprecate-retry-prompt-part
+harness-ref:retry-feedback-part	Run harness-compat against the pydantic-ai-harness branch named after the colon
+has-workaround	A concrete user workaround is documented in the issue
+hooks
+httpx
+huggingface
+implementation-pending
+internal
+invalid	This doesn't seem right
+litellm
+logfire
+loopable	Mechanically fixable bug suitable for automated fix loop; no human design judgment expected.
+media
+message-history
+meta	high level, conceptual
+mistral
+model issue
+model settings
+model-limitation
+moonshot/kimi
+more info	More information required
+native-or-local	a.k.a. `provider adaptive` or `native fallback`
+native-tools
+needs MRE
+needs-confirmation
+needs-discussion
+needs-maintainer-action	The next meaningful action must come from a maintainer
+new models	Support for new model(s)
+openai
+openrouter
+output
+p:1-highest	Signal 9-10: needs maintainer attention today.
+p:2-high	Signal 7-8: plan for this week.
+p:3-mid	Signal 4-6: normal backlog.
+p:4-low	Signal 0-3: low, probably unplanned.
+package upgrades
+packaging
+parked:no-user-report	Real, found by the team, fix scoped or ready; held until a user reports it
+partner: Vstorm
+performance
+pkg:clai	clai, the original CLI (clai/)
+pkg:clai2	pydantic-clai2 (src/pydantic_clai2)
+pkg:core	pydantic-ai-slim, pydantic-ai and examples (pydantic_ai_slim/, examples/)
+pkg:evals	pydantic-evals (pydantic_evals/)
+pkg:graph	pydantic-graph (pydantic_graph/)
+pkg:harness	pydantic-ai-harness (src/pydantic_ai_harness)
+prefect
+probable-spam	Likely spam or package-promotion issue; needs maintainer review before engagement.
+provider-mapping-sweep
+provider-parity
+provider-parity-explore
+pydanty:bot	Managed by pydanty dogfooding automation
+pydanty:brief-generated	An issue_brief artifact version landed
+pydanty:bug	Managed by pydanty dogfooding automation
+pydanty:cancel	Kill switch: pydanty never starts a run on this issue or PR while present; nothing auto-removes it.
+pydanty:feature	Managed by pydanty dogfooding automation
+pydanty:fix-attempted	issue-fix-tdd workflow ran
+pydanty:fix-cannot-reproduce	Fix workflow couldn't reproduce the bug
+pydanty:fix-ci	One-shot trigger: run a single mechanical CI-fix pass on this PR. Consumed on dispatch.
+pydanty:fix-incorrect	Fix workflow tests didn't pass after fix
+pydanty:is-working	Pydanty is mid-flight reviewing/remediating this PR; do not edit until it clears
+pydanty:meta	Managed by pydanty dogfooding automation
+pydanty:model-request	Managed by pydanty dogfooding automation
+pydanty:needs-human
+pydanty:pr	Pull request classification managed by pydanty.
+pydanty:processed	Managed by pydanty dogfooding automation
+pydanty:promotional	Managed by pydanty dogfooding automation
+pydanty:rb-pending	Waiting for CI/mergeability. Pydanty auto-reviews once ready; may run CI-fix first.
+pydanty:retry-pr	Re-dispatch the pydanty PR opener from the stored handoff (skip triage)
+pydanty:review-branch	Trigger pydanty review-branch auto-review on this PR
+pydanty:review-lite	Trigger: freeform AI-decomposed review of this PR. No CI precondition. Consumed on dispatch.
+pydanty:reviewed	Reviewed by pydanty review-branch auto-review
+pydanty:skip	Opt out: pydanty never triggers (triage / retry-pr) on this issue
+pydanty:spam	Managed by pydanty dogfooding automation
+pydanty:triage-issue	Trigger pydanty dogfooding automation
+pydanty:unclear	Unclear classification managed by pydanty.
+python:uv	Pull requests that update python:uv code
+question	Further information is requested
+qwen
+refactor	change to code structure
+regression
+replay-history	labels items that have to do with replaying stored message histories
+review phase: API
+roundtrip-sweep
+run_stream
+serialization
+size: L	Large PR (501-1500 weighted lines)
+size: M	Medium PR (101-500 weighted lines)
+size: S	Small PR (≤100 weighted lines)
+size: XL	Extra large PR (>1500 weighted lines)
+solved
+spam
+stale-issues
+state-loss
+streaming
+system prompts
+temporal
+test-suite	Changes or improvements to the test suite
+thinking
+tools
+tracking	waiting for something that needs to happen to take the next step
+triage:legitimate
+trigger:ci-duration-report	Trigger a CI duration report comment.
+trigger:docs	Trigger a documentation preview.
+unplanned	This will not be worked on
+usage
+v2
+v2:exec	for PRs that change behavior and build on top of a `v2-master` branch
+v2:prep	for PRs that deprecate things in main before v2
+v3	Reserved for breaking API changes targeting v3 (after v2 ships)
+validation
+vercel-ai
+waiting-on-reporter
+we-owe-you-a-followup	use this label when the pydantic ai team promised to follow up on this
+web-ui
+xai
+z.ai/glm
