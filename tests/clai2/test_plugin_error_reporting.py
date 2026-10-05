@@ -194,6 +194,34 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
     assert observer_failed.parent == root.context
 
 
+async def test_handled_errors_keep_plugin_and_event_names_without_ui_events(tmp_path: Path, recorder: Recorder) -> None:
+    """`SessionEnd` and a plugin name like `session-namer` would trip Logfire's `session` scrubbing pattern."""
+    namer = tmp_path / 'session_namer.py'
+    namer.write_text(
+        'from pydantic_clai2.plugins import Plugin, SessionEnd\n'
+        'class Namer(Plugin):\n'
+        '    async def on_session_end(self, event: SessionEnd) -> None:\n'
+        '        raise RuntimeError("could not save")\n'
+    )
+    harness = Harness(
+        tmp_path,
+        builtin=(
+            PluginSettings(
+                id='observability',
+                factory='pydantic_clai2.builtin_plugins.logfire',
+                settings={'send_to_logfire': False},
+            ),
+            PluginSettings(id='session_namer', factory='session_namer', path=str(namer)),
+        ),
+    )
+    await harness.loader.load_all()
+    await harness.loader.close('exit')
+    [failed] = [span for span in recorder.spans() if span.name != 'CLAI session']
+    attributes = failed.attributes or {}
+    assert attributes['logfire.msg'] == "Plugin 'session_namer' failed handling SessionEnd"
+    assert (attributes['plugin'], attributes['event']) == ('session_namer', 'SessionEnd')
+
+
 async def test_startup_errors_keep_only_their_type_without_content(tmp_path: Path, recorder: Recorder) -> None:
     harness = Harness(
         tmp_path,

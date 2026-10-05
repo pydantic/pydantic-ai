@@ -98,8 +98,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 console=False,
                 config_dir=private_dir,
                 data_dir=private_dir,
-                # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.
-                scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names) if settings.ui_events else None,
+                # UI events and handled errors name settings, keys, plugins, and events, such as `sessions.naming`,
+                # `OPENAI_API_KEY`, or `SessionEnd`, that look like secrets. The callback only keeps those names, and
+                # only on CLAI's own records, so everything else is scrubbed as usual.
+                scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names),
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
             )
         finally:

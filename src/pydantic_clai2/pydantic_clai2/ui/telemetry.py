@@ -26,7 +26,9 @@ Attribute = str | int | float | bool
 SCOPE = 'clai2'
 """The instrumentation scope for everything CLAI emits itself: session roots, UI records, and handled errors."""
 
-NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'label', 'key_name', 'new_key_name'})
+NAMES = frozenset(
+    {'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'label', 'key_name', 'new_key_name', 'event'}
+)
 """Attributes that only ever hold names and listed choices, which `keep_names` exempts from scrubbing."""
 PROMPT = 'prompt'
 """The submitted prompt, which `keep_names` also keeps: agent spans carry the same text unscrubbed."""
