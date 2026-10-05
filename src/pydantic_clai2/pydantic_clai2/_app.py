@@ -519,7 +519,6 @@ def create_shell(
     )
     screen = Screen()
     status = Status()
-    submitted: list[str] = []
     loader: PluginLoader[DepsT] = PluginLoader(
         store=store,
         console=console,
@@ -531,7 +530,7 @@ def create_shell(
         conversation=session,
         status=status,
         enabled=load_plugins,
-        submit_prompt=submitted.append,
+        submit_prompt=lambda text: shell.submit_prompt(text),
     )
     models.plugins = loader.model_providers
     models.logins = loader.logins
@@ -597,7 +596,6 @@ def create_shell(
         session_settings=session_settings,
         spinners=spinners,
         updates=updates,
-        submitted=submitted,
     )
     if prompt is not None:
         prompt.key_bindings = images.bindings()
@@ -648,8 +646,8 @@ class _Shell(Generic[DepsT, OutputT]):
     updates: Updates
     transcript: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     images: ImageInput = field(default_factory=ImageInput)
-    submitted: list[str] = field(default_factory=list[str])
-    """Prompts a command submitted with `host.submit_prompt`, run once it returns."""
+    submitted: list[str] | None = None
+    """Prompts the running `/command` submitted with `host.submit_prompt`; `None` while no command runs."""
     reload_requested: bool = False
     editor: LivePrompt | None = None
     forks: Forks[DepsT, OutputT] = field(init=False)
@@ -729,6 +727,12 @@ class _Shell(Generic[DepsT, OutputT]):
             f'resume={record.id!r}. Continue from its saved history and report the result.'
         )
         return f'Resume requested for task {record.id[:8]}.'
+
+    def submit_prompt(self, text: str) -> None:
+        """Queue `text` to run as a turn once the running `/command` returns."""
+        if self.submitted is None:
+            raise RuntimeError('`submit_prompt` works only in a /command handler run between turns.')
+        self.submitted.append(text)
 
     def request_reload(self, args: list[str]) -> str:
         if args:
@@ -909,14 +913,19 @@ class _Shell(Generic[DepsT, OutputT]):
     async def _command(self, text: str) -> bool:
         if self.plugins_busy(text):
             return False
-        async with self.forks.busy(), self._released():
-            await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
+        self.submitted = submitted = list[str]()
+        try:
+            async with self.forks.busy(), self._released():
+                await self.interrupts.run(
+                    _execute_command(self.commands, text, console=self.console, status=self.status)
+                )
+        finally:
+            self.submitted = None
         if text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required:
-            self.submitted.clear()
             return True
         exiting = False
-        while self.submitted and not exiting:
-            exiting = await self._prompt(self.submitted.pop(0))
+        while submitted and not exiting:
+            exiting = await self._prompt(submitted.pop(0))
         return exiting
 
     async def _turn(self, text: str | None) -> bool:

@@ -18,9 +18,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import Skills
 from pydantic_clai2 import chat
+from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, collect
 from pydantic_clai2.plugins.loader import PluginLoader
@@ -247,6 +249,21 @@ class TestSkillCommands:
         ]
         assert 'reviewed' in output.getvalue()
 
+    def test_the_shell_takes_a_prompt_only_from_a_running_command(self, tmp_path: Path) -> None:
+        shell = create_shell(
+            Agent(TestModel(), deps_type=type(None)),
+            deps=None,
+            plugins=(),
+            usage_limits=None,
+            console=Console(file=io.StringIO()),
+            settings=None,
+            store=SettingsStore(tmp_path / 'config.db'),
+            builtin_plugins=(),
+            project=ProjectSettings(),
+        )
+        with pytest.raises(RuntimeError, match='works only in a /command handler run between turns'):
+            shell.submit_prompt('hello')
+
     def test_submit_prompt_needs_a_shell(self) -> None:
         host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings={})
         with pytest.raises(RuntimeError, match="Plugin 'coder' has no shell to run a prompt in"):
@@ -266,7 +283,9 @@ class TestSkillCommands:
         assert 'review' not in commands
         write_skill(project / '.agents' / 'skills', 'review')
 
-        await loader.reload('coder')
+        # What `/plugins reload coder` does, without re-importing the module for the rest of the test process.
+        await loader.unload('coder')
+        await loader.load('coder')
 
         assert 'review' in commands
         await loader.close('exit')

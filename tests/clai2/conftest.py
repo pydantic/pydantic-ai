@@ -63,10 +63,14 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
 
 
 @pytest.fixture(autouse=True)
-def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def isolated_environment(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Redirect default databases, including subprocesses, away from user data."""
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    # Away from this repository's own files, such as the Agent Skills the `coder` plugin would load.
+    monkeypatch.chdir(tmp_path_factory.mktemp('work'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)
     for name in (
         'LOGFIRE_TOKEN',

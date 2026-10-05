@@ -108,9 +108,7 @@ async def test_drop_in_plugin_commands_and_hooks(tmp_path: Path) -> None:
     assert 'stopped: exit' in text
 
 
-async def test_coder_is_a_builtin_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Away from this repository's Agent Skills, whose unsupported frontmatter fields warn on every run.
-    monkeypatch.chdir(tmp_path)
+async def test_coder_is_a_builtin_plugin(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     offered: list[set[str]] = []
     hooks = Hooks[None]()

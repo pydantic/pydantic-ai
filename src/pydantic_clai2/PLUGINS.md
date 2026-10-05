@@ -1794,7 +1794,7 @@ A command can start a turn with `self.host.submit_prompt(text)`: the text runs
 as the next prompt once the command returns, ahead of anything queued in the
 editor, and goes through `on_turn_start` like typed input, without being echoed.
 Call it only from a command handler, and not from a `during_turn` command opened
-over a running turn.
+over a running turn: anywhere else it raises `RuntimeError`.
 It is always a prompt, even when it starts with `/` or `!`. The built-in skill
 commands use it to send a skill's instructions:
 
@@ -2355,7 +2355,7 @@ offer them without an `/add_model` first. A failed sign-in adds nothing.
 ## Testing a plugin
 
 `load_plugin(PluginClass, host)` builds a plugin and collects its contributions,
-exactly as the loader does. `PluginHost` is an ordinary object: build one with a
+as the loader does, except that it does not await `prepare`. `PluginHost` is an ordinary object: build one with a
 `Console` writing to a `StringIO`, then send hand-made events through
 `dispatch`. No terminal, no model, no network.
 

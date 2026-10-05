@@ -426,9 +426,9 @@ class PluginLoader(Generic[DepsT]):
             built = settings_capability(plugin)
             if built is not None:
                 self._from_settings[name] = built
+            activating = False
             await plugin.prepare()
             loaded = collect(plugin)
-            activating = False
             for hidden in self._commands.register_many(loaded.commands):
                 self._console.print(
                     f'/{hidden.name} ({hidden.description}) is hidden by another /{hidden.name} command.',

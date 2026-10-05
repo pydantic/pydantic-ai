@@ -289,8 +289,8 @@ class PluginHost(Generic[DepsT]):
         skill's instructions. The prompt runs once the command returns, before input queued in the
         editor, and goes through `on_turn_start` like any prompt. A `during_turn` command opened over a
         running turn must not call it. Text starting with `/` or `!` is a prompt here, not
-        a command. Raises `RuntimeError` on a host with no shell to run it, such as in a test, unless
-        the host was built with `submit_prompt=`.
+        a command. Raises `RuntimeError` outside a command handler run between turns, and on a host
+        with no shell to run it, such as in a test, unless the host was built with `submit_prompt=`.
         """
         if self._submit_prompt is None:
             raise RuntimeError(f'Plugin {self.name!r} has no shell to run a prompt in.')
@@ -559,8 +559,9 @@ def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
 
 
 def load_plugin(plugin_type: type[Plugin[BaseModel, DepsT]], host: PluginHost[DepsT]) -> LoadedPlugin[DepsT]:
-    """Build `plugin_type` from `host`'s settings and collect what it contributes, as the loader does.
+    """Build `plugin_type` from `host`'s settings and collect what it contributes, as the loader does except `prepare`.
 
-    This is also how a plugin's tests load it without a shell; fire host events with `dispatch`.
+    This is also how a plugin's tests load it without a shell; fire host events with `dispatch`. For a
+    plugin with `prepare`, call `from_host`, await `prepare`, then `collect`.
     """
     return collect(plugin_type.from_host(host))

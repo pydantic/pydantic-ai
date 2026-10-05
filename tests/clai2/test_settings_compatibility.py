@@ -410,7 +410,6 @@ async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
 ) -> None:
     """A `coder` saved before skills existed gets the default folders; a build lacking the feature drops a saved list."""
-    monkeypatch.chdir(tmp_path)
     store = SettingsStore(tmp_path / 'settings.db')
     with closing(sqlite3.connect(store.path)) as connection, connection:
         connection.execute(
