@@ -5,7 +5,7 @@ import io
 import os
 import stat
 import subprocess
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,15 +21,19 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2._app import DEFAULT_PLUGINS
+from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
 from pydantic_clai2.builtin_plugins import aoe
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import (
     ConversationChanged,
     LoadedPlugin,
     PluginHost,
     SessionEnd,
     SessionStart,
+    TurnEnd,
+    TurnStart,
     load_plugin,
 )
 from pydantic_clai2.runtime._session import Session
@@ -52,9 +56,14 @@ class System:
     current: str | None = f'{{"session": "my-task", "profile": "work", "id": "{INSTANCE}"}}'
     rename_error: str | None = None
     calls: list[tuple[str, ...]] = field(default_factory=list[tuple[str, ...]])
+    aoe_calls: 'asyncio.Queue[tuple[str, ...]] | None' = None
+    """Every `aoe` command, for a test to wait on; the plugin runs commands from worker threads."""
+    loop: asyncio.AbstractEventLoop | None = None
 
     def __call__(self, *argv: str) -> subprocess.CompletedProcess[str] | None:
         self.calls.append(argv)
+        if argv[0] == 'aoe' and self.loop is not None and self.aoe_calls is not None:
+            self.loop.call_soon_threadsafe(self.aoe_calls.put_nowait, argv)
         match argv:
             case ('tmux', 'display-message', *_):
                 return self.result(f'{self.session_name}\t{self.pane_pid}\n' if self.display else None)
@@ -99,15 +108,15 @@ class Fixture:
         while (await asyncio.wait_for(self.writes.get(), timeout=10))[0] != expected:
             pass
 
+    async def aoe(self, command: str) -> tuple[str, ...]:
+        """Wait until the plugin runs `aoe ... <command> ...`."""
+        assert self.system.aoe_calls is not None
+        while command not in (call := await asyncio.wait_for(self.system.aoe_calls.get(), timeout=10)):
+            pass
+        return call
+
     def renames(self) -> list[str]:
         return [call[-1] for call in self.system.calls if call[1:4] == ('-p', 'work', 'session')]
-
-
-async def until(condition: Callable[[], bool]) -> None:
-    """Wait for the plugin's worker, which writes from threads, to reach `condition`."""
-    with anyio.fail_after(10):
-        while not condition():
-            await anyio.sleep(0.01)
 
 
 def found(name: str) -> str:
@@ -120,7 +129,7 @@ def missing(name: str) -> None:
 
 @pytest.fixture
 async def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Fixture:
-    system = System()
+    system = System(aoe_calls=asyncio.Queue(), loop=asyncio.get_running_loop())
     monkeypatch.setattr(aoe, 'run', system)
     monkeypatch.setattr(aoe, 'hooks_base', lambda: tmp_path / 'hooks')
     monkeypatch.setattr(aoe, '_LOOKUP_INTERVAL', 0)
@@ -161,12 +170,17 @@ async def started(env: Fixture, tmp_path: Path) -> AsyncIterator[tuple[Session[N
     session = make_session(tmp_path)
     loaded = await load(session)
     await env.status('idle')
+    await env.write('mapping')
     yield session, loaded
     await loaded.dispatch(SessionEnd(reason='exit'))
 
 
 async def load(
-    conversation: Session[None, str] | None = None, *, terminal: bool = True, output: io.StringIO | None = None
+    conversation: Session[None, str] | None = None,
+    *,
+    terminal: bool = True,
+    output: io.StringIO | None = None,
+    chosen: bool = False,
 ) -> LoadedPlugin[None]:
     host = PluginHost[None](
         name='aoe',
@@ -178,7 +192,7 @@ async def load(
     if conversation is not None:
         conversation.on_change = loaded.dispatch
         conversation.plugins = loaded.capabilities
-    await loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    await loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings(), conversation_chosen=chosen))
     return loaded
 
 
@@ -203,6 +217,8 @@ async def test_inert_outside_an_interactive_tmux_pane(
         monkeypatch.delenv(missing)
     loaded = await load(terminal=missing != 'headless')
     assert loaded.capabilities == ()
+    await loaded.dispatch(TurnStart(text='hello'))
+    await loaded.dispatch(TurnEnd(text='hello', outcome='failed'))
     await loaded.dispatch(ConversationChanged(conversation_id='other', title=None))
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert env.system.calls == []
@@ -298,7 +314,7 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     loaded = await load(session)
     await env.status('idle')
-    await env.write('session_id')
+    await env.write('mapping')
     base = env.hooks
     assert stat.S_IMODE(base.stat().st_mode) == 0o700
     assert stat.S_IMODE(env.directory.stat().st_mode) == 0o700
@@ -311,14 +327,14 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
     await session.prompt('Fix the parser')
     await env.status('idle')
     assert (env.directory / 'status').read_text() == 'idle'
-    await until(lambda: env.renames() == ['Fix the parser'])
-    assert ('aoe', '-p', 'work', 'session', 'rename', INSTANCE, '-t', 'Fix the parser') in env.system.calls
+    assert await env.aoe('rename') == ('aoe', '-p', 'work', 'session', 'rename', INSTANCE, '--title=Fix the parser')
 
     await session.renamed(conversation_id=first, title='Fix the parser')
     await session.renamed(conversation_id=first, title='Parser fix')
-    await until(lambda: env.renames() == ['Fix the parser', 'Parser fix'])
+    await env.aoe('rename')
+    assert env.renames() == ['--title=Fix the parser', '--title=Parser fix']
     await session.clear()
-    await env.write('session_id')
+    await env.write('mapping')
     assert (env.directory / 'session_id').read_text() == session.conversation_id + '\n'
     assert mapping.read_text() == session.conversation_id + '\n'
     assert not list(env.directory.glob('.*.tmp'))
@@ -328,24 +344,35 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
     assert (env.directory / 'session_id').exists()
 
 
-async def test_failed_run_is_an_error_until_the_next(env: Fixture, tmp_path: Path) -> None:
-    fail = True
-
-    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        if fail:
-            raise RuntimeError('provider down')
-        yield 'ok'
-
-    session = make_session(tmp_path, FunctionModel(stream_function=respond))
-    loaded = await load(session)
-    await env.status('idle')
-    with pytest.raises(RuntimeError, match='provider down'):
-        await session.prompt('first')
-    await env.status('error')
-    fail = False
-    await session.prompt('second')
-    await env.status('idle')
-    await loaded.dispatch(SessionEnd(reason='exit'))
+async def test_a_failed_turn_is_an_error_until_the_next(env: Fixture, tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel(call_tools=[])),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO(), force_terminal=True),
+        # The model cannot be resolved, so the turn fails before its agent run starts.
+        settings=Settings(model='no-such-provider:model'),
+        store=SettingsStore(tmp_path / 'settings.db'),
+        builtin_plugins=[PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe')],
+        project=ProjectSettings(),
+        headless=True,
+    )
+    await shell.loader.load_all()
+    try:
+        await env.status('idle')
+        ended = await shell.run_turn(TurnStart(text='hello'), headless=True)
+        assert ended.outcome == 'failed'
+        await shell.loader.fire(ended)
+        await env.status('error')
+        shell.session.model = None
+        ended = await shell.run_turn(TurnStart(text='again'), headless=True)
+        assert ended.outcome == 'completed'
+        await env.status('idle')
+        await shell.loader.fire(ended)
+    finally:
+        await shell.loader.close('exit')
+    assert not (env.directory / 'status').exists()
 
 
 async def test_nested_failure_and_background_runs(
@@ -422,6 +449,14 @@ async def test_restarted_pane_resumes_its_conversation(env: Fixture, tmp_path: P
     assert f'Resumed earlier work ({earlier.conversation_id}).' in Text.from_ansi(output.getvalue()).plain
     await loaded.dispatch(SessionEnd(reason='exit'))
 
+    # `--session-id` chose an empty conversation, which wins.
+    named = make_session(tmp_path)
+    loaded = await load(named, chosen=True)
+    await env.write('mapping')
+    assert named.messages == []
+    assert (env.state / INSTANCE).read_text() == named.conversation_id + '\n'
+    await loaded.dispatch(SessionEnd(reason='exit'))
+
     # An explicit `--resume` already restored a conversation, which wins.
     other = make_session(tmp_path)
     await other.prompt('other work')
@@ -447,18 +482,37 @@ async def test_unusable_mapping_starts_fresh(env: Fixture, tmp_path: Path, saved
 
 
 @pytest.mark.parametrize(
-    'failure', ['tied worktree', 'linked worktree', 'other profile', 'unreadable', 'not current', 'no aoe']
+    'failure',
+    [
+        'tied worktree',
+        'linked worktree',
+        'submodule',
+        'other profile',
+        'unreadable',
+        'not current',
+        'no aoe',
+        'timeout',
+    ],
 )
 async def test_title_push_failures_are_benign(
     env: Fixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
 ) -> None:
     if failure == 'tied worktree':
         env.system.rename_error = 'Stop the session before renaming its worktree directory or branch.'
-    elif failure == 'linked worktree':
-        # AoE would move an idle worktree-tied session's directory to follow the title.
-        (tmp_path / '.git').write_text('gitdir: /elsewhere/.git/worktrees/proj\n')
+    elif failure in ('linked worktree', 'submodule'):
+        # AoE would move an idle worktree-tied session's directory to follow the title; a submodule is not one.
+        kind = 'worktrees' if failure == 'linked worktree' else 'modules'
+        (tmp_path / '.git').write_text(f'gitdir: /elsewhere/.git/{kind}/proj\n')
         (tmp_path / 'sub').mkdir()
         monkeypatch.chdir(tmp_path / 'sub')
+    elif failure == 'timeout':
+        system = env.system
+
+        def timing_out(*argv: str) -> subprocess.CompletedProcess[str] | None:
+            result = system(*argv)
+            return None if 'rename' in argv else result
+
+        monkeypatch.setattr(aoe, 'run', timing_out)
     elif failure == 'other profile':
         env.system.current = '{"session": "x", "profile": "work", "id": "someone-else"}'
     elif failure == 'unreadable':
@@ -469,16 +523,21 @@ async def test_title_push_failures_are_benign(
         monkeypatch.setattr('shutil.which', missing)
     session = make_session(tmp_path)
     loaded = await load(session)
-    plugin = loaded.plugin
-    assert isinstance(plugin, aoe.AoePlugin) and plugin.reporter is not None
-    reporter = plugin.reporter
     await session.prompt('first title')
-    await until(lambda: reporter.published.title == 'first title' or not reporter.titles or reporter.aoe is None)
-    await session.renamed(conversation_id=session.conversation_id, title='second title')
+    calls = {'tied worktree': 1, 'submodule': 1, 'timeout': 1}.get(failure, 0)
+    if calls or failure in ('other profile', 'unreadable', 'not current'):
+        await env.aoe('rename' if calls else 'current')
+    await session.renamed(conversation_id=session.conversation_id, title='-second title')
+    if failure in ('submodule', 'timeout'):
+        # Only a refusal stops renames; a timed-out one tries again with the next title.
+        assert (await env.aoe('rename'))[-1] == '--title=-second title'
+        calls += 1
+    elif failure in ('other profile', 'unreadable', 'not current'):
+        await env.aoe('current')
     await env.status('idle')
     await loaded.dispatch(SessionEnd(reason='exit'))
     attempts = [call for call in env.system.calls if call[0] == 'aoe' and 'rename' in call]
-    assert len(attempts) == (1 if failure == 'tied worktree' else 0)
+    assert len(attempts) == calls
 
 
 @pytest.mark.parametrize('problem', ['group access', 'symlink', 'instance symlink', 'status is a directory'])
@@ -552,10 +611,8 @@ async def test_an_id_aoe_would_reject_is_only_mapped(env: Fixture, tmp_path: Pat
         summary=ConversationSummary(id='-dash-first', workspace=str(tmp_path)),
     )
     loaded = await load(session)
-    plugin = loaded.plugin
-    assert isinstance(plugin, aoe.AoePlugin) and plugin.reporter is not None
-    reporter = plugin.reporter
-    await until(lambda: reporter.published.session_id == '-dash-first')
+    # The mapping is written after the `session_id` file would be.
+    await env.write('mapping')
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert (env.state / INSTANCE).read_text() == '-dash-first\n'
     assert not (env.directory / 'session_id').exists()

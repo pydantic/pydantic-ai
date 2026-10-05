@@ -329,22 +329,24 @@ symlink, owned by another user, or open to group or others. It reports `running`
 while a prompt's agent run is in progress (rewritten every minute, as AoE ignores an
 older `running`), `waiting` while an `ask_user` question is open, `error` after a
 failed turn until the next prompt starts, and `idle` otherwise. Background `/fork`
-runs do not count. Other approval prompts are not tracked. The file is removed when
+runs do not count as `running`, but a failed fork is a failed turn and shows `error`.
+Other approval prompts are not tracked. The file is removed when
 CLAI2 exits; AoE removes the directory when it stops the session.
 
 **Conversation.** The current conversation ID goes to `session_id` beside the status
 file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
 CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
-`--session-id`, and `--fork-session` take precedence. A conversation saved in another
+`--session-id`, and `--fork-session` take precedence (`SessionStart.conversation_chosen`). A conversation saved in another
 directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
 **Title.** When the conversation's title changes (its first prompt, background naming,
 or a rename in `/resume`), the plugin runs `aoe session rename -t TITLE`. It skips this
-in a linked Git worktree, because AoE's `session.tie_workdir_to_name` (on by default)
-would move an AoE-managed worktree out from under the running CLAI2, and stops trying
-for the session after AoE refuses a rename. AoE renames the tmux session to match.
+in a linked Git worktree (not a submodule), because AoE's `session.tie_workdir_to_name`
+(on by default) would move an AoE-managed worktree out from under the running CLAI2,
+and stops trying for the session once AoE refuses a rename; a rename that times out is
+tried again with the next title. AoE renames the tmux session to match.
 
 All file and process work runs off the event loop, and failures are logged at debug
 level, never raised into a turn. `/plugins disable aoe` stops reporting.

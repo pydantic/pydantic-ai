@@ -36,6 +36,8 @@ from pydantic_clai2.plugins import (
     PluginHost,
     SessionEnd,
     SessionStart,
+    TurnEnd,
+    TurnStart,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -267,17 +269,24 @@ def linked_worktree(directory: Path) -> bool:
     """
     for parent in (directory, *directory.parents):
         marker = parent / '.git'
-        if marker.exists():
-            return marker.is_file()
+        if marker.is_dir():
+            return False
+        if marker.is_file():
+            # A submodule's `.git` file points into `.git/modules/`, a linked worktree's into `.git/worktrees/`.
+            gitdir = marker.read_text(encoding='utf-8', errors='replace').partition('gitdir:')[2].strip()
+            return '/worktrees/' in gitdir.replace(os.sep, '/')
     return False
 
 
-def rename(aoe: str, profile: str, instance_id: str, title: str) -> bool:
-    """Set the AoE session title; `False` when AoE cannot, such as for a running worktree-tied session."""
-    result = run(aoe, '-p', profile, 'session', 'rename', instance_id, '-t', title)
-    if result is not None and result.returncode != 0:
+def rename(aoe: str, profile: str, instance_id: str, title: str) -> bool | None:
+    """Set the AoE session title: `False` when AoE refuses, `None` when `aoe` did not run to completion."""
+    # `--title=` keeps a title that starts with `-` from reading as an option.
+    result = run(aoe, '-p', profile, 'session', 'rename', instance_id, f'--title={title}')
+    if result is None:
+        return None
+    if result.returncode != 0:
         _LOGGER.debug('aoe: session rename failed: %s', result.stderr.strip())
-    return result is not None and result.returncode == 0
+    return result.returncode == 0
 
 
 @dataclass(kw_only=True)
@@ -318,28 +327,16 @@ class _Reporter:
         self.changed.set()
 
     async def run(self, ctx: RunContext[None], handler: WrapRunHandler) -> AgentRunResult[object]:
-        if not self.foreground(ctx):
-            try:
-                return await handler()
-            finally:
-                self.settle(ctx)
-        self.running += 1
-        self.failed = False
+        foreground = self.foreground(ctx)
+        self.running += foreground
         self.update()
         try:
             return await handler()
-        except Exception:
-            # Only the outermost run's failure fails the turn; a parent may recover from a nested one.
-            self.failed = self.running == 1
-            raise
         finally:
-            self.running -= 1
-            self.settle(ctx)
-
-    def settle(self, ctx: RunContext[None]) -> None:
-        """Forget the questions an ended run left open; it can no longer be waiting on them."""
-        self.waiting = {request: run for request, run in self.waiting.items() if run != ctx.run_id}
-        self.update()
+            self.running -= foreground
+            # An ended run can no longer be waiting on the questions it left open.
+            self.waiting = {request: run for request, run in self.waiting.items() if run != ctx.run_id}
+            self.update()
 
     def asked(self, ctx: RunContext[None], event: AskUserRequestedEvent) -> None:
         self.waiting[event.request.id] = ctx.run_id
@@ -385,22 +382,31 @@ class _Reporter:
         if conversation_id == self.published.session_id:
             return
         assert self.mappings is not None, 'only an attached reporter publishes'
-        await run_sync(self.mappings.write, self.instance.instance_id, conversation_id)
-        if _SESSION_ID.fullmatch(conversation_id):
-            await run_sync(self.instance.write, 'session_id', conversation_id + '\n')
         self.published.session_id = conversation_id
+        try:
+            if _SESSION_ID.fullmatch(conversation_id):
+                await run_sync(self.instance.write, 'session_id', conversation_id + '\n')
+        finally:
+            # The mapping lives outside the hooks directory, so record it even when that is unusable.
+            await run_sync(self.mappings.write, self.instance.instance_id, conversation_id)
 
     async def publish_title(self) -> None:
         title = self.host.conversation.title
         if not self.titles or self.aoe is None or title is None or title == self.published.title:
             return
         instance_id = self.instance.instance_id
+        # Whatever happens, try again only for the next title, not on every status change.
+        self.published.title = title
         if self.profile is None:
             self.profile = await run_sync(aoe_profile, self.aoe, instance_id)
-        if self.profile is None or not await run_sync(rename, self.aoe, self.profile, instance_id, title):
-            # A running worktree-tied session cannot be renamed, so stop asking for this session.
+        if self.profile is not None and await run_sync(rename, self.aoe, self.profile, instance_id, title) is False:
+            # AoE refused, as it does for a running worktree-tied session, so stop asking for this session.
             self.titles = False
-        self.published.title = title
+
+    def turn(self, *, failed: bool) -> None:
+        """A turn started, or ended; one that failed, before or during its run, shows `error` until the next."""
+        self.failed = failed
+        self.update()
 
     async def stop(self) -> None:
         with anyio.CancelScope(shield=True):
@@ -419,7 +425,7 @@ class _Reporter:
 
 @dataclass
 class _Reporting(AbstractCapability[None]):
-    """Report foreground runs, open questions, and failed runs as they happen."""
+    """Report foreground runs and open questions as they happen."""
 
     reporter: _Reporter
 
@@ -458,15 +464,18 @@ class AoePlugin(Plugin):
                 self.reporter = None
                 return
             mappings = Mappings(state_directory())
-            await self._restore(await run_sync(mappings.read, located.instance_id))
+            if not event.conversation_chosen:
+                await self._restore(await run_sync(mappings.read, located.instance_id))
             await reporter.attach(
-                hooks=HookFiles(hooks_base(), located.instance_id), mappings=mappings, aoe=shutil.which('aoe')
+                hooks=HookFiles(hooks_base(), located.instance_id),
+                mappings=mappings,
+                aoe=await run_sync(shutil.which, 'aoe'),
             )
         except Exception:
             _LOGGER.debug('aoe: could not attach to the AoE session', exc_info=True)
 
     async def _restore(self, conversation_id: str | None) -> None:
-        """Pick up the conversation a restarted pane held, unless CLAI started with one of its own."""
+        """Pick up the conversation a restarted pane held, unless this one already has history."""
         conversation = self.host.conversation
         if conversation_id is None or conversation.messages or conversation.title is not None:
             return
@@ -474,6 +483,14 @@ class AoePlugin(Plugin):
             self.host.console.print(await conversation.resume(conversation_id), markup=False)
         except (LookupError, ValueError, RuntimeError):
             _LOGGER.debug('aoe: could not resume %s', conversation_id, exc_info=True)
+
+    async def on_turn_start(self, event: TurnStart) -> None:
+        if self.reporter is not None:
+            self.reporter.turn(failed=False)
+
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        if self.reporter is not None:
+            self.reporter.turn(failed=event.outcome == 'failed')
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
         if self.reporter is not None:
