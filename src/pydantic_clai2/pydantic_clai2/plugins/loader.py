@@ -369,7 +369,7 @@ class PluginLoader(Generic[DepsT]):
         return [name for provider in self.model_providers().values() for name in provider.names]
 
     def settings_model(self, model: str) -> str:
-        """The model whose `/model_settings` controls `model` takes: `PREFIX:NAME` as `settings_from:NAME`."""
+        """The model whose `/model settings` controls `model` takes: `PREFIX:NAME` as `settings_from:NAME`."""
         prefix, separator, name = model.partition(':')
         provider = self.model_providers().get(prefix) if separator else None
         if provider is None or provider.settings_from is None:
