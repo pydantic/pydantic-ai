@@ -305,14 +305,14 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
-            pipe.send_text('start\n')
+            pipe.send_text('start\r')
             await working.wait()
-            pipe.send_text('/plugins disable alpha\n')
+            pipe.send_text('/plugins disable alpha\r')
             await applied.wait()
             assert 'alpha ended' not in ''.join(written)
             assert [plugin.enabled for plugin in store.plugins()] == ([] if delegating else [False])
             finish.set()
-            pipe.send_text('/exit\n')
+            pipe.send_text('/exit\r')
             await done.wait()
     # The queued `/exit` echoes once the turn is over and its plugin hooks have run.
     text = output.getvalue()
