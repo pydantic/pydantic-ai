@@ -2373,10 +2373,19 @@ assert plugin.capabilities == ()
 ```
 
 `plugin.commands`, `plugin.status_segments`, and the rest hold what the plugin
-declared. `load_plugin` cannot await `prepare`, so it raises `TypeError` for a
-plugin that has one; build that plugin with `PluginClass.from_host(host)`,
-`await plugin.prepare()`, then `collect(plugin)`. A plugin that reads the history gets a `Transcript` by default; pass
+declared. A plugin that reads the history gets a `Transcript` by default; pass
 `conversation=Transcript(messages=[...], model=TestModel())` to seed it.
+
+`load_plugin` cannot await `prepare`, so it raises `TypeError` for a plugin that
+has one. Load that plugin in three steps instead:
+
+```python
+from pydantic_clai2.plugins import collect
+
+plugin = PluginClass.from_host(host)
+await plugin.prepare()
+loaded = collect(plugin)
+```
 
 ## vllm connection
 

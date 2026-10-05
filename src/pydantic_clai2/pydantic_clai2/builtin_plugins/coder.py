@@ -33,6 +33,7 @@ from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 _FOLDER_NAME = re.compile(r'[A-Za-z0-9_-]+')
 
@@ -233,7 +234,8 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         return tuple(
             Command(
                 name=skill.name,
-                description=f'Skill: {skill.description.splitlines()[0]}',
+                # Skill files come from the repository, so control characters must not reach the terminal.
+                description=f'Skill: {terminal_text(skill.description.splitlines()[0])}',
                 handler=partial(self._invoke, skill),
                 raw=True,
                 overridable=True,
@@ -247,7 +249,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
 
     async def on_session_start(self, event: SessionStart) -> None:
         for notice in self._skill_notices:
-            self.host.console.print(notice, style=theme.color(theme.WARNING), markup=False)
+            self.host.console.print(terminal_text(notice), style=theme.color(theme.WARNING), markup=False)
 
     async def configure(self) -> str:
         if not self.host.console.is_terminal:

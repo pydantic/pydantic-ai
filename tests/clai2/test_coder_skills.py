@@ -195,6 +195,18 @@ class TestSkillCatalog:
             'must start with YAML frontmatter delimited by `---`.\n'
         )
 
+    async def test_control_characters_from_skill_files_are_made_inert(self, project: Path) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='"Review \\e[31m red."')
+        broken = project / '.agents' / 'skills' / 'bad\x1bc'
+        broken.mkdir()
+        (broken / 'SKILL.md').write_text('no frontmatter', encoding='utf-8')
+        loaded, output = await load_coder()
+
+        (command,) = loaded.commands
+        assert command.description == 'Skill: Review \\x1b[31m red.'
+        assert '\x1b' not in output.getvalue()
+        assert 'bad\\x1bc' in output.getvalue()
+
     async def test_a_misconfigured_folder_turns_skills_off_with_a_notice(self, project: Path) -> None:
         write_skill(project / 'skills', 'review')
         loaded, output = await load_coder({'skill_folders': ['skills/review']})
