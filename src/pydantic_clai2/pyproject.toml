@@ -33,6 +33,7 @@ dependencies = [
     "termflow-md>=0.11.0,<0.12",
     "pyfiglet>=1.0.4",
     "prompt-toolkit>=3.0.52",
+    "python-dotenv>=1.2.2",
     "rich>=14",
     "keyring>=25.6",
     # Encrypts saved credentials with the one key kept in keyring, so a session prompts for keychain access once.
