@@ -1632,7 +1632,12 @@ async def test_truncated_reveal_omits_anthropic_channel(allow_model_requests: No
     assert not isinstance(request['betas'], list)
     assert 'tool_addition' not in json.dumps(request['messages'], sort_keys=True)
     assert request['tools'] == [
-        {'name': 'always_ready', 'description': '', 'input_schema': {'type': 'object', 'properties': {}}},
+        {
+            'name': 'always_ready',
+            'description': '',
+            'input_schema': {'type': 'object', 'properties': {}},
+            'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+        },
         {
             'name': 'hidden_tool',
             'description': '',

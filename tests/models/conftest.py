@@ -24,7 +24,9 @@ with try_import() as google_imports:
 
 
 class AnthropicModelFactory(Protocol):
-    def __call__(self, model_name: str, *, api_key: str | None = None, capture: bool = False) -> AnthropicModel: ...
+    def __call__(
+        self, model_name: str, *, api_key: str | None = None, capture: bool = False, cache: bool = True
+    ) -> AnthropicModel: ...
 
 
 @pytest.fixture
@@ -36,16 +38,18 @@ def anthropic_model(anthropic_api_key: str, request_capture: RequestCapture) -> 
     test reading `request_capture` sees the same instance this wired in.
     """
 
-    def _create_model(model_name: str, *, api_key: str | None = None, capture: bool = False) -> AnthropicModel:
+    def _create_model(
+        model_name: str, *, api_key: str | None = None, capture: bool = False, cache: bool = True
+    ) -> AnthropicModel:
         # Imported here rather than at module scope: this conftest also loads on shards installed
         # without the `anthropic` extra, where a top-level import would fail at collection.
-        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
         from pydantic_ai.providers.anthropic import AnthropicProvider
 
         provider = AnthropicProvider(
             api_key=api_key or anthropic_api_key, http_client=request_capture.client if capture else None
         )
-        return AnthropicModel(model_name, provider=provider)
+        return AnthropicModel(model_name, provider=provider, settings=AnthropicModelSettings(anthropic_cache=cache))
 
     return _create_model
 

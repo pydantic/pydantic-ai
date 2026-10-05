@@ -2105,16 +2105,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
-        # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
-        # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
-        # cannot use prompt caching`); they're hidden from the model until tool search
-        # discovers them, so they aren't part of the cacheable prompt prefix anyway.
-        if cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions'):
-            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
-            for tool in reversed(tools):
-                if tool.get('defer_loading') is not True:
-                    tool['cache_control'] = self._build_cache_control(ttl)
-                    break
+        if not any('cache_control' in tool for tool in tools):
+            self._cache_tool_definitions(tools, model_settings)
 
         return tools, mcp_servers, beta_features
 
@@ -2172,10 +2164,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for t in tool_defs.values()
         ]
 
+        self._cache_tool_definitions(tools, model_settings)
+
         if 'parallel_tool_calls' in model_settings and tool_choice['type'] != 'none':
             tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']
 
         return tools, tool_choice
+
+    def _cache_tool_definitions(self, tools: list[BetaToolUnionParam], model_settings: AnthropicModelSettings) -> None:
+        # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
+        # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
+        # cannot use prompt caching`); they're hidden from the model until tool search
+        # discovers them, so they aren't part of the cacheable prompt prefix anyway.
+        if cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions'):
+            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
+            for tool in reversed(tools):
+                if tool.get('defer_loading') is not True:
+                    tool['cache_control'] = self._build_cache_control(ttl)
+                    break
 
     async def _map_message(  # noqa: C901
         self,
