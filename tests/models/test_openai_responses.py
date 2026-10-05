@@ -7277,7 +7277,8 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                             cost=Decimal('0.00475625'),
                         )
                     )
-                    assert run.usage == snapshot(RunUsage(requests=1))
+                    # The run counts the step once its response is committed, after the stream.
+                    assert run.usage == snapshot(RunUsage())
                 assert run.usage == snapshot(
                     RunUsage(
                         input_tokens=53,
@@ -16985,13 +16986,13 @@ async def test_openai_responses_function_call_grouping_around_active_tool_search
             parts=[
                 ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
                 ThinkingPart(content='inspect ordinary result'),
-                ToolCallPart('search_tools', {'queries': ['weather']}, tool_call_id='search-a'),
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-a'),
             ]
         ),
         ModelRequest(
             parts=[
                 ToolReturnPart('read', 'contents', tool_call_id='call-a'),
-                ToolReturnPart('search_tools', {'discovered_tools': []}, tool_call_id='search-a'),
+                ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='search-a'),
             ]
         ),
     ]
@@ -17013,9 +17014,11 @@ async def test_openai_responses_function_call_grouping_around_active_tool_search
             },
             {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
             {
-                'type': 'function_call_output',
+                'type': 'tool_search_output',
+                'execution': 'client',
+                'tools': [],
                 'call_id': 'search-a',
-                'output': '{"discovered_tools":[]}',
+                'status': 'completed',
             },
         ]
     )

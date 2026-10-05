@@ -28,6 +28,10 @@ does not report speech-end boundaries, so its user part contains everything sent
 response completed through the current response completion, including silence sent while the model
 is responding. Retention records the microphone stream only; it does not mix the model's output audio
 into the user's part unless that output is present in the microphone input itself.
+
+How much retained audio a session keeps is bounded by `retain_audio_max_seconds` on
+[`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session]; the oldest is evicted first, keeping
+its transcript.
 """
 
 
@@ -122,7 +126,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     """Model used to transcribe the user's audio input, so their turns are captured into history.
 
     `'auto'` (the default) uses the provider's recommended realtime transcription model; pass a
-    specific id (e.g. `'gpt-4o-transcribe'`) to pin one, or `None` to disable transcription (see
+    specific id (e.g. `'gpt-live-transcribe'`) to pin one, or `None` to disable transcription (see
     `audio_retention` to retain the raw audio instead).
 
     `None` turns transcription off on every provider. A *pinned* id applies only to the providers that
@@ -200,7 +204,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`UserError`][pydantic_ai.exceptions.UserError] at connect time, since a re-dial without
     resumption would lose the conversation.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini, xAI, and OpenAI GPT-Live, which forks a session stored
+    with `openai_live_store=True` and otherwise replays the local history into a new one.
     """
 
 
@@ -212,6 +217,8 @@ KnownRealtimeTranscriptionModelName = TypeAliasType(
         'gpt-4o-transcribe',
         'gpt-4o-mini-transcribe',
         'gpt-realtime-whisper',
+        'gpt-live-transcribe',
+        'gpt-transcribe',
         'grok-transcribe',
         'azure-speech',
         'mai-transcribe',

@@ -34,6 +34,14 @@ the monitor starts a fresh mark for it instead of comparing against the previous
 model's. Marks are kept per key rather than reset, so switching back to an earlier
 model within its cache TTL still compares against that model's prefix.
 
+Native tool responses may sum cache reads across internal model calls. The monitor
+can still warn on a low total, but keeps the earlier prefix and waits for an ordinary
+request to confirm recovery. If the provider reports one call to the main model and
+no compaction, the response uses normal cache accounting. Gemini responses with
+separate tool-use prompt accounting do the same. These responses can establish a
+larger prefix, and a healthy cache read confirms recovery so a later collapse can
+warn again.
+
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run
 that continues an earlier one via `message_history` -- including history that was
 serialized and loaded back, which carries the conversation id with it -- is judged

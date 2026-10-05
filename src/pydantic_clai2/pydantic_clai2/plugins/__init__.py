@@ -91,6 +91,14 @@ class SessionStart:
 
 
 @dataclass(kw_only=True)
+class PluginLoadFailed:
+    """A plugin failed to load; delivered to loaded plugins after startup loading finishes."""
+
+    plugin: str
+    error: BaseException
+
+
+@dataclass(kw_only=True)
 class SessionEnd:
     """CLAI is quitting, or this plugin is being unloaded."""
 
@@ -169,7 +177,8 @@ class PluginLogin:
 
     For sign-ins that store credentials, such as the subscription behind a `ModelProvider`. Keep
     secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
-    NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
+    Name it after the model prefix it unlocks, as CLAI's own `openai-codex` and `github-copilot` are.
+    NAME cannot be a sign-in CLAI ships (including the earlier `codex` and `copilot`); when two
     plugins add one name, the later one wins. Unloading the plugin removes it. Once the sign-in
     succeeds, `models` (as `PREFIX:NAME`, such as a `ModelProvider`'s `names`) are added to the saved
     model list, so `/model` and `/model_settings` offer them without `/add_model`.
@@ -217,7 +226,7 @@ def _runs_already(prefix: str) -> bool:
     return True
 
 
-HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd
+HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd | PluginLoadFailed
 Renderer = Callable[[AgentStreamEvent], RenderableType | None]
 """Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
@@ -442,6 +451,9 @@ class Plugin(Generic[SettingsT, DepsT]):
     async def on_session_end(self, event: SessionEnd) -> None:
         """CLAI is quitting, the plugin is unloading, or it failed to load after it was built."""
 
+    async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
+        """A startup plugin failed to load; called after all enabled plugins have been tried."""
+
     async def on_turn_start(self, event: TurnStart) -> None:
         """A prompt was submitted; edit `event.text` or call `event.cancel()`. A failure cancels the turn."""
 
@@ -469,6 +481,7 @@ _HANDLERS: dict[type[HostEvent], str] = {
     SessionEnd: 'on_session_end',
     TurnStart: 'on_turn_start',
     TurnEnd: 'on_turn_end',
+    PluginLoadFailed: 'on_plugin_load_failed',
 }
 
 

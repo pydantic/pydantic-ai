@@ -64,7 +64,7 @@ def make_host() -> PluginHost[None]:
 
 
 @pytest.mark.parametrize('missing', ['HERDR_ENV', 'HERDR_SOCKET_PATH', 'HERDR_PANE_ID', 'windows'])
-def test_inactive(missing: str, recorded: RecordingClient, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_inactive(missing: str, recorded: RecordingClient, monkeypatch: pytest.MonkeyPatch) -> None:
     if missing == 'windows':
         monkeypatch.setattr(herdr.sys, 'platform', 'win32')
     else:
@@ -73,6 +73,13 @@ def test_inactive(missing: str, recorded: RecordingClient, monkeypatch: pytest.M
     loaded = load_plugin(herdr.HerdrPlugin, host)
     assert isinstance(loaded.plugin, herdr.HerdrPlugin) and loaded.plugin.reporter is None
     assert loaded.capabilities == ()
+    for event in (
+        SessionStart(agent=Agent(TestModel()), settings=Settings()),
+        TurnStart(text='hello'),
+        TurnEnd(text='hello', outcome='completed'),
+        SessionEnd(reason='exit'),
+    ):
+        await loaded.dispatch(event)
     assert recorded.reports == []
 
 
