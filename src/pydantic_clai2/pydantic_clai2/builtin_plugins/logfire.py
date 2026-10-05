@@ -5,7 +5,7 @@ The default-enabled `observability` plugin: Logfire instrumentation owned by the
 With `ui_events` on, the same instance also records CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 
-`configure` opens the settings menu (turning the plugin on, `C` in `/plugins`, or `/plugins configure
+`configure` opens the settings menu (turning the plugin on, `c` in `/plugins`, or `/plugins configure
 observability`). Each edit is saved at once, and the loader loads the plugin again when the menu closes, so the
 next run uses it. Its first row runs the project setup in `logfire_setup`.
 """
