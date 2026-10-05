@@ -753,11 +753,12 @@ LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     id='SIM-18',
     title=(
         'on GPT-Live, a spoken reply that goes on across a delegated tool round is recorded in two pieces around '
-        "the tool's return (the GPT-Live counterpart of #8760)"
+        "the tool's return (the GPT-Live counterpart of #8760); when the model has started another reply by then, "
+        "the delegation's later tool call is recorded in that reply instead, with the words around it"
     ),
     tracked_by='per-response-id state, so a response the session already recorded can be continued; found by this simulator',
     evidence='recorded',
-    codes=frozenset({'response.duplicated'}),
+    codes=frozenset({'response.duplicated', 'response.mixed', 'response.truncated'}),
     providers=frozenset({'gpt-live'}),
     matches=lambda sim, violation: _continued_after_calling(sim),
 )

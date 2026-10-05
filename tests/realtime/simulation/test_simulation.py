@@ -395,6 +395,23 @@ def test_known_live_reply_split_by_a_delegated_round() -> None:
     reproduce('SIM-18', LiveSimulation(), scenario)
 
 
+@known('SIM-18')
+def test_known_live_late_delegated_call_lands_in_the_next_reply() -> None:
+    """The delegation calls another tool after the model started speaking a new reply: that reply gets the call."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        sim.advance_time(0.1)
+        sim.finish_tool()
+        sim.speak()
+        sim.backend_call()
+        sim.settle()
+
+    reproduce('SIM-18', LiveSimulation(), scenario)
+
+
 @known('SIM-13')
 def test_known_gemini_cut_off_unstarted_turn_ends_the_wait_early() -> None:
     """Two spoken turns the model hadn't started answering, then a typed one that cuts them off."""
