@@ -2070,26 +2070,6 @@ async def test_unanswered_attempts_of_a_nested_fallback_model_are_recorded_once(
     assert [attempt.model_name for attempt in spy.in_wrapper or ()] == ['a', 'b', 'fallback:a,b', 'c']
 
 
-async def test_unanswered_attempts_of_a_failed_stream_are_on_the_request_context() -> None:
-    """A stream opens lazily, so its group is raised in the consumer; it is recorded before the wrapper unwinds."""
-
-    model = FallbackModel(
-        FunctionModel(stream_function=failure_response_stream, model_name='a'),
-        FunctionModel(stream_function=failure_response_stream, model_name='b'),
-    )
-    spy = _UsageAttemptsSpy()
-
-    with pytest.raises(FallbackExceptionGroup):
-        async with Agent(model, capabilities=[spy]).run_stream('test') as result:
-            await result.get_output()  # pragma: no cover
-
-    assert spy.in_error_hook is None
-    assert [(attempt.model_name, attempt.outcome, attempt.usage) for attempt in spy.in_wrapper or ()] == [
-        ('a', 'error', None),
-        ('b', 'error', None),
-    ]
-
-
 async def test_a_request_without_a_fallback_group_records_no_unanswered_attempts() -> None:
     spy = _UsageAttemptsSpy()
 

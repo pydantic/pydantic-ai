@@ -339,7 +339,6 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         response: ModelResponse,
         token: Callable[[], str],
-        known_cost: Decimal | None = None,
         *,
         failed_attempt: bool = False,
     ) -> Exception | None:
@@ -348,7 +347,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         One failure must not stop the other responses of the lifecycle from accruing.
         """
         try:
-            return await self._accrue_response(ctx, response, token(), known_cost, failed_attempt=failed_attempt)
+            return await self._accrue_response(ctx, response, token(), failed_attempt=failed_attempt)
         except Exception as exc:
             return exc
 
@@ -357,11 +356,10 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         response: ModelResponse,
         token: str,
-        known_cost: Decimal | None = None,
         *,
         failed_attempt: bool = False,
     ) -> Exception | None:
-        usd, priced, price_error = self._price_of(response, known_cost)
+        usd, priced, price_error = self._price_of(response, failed_attempt=failed_attempt)
         keyed = await self._keyed(ctx)
         entries: dict[str, SpendEntry] = {}
         for budget, key in keyed:
@@ -716,7 +714,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         now = await self._now()
         return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
 
-    def _price_of(self, response: ModelResponse, known_cost: Decimal | None = None) -> tuple[Decimal, bool, str | None]:
+    def _price_of(self, response: ModelResponse, *, failed_attempt: bool = False) -> tuple[Decimal, bool, str | None]:
         """What the response cost, whether that number is real, and why it was rejected.
 
         A rejected amount is reported rather than raised so the caller can finish
@@ -724,11 +722,11 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         spent, so dropping them would leave a token ceiling understating what the model
         was asked to do -- the same reasoning `on_unpriced='raise'` already follows.
 
-        `known_cost` is the cost core already put on a response this one only summarizes:
-        an attempt's `usage.cost` was priced with the provider URL the rejected response
-        carried, which the summary does not. `price` still comes first. Core never overwrites
-        a cost the model set itself, so a negative or non-finite one is not trusted and the
-        summary is priced from the registry instead.
+        A failed attempt's response only summarizes the rejected one, so the `usage.cost` core
+        put on it is used when `price` gives none: core priced it with the provider URL the
+        rejected response carried, which the summary does not. Core never overwrites a cost
+        the model set itself, so a negative or non-finite one is not trusted and the summary
+        is priced from the registry instead.
         """
         if self.price is not None:
             try:
@@ -747,6 +745,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     # closes. Corrections belong in the store, not here.
                     return Decimal(0), False, f'returned a negative amount ({supplied})'
                 return supplied, True, None
+        known_cost = response.usage.cost if failed_attempt else None
         if known_cost is not None and known_cost.is_finite() and known_cost >= 0:
             return known_cost, True, None
         if response.model_name:
@@ -762,8 +761,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
 def _billed_attempts(
     attempts: Sequence[ModelRequestAttempt], token: Callable[[], str]
-) -> Iterator[tuple[ModelResponse, Callable[[], str], Decimal | None]]:
-    """Each attempt the provider billed, as a response to accrue, its replay token, and its known cost.
+) -> Iterator[tuple[ModelResponse, Callable[[], str]]]:
+    """Each attempt the provider billed, as a response to accrue and its replay token.
 
     The response carries what `price` and the registry read, so a user's `price` prices an attempt the
     same way it would have priced the response had it been accepted. An attempt's token extends
@@ -779,7 +778,7 @@ def _billed_attempts(
             provider_name=attempt.provider_name,
             timestamp=attempt.timestamp,
         )
-        yield billed, partial(_attempt_token, token, index), attempt.usage.cost
+        yield billed, partial(_attempt_token, token, index)
 
 
 def _attempt_token(token: Callable[[], str], index: int) -> str:
