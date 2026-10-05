@@ -40,6 +40,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeSessionReconnectEvent,
+    _session as realtime_session,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -1917,12 +1918,17 @@ def _spoken_reply(response_id: str, pcm: bytes, transcript: str) -> list[str]:
     ]
 
 
-async def test_retained_audio_eviction_keeps_a_committed_turn_in_its_place(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('core_mode', ['core', 'legacy'])
+async def test_retained_audio_eviction_keeps_a_committed_turn_in_its_place(
+    monkeypatch: pytest.MonkeyPatch, core_mode: str
+) -> None:
     """A spoken turn goes after what its commit followed, even once the retained-audio budget evicted that answer's audio.
 
     The second answer arrives before the second turn's transcript and evicts the first answer's audio, which the
-    second commit was placed after.
+    second commit was placed after. Also run on the current core (`_CORE_MODE = 'legacy'`), whose own record keeps
+    retained audio only there: in core mode it lets that audio go as soon as it records it.
     """
+    monkeypatch.setattr(realtime_session, '_CORE_MODE', core_mode)
     tenth_of_a_second = b'\x10\x27' * 2400
     ws = _PhasedWebSocket(
         [_created(), _updated()],
