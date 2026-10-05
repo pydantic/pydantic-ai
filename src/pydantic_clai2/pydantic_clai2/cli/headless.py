@@ -77,6 +77,9 @@ async def run_headless(
                             current = next(other for other in shell.loader.entries() if other.name == entry.name)
                             if current.included_in is None:
                                 await shell.loader.load(entry.name)
+                    if resume is not None:
+                        # Now that observability has subscribed, under the restored conversation.
+                        shell.session.record_resumed()
                     start = TurnStart(text=text)
                     ended = TurnEnd(text=text, outcome='cancelled')
                     try:

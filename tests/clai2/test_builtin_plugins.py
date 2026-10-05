@@ -10,6 +10,7 @@ from rich.console import Console
 from termflow.tui import MenuItem
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.coder import CoderSettings
@@ -225,7 +226,8 @@ def test_saved_logfire_opens_observability_setup_when_enabled(tmp_path: Path) ->
         result = menu.toggle(Menu(), item)
         assert result is not None and result.item is not None
         assert result.item.value == Configure('observability')
-        assert len(plugins.entries()) == 1 and len(plugins.capabilities()) == 1
+        assert len(plugins.entries()) == 1
+        assert sum(isinstance(capability, Instrumentation) for capability in plugins.capabilities()) == 1
         (saved,) = store.plugins()
         assert saved.id == 'observability' and saved.enabled
         assert saved.settings == {'send_to_logfire': False, 'include_content': False}
@@ -266,7 +268,7 @@ async def test_legacy_logfire_sources_share_one_runtime_identity(tmp_path: Path,
         assert [entry.name for entry in plugins.entries()] == ['observability']
         assert not plugins.capabilities()
         await plugins.enable('observability')
-        assert len(plugins.capabilities()) == 1
+        assert sum(isinstance(capability, Instrumentation) for capability in plugins.capabilities()) == 1
         await plugins.disable('observability')
         assert not plugins.capabilities()
         assert not store.plugins()[0].enabled

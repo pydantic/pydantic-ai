@@ -31,7 +31,7 @@ from pydantic_ai import AgentStreamEvent, PartStartEvent, TextPart
 from pydantic_ai.messages import ModelMessage
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime._session import Session, session_context
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.status import Status
@@ -267,31 +267,32 @@ class Forks(Generic[DepsT, OutputT]):
             return []
 
     async def _run(self, fork_id: int, session: Session[DepsT, OutputT], prompt: str) -> None:
-        try:
-            result = await session.prompt(prompt)
-        except asyncio.CancelledError:
-            record = self._finish(fork_id, 'cancelled', session)
-            self._notify(f'{record.tag} cancelled after {record.elapsed:.1f}s', theme.MUTED)
-            with move_on_after(5, shield=True):
-                await self._fire(TurnEnd(text=prompt, outcome='cancelled'))
-            raise
-        except Exception as exc:  # noqa: BLE001 -- a failed fork reports and never reaches the shell.
-            record = self._finish(fork_id, 'failed', session)
-            first_line = (error_message(exc).strip().splitlines() or [''])[0]
-            self._notify(
-                f'{record.tag} failed after {record.elapsed:.1f}s: {type(exc).__name__}: {first_line}', theme.ERROR
-            )
-            await self._fire(TurnEnd(text=prompt, outcome='failed', error=exc))
-            return
-        record = self._finish(fork_id, 'done', session)
-        await self._fire(TurnEnd(text=prompt, outcome='completed', result=result))
-        while True:
-            await self._idle.wait()
-            async with self._terminal:
-                # A turn or command may have started between the wake-up and taking the lock.
-                if not self._busy:
-                    await self._announce(record, result.output)
-                    return
+        with session_context(session.summary.id):
+            try:
+                result = await session.prompt(prompt)
+            except asyncio.CancelledError:
+                record = self._finish(fork_id, 'cancelled', session)
+                self._notify(f'{record.tag} cancelled after {record.elapsed:.1f}s', theme.MUTED)
+                with move_on_after(5, shield=True):
+                    await self._fire(TurnEnd(text=prompt, outcome='cancelled'))
+                raise
+            except Exception as exc:  # noqa: BLE001 -- a failed fork reports and never reaches the shell.
+                record = self._finish(fork_id, 'failed', session)
+                first_line = (error_message(exc).strip().splitlines() or [''])[0]
+                self._notify(
+                    f'{record.tag} failed after {record.elapsed:.1f}s: {type(exc).__name__}: {first_line}', theme.ERROR
+                )
+                await self._fire(TurnEnd(text=prompt, outcome='failed', error=exc))
+                return
+            record = self._finish(fork_id, 'done', session)
+            await self._fire(TurnEnd(text=prompt, outcome='completed', result=result))
+            while True:
+                await self._idle.wait()
+                async with self._terminal:
+                    # A turn or command may have started between the wake-up and taking the lock.
+                    if not self._busy:
+                        await self._announce(record, result.output)
+                        return
 
     def _finish(self, fork_id: int, status: ForkStatus, session: Session[DepsT, OutputT]) -> ForkRecord:
         record = self._records[fork_id]
