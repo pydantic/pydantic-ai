@@ -6,7 +6,7 @@ from collections import deque
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import IO, Protocol
+from typing import IO, Protocol, cast
 
 from rich.ansi import AnsiDecoder
 from rich.color import ColorSystem
@@ -175,6 +175,14 @@ class _Lines:
         self.pending = ''
         self._decoder = TranscriptDecoder()
 
+    @classmethod
+    def rebind(cls, stream: '_Lines') -> '_Lines':
+        stream.__class__ = cls
+        stream._decoder.__class__ = TranscriptDecoder
+        for line in stream.lines:
+            line.__class__ = _Line
+        return stream
+
     def write(self, text: str) -> None:
         self.revision += 1
         self.pending = _OSC.sub(replay_osc, self.pending + text)
@@ -222,6 +230,12 @@ class MarkdownBlock(io.StringIO):
         self._stream = _Lines(max_chars=max_chars, max_lines=max_lines)
         self._changed = changed
         self._rows: tuple[object, tuple[str, ...]] = ((), ())
+
+    @classmethod
+    def rebind(cls, block: 'MarkdownBlock') -> 'MarkdownBlock':
+        block.__class__ = cls
+        block._stream = _Lines.rebind(block._stream)
+        return block
 
     def extend(self, markdown: str) -> None:
         """Record source as it arrives, ahead of the smoothed rendering."""
@@ -299,6 +313,35 @@ class TranscriptBuffer:
         self._pending = ''
         self._discard_until_newline = False
         self._decoder = TranscriptDecoder()
+
+    @classmethod
+    def rebind(cls, transcript: 'TranscriptBuffer') -> 'TranscriptBuffer':
+        """Upgrade retained state in place when reload replaces its class definitions.
+
+        The suspended `chat` coroutine and capture wrappers still reference this object.
+        Pre-live transcripts stored styled Text lines, all already emitted to native
+        scrollback. Rebinding live transcripts also refreshes nested class identities,
+        so eviction does not mistake an old `_Line` for a Markdown block.
+        """
+        if '_items' not in vars(transcript):
+            retained = cls(max_lines=transcript.max_lines, max_chars=transcript.max_chars)
+            for line in cast(deque[Text], vars(transcript)['_lines']):
+                retained._append(_Line(line))
+            retained._pending = transcript._pending
+            retained._discard_until_newline = transcript._discard_until_newline
+            retained._decoder.style = transcript._decoder.style
+            retained.mark_printed()
+            vars(transcript).clear()
+            vars(transcript).update(vars(retained))
+        transcript.__class__ = cls
+        transcript._decoder.__class__ = TranscriptDecoder
+        for item in transcript._items:
+            # StringIO is a stable dependency type across CLAI reloads.
+            if isinstance(item, io.StringIO):
+                MarkdownBlock.rebind(item)
+            else:
+                item.__class__ = _Line
+        return transcript
 
     @property
     def end(self) -> int:

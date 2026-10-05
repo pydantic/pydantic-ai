@@ -1,6 +1,8 @@
 """Bounded transcript replay preserves text, wrapping, and styling, not controls."""
 
 import io
+from collections import deque
+from typing import cast
 
 import pytest
 from rich.color import ColorSystem
@@ -9,7 +11,13 @@ from rich.style import Style
 from rich.text import Text
 from termflow.ansi.utils import visible_length
 
-from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock, TranscriptBuffer, render_ansi, style_prefix
+from pydantic_clai2.ui.prompt.prompt_transcript import (
+    MarkdownBlock,
+    TranscriptBuffer,
+    TranscriptDecoder,
+    render_ansi,
+    style_prefix,
+)
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -303,3 +311,69 @@ def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() 
     block.write('answer\n')
     assert block.source is None
     assert plain(buffer, width=40) == ['answer', '']
+
+
+class _PreLiveTranscript:
+    """The pre-1.0 runtime state: styled Text lines and an unfinished ANSI stream.
+
+    It deliberately has no live-panel methods, including `mark_printed`.
+    """
+
+    def __init__(self, *, pending: str = 'pending\x1b[32', discard: bool = False) -> None:
+        self.max_lines = 2000
+        self.max_chars = 1_000_000
+        self._lines = deque([Text.from_ansi('\x1b[31mold output\x1b[0m')])
+        self._pending = pending
+        self._chars = len(self._lines[0])
+        self._discard_until_newline = discard
+        self._decoder = TranscriptDecoder()
+
+
+def test_pre_live_transcript_migrates_in_place_preserving_styles_and_partial_ansi() -> None:
+    legacy = _PreLiveTranscript()
+    retained = cast(TranscriptBuffer, legacy)
+    transcript = TranscriptBuffer.rebind(retained)
+    assert transcript is retained
+    assert type(transcript) is TranscriptBuffer
+    assert transcript.max_lines == 2000 and transcript.max_chars == 1_000_000
+    assert plain(transcript) == ['old output', 'pending']
+    assert '\x1b[31m' in transcript.frame(width=80, height=24).rows[0]
+    transcript.write('m green\x1b[0m\n')
+    assert plain(transcript) == ['old output', 'pending green', '']
+    assert '\x1b[32m' in transcript.frame(width=80, height=24).rows[1]
+    assert Text.from_ansi(transcript.printed(width=80)).plain == 'pending green', 'old output was already emitted'
+    output = io.StringIO()
+    console = Console(file=output)
+    with transcript.capture(console):
+        console.print('after reload')
+    assert console.file is output
+    assert output.getvalue() == 'after reload\n'
+    assert plain(transcript) == ['old output', 'pending green', 'after reload', '']
+    assert transcript.printed(width=80) == '', 'capture does not duplicate lifecycle output'
+
+
+def test_pre_live_transcript_preserves_discarding_a_malformed_escape() -> None:
+    legacy = _PreLiveTranscript(pending='', discard=True)
+    transcript = TranscriptBuffer.rebind(cast(TranscriptBuffer, legacy))
+    transcript.write('discarded')
+    assert plain(transcript) == ['old output', '']
+    transcript.write('discarded\nnew\n')
+    assert plain(transcript) == ['old output', '', 'new', '']
+
+
+def test_live_transcript_rebinds_nested_markdown_state_without_resetting_output() -> None:
+    transcript = TranscriptBuffer(max_lines=3)
+    transcript.write('notice\n')
+    block = _block(transcript)
+    block.extend('answer')
+    block.write('answer\n')
+    for _ in range(2):
+        assert TranscriptBuffer.rebind(transcript) is transcript
+        assert plain(transcript, width=40) == ['notice', 'answer', '']
+    block.extend(' more')
+    block.write('more\n')
+    assert plain(transcript, width=40) == ['notice', 'answer', 'more', '']
+    transcript.max_lines = 1
+    transcript.write('latest\n')
+    assert plain(transcript, width=40) == ['latest', '']
+    assert transcript.printed(width=40) == 'latest\n'

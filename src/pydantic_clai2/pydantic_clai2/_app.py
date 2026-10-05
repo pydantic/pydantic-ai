@@ -621,6 +621,8 @@ def create_shell(
         )
     )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
+    # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
+    TranscriptBuffer.rebind(transcript)
     return shell
 
 

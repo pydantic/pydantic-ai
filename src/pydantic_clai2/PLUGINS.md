@@ -1933,7 +1933,9 @@ On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme; tool and command
 output rewraps with its original colours. The transcript includes startup and
-plugin lifecycle output. It keeps styling, not arbitrary terminal controls.
+plugin lifecycle output. `/reload` preserves it, including when a running session
+upgrades from the older scrollback implementation. It keeps styling, not arbitrary
+terminal controls.
 Use `self.host.full_screen()` for widgets instead of printing cursor-control
 sequences into the transcript. `run_worker` temporarily leaves the live panel
 for full-screen widgets; output continues into the transcript without painting

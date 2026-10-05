@@ -955,6 +955,8 @@ After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
 `importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
 and session with the updated code. The Python process, agent, dependencies passed
 to `chat`, conversation messages, selected model, and active settings are kept.
+The retained transcript is kept too, including when upgrading a running session
+from the older scrollback implementation to the live panel.
 Enabled plugins unload and load again so their handlers use the refreshed
 shell types. Disabled and unapproved project plugins stay off.
 
