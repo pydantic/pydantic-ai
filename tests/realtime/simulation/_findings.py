@@ -550,17 +550,27 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
 )
 
 
+def _results_answered_together(sim: Simulation, violation: InvariantViolation) -> bool:
+    """One reply answered the results of several tool calls: parallel calls, or the calls of separate delegations."""
+    truth = sim.truth
+    return _parallel_calls(sim, violation) or any(
+        sum((input_ := truth.input(key)) is not None and input_.kind == 'tool_output' for key in response.answers) > 1
+        for response in truth.responses.values()
+    )
+
+
 LIVE_BATCH_RESERVATIONS = Finding(
     id='SIM-6',
     title=(
-        'a GPT-Live delegation answers its parallel tool calls once, but the session reserves a reply per result, '
-        'so `wait_for_reply()` hangs'
+        "GPT-Live answers the results of several tool calls (a delegation's parallel calls, or the calls of "
+        'delegations in a row) with one reply, but the session reserves a reply per result, so `wait_for_reply()` '
+        'hangs'
     ),
     tracked_by='reply obligations resolved by the reply that answers them (#8765 fixed this for the other providers, but not GPT-Live); found by this simulator',
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
     providers=frozenset({'gpt-live'}),
-    matches=_parallel_calls,
+    matches=_results_answered_together,
 )
 
 
