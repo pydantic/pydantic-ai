@@ -110,7 +110,10 @@ class Instrumentation(AbstractCapability[Any]):
     prefix moved while it should still have been warm. A sustained collapse emits the event
     once, until a healthy read-back re-stabilizes the cache. The established prefix is tracked
     per conversation and per provider, endpoint, and model, so the first request of a run that
-    continues a conversation is judged against what the previous run cached.
+    continues a conversation is judged against what the previous run cached. A request long enough
+    to cache on a model whose prompt caching its settings turned off without `cache=False` sets
+    `pydantic_ai.cache.disabled` and emits a `pydantic_ai.cache.disabled` span event, once per
+    conversation.
     """
 
     _safe_at_runtime: ClassVar[bool] = True
@@ -472,6 +475,16 @@ class Instrumentation(AbstractCapability[Any]):
         # has a `0.0` hit ratio, and that cold-start cost belongs in the run's cache-efficiency picture.
         span.set_attribute('pydantic_ai.cache.hit_ratio', health.hit_ratio)
         span.set_attribute('pydantic_ai.cache.established_tokens', health.established_tokens)
+
+        if health.disabled:
+            span.set_attribute('pydantic_ai.cache.disabled', True)
+            disabled_attributes: dict[str, str | int] = {'input_tokens': response.usage.input_tokens}
+            if response.provider_name is not None:
+                disabled_attributes['provider_name'] = response.provider_name
+            if response.model_name is not None:  # pragma: no branch
+                disabled_attributes['model_name'] = response.model_name
+            span.add_event('pydantic_ai.cache.disabled', attributes=disabled_attributes)
+            return
 
         collapse = health.collapse
         if collapse is None:

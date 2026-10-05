@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -14,6 +14,7 @@ from pydantic_ai import (
     CompactionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
+    ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ModelRetry,
@@ -31,7 +32,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import try_import
@@ -933,3 +934,124 @@ def test_concurrent_runs_of_a_new_conversation_keep_each_others_marks() -> None:
     later = CacheHealthDetector(store, 'conversation', 'run-3', alert_on={'unexpected'})
     assert set(later.marks) == {('provider-a', None, 'cache-model'), ('provider-b', None, 'cache-model')}
     assert second.marks is later.marks
+
+
+# ---- Caching disabled by settings -------------------------------------------------------------
+
+
+class ProviderCacheFunctionModel(FunctionModel):
+    """A model that needs caching configured, with a provider-specific `provider_cache` setting.
+
+    Like `anthropic_cache_instructions` and friends, the setting takes precedence over the unified
+    `cache` setting when present, including when it's `False`.
+    """
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        if 'provider_cache' in merged_settings:
+            return (cast(dict[str, Any], merged_settings)['provider_cache'],)
+        return super()._effective_cache_settings(merged_settings)
+
+
+def disabled_cache_spans(
+    usages: Sequence[RequestUsage],
+    *,
+    settings: dict[str, Any],
+    prompt: str | list[str | CachePoint] = 'prompt',
+    runs: int = 1,
+) -> list[ReadableSpan]:
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    responses = iter(usages)
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')], usage=next(responses))
+
+    model = ProviderCacheFunctionModel(model_function, profile=ModelProfile(supports_cache=True))
+    agent = Agent(
+        model,
+        model_settings=cast(ModelSettings, settings),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False))
+        ],
+    )
+    history: list[ModelMessage] | None = None
+    for _ in range(runs):
+        history = agent.run_sync(prompt, message_history=history).all_messages()
+    return [span for span in exporter.get_finished_spans() if span.name.startswith('chat ')]
+
+
+def test_caching_disabled_by_provider_setting_is_reported_once() -> None:
+    """A provider-specific `False` that silently overrides the default-on unified setting is reported, once per
+    conversation, on a request long enough to cache that engaged no cache."""
+    spans = disabled_cache_spans(
+        [RequestUsage(input_tokens=5000), RequestUsage(input_tokens=5100)], settings={'provider_cache': False}, runs=2
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {
+            'pydantic_ai.cache.hit_ratio': 0.0,
+            'pydantic_ai.cache.established_tokens': 0,
+            'pydantic_ai.cache.disabled': True,
+        },
+        {},
+    ]
+    assert [(event.name, dict(event.attributes or {})) for event in spans[0].events] == [
+        ('pydantic_ai.cache.disabled', {'input_tokens': 5000, 'model_name': 'function:model_function:'})
+    ]
+    assert not spans[1].events
+
+
+@pytest.mark.parametrize(
+    ('settings', 'usage', 'prompt'),
+    [
+        pytest.param({'cache': False}, RequestUsage(input_tokens=5000), 'prompt', id='turned-off-on-purpose'),
+        pytest.param({}, RequestUsage(input_tokens=5000), 'prompt', id='default-on'),
+        pytest.param({'provider_cache': False}, RequestUsage(input_tokens=1000), 'prompt', id='too-short'),
+        pytest.param(
+            {'provider_cache': False},
+            RequestUsage(input_tokens=5000),
+            ['context', CachePoint(), 'prompt'],
+            id='cache-point',
+        ),
+    ],
+)
+def test_caching_disabled_not_reported(
+    settings: dict[str, Any], usage: RequestUsage, prompt: str | list[str | CachePoint]
+) -> None:
+    """Turning caching off on purpose, caching that's on, a prompt too short to cache, and hand-placed
+    `CachePoint`s are never reported."""
+    spans = disabled_cache_spans([usage], settings=settings, prompt=prompt)
+
+    assert [cache_attributes(span) for span in spans] == [{}]
+
+
+def test_caching_enabled_after_disabled_report_keeps_the_report() -> None:
+    """Once caching starts working, its marks are judged as usual, and the disabled report isn't repeated."""
+    store = ConversationCacheMarkStore()
+    detector = CacheHealthDetector(store, 'conversation', 'run', alert_on=frozenset({'unexpected'}))
+    model = ProviderCacheFunctionModel(
+        lambda messages, info: ModelResponse(parts=[TextPart('done')]), profile=ModelProfile(supports_cache=True)
+    )
+
+    def observe(settings: dict[str, Any], usage: RequestUsage):
+        context = ModelRequestContext(
+            model=model,
+            messages=[ModelRequest.user_text_prompt('prompt')],
+            model_settings=cast(ModelSettings, settings),
+            model_request_parameters=ModelRequestParameters(),
+        )
+        return detector.observe(context, ModelResponse(parts=[TextPart('done')], usage=usage, model_name='m'))
+
+    first = observe({'provider_cache': False}, RequestUsage(input_tokens=5000))
+    assert first is not None and first.disabled
+    second = observe({}, RequestUsage(input_tokens=5000, cache_write_tokens=4900))
+    assert second is not None and not second.disabled
+    assert observe({'provider_cache': False}, RequestUsage(input_tokens=5000)) is not None
+    assert all(mark.disabled_alerted for mark in detector.marks.values())
+
+
+def test_fallback_model_never_reports_caching_disabled() -> None:
+    """A fallback model can't know which model serves the request, so it claims nothing about its caching."""
+    model = FallbackModel(ProviderCacheFunctionModel(lambda messages, info: ModelResponse(parts=[])))
+    assert not model._caching_disabled_by_settings(cast(ModelSettings, {'provider_cache': False}))  # pyright: ignore[reportPrivateUsage]

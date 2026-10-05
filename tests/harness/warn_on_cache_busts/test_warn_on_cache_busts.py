@@ -18,8 +18,10 @@ import copy
 import pickle
 import warnings
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -43,11 +45,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.warn_on_cache_busts import (
     CacheBustWarning,
+    CacheDisabledWarning,
     WarnOnCacheBusts,
 )
 
@@ -931,3 +935,44 @@ async def test_both_on_one_agent_latch_and_rearm_together() -> None:
         'Cache hit collapsed at model request 2',
         'Cache hit collapsed at model request 5',
     ]
+
+
+class _ProviderCacheFunctionModel(FunctionModel):
+    """A model that needs caching configured, whose provider-specific `provider_cache` setting wins when present."""
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        if 'provider_cache' in merged_settings:
+            return (cast(dict[str, Any], merged_settings)['provider_cache'],)
+        return super()._effective_cache_settings(merged_settings)
+
+
+def _disabled_cache_agent(settings: dict[str, Any], monitor: WarnOnCacheBusts[None]) -> Agent[None, str]:
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=5000), model_name='cached-model')
+
+    model = _ProviderCacheFunctionModel(fn, profile=ModelProfile(supports_cache=True))
+    return Agent(model, deps_type=type(None), model_settings=cast(ModelSettings, settings), capabilities=[monitor])
+
+
+def test_warns_once_when_a_provider_setting_disables_caching():
+    """A provider-specific setting that turns the default-on caching off without caching itself warns once."""
+    agent = _disabled_cache_agent({'provider_cache': False}, WarnOnCacheBusts())
+
+    with pytest.warns(CacheDisabledWarning) as record:
+        result = agent.run_sync('prompt')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        agent.run_sync('again', message_history=result.all_messages())
+
+    (warning,) = [w.message for w in record if isinstance(w.message, CacheDisabledWarning)]
+    assert str(warning) == snapshot(
+        "Prompt caching is off at model request 1: 5000 input tokens were sent to 'function:fn:' uncached, because a provider-specific cache setting overrode the unified `cache` setting without enabling caching itself. Remove the provider-specific setting to use the default `cache=True`, enable caching through it (for example `anthropic_cache='5m'`), or set `cache=False` to turn caching off on purpose."
+    )
+
+
+def test_no_disabled_warning_when_caching_is_turned_off_on_purpose():
+    agent = _disabled_cache_agent({'cache': False}, WarnOnCacheBusts())
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        agent.run_sync('prompt')

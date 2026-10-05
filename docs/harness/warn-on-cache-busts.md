@@ -59,6 +59,10 @@ Marks are kept per conversation (`RunContext.conversation_id`), not per run. A r
 
 A continuation that comes back after the retention window has elapsed is classified `ttl_expired` and doesn't warn. A conversation's marks are forgotten once it has been idle for 24 hours, longer than any provider documents keeping a cache, or when more than 4,096 conversations on the same instance have been active more recently.
 
+## Caching turned off
+
+Pydantic AI turns [prompt caching](../capabilities/caching.md) on by default on the models that need it configured (Anthropic, Bedrock, OpenRouter's Anthropic and Gemini routes, and OpenAI's GPT-5.6 and later). A provider-specific cache setting takes precedence over that default even when it's `False`, so a setting like `anthropic_cache_instructions=False` silently turns all of it off. When a request of at least 4,096 input tokens goes to such a model with no caching in effect, no `CachePoint` in its history, and no cache usage reported, the monitor emits a `CacheDisabledWarning` saying how to turn caching back on, once per conversation and model. Turning caching off on purpose with `cache=False` doesn't warn. Silence or escalate it with the `warnings` filters, like `CacheBustWarning`.
+
 ## Options
 
 - `min_missed_ratio` (default `0.05`): only warn when a request falls short of the established prefix by more than this fraction of it. The default only keeps provider rounding out. It must be at least `0.0` and less than `1.0` -- a request can't miss more than the whole prefix.
