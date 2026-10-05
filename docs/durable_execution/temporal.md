@@ -541,7 +541,7 @@ Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) fo
 - A [`CancellationToken`][pydantic_ai.CancellationToken] lets an external actor (a user hitting "stop") cancel the run first-party without cancelling the workflow, when the token is created in workflow code and fired from a [`@workflow.signal`](https://docs.temporal.io/develop/python/message-passing#signals) handler (see below). Uncaught, the resulting `RunCancelled` fails the workflow just like with `AgentRun.cancel()`.
 - Cancelling the Temporal workflow itself remains an external cancellation: `CancelledError` keeps propagating and the workflow still ends as *Cancelled*.
 
-A signal handler runs on the workflow event loop and is recorded in history, so a token fired from one cancels the run at the same point on replay. Firing the token from anywhere else -- another thread, or code outside the workflow -- is not replay-deterministic.
+A signal handler runs on the workflow event loop and is recorded in history, so a token fired from one cancels the run at the same point on replay. Firing the token from anywhere else -- another thread, an activity, or code outside the workflow -- raises a [`UserError`][pydantic_ai.exceptions.UserError] and leaves the run and the token untouched, since that cancellation couldn't be replayed.
 
 ```python {title="temporal_signal_cancellation.py" test="skip" requires="temporal_durability.py"}
 from temporalio import workflow

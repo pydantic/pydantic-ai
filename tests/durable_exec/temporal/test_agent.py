@@ -552,12 +552,17 @@ _signal_cancellation_agents: dict[str, AbstractAgent[None, str]] = {
 }
 
 
+# Lets a test reach a running workflow's token from outside the workflow, to fire it from the wrong place.
+_signal_cancellation_tokens: dict[str, CancellationToken] = {}
+
+
 @workflow.defn
 class SignalCancellationWorkflow:
     def __init__(self) -> None:
         # Created in workflow code and fired only from the signal handler below, so the cancellation
         # lands at the same point in the workflow's history on replay.
         self._token = CancellationToken()
+        _signal_cancellation_tokens[workflow.info().workflow_id] = self._token
 
     @workflow.run
     async def run(self, prompt: str, catch: bool, agent: str) -> str:
@@ -610,6 +615,36 @@ async def test_temporal_signal_before_run_starts_cancels_run(client: Client) -> 
         history = await handle.fetch_history()
 
     assert not any(event.HasField('activity_task_scheduled_event_attributes') for event in history.events)
+    await _replay_signal_cancellation(history)
+
+
+async def test_temporal_token_fired_outside_the_workflow_raises_and_cancels_nothing(client: Client) -> None:
+    """Firing the token from outside the workflow's loop (here, the test's own loop) can't reach the
+    run: it raises a `UserError` pointing at a signal handler, and records nothing, so the run isn't
+    cancelled at a point Temporal never recorded. Firing it from the signal handler afterwards still
+    cancels the run, and the history replays."""
+    global _signal_cancellation_activity_started
+
+    _signal_cancellation_activity_started = asyncio.Event()
+    workflow_id = f'{SignalCancellationWorkflow.__name__}-{uuid.uuid4()}'
+    async with _signal_cancellation_worker(client):
+        handle = await client.start_workflow(
+            SignalCancellationWorkflow.run,
+            args=['cancel me', True, 'capability'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        await _signal_cancellation_activity_started.wait()
+        token = _signal_cancellation_tokens.pop(workflow_id)
+
+        with pytest.raises(UserError, match="can't be reached from another thread or loop"):
+            token.cancel()
+        assert not token.cancelled
+
+        await handle.signal(SignalCancellationWorkflow.cancel)
+        assert await handle.result() == 'run cancelled'
+        history = await handle.fetch_history()
+
     await _replay_signal_cancellation(history)
 
 
