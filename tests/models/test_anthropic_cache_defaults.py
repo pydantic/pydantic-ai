@@ -68,17 +68,16 @@ async def test_default_cache_breakpoints(
     assert model.resolve_cache_retention(None) == (retention if enabled else None)
 
 
-@pytest.mark.parametrize(
-    'settings',
-    [
-        AnthropicModelSettings(anthropic_cache_messages=True),
-        AnthropicModelSettings(anthropic_cache_messages='1h'),
-        AnthropicModelSettings(
+@pytest.mark.parametrize('case', ['per-block', 'per-block-1h', 'opt-out'])
+def test_cache_defaults_preserve_overrides(case: str):
+    if case == 'per-block':
+        settings = AnthropicModelSettings(anthropic_cache_messages=True)
+    elif case == 'per-block-1h':
+        settings = AnthropicModelSettings(anthropic_cache_messages='1h')
+    else:
+        settings = AnthropicModelSettings(
             anthropic_cache=True, anthropic_cache_instructions=False, anthropic_cache_tool_definitions=False
-        ),
-    ],
-)
-def test_cache_defaults_preserve_overrides(settings: AnthropicModelSettings):
+        )
     client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(type='text', text='Done')], BetaUsage(input_tokens=5, output_tokens=1))
     )

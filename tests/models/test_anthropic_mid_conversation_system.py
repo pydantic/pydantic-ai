@@ -70,9 +70,10 @@ pytestmark = [
     pytest.mark.vcr,
 ]
 
-_UNCACHED = AnthropicModelSettings(
-    anthropic_cache=False, anthropic_cache_instructions=False, anthropic_cache_tool_definitions=False
-)
+if imports_successful():
+    _UNCACHED = AnthropicModelSettings(
+        anthropic_cache=False, anthropic_cache_instructions=False, anthropic_cache_tool_definitions=False
+    )
 
 INSTRUCTION = 'From now on, every suggestion must include explicit type annotations.'
 _CACHE_PREFIX = 'Stable harness state for the mid-conversation cache test.\n' + '\n'.join(
