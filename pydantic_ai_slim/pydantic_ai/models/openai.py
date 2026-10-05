@@ -2991,10 +2991,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 ]
                 instructions = OMIT
             target = cast(responses.EasyInputMessageParam, openai_messages[breakpoint_index])
-            assert isinstance(target['content'], str)
-            content: list[responses.ResponseInputContentParam] = [
-                responses.ResponseInputTextParam(type='input_text', text=target['content'])
-            ]
+            # A system prompt's content is already a list when a leading `CachePoint` attached its breakpoint there.
+            content = target['content']
+            if isinstance(content, str):
+                content = [responses.ResponseInputTextParam(type='input_text', text=content)]
             _add_openai_prompt_cache_breakpoint(content)
             target['content'] = content
         return instructions

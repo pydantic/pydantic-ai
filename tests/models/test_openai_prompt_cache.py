@@ -1110,6 +1110,37 @@ async def test_openai_responses_cache_instructions_without_instruction_parts(all
     )
 
 
+async def test_openai_responses_cache_instructions_with_leading_cache_point_on_system_prompt(
+    allow_model_requests: None,
+):
+    """A leading `CachePoint` has already put its breakpoint on the system prompt the instruction breakpoint targets."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+
+    await Agent(model, system_prompt='Support policies.', model_settings=settings).run(
+        [CachePoint(), 'Where is order 1234?']
+    )
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'Where is order 1234?', 'type': 'input_text'}]},
+        ]
+    )
+
+
 async def test_openai_chat_cache_instructions_with_developer_role(allow_model_requests: None):
     """OpenAI's own example marks reusable instructions in a developer message."""
     mock_client = MockOpenAI.create_mock(chat_completion())
