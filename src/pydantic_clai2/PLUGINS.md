@@ -2135,7 +2135,9 @@ again. Services with Dynamic Client Registration need none of this: add them as
 
 `host.conversation` is the retained history: `messages` is a snapshot,
 `await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model the next prompt will use. `host.status` is the footer's state:
+model CLAI or the user selected for the next prompt. A capability that selects a model, such as
+Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
+status row still name the selected one, and `/compact` and session naming run on it. `host.status` is the footer's state:
 `context_tokens` and `context_window` render as compact used/max, such as
 `128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
 not an assumed fallback. Set `context_alert` to paint the figure in the warning

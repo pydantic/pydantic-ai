@@ -348,7 +348,7 @@ class Session(Generic[DepsT, OutputT]):
         )
 
     async def resolved_model(self) -> Model | str | None:
-        """The model the next run uses: the session's choice after `resolve_model`, else the agent's own."""
+        """The selected model after `resolve_model`, else the agent's own; a capability may replace a default per request."""
         if self.model is None:
             return self.agent.model
         model = self.resolve_model(self.model)

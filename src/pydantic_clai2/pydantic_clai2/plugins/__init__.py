@@ -51,7 +51,10 @@ class Conversation(Protocol):
         ...
 
     async def resolved_model(self) -> Model | str | None:
-        """The model the next run uses; `None` when nothing has been chosen yet."""
+        """The model CLAI or the user selected for the next run; `None` when there is none.
+
+        A capability that selects a model can replace CLAI's default per request, so a run may use another.
+        """
         ...
 
 

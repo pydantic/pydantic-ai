@@ -310,11 +310,31 @@ async def test_capability_settings_beat_defaults_not_overrides(tmp_path: Path) -
 
 
 async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
-    """A capability's model replaces CLAI's default and resolves through CLAI; the GPT defaults do not follow it."""
-    recorder, _ = await run_turn(
-        tmp_path, settings=Settings(), plugins=(Published(model='anthropic:claude-sonnet-4-6'),)
+    """A capability's model replaces CLAI's default and resolves through CLAI; the GPT defaults do not follow it.
+
+    `resolved_model()`, which `/compact` and session naming run on, still names the selected model,
+    as `PLUGINS.md` documents.
+    """
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = create_shell(
+        create_stock_agent(),
+        deps=None,
+        plugins=(Published(model='anthropic:claude-sonnet-4-6'),),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=store.load(),
+        store=store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
     )
+    recorder = Recorder()
+    shell.session.resolve_model = recorder.resolve
+    ended = await shell.run_turn(TurnStart(text='hello'), headless=True)
+    assert ended.outcome == 'completed', ended.error
     assert recorder.calls == snapshot([('anthropic:claude-sonnet-4-6', {})])
+    selected = await shell.session.resolved_model()
+    assert isinstance(selected, Model) and selected.model_name == 'openai-codex:gpt-6-astra'
 
 
 @pytest.mark.parametrize('stock', [True, False], ids=['stock', 'supplied'])
