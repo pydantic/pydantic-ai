@@ -3018,10 +3018,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
     @staticmethod
-    async def _map_image_url(item: ImageUrl) -> BetaImageBlockParam:
+    async def _map_image_url(item: ImageUrl, *, include_citations: bool = False) -> BetaImageBlockParam:
         if item.force_download:
             downloaded = await download_item(item, data_format='bytes')
-            return AnthropicModel._map_binary_data(downloaded['data'], item.media_type)  # pyright: ignore[reportReturnType]
+            return AnthropicModel._map_binary_data(  # pyright: ignore[reportReturnType]
+                downloaded['data'], item.media_type, include_citations=include_citations
+            )
         return BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
 
     @staticmethod
@@ -3063,7 +3065,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return AnthropicModel._map_binary_data(item.data, item.media_type, include_citations=include_citations)
             raise NotImplementedError(f'Unsupported binary content type in Anthropic {context}: {item.media_type}')
         elif isinstance(item, ImageUrl):
-            return await AnthropicModel._map_image_url(item)
+            return await AnthropicModel._map_image_url(item, include_citations=include_citations)
         elif isinstance(item, DocumentUrl):
             return await AnthropicModel._map_document_url(item, include_citations=include_citations)
         elif isinstance(item, AudioUrl):

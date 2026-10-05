@@ -51,7 +51,8 @@ with try_import() as xai_available:
     from pydantic_ai.native_tools import XSearchTool
     from pydantic_ai.providers.xai import XaiProvider
 
-pytestmark = pytest.mark.vcr
+# Matching on the body makes a request that drops a citation setting fail instead of replaying the recording.
+pytestmark = pytest.mark.vcr(additional_matchers=['body'])
 
 # The Anthropic recordings sent this explicitly; without it, requests are streamed behind the scenes.
 ANTHROPIC_SETTINGS = ModelSettings(max_tokens=4096)
@@ -478,6 +479,7 @@ def _web_citation_agent(
     elif case.provider == 'google-vertex':
         model = GoogleModel('gemini-2.5-flash', provider=request.getfixturevalue('vertex_provider'))
         tool = WebSearchTool()
+        prompt = "Use Google Search to find Pydantic AI's documentation and cite it."
     elif case.provider == 'openai':
         model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
         tool = WebSearchTool(max_uses=1)
