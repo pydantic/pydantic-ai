@@ -89,6 +89,11 @@ async def test_startup_import_errors_reach_configured_logfire(
         assert [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17] == errors
     finally:
         await harness.loader.close('exit')
+    root = next(span for span in recorder.spans() if span.name == 'CLAI session')
+    assert root.parent is None
+    assert all(span.parent == root.context for span in errors)
+    assert all('logfire.tags' not in (span.attributes or {}) for span in errors)
+    assert all(span.instrumentation_scope is not None and span.instrumentation_scope.name == 'clai2' for span in errors)
 
 
 @pytest.mark.parametrize('enabled', [False, True])

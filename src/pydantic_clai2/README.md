@@ -1778,6 +1778,26 @@ terminal console output is disabled so it does not interfere with the editor.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 
+Agent runs and recorded UI interactions nest under a `CLAI session` root span.
+Its `agent_session_id` attribute is the saved conversation ID.
+`/clear` selects a new root; `/resume` returns to that conversation's root if it
+was already opened by this plugin instance. Unloading the plugin ends its roots;
+reloading starts new traces with the same saved conversation IDs.
+
+Each session root is tagged with your email, as a Logfire tag and the
+`user.email` attribute, never on child spans or logs. `user_tag` picks where it
+comes from. The default, `logfire-account`, uses the account you signed in with
+when you set up the **Logfire project** (below); that account already has access
+to the project, so the tag reveals nothing new to it. With a token from
+`LOGFIRE_TOKEN`, the credentials file, a token changed since setup, a setup made
+before this setting existed, or a server that does not report your email, roots
+are not tagged until you run the setup again. `git-email` uses
+`git config user.email` instead (Git is only queried with this choice; a missing
+email leaves the tag out), and `false` turns the tag off. Choose **User tag** in
+`/plugins configure observability`, or set `user_tag` in the plugin settings.
+Everything CLAI records itself (session roots, UI records, and plugin load
+failures) uses the `clai2` instrumentation scope.
+
 Prompts, responses, tool arguments/results, and binary image attachments are
 included by default, including retained history used by later turns. This can
 send source code, file contents, and screenshots to the configured telemetry
@@ -1807,8 +1827,8 @@ scrubbing remains enabled.
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `false`) adds spans and logs, tagged
-`clai2-ui`, for UI interactions: menus, slash commands, `/set`, plugin actions,
+rather than falling back. `ui_events` (default `false`) adds spans and logs in the
+`clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never prompt text, typed
 values, or secrets.
@@ -1824,7 +1844,8 @@ Choose **Logfire project** in the settings menu (`/plugins configure observabili
 
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
-reloads and the next turn is traced there. The sign-in itself is not kept. The
+reloads and the next turn is traced there. The sign-in itself is not kept, only
+your account's email, saved with the key name as `account` to tag session roots. The
 URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
 send the token elsewhere, and sending is turned on if it was off. Choose the row
 again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the

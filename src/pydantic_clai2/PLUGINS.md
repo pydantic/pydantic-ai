@@ -379,21 +379,39 @@ be recorded. Logfire's usual scrubbing is enabled.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
 `LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
-sets `token`, `base_url`, and `send_to_logfire` for you (`R` on it clears `token`
-and `base_url` again): it asks
-where traces go, runs Logfire's own device sign-in there (the one behind
-`logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
-accepts), lists the projects you can write to, and saves a new write token for
-the one you pick in `/keys`. The sign-in token is used only during setup. The flow
-lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+sets `token`, `base_url`, `account`, and `send_to_logfire` for you (`R` on it
+clears `token`, `base_url`, and `account` again): it asks where traces go, runs
+Logfire's own device sign-in there (the one behind `logfire auth`, not
+`logfire_mcp`'s MCP OAuth, whose tokens only the MCP server accepts), reads your
+account's email, lists the projects you can write to, and saves a new write
+token for the one you pick in `/keys`. The sign-in token is used only during
+setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+
+Agent runs and UI records nest under a `CLAI session` root whose
+`agent_session_id` is the saved conversation ID. `/clear` selects a new root;
+`/resume` reuses that conversation's root if this plugin instance already opened
+it. Unloading the plugin ends its roots; reloading starts new traces with the
+same saved conversation IDs.
+
+`user_tag` (default `logfire-account`) tags each session root, and only the
+root, with your email, as a Logfire tag and the `user.email` attribute.
+`logfire-account` uses the email in `account`, the account that signed in during
+the **Logfire project** setup, while `token` still names the key that setup
+saved. A token from elsewhere, a setup made before this setting existed, or a
+server that does not report the email leaves roots untagged until setup runs
+again. `git-email` uses `git config user.email` (Git is queried only then), and
+`false` turns the tag off. Set **User tag** in
+`/plugins configure observability`.
 
 `ui_events` (default `false`) also records CLAI's UI interactions on the same
-instance, as spans and logs tagged `clai2-ui`: menus opened and how they closed,
-slash commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
+instance, as spans and logs in the `clai2` instrumentation scope, which session
+roots and plugin load failures share: menus opened and how they closed, slash
+commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
 resume. Attributes carry names and listed choices, never prompt text, typed
 values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
-`run_worker` opens every menu's span, so a new menu is covered without extra code.
+`run_worker` opens every menu's span, so a new menu is covered without extra
+code.
 With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `setting`, `key_name`, ...) are exempt from scrubbing, since names like
 `OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.
@@ -2150,19 +2168,27 @@ again. Services with Dynamic Client Registration need none of this: add them as
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
-`await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model the next prompt will use. Local `!command` executions append a user message
-with the command, stdout, stderr, and completion status. They do not start an
-agent turn or fire turn hooks; the context reaches the model on the next prompt.
+`await commit_messages(...)` persists and swaps it between turns, and
+`resolved_model()` is the model the next prompt will use. Local `!command`
+executions append a user message with the command, stdout, stderr, and
+completion status. They do not start an agent turn or fire turn hooks; the
+context reaches the model on the next prompt.
 
-`host.status` is the footer's state:
-`context_tokens` and `context_window` render as compact used/max, such as
-`128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
-not an assumed fallback. Set `context_alert` to paint the figure in the warning
-colour. The built-in `compaction` plugin fills these fields from Harness usage
-events, including an explicit window override, and clears the window when unloaded. A host built outside the shell gets an in-memory
-`Transcript` and a detached `Status`, so tests need no special case. The status
-row itself is CLAI's; a plugin adds to it with `get_status_segments`.
+`host.session_id` is the current saved conversation ID, following `/clear` and
+`/resume`. During a run it identifies that run's conversation, including a
+background fork. It is `None` while startup resume is selecting a conversation,
+or for a host without session persistence. Custom hosts can supply a
+`session_id` callback to read their current ID.
+
+`host.status` is the footer's state: `context_tokens` and `context_window`
+render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
+`context_window` for a known capacity, not an assumed fallback. Set
+`context_alert` to paint the figure in the warning colour. The built-in
+`compaction` plugin fills these fields from Harness usage events, including an
+explicit window override, and clears the window when unloaded. A host built
+outside the shell gets an in-memory `Transcript` and a detached `Status`, so
+tests need no special case. The status row itself is CLAI's; a plugin adds to it
+with `get_status_segments`.
 
 The double-Esc rewind menu also uses `commit_messages` between turns. It removes
 the selected prompt and later history, but does not undo plugin state, file
