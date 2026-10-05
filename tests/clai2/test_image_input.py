@@ -194,7 +194,7 @@ async def test_shell_image_and_text_turns(image_path: Path, tmp_path: Path, term
             return request_context
 
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
-        pipe.send_text(f'\x1b[200~"{image_path}"\x1b[201~describe\ntext only\n/exit\n')
+        pipe.send_text(f'\x1b[200~"{image_path}"\x1b[201~describe\rtext only\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None), capabilities=[Capture()]),
             deps=None,
@@ -277,7 +277,7 @@ async def test_image_hooks_and_expired_history(image_path: Path, tmp_path: Path,
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
         text = '[image:1234abcd]' if action == 'expired' else f'\x1b[200~{image_path}\x1b[201~'
-        pipe.send_text(text + 'caption\n/exit\n')
+        pipe.send_text(text + 'caption\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None), capabilities=[Capture()]),
             deps=None,
@@ -443,7 +443,7 @@ async def test_image_can_be_retried_after_selecting_a_model(
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
-        pipe.send_text(f'\x1b[200~{image_path}\x1b[201~caption\n/set model test\n[image:12345678]caption\n/exit\n')
+        pipe.send_text(f'\x1b[200~{image_path}\x1b[201~caption\r/set model test\r[image:12345678]caption\r/exit\r')
         await chat(
             agent,
             deps=None,
