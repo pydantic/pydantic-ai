@@ -75,7 +75,8 @@ trusted [`deps`](../dependencies.md), not session instructions supplied to the m
 
 To continue an earlier conversation, create the `AgentRealtime` per call inside the offer handler,
 `realtime = agent.realtime(model, message_history=...)`, and answer the offer and open the sideband from
-that same object: the call picks up that history on every provider once the sideband attaches.
+that same object. GPT-Live takes the history when the offer starts the call, and a sideband opened with
+other history refuses to attach; the other providers seed it when the sideband attaches.
 
 !!! warning "The browser can read seeded history"
     Seeding a WebRTC call with [`message_history`](history.md) sends those prior turns into the
