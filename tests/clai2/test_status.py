@@ -14,7 +14,7 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import _reset_status, create_shell  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -114,14 +114,10 @@ async def test_footer_paints_the_context_figure_on_alert(monkeypatch: pytest.Mon
     assert f'{sgr(WARNING)}9{sgr(WARNING)}0' in painted and f'{sgr(WARNING)}m' not in painted
 
 
-@pytest.mark.parametrize('command', ['/new', '/clear', '/resume'])
-def test_new_resets_the_figures_whatever_follows_it(command: str) -> None:
+def test_clearing_the_conversation_resets_its_figures() -> None:
     status = Status(context_tokens=90, context_window=100, context_alert=True, output_tokens=5, streamed_chars=8)
-    _reset_status(f'{command} please', status)
+    status.clear_conversation()
     assert status == Status()
-    status.context_alert = True
-    _reset_status(f'{command}er', status)
-    assert status.context_alert
 
 
 async def test_model_change_clears_the_previous_context_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

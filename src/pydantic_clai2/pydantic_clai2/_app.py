@@ -547,7 +547,7 @@ def create_shell(
 
     async def conversation_changed(event: ConversationChanged) -> None:
         nonlocal shown
-        # A plugin's `resume` switches conversations too, not only the commands `_reset_status` knows.
+        # The footer belongs to one conversation: any switch, by command or plugin, starts it afresh.
         if event.conversation_id != shown:
             shown = event.conversation_id
             status.clear_conversation()
@@ -846,7 +846,7 @@ class _Shell(Generic[DepsT, OutputT]):
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
             with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
-                await _execute_command(self.commands, text, console=self.console, status=self.status)
+                await _execute_command(self.commands, text, console=self.console)
 
     async def _rewind(self) -> None:
         assert self.editor is not None
@@ -926,7 +926,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if self.plugins_busy(text):
             return False
         async with self.forks.busy(), self._released():
-            await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
+            await self.interrupts.run(_execute_command(self.commands, text, console=self.console))
         return (
             text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required
         )
@@ -1063,7 +1063,7 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status) -> None:
+async def _execute_command(commands: Commands, text: str, *, console: Console) -> None:
     try:
         result = await commands.execute_async(text)
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
@@ -1073,12 +1073,6 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
-    _reset_status(text, status)
-
-
-def _reset_status(command: str, status: Status) -> None:
-    if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
-        status.clear_conversation()
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
