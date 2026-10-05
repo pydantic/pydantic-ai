@@ -558,6 +558,44 @@ for msg in result.all_messages():
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]
 ```
 
+## Recognizing `run_code` calls
+
+The `run_code` tool declares the `'code_mode.run_code'` [tool kind](../tools-advanced.md#typed-tool-parts), so its call parts are promoted to `RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). A hook or history processor can recognize them with `isinstance` instead of matching the tool's name, and read the submitted code from `code`:
+
+```python
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import RunCodeCallPart
+
+
+@dataclass
+class RecordSnippets(AbstractCapability[Any]):
+    snippets: list[str] = field(default_factory=list)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if isinstance(call, RunCodeCallPart) and call.code is not None:
+            self.snippets.append(call.code)
+        return await handler(args)
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(), RecordSnippets()])
+```
+
+`run_code` calls recorded before `CodeMode` declared this kind load as plain `ToolCallPart`s. `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
+
 ## In practice
 
 A representative run wires `CodeMode` up against an MCP server and a web search and asks it to find the most-discussed Hacker News story across three feeds, pull the comment thread and the submitter's profile, and search the web for follow-up coverage. `CodeMode` collapses that into two `run_code` calls: the first fetches all three feeds in parallel via `asyncio.gather`, dedupes by id, filters by score, and ranks by comment count -- in plain Python; the second batches the three follow-up calls (`hn_get_thread`, `hn_get_user`, `duckduckgo_search`) together.

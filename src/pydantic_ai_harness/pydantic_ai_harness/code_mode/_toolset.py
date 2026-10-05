@@ -11,12 +11,12 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 from urllib.parse import urlsplit
 
-from pydantic import Field, TypeAdapter
+from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
-from typing_extensions import NotRequired, Self, TypedDict, TypeIs
+from typing_extensions import Self, TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
@@ -60,6 +60,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode._parts import RUN_CODE_TOOL_KIND, RunCodeArgs
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -322,16 +323,9 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     }
 
 
-class _RunCodeArguments(TypedDict):
-    code: Annotated[str, Field(description='The Python code to execute in the sandbox.')]
-    restart: NotRequired[
-        Annotated[
-            bool,
-            Field(
-                description='Set to true to reset REPL state. When false (default), state is preserved between calls.'
-            ),
-        ]
-    ]
+class _RunCodeArguments(RunCodeArgs):
+    # Keeps the schema title the model has always been sent; the fields come from `RunCodeArgs`.
+    pass
 
 
 _RUN_CODE_TOOL_NAME = 'run_code'
@@ -1002,6 +996,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 parameters_json_schema=_RUN_CODE_JSON_SCHEMA,
                 metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
                 sequential=True,
+                tool_kind=RUN_CODE_TOOL_KIND,
                 capability_id=self._capability_id(ctx),
             ),
             max_retries=self.max_retries,
