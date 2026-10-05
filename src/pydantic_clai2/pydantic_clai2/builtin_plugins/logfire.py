@@ -73,7 +73,7 @@ class LogfireSettings(BaseModel):
     ui_events: bool = Field(
         default=False,
         description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions. '
-        'With message content included, submitted prompts and ! lines carry their text.',
+        'With message content included, submitted prompts carry their text.',
     )
 
 

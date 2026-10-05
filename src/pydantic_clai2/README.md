@@ -1736,9 +1736,9 @@ rather than falling back. `ui_events` (default `false`) adds spans and logs in t
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never typed values or
 secrets. The one exception: while `include_content` is on, a submitted prompt also
-carries its text as `prompt`, and a `!` line its command as `shell_command`
-(scrubbed as usual), each cut to 64,000 characters. Slash-command arguments are
-never recorded, since they can hold secrets such as `/plugins add` settings.
+carries its text as `prompt`, cut to 64,000 characters. `!` lines record only
+that they were shell commands and their length, and slash-command arguments are
+never recorded, since both can hold secrets such as `/plugins add` settings.
 
 ### Setting up where traces go
 

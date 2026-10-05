@@ -385,10 +385,10 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
     ]
 
 
-async def test_prompt_and_shell_text_are_recorded_with_content(
+async def test_only_prompt_text_is_recorded_with_content(
     content_exporter: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With content on, prompts keep their words unscrubbed, `!` lines are scrubbed, and command arguments stay out."""
+    """With content on, prompts keep their words unscrubbed; `!` lines and command arguments stay out."""
     monkeypatch.setattr(telemetry, 'MAX_CONTENT_CHARS', 20)
     commands = Commands()
     commands.register(Command(name='plugins', description='Plugins', handler=lambda args: ''))
@@ -406,8 +406,7 @@ async def test_prompt_and_shell_text_are_recorded_with_content(
             for text in (
                 'fix the session bug',
                 'a prompt longer than twenty characters',
-                '!echo $OPENAI_API_KEY',
-                '!git status',
+                '!export TOKEN=sk-y',
                 '/plugins add x m {"token": "sk-x"}',
             ):
                 live.buffer.replace(text)
@@ -422,23 +421,10 @@ async def test_prompt_and_shell_text_are_recorded_with_content(
             'prompt submitted',
             {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 38, 'prompt': 'a prompt longer than'},
         ),
-        (
-            'prompt submitted',
-            {
-                'route': 'submitted',
-                'recalled': False,
-                'kind': 'shell',
-                'chars': 21,
-                'shell_command': "[Scrubbed due to 'API_KEY']",
-            },
-        ),
-        (
-            'prompt submitted',
-            {'route': 'submitted', 'recalled': False, 'kind': 'shell', 'chars': 11, 'shell_command': 'git status'},
-        ),
+        ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'shell', 'chars': 18}),
         (
             'prompt submitted',
             {'route': 'submitted', 'recalled': False, 'kind': 'command', 'command': 'plugins', 'chars': 34},
         ),
     ]
-    assert 'sk-x' not in json.dumps([own for _, own in recorded(content_exporter)])
+    assert 'sk-' not in json.dumps([own for _, own in recorded(content_exporter)])

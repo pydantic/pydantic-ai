@@ -7,7 +7,7 @@ the `clai2` instrumentation scope, like everything else CLAI emits itself.
 Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the plugin loader,
 `/keys`, the prompt editor) rather than individual menus, so a new menu is covered without extra code.
 Attributes name what was chosen (a command, a menu, a setting, a plugin, a key's name), not what was typed:
-secrets and free-text values stay out. The one exception is a submitted prompt or `!` line, added through
+secrets and free-text values stay out. The one exception is a submitted prompt's text, added through
 `content` only when the subscriber records message content, as agent spans do.
 """
 
@@ -173,8 +173,7 @@ def keep_names(match: logfire.ScrubMatch) -> object:
     A setting such as `sessions.naming`, a key's name such as `OPENAI_API_KEY`, or a field such as `auth` trips
     Logfire's default patterns. Only the top-level `NAMES` attributes of UI records, and the message placeholders
     filled from them, are kept, along with `PROMPT`, whose words would otherwise trip the same patterns ("the
-    session bug"). Everything else, including a `!` line's `shell_command` and every agent span, is scrubbed as
-    usual.
+    session bug"). Everything else, including every agent span, is scrubbed as usual.
     """
     if (
         _emitting.get()
