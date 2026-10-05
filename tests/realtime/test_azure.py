@@ -86,7 +86,7 @@ async def test_voice_live_url_and_auth_headers() -> None:
     model = AzureRealtimeModel('gpt realtime', provider=provider, settings=settings)
 
     assert model._realtime_url(settings) == (  # pyright: ignore[reportPrivateUsage]
-        'wss://resource.services.ai.azure.com/voice-live/realtime?api-version=2026-04-10&model=gpt+realtime'
+        'wss://resource.services.ai.azure.com/voice-live/realtime?api-version=2026-07-15&model=gpt+realtime'
     )
     assert await model._auth_headers() == {'api-key': 'azure-key'}  # pyright: ignore[reportPrivateUsage]
 
@@ -470,7 +470,7 @@ def test_voice_live_default_api_version() -> None:
     )
     model = AzureRealtimeModel('gpt-realtime', provider=provider)
     url = model._realtime_url(AzureRealtimeModelSettings(azure_voice_live=True))  # pyright: ignore[reportPrivateUsage]
-    assert 'api-version=2026-04-10' in url
+    assert 'api-version=2026-07-15' in url
 
 
 def test_realtime_url_ignores_endpoint_path_and_query(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -491,7 +491,7 @@ def test_realtime_url_ignores_endpoint_path_and_query(monkeypatch: pytest.Monkey
     ):
         model = AzureRealtimeModel('m', provider=AzureProvider(azure_endpoint=endpoint, api_key='k'))
         assert model._realtime_url() == 'wss://r.openai.azure.com/openai/v1/realtime?model=m'  # pyright: ignore[reportPrivateUsage]
-        assert model._realtime_url(vl) == 'wss://r.openai.azure.com/voice-live/realtime?api-version=2026-04-10&model=m'  # pyright: ignore[reportPrivateUsage]
+        assert model._realtime_url(vl) == 'wss://r.openai.azure.com/voice-live/realtime?api-version=2026-07-15&model=m'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_voice_live_event_mapping() -> None:
@@ -583,7 +583,6 @@ def test_voice_live_silently_ignores_openai_only_settings() -> None:
             azure_voice_live=True,
             openai_output_speed=1.5,
             openai_truncation='auto',
-            parallel_tool_calls=False,
         ),
     )
     # The Voice Live session config is built from a fixed field set; these knobs don't appear, under
@@ -592,7 +591,18 @@ def test_voice_live_silently_ignores_openai_only_settings() -> None:
     assert 'output_audio' not in config
     assert 'truncation' not in config
     assert 'truncation_strategy' not in config
-    assert 'parallel_tool_calls' not in config
+
+
+@pytest.mark.parametrize('parallel_tool_calls,expected', [(False, False), (True, None), (None, None)])
+def test_voice_live_parallel_tool_calls(parallel_tool_calls: bool | None, expected: bool | None) -> None:
+    """Only `False` is sent: `True` is the server default, and some `gpt-realtime` models reject it."""
+    provider = AzureProvider(azure_endpoint='https://r.services.ai.azure.com', api_version='2024-10-01', api_key='k')
+    model = AzureRealtimeModel('gpt-realtime', provider=provider)
+    settings = AzureRealtimeModelSettings(azure_voice_live=True)
+    if parallel_tool_calls is not None:
+        settings['parallel_tool_calls'] = parallel_tool_calls
+    config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert config.get('parallel_tool_calls') == expected
 
 
 def test_sideband_url_uses_the_ga_realtime_path() -> None:
