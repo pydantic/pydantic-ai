@@ -2,6 +2,7 @@
 
 import io
 import logging
+import os
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -88,6 +89,8 @@ async def test_export_problems_go_to_a_file_not_the_terminal(
         assert capsys.readouterr().err == 'After the session\n'
 
     log = tmp_path / 'telemetry.log'
+    if os.name != 'nt':  # pragma: no branch
+        assert log.stat().st_mode & 0o777 == 0o600
     assert [line.split(' ', 2)[2] for line in log.read_text().splitlines()] == [
         'WARNING logfire: Currently retrying 1 failed export(s) (955 bytes)',
         f'ERROR {_METRICS}: Failed to export metrics batch code: None, reason: timed out',

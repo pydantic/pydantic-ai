@@ -352,7 +352,7 @@ Export problems, such as a request to Logfire timing out, are logged as
 warnings and errors by the `logfire` and `opentelemetry` loggers. Logfire retries
 failed span exports from disk; OpenTelemetry drops a metrics batch it could not
 send. In the interactive shell these records go to `telemetry.log` next to
-`config.db` (rotated at 1 MB, one previous file kept) instead of over the editor,
+`config.db` (owner-only, rotated at 1 MB, one previous file kept) instead of over the editor,
 and CLAI names that file on exit when the session wrote to it. A logger your own
 application already handles, when embedding `chat()`, is left alone. Headless
 `clai2 -p` still writes them to stderr, separate from the answer on stdout.
