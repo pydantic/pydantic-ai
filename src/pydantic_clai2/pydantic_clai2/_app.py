@@ -405,14 +405,19 @@ def create_shell(
             available=lambda: (session.model or _model_label(agent)).startswith('openai-codex:'),
         )
     )
-    commands.register(Command(name='resume', description='Browse or restore a saved session', handler=sessions.command))
-    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command))
+    commands.register(
+        Command(
+            name='resume', description='Browse or restore a saved session', handler=sessions.command, during_turn=True
+        )
+    )
+    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
     commands.register(
         Command(
             name='login',
             description='Sign in to a subscription: openai-codex, github-copilot, or one a plugin adds',
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
+            during_turn=True,
         )
     )
     commands.register(
@@ -839,7 +844,8 @@ class _Shell(Generic[DepsT, OutputT]):
             if self.plugins_busy(text):
                 return
             with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
-                await _execute_command(self.commands, text, console=self.console, status=self.status)
+                # A running conversation cannot be replaced, so the turn's footer counters stay.
+                await _execute_command(self.commands, text, console=self.console, status=None)
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:
@@ -1070,7 +1076,7 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status) -> None:
+async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status | None) -> None:
     try:
         result = await commands.execute_async(text)
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
@@ -1080,7 +1086,8 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
-    _reset_status(text, status)
+    if status is not None:
+        _reset_status(text, status)
 
 
 def _reset_status(command: str, status: Status) -> None:

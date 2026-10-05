@@ -236,6 +236,11 @@ class Session(Generic[DepsT, OutputT]):
         """Told when a guarded plugin capability rejected its configuration, before the failed turn's error propagates."""
 
     @property
+    def running(self) -> bool:
+        """Whether a run, resume, or history replacement holds the conversation now."""
+        return self._running
+
+    @property
     def messages(self) -> list[ModelMessage]:
         """Return a snapshot of the conversation's message list."""
         return list(self._messages)
