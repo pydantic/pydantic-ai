@@ -369,6 +369,8 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta` and `annotations` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions, and the tool's output schema (if any) is available as the `return_schema` field.
 
+Tools that an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) server reserves for its own UI, by leaving `"model"` out of `_meta.ui.visibility`, are not exposed to the model.
+
 [`MCPToolset`][pydantic_ai.mcp.MCPToolset] additionally exposes a `task: bool` flag indicating whether the toolset will use [task-augmented execution](#background-tasks) for the tool. For tools where task support is optional, this reflects the `prefer_tasks` setting.
 
 ## Background tasks

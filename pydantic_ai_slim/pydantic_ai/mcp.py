@@ -1298,6 +1298,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
+            if _is_app_only(mcp_tool):
+                continue
             # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
             input_schema = mcp_validated_field(mcp_tool, 'input_schema', _JSON_SCHEMA_ADAPTER)
@@ -1750,6 +1752,15 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         )
 
     return handler
+
+
+def _is_app_only(tool: mcp_types.Tool) -> bool:
+    """Whether an MCP Apps (SEP-1865) server keeps the tool from the model, by leaving `"model"` out of `_meta.ui.visibility`."""
+    match tool.meta:
+        case {'ui': {'visibility': ['app'] | []}}:
+            return True
+        case _:
+            return False
 
 
 def _raise_mcp_tool_error(

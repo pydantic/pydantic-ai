@@ -620,6 +620,27 @@ class TestMCPToolsetIntegration:
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
 
+    async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
+        """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are only for the server's UI."""
+        server: FastMCP[None] = FastMCP('apps_server')
+
+        @server.tool(meta={'ui': {'visibility': ['app']}})
+        async def save_checkpoint() -> str:
+            return 'saved'
+
+        @server.tool(meta={'ui': {'visibility': ['app', 'model']}})
+        async def create_view() -> str:
+            return 'created'
+
+        @server.tool(meta={'ui': {'resourceUri': 'ui://view'}})
+        async def read_me() -> str:
+            return 'read'
+
+        toolset = MCPToolset(server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+        assert sorted(tools) == snapshot(['create_view', 'read_me'])
+
     async def test_tool_annotations_keep_the_wire_spelling(
         self, fastmcp_server: FastMCP[None], run_context: RunContext
     ):
