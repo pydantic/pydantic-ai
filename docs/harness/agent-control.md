@@ -68,14 +68,16 @@ the first run reports the agent to your project so there is nothing to describe 
 
 Agent Control needs a `LOGFIRE_API_KEY` with the `project:read_variables` scope -- a different
 credential from the write token that sends spans. Read-only is all it is: nothing here writes to your
-project's variables. `LOGFIRE_API_KEY` is read by the Logfire instance `logfire.configure()` set up,
-which is the one `AgentControl` resolves on unless you pass `logfire_instance=`: if your application
-configures a `logfire.Logfire` instance of its own, pass that. When the instance has no way to read
-variables, `AgentControl` warns once per process and agent, naming what is missing, and the agent runs
-as written. Instrumentation is not optional, though: it is how the agent tells Logfire it
+project's variables. Instrumentation is not optional, though: it is how the agent tells Logfire it
 exists at all (see [Registration and the baseline](#registration-and-the-baseline)), and without
 spans neither the version that produced a given run nor whether the agent is picking its config up
 makes it back to Logfire.
+
+`LOGFIRE_API_KEY` is read by the Logfire instance `logfire.configure()` set up, which is the one
+`AgentControl` resolves on unless you pass `logfire_instance=`: if your application configures a
+`logfire.Logfire` instance of its own, pass that. When the instance has no way to read variables,
+`AgentControl` warns once per process for each variable, naming what is missing, and the agent runs
+as written.
 
 That's the whole setup on the code side. Creating the config itself is done in Logfire.
 

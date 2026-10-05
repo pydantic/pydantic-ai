@@ -70,12 +70,20 @@ _UNREADABLE = (
 )
 _NO_API_KEY = (
     'Reading Logfire variables needs an API key with the `project:read_variables` scope (a write token cannot '
-    'read them), set as `LOGFIRE_API_KEY` or passed as `logfire.configure(api_key=...)`.'
+    'read them), set as `LOGFIRE_API_KEY` for `logfire.configure()` to read or passed as '
+    '`logfire.configure(api_key=...)`.'
 )
-_PASS_YOUR_INSTANCE = (
-    ' This capability resolves on the default Logfire instance: if your application configures its own, pass it '
-    'as `AgentControl(logfire_instance=...)`.'
+_UNCONFIGURED_DEFAULT = (
+    '`LOGFIRE_API_KEY` is set, but the default Logfire instance has not been configured, and only a configured '
+    'instance reads it. Call `logfire.configure()`.'
 )
+_UNCONFIGURED_GIVEN = (
+    '`LOGFIRE_API_KEY` is set, but the Logfire instance it resolves on has not been configured, and only a '
+    'configured instance reads it. Use the instance `logfire.configure()` returned.'
+)
+_ON_DEFAULT = ' This capability resolves on the default Logfire instance: if your application configures its own, '
+_PASS_INSTANCE = _ON_DEFAULT + 'pass it as `AgentControl(logfire_instance=...)`.'
+_CREATE_VARIABLE = _ON_DEFAULT + 'create the `Variable` on that instance.'
 
 
 @pytest.mark.parametrize(
@@ -83,52 +91,42 @@ _PASS_YOUR_INSTANCE = (
     [
         # This package configures Logfire without an API key, which is the deployment that holds only a
         # write token.
-        pytest.param(None, 'default', _UNREADABLE + _NO_API_KEY + _PASS_YOUR_INSTANCE, id='no-api-key'),
+        pytest.param(False, 'default', _UNREADABLE + _NO_API_KEY + _PASS_INSTANCE, id='no-api-key'),
         # A host application that configures a Logfire instance of its own leaves the default one
         # unconfigured, and an unconfigured instance never reads `LOGFIRE_API_KEY`.
         pytest.param(
-            'key',
-            'default',
-            _UNREADABLE
-            + '`LOGFIRE_API_KEY` is set, but the default Logfire instance has not been configured, and only a '
-            'configured instance reads it. Call `logfire.configure()`.' + _PASS_YOUR_INSTANCE,
-            id='unconfigured-default-instance',
+            True, 'default', _UNREADABLE + _UNCONFIGURED_DEFAULT + _PASS_INSTANCE, id='unconfigured-default-instance'
         ),
         pytest.param(
-            'key',
-            'given',
-            _UNREADABLE + '`LOGFIRE_API_KEY` is set, but the Logfire instance this capability was given has not been '
-            'configured, and only a configured instance reads it. Pass the instance `logfire.configure()` returned.',
-            id='unconfigured-given-instance',
+            True,
+            'default-variable',
+            _UNREADABLE + _UNCONFIGURED_DEFAULT + _CREATE_VARIABLE,
+            id='variable-on-unconfigured-default-instance',
         ),
-        pytest.param(
-            'key',
-            'variable',
-            _UNREADABLE + '`LOGFIRE_API_KEY` is set, but the Logfire instance this capability was given has not been '
-            'configured, and only a configured instance reads it. Pass the instance `logfire.configure()` returned.',
-            id='unconfigured-variable-instance',
-        ),
+        pytest.param(True, 'given', _UNREADABLE + _UNCONFIGURED_GIVEN, id='unconfigured-given-instance'),
+        pytest.param(True, 'given-variable', _UNREADABLE + _UNCONFIGURED_GIVEN, id='variable-on-unconfigured-instance'),
     ],
 )
 async def test_an_instance_that_cannot_read_variables_warns_once(
-    monkeypatch: pytest.MonkeyPatch, api_key: str | None, instance: str, expected: str
+    monkeypatch: pytest.MonkeyPatch, api_key: bool, instance: str, expected: str
 ) -> None:
     # Resolving through no provider at all looks identical to "nothing published yet" -- the agent runs
     # as written either way -- so it has to say which it is, and what is missing: once, not every run.
     # Nothing is fetched in any case: an unconfigured instance never reads the key, which is the point.
-    if api_key is not None:
-        monkeypatch.setenv('LOGFIRE_API_KEY', api_key)
-        monkeypatch.setenv('LOGFIRE_IGNORE_NO_CONFIG', '1')
     unconfigured = logfire.Logfire(config=LogfireConfig())
+    if api_key:
+        monkeypatch.setenv('LOGFIRE_API_KEY', 'pylf_v1_us_not_a_real_key')
+        monkeypatch.setenv('LOGFIRE_IGNORE_NO_CONFIG', '1')
+        monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', unconfigured)
     if instance == 'default':
-        if api_key is not None:
-            monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', unconfigured)
         control = AgentControl('unreadable')
     elif instance == 'given':
-        control = AgentControl('unreadable', logfire_instance=unconfigured)
+        control = AgentControl('unreadable', logfire_instance=logfire.Logfire(config=LogfireConfig()))
     else:
-        variable = Variable('agent__unreadable', type=AgentConfig, default=AgentConfig(), logfire_instance=unconfigured)
-        control = AgentControl(variable)
+        on = unconfigured if instance == 'default-variable' else logfire.Logfire(config=LogfireConfig())
+        control = AgentControl(
+            Variable('agent__unreadable', type=AgentConfig, default=AgentConfig(), logfire_instance=on)
+        )
     agent = Agent(TestModel(), instructions='code', capabilities=[control])
     with pytest.warns(UserWarning) as caught:
         await agent.run('hello')

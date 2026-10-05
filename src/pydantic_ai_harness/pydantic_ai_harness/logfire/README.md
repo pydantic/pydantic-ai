@@ -57,8 +57,8 @@ credential a deployment holds needs `project:read_variables` and nothing more. C
 is done in the Logfire UI. `LOGFIRE_API_KEY` is read by the Logfire instance `logfire.configure()` set
 up, which is the one these capabilities resolve on unless you pass `logfire_instance=`: if your
 application configures a `logfire.Logfire` instance of its own, pass that. When the instance has no way
-to read variables, `AgentControl` warns once per process and agent, naming what is missing, and the
-agent runs as written.
+to read variables, `AgentControl` warns once per process for each variable, naming what is missing, and
+the agent runs as written.
 
 `AgentControl` is the one that does not need you to create it there first. It emits one
 `agent_control_config_hint` span carrying the name of the variable the config belongs in and an
