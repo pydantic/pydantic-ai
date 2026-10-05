@@ -1050,12 +1050,16 @@ async def test_by_default_an_owned_delegate_does_not_delegate() -> None:
             await agent.run('go', conversation_id='root')
     (record,) = owner.records.values()
     assert record.output == 'subtask done'
-    assert offered == {'go': ['delegate_task', 'stop_task', 'list_tasks'], 'subtask': []}
+    assert offered == {'go': ['delegate_task', 'stop_task', 'list_tasks', 'message_task'], 'subtask': []}
 
 
 @pytest.mark.parametrize(
     ('tool_name', 'offered_tools'),
-    [('stop_task', ['stop_task', 'list_tasks']), ('list_tasks', ['list_tasks', 'stop_task'])],
+    [
+        ('stop_task', ['stop_task', 'list_tasks', 'message_task']),
+        ('list_tasks', ['list_tasks', 'stop_task', 'message_task']),
+        ('message_task', ['message_task', 'stop_task', 'list_tasks']),
+    ],
 )
 async def test_a_delegate_tool_named_like_a_task_control_keeps_its_name(
     tool_name: str, offered_tools: list[str]
@@ -1076,3 +1080,141 @@ async def test_a_delegate_tool_named_like_a_task_control_keeps_its_name(
             )
             await agent.run('go', conversation_id='root')
     assert offered == offered_tools
+
+
+def user_prompts(messages: list[ModelMessage]) -> list[str]:
+    return [
+        str(part.content)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+
+async def test_message_task_reaches_a_running_child_at_its_next_request() -> None:
+    child_waiting, release, worker_finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def worker_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if len(user_prompts(messages)) == 1:
+            child_waiting.set()
+            await release.wait()
+            return ModelResponse(parts=[TextPart('first draft')])
+        return ModelResponse(parts=[TextPart(user_prompts(messages)[-1])])
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        if update.task.status == 'finished':
+            worker_finished.set()
+
+    owner = DelegationTasks(observer=observe)
+    worker = Agent(scripted(worker_respond), deps_type=object, name='worker')
+
+    async def parent_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='worker', task='draft it', background=True)
+        if not results(messages, 'message_task'):
+            await child_waiting.wait()
+            (record,) = owner.records.values()
+            return call('message_task', task_id=record.id, message='Use British spelling.')
+        release.set()
+        return ModelResponse(parts=[TextPart('done')])
+
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(
+                    scripted(parent_respond), capabilities=[SubAgents(agents=[SubAgent(worker)], agent_folders=None)]
+                )
+                result = await parent.run('go', conversation_id='root')
+                await worker_finished.wait()
+            (record,) = owner.records.values()
+            assert results(result.all_messages(), 'message_task') == [
+                f'Message sent to task {record.id}; it will see it before its next model request.'
+            ]
+            # The message was injected after the first draft, and the child answered it in the same run.
+            assert record.output == 'Message from the agent that delegated this task to you:\nUse British spelling.'
+            assert record.generation == 1
+
+
+async def test_message_task_resumes_a_finished_child() -> None:
+    async def worker_respond(messages: list[ModelMessage]) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(' then '.join(user_prompts(messages)))])
+
+    owner = DelegationTasks()
+    worker = Agent(scripted(worker_respond), deps_type=object, name='worker')
+
+    async def parent_respond(messages: list[ModelMessage]) -> ModelResponse:
+        if not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='worker', task='first')
+        if not results(messages, 'message_task'):
+            (record,) = owner.records.values()
+            return call('message_task', task_id=record.id, message='follow up')
+        return ModelResponse(parts=[TextPart('done')])
+
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(
+                    scripted(parent_respond), capabilities=[SubAgents(agents=[SubAgent(worker)], agent_folders=None)]
+                )
+                result = await parent.run('go', conversation_id='root')
+            (record,) = owner.records.values()
+            assert results(result.all_messages(), 'message_task') == [f'Task {record.id} (ok):\nfirst then follow up']
+            assert record.generation == 2
+
+
+async def test_message_task_refusals() -> None:
+    owner = DelegationTasks(one_shot=frozenset({'Explore'}))
+    blocked = asyncio.Event()
+
+    async def wait(record: DelegationTask) -> str:
+        await blocked.wait()
+        return 'unreachable'  # pragma: no cover
+
+    child = Agent(TestModel(), deps_type=object, name='Explore')
+    async with owner.opened():
+        await delegate(owner, conversation_id='other')
+        await delegate(owner, agent_name='Explore')
+        await owner.delegate(
+            agent_name='worker', prompt='', conversation_id='root', model=None, background=True, resume=None, run=wait
+        )
+        other, one_shot, unattached = owner.records.values()
+
+        async def respond(messages: list[ModelMessage]) -> ModelResponse:
+            if results(messages, 'message_task'):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('message_task', {'task_id': task_id, 'message': 'hi'}, tool_call_id=task_id)
+                    for task_id in (other.id, one_shot.id, unattached.id)
+                ]
+            )
+
+        with owner.bind():
+            parent = Agent(scripted(respond), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+            result = await parent.run('go', conversation_id='root')
+        assert results(result.all_messages(), 'message_task') == [
+            f'Unknown task {other.id!r}. Call `list_tasks` to see the tasks you started.',
+            f'Task {one_shot.id!r} cannot resume; it is one-shot or was stopped by the user',
+            f'Task {unattached.id} is starting or settling and cannot take a message right now.',
+        ]
+
+
+async def test_list_tasks_is_capped() -> None:
+    owner = DelegationTasks()
+    child = Agent(TestModel(), deps_type=object, name='worker')
+    async with owner.opened():
+        for _ in range(52):
+            await delegate(owner)
+        first, second, *_ = owner.records.values()
+        with owner.bind():
+            agent = Agent(
+                TestModel(call_tools=['list_tasks']),
+                capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+            )
+            result = await agent.run('go', conversation_id='root')
+    (listing,) = results(result.all_messages(), 'list_tasks')
+    lines = listing.splitlines()
+    assert len(lines) == 51
+    assert lines[-1] == '(2 older finished tasks not shown.)'
+    assert first.id not in listing and second.id not in listing

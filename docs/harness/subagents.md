@@ -434,16 +434,21 @@ pending reports on its next explicitly started run. Enqueue delivery is acknowle
 only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
 
 The model can manage the tasks it started, too: with an owner bound, `SubAgents` also
-offers `list_tasks` and `stop_task(task_id)`. `list_tasks` lists each task's ID, agent,
-status or outcome, foreground or background mode, start time, and the first 80
-characters of its task. `stop_task` calls `cancel(task_id, user=False)`, stopping the
+offers `list_tasks`, `message_task(task_id, message)`, and `stop_task(task_id)`.
+`list_tasks` lists each task's ID, agent, status or outcome, foreground or background
+mode, start time, and the first 80 characters of its task; running tasks and the 50 most
+recent are listed, with a count of the rest. `message_task` steers a task: a running one
+receives the message, framed as coming from the delegating agent, through core's
+`enqueue` at `'asap'` priority, so it sees it before its next model request. A finished
+or stopped task is resumed with the message as its new task, exactly like
+`delegate_task(resume=task_id)`, so one-shot and user-stopped tasks refuse it. `stop_task` calls `cancel(task_id, user=False)`, stopping the
 task and its descendants without marking it as user-stopped, so the model can later
 continue it with `delegate_task(resume=task_id)` unless it is one-shot; the result says
 which. When the caller started the task itself, the tool's result stands in for the
 stopped task's report, so no report follows; a stopped task started by one of the
 caller's descendants still reports to that descendant. A top-level run reaches
 every task in its conversation; a delegated run reaches only the tasks below it, so it
-cannot list or stop its siblings or its parent. Neither tool is offered without an
+cannot list, message, or stop its siblings or its parent. None of these tools is offered without an
 owner or to a run at `max_depth`, which cannot delegate.
 
 An observer receives `DelegationTaskEvent`, with the task identity and an optional

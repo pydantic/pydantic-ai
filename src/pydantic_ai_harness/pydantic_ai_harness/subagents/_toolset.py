@@ -288,6 +288,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             self.add_function(self.stop_task, prepare=self._prepare_task_control, metadata=metadata)
         if tool_name != 'list_tasks':
             self.add_function(self.list_tasks, prepare=self._prepare_task_control, metadata=metadata)
+        if tool_name != 'message_task':
+            self.add_function(self.message_task, prepare=self._prepare_task_control, metadata=metadata)
 
     def _prepare_delegate(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         """Shape the delegate tool's `model` argument to the configured menu, or hide it at `max_depth`.
@@ -321,7 +323,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return replace(tool_def, parameters_json_schema=schema)
 
     def _prepare_task_control(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
-        """Offer `stop_task` and `list_tasks` only where this run can have started tasks: an open owner, below `max_depth`."""
+        """Offer the task controls only where this run can have started tasks: an open owner, below `max_depth`."""
         if DelegationTasks.current() is None or at_max_depth(self._max_depth):
             return None
         return tool_def
@@ -474,6 +476,29 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             return f'Task {task_id}: running -> stopped. Continue it with delegate_task(resume={task_id!r}) if needed.'
         return f'Task {task_id}: running -> stopped. It is one-shot and cannot be resumed.'
 
+    async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
+        """Send a message to a task you started, e.g. to steer it, correct it, or give it a follow-up.
+
+        A running task sees the message before its next model request. A finished or stopped task
+        is resumed with the message as its new task, as with delegate_task's `resume`, and the
+        result is returned the same way.
+
+        Args:
+            ctx: The run context.
+            task_id: The ID of the task to message.
+            message: What to tell the task. Its earlier context is kept, so it need not be repeated.
+        """
+        owner = DelegationTasks.current()
+        assert owner is not None, '`message_task` is only offered while a `DelegationTasks` owner is bound'
+        record = next((r for r in _owned_tasks(owner, ctx) if r.id == task_id), None)
+        if record is None:
+            raise ModelRetry(f'Unknown task {task_id!r}. Call `list_tasks` to see the tasks you started.')
+        if record.status == 'running':
+            if not owner.message(task_id, message):
+                raise ModelRetry(f'Task {task_id} is starting or settling and cannot take a message right now.')
+            return f'Message sent to task {task_id}; it will see it before its next model request.'
+        return await self.delegate_task(ctx, record.agent_name, message, background=record.background, resume=task_id)
+
     async def list_tasks(self, ctx: RunContext[AgentDepsT]) -> str:
         """List the tasks you started with delegate_task, and the tasks they started, with their IDs and status.
 
@@ -486,7 +511,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if not records:
             return 'No tasks started yet.'
         caller = DelegationTasks.child_id()
-        return '\n'.join(_task_line(record, nested=record.parent_id != caller) for record in records)
+        # Running tasks first, then the most recent finished ones, listed in the order they started.
+        ranked = sorted(
+            enumerate(records), key=lambda item: (item[1].status != 'running', -item[1].started_at, -item[0])
+        )
+        listed = {record.id for _, record in ranked[:_MAX_LISTED_TASKS]}
+        lines = [_task_line(record, nested=record.parent_id != caller) for record in records if record.id in listed]
+        if len(records) > len(lines):
+            lines.append(f'({len(records) - len(lines)} older finished tasks not shown.)')
+        return '\n'.join(lines)
 
     def _resolve_agent(self, ctx: RunContext[AgentDepsT], agent_name: str) -> SubAgent[AgentDepsT]:
         """The delegate `agent_name` names, with the running agent resolved at call time for `include_self`.
@@ -750,6 +783,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
 
 _PROMPT_SNIPPET_CHARS = 80
+_MAX_LISTED_TASKS = 50
 
 
 def _owned_tasks(owner: DelegationTasks, ctx: RunContext[Any]) -> list[DelegationTask]:
