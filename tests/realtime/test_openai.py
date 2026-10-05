@@ -40,6 +40,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartEndEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
@@ -5345,3 +5346,63 @@ async def test_audio_that_fails_to_go_out_is_taken_back_from_the_core_too() -> N
         core = session._core  # pyright: ignore[reportPrivateUsage]
         assert core is not None
         assert not core._input_audio  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None:
+    """The session core's history keeps retained audio; the session's own record (what tools see) lets its copy go.
+
+    The part streamed as an event keeps its audio, so what is resident is bounded by `retain_audio_max_seconds`
+    once rather than twice.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='output_audio',
+    )
+    frames: list[dict[str, Any]] = [
+        {
+            'type': 'response.created',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+        },
+        {
+            'type': 'response.output_audio.delta',
+            'response_id': 'resp_1',
+            'item_id': 'item_a1',
+            'delta': base64.b64encode(b'\x01\x00' * 100).decode('ascii'),
+        },
+        {
+            'type': 'response.output_audio_transcript.delta',
+            'response_id': 'resp_1',
+            'item_id': 'item_a1',
+            'delta': 'Hello.',
+        },
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+        },
+    ]
+    async with session:
+        await session.send('Hi.')
+        for frame in frames:
+            ws.push(frame)
+        streamed: list[SpeechPart] = []
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                streamed.append(event.part)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        legacy = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        history = session.all_messages()
+
+    def speech(messages: list[ModelMessage]) -> list[SpeechPart]:
+        return [part for message in messages for part in message.parts if isinstance(part, SpeechPart)]
+
+    assert [part.transcript for part in speech(history)] == ['Hello.']
+    assert all(part.audio is not None for part in speech(history))
+    assert [part.transcript for part in speech(legacy)] == ['Hello.']
+    assert all(part.audio is None for part in speech(legacy))
+    assert [part.audio is not None for part in streamed] == [True]

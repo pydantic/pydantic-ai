@@ -2061,6 +2061,7 @@ class RealtimeSession:
         self._user_turn_active = True
         for event in self._finalize_untranscribed_user():
             self._queue_put(event)
+        self._drop_audio_the_core_keeps()
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
@@ -2647,6 +2648,7 @@ class RealtimeSession:
             self._pending_sent_requests = []
             self._stop_held_user_turn_watchdog()
         self._session_instrumentation.end_chat_span(input_messages, response)
+        self._drop_audio_the_core_keeps()
         self._response_parts = []
         self._native_tool_parts = []
         self._pending_response_usage = RequestUsage()
@@ -2666,6 +2668,7 @@ class RealtimeSession:
             self._remove_sent_request(request)
             self._history.append(request)
         self._held_user_turns = []
+        self._drop_audio_the_core_keeps()
 
     def _stop_held_user_turn_watchdog(self) -> None:
         if self._held_user_turn_watchdog is not None:
@@ -3221,6 +3224,24 @@ class RealtimeSession:
             excess -= budget.weight(evicted, output=False)
         excess = budget.trim(self._input_audio, excess, output=False)
         budget.trim(self._output_audio, excess, output=True)
+
+    def _drop_audio_the_core_keeps(self) -> None:
+        """Let go of the retained audio this session's own record holds, when the core keeps history.
+
+        The core's history is the one `all_messages()` returns, with retained audio bounded by
+        `retain_audio_max_seconds`; this session's own record (what tools see as `RunContext.messages`, and chat
+        spans as their input) keeps only the transcripts, so the audio isn't held twice. The parts streamed as
+        events, and the responses chat spans record, are built before this and keep their audio.
+        """
+        if self._core is None or not self._audio_budget.tracked_parts:
+            return
+        index = self._audio_eviction_start
+        while index < len(self._history):
+            stripped, freed = self._audio_budget.strip(self._history[index])
+            if freed:
+                self._replace_recorded_message(index, stripped)
+            index += 1
+        self._audio_eviction_start = index
 
     def _replace_recorded_message(self, index: int, message: ModelMessage) -> None:
         """Swap a message in history for an updated copy, carrying over the user-turn anchors that point at it.
@@ -4190,6 +4211,7 @@ class RealtimeSession:
                 if await self._handle_pump_event(event):
                     return  # a usage limit tripped: stop reading the upstream
                 self._count_closed_tool_batch_replies()
+                self._drop_audio_the_core_keeps()
         except Exception as e:
             self._pump_error = e
         finally:
