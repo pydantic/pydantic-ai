@@ -1931,6 +1931,67 @@ async def test_openrouter_responses_prompt_cache_e2e(
     _assert_cache_usage(first.usage, second.usage)
 
 
+def _assert_instruction_prefix_shared(first: RunUsage, second: RunUsage) -> None:
+    """The second conversation reads the cached instructions written (or read) by the first.
+
+    With `mode='explicit'` there's no implicit breakpoint, so the read comes from the instruction
+    breakpoint, and everything but the second conversation's own user turn is read from the cache.
+    """
+    assert first.cache_write_tokens > 0 or first.cache_read_tokens > 0
+    assert second.cache_read_tokens >= 1024
+    assert second.input_tokens - second.cache_read_tokens < 64
+
+
+@pytest.mark.vcr
+async def test_openai_chat_cache_instructions_e2e(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """Separate conversations share the instruction breakpoint on Chat Completions."""
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIChatModelSettings(
+        openai_cache_instructions=True,
+        openai_prompt_cache_key='pydantic-ai-cache-instructions-e2e-chat',
+        openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'},
+    )
+    agent = Agent(model, instructions=_STABLE_PREFIX, model_settings=settings)
+
+    first = await agent.run('Which shelf holds entry 0042? Reply with just the number.')
+    second = await agent.run('Which aisle holds entry 0101? Reply with just the number.')
+
+    for index in (0, 1):
+        messages = _request_body(vcr, index)['messages']
+        assert messages[0]['role'] == 'system'
+        assert messages[0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_instruction_prefix_shared(first.usage, second.usage)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
+async def test_openai_responses_cache_instructions_e2e(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette, system_prompt_role: Literal['system', 'developer']
+):
+    """Separate conversations share the instructions relocated into leading input messages on Responses."""
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        profile=OpenAIModelProfile(openai_system_prompt_role=system_prompt_role),
+    )
+    settings = OpenAIResponsesModelSettings(
+        openai_cache_instructions=True,
+        openai_prompt_cache_key=f'pydantic-ai-cache-instructions-e2e-responses-{system_prompt_role}',
+        openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'},
+    )
+    agent = Agent(model, instructions=_STABLE_PREFIX, model_settings=settings)
+
+    first = await agent.run('Which shelf holds entry 0042? Reply with just the number.')
+    second = await agent.run('Which aisle holds entry 0101? Reply with just the number.')
+
+    for index in (0, 1):
+        body = _request_body(vcr, index)
+        assert 'instructions' not in body
+        assert body['input'][0]['role'] == system_prompt_role
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_instruction_prefix_shared(first.usage, second.usage)
+
+
 # ===== Prompt cache diagnostics =====
 
 
