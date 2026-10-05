@@ -38,6 +38,32 @@ def print_tool_header(console: Console, *, name: str, argument: str | Text = '')
     console.print()
 
 
+SHELL_COMMAND_ROWS = 10
+"""Most terminal rows a shell command header may take before the rest is summarized."""
+
+
+def print_shell_header(console: Console, command: str) -> None:
+    """Wrap the whole command under a hanging indent, so long one-liners and scripts stay readable.
+
+    Rows beyond `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged.
+    """
+    if not command.strip():
+        print_tool_header(console, name='shell')
+        return
+    muted = theme.color(theme.MUTED)
+    head = Text('● ', style=muted)
+    head.append('shell ', style=theme.color(theme.ACCENT))
+    indent = Text(' ' * head.cell_len)
+    body = Text(terminal_text(command.strip('\n')), style=muted)
+    rows = body.wrap(console, max(console.width - head.cell_len, 1), overflow='fold')
+    for index, row in enumerate(rows[:SHELL_COMMAND_ROWS]):
+        row.rstrip()
+        console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)
+    if len(rows) > SHELL_COMMAND_ROWS:
+        console.print(indent + Text(f'… +{len(rows) - SHELL_COMMAND_ROWS} lines', style=muted), no_wrap=True)
+    console.print()
+
+
 def tool_arguments_text(arguments: Mapping[str, object], *, max_chars: int) -> Text:
     """Show arguments as one-line `name=value` pairs, clipping each value to `max_chars`.
 
@@ -106,6 +132,9 @@ class ToolOutput:
         self._writes: dict[tuple[str | None, str, str], FileChangeRequestEvent] = {}
 
     def _header(self, name: str, argument: str) -> None:
+        if name == 'shell':
+            print_shell_header(self.console, argument)
+            return
         lines = argument.splitlines()
         summary = lines[0] if lines else ''
         if len(lines) > 1:

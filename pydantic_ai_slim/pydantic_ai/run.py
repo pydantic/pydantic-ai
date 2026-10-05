@@ -4,12 +4,15 @@ import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from copy import copy, deepcopy
 from datetime import datetime
+from functools import cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 import anyio
-from pydantic import model_serializer, model_validator
+from pydantic import ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator, with_config
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import NotRequired, Required, TypedDict
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
@@ -38,7 +41,12 @@ if TYPE_CHECKING:
     from .workspaces import Workspace
 
 
+@with_config(ConfigDict(title='AgentRunResult'))
 class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
+    """The final result of an agent run."""
+
+    # The serialized shape. Its title and docstring are what the published serialization JSON schema
+    # shows, so they name the public class rather than this one.
     output: NotRequired[OutputDataT]
     messages: list[_messages.ModelMessage]
     new_message_index: NotRequired[int]
@@ -48,6 +56,54 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_id: NotRequired[str]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
+
+
+@with_config(ConfigDict(title='AgentRunResult'))
+class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
+    """The final result of an agent run."""
+
+    # The shape `AgentRunResult` validates, as its published validation JSON schema describes it: the
+    # serialized shape with only `output` required, since `_validate_serialized` fills in a default for
+    # every other key. The legacy private-field shape it also accepts is deliberately not described,
+    # so nothing new is built against it. Title and docstring are what the published schema shows.
+    output: Required[OutputDataT]
+    messages: list[_messages.ModelMessage]
+    new_message_index: int
+    output_tool_name: str | None
+    usage: _usage.RunUsage
+    run_id: str
+    conversation_id: str
+    metadata: dict[str, Any] | None
+    traceparent: str | None
+
+
+@cache
+def _input_core_schema() -> CoreSchema:
+    """The core schema of `_AgentRunResultInput`, with `output` left as `Any` for each caller to fill in."""
+    return TypeAdapter(_AgentRunResultInput[Any]).core_schema
+
+
+def _with_output_schema(schema: CoreSchema, output_schema: CoreSchema) -> CoreSchema:
+    """Return a copy of the `_AgentRunResultInput` schema whose `output` field validates as `output_schema`."""
+    schema = deepcopy(schema)
+    typed_dict = schema
+    while typed_dict['type'] != 'typed-dict':
+        # Wrapped in `definitions` when any field's type is recursive, as a message history is.
+        typed_dict = cast('CoreSchema', typed_dict['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
+    # Each parameterization has its own `output`, so it can't share one definition: published under
+    # this schema's own ref, `AgentRunResult[str]` and `AgentRunResult[City]` in one API would both
+    # point at whichever was generated first. Without it, the shape is inlined into the definition of
+    # the `AgentRunResult[...]` it belongs to.
+    typed_dict.pop('ref', None)
+    typed_dict['fields']['output']['schema'] = output_schema
+    return schema
+
+
+def _output_field_schema(schema: CoreSchema) -> CoreSchema:
+    """Find the schema of the dataclass's `output` field, resolved for this parameterization."""
+    while schema['type'] != 'dataclass-args':
+        schema = cast('CoreSchema', schema['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
+    return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
 
 
 _STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
@@ -784,6 +840,20 @@ class AgentRunResult(Generic[OutputDataT]):
         state = self.__dict__.copy()
         state.pop('_workspace', None)
         return state
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Publish the shape `_validate_serialized` accepts, not the private dataclass fields.
+
+        The validator replaces the dataclass fields with the public ones, but the JSON schema is
+        generated from the dataclass, so without this an `AgentRunResult` in an API request model
+        advertises `_state` and everything it references. `__get_pydantic_core_schema__` isn't
+        called for a parameterized generic dataclass, so the schema can't be replaced at the core
+        level; this hook is called for both forms, with `output` already resolved.
+        """
+        if handler.mode != 'validation':
+            return handler(core_schema)
+        return handler(_with_output_schema(_input_core_schema(), _output_field_schema(core_schema)))
 
     @model_validator(mode='before')
     @classmethod

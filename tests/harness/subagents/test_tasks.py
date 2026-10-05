@@ -12,6 +12,7 @@ import pytest
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
@@ -20,6 +21,8 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -498,6 +501,53 @@ async def test_restore_interrupted_step_history(tmp_path: Path, snapshot: bool) 
         assert bool(saved.messages) == snapshot
         if snapshot:
             assert 'step evidence' in str(saved.messages)
+
+
+async def test_resume_closes_out_tool_calls_interrupted_by_process_exit(tmp_path: Path) -> None:
+    owner = DelegationTasks(directory=tmp_path)
+    async with owner.opened():
+        await delegate(owner, conversation_id='parent')
+        (record,) = owner.records.values()
+        record.messages = [
+            ModelRequest(parts=[UserPromptPart('start')]),
+            ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='slow')]),
+        ]
+    path = tmp_path / f'{record.id}.json'
+    data = json.loads(path.read_text())
+    data['status'] = 'running'
+    path.write_text(json.dumps(data))
+
+    seen: list[ModelMessage] = []
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.extend(messages)
+        yield 'resumed result'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    restored = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with restored.opened():
+            with restored.bind():
+                parent = Agent(
+                    parent_model(resume=record.id),
+                    capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+                )
+                await parent.run('continue', conversation_id='parent')
+    resumed = restored.records[record.id]
+    assert (resumed.outcome, resumed.output) == ('ok', 'resumed result')
+    returns = [
+        part
+        for message in seen
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.tool_call_id, part.outcome, part.content) for part in returns] == [
+        ('slow', 'interrupted', INTERRUPTED_TOOL_RETURN_CONTENT)
+    ]
+    last = seen[-1]
+    assert isinstance(last, ModelRequest)
+    assert [part.content for part in last.parts if isinstance(part, UserPromptPart)] == ['inspect']
 
 
 async def test_failed_parent_drains_descendants() -> None:
