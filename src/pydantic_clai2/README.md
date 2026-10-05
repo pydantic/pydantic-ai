@@ -8,8 +8,10 @@ see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-Context management is the built-in `compaction` plugin,
-[described below](#compacting-the-conversation).
+`coder` includes its own context management: it clears old tool results as the
+context fills. The fuller built-in `compaction` plugin,
+[described below](#compacting-the-conversation), stays greyed out in `/plugins`
+while `coder` is on, since the two overlap, and takes over when you disable `coder`.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
@@ -130,6 +132,19 @@ including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
 
+## Option keys on macOS
+
+CLAI asks the terminal to report modified keys, so Option+Enter (steer) works in
+Herdr, and in iTerm2 even with its default Option key setting. If Option+Enter
+still queues the message like Enter, the terminal is sending a plain Enter:
+
+- Terminal.app: turn on Settings > Profiles > Keyboard > Use Option as Meta key.
+- tmux: tmux forwards Alt+Enter, but does not pass CLAI's request on to the
+  outer terminal. Set that terminal to send Option as Alt, for example iTerm2's
+  Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
+- For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
+  `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+
 ## Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
@@ -179,25 +194,36 @@ system shell instead of starting an agent turn:
 ```text
 > !git status
 $ git status
-Shell passthrough, not sent to the agent
+Shell command and output saved for the next prompt
 ...
 Done (0.1s)
 ```
 
 The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
-available. It runs in CLAI's working directory, with the terminal's input and output, so interactive programs and pagers work. CLAI
-reports `Done` or the exit code with the elapsed time. Ctrl-C interrupts the
+available. It runs in CLAI's working directory with the terminal's input. Stdout
+and stderr are captured separately and displayed as they arrive. Because output
+is piped, programs that require a terminal for their output, such as full-screen
+editors, may not work. CLAI reports `Done` or the exit code with the elapsed time.
+Ctrl-C interrupts the
 command and returns to the prompt. On POSIX the command runs in its own session,
 so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
-on purpose with `setsid()`, as daemons do, outlives the command. Without a
-controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
+on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
+should redirect stdout and stderr: CLAI stops collecting their output after the
+shell exits. Without a controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
 or `ssh` password prompts, cannot read your input. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
-CLAI. Neither the command nor its output is added to the conversation, and a
-bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
+CLAI. The command, stdout, stderr, and completion status are saved in the
+conversation for the model's next turn, including partial output from interrupted
+commands. Each stream retains up to 100,000 characters, with a truncation notice
+when it exceeds that limit; all output continues streaming to the terminal.
+Running a command does not request a model reply. This context survives
+`/resume` without re-running the command; `/new` starts without it. Do not use `!`
+for output you do not want saved or shared with the model.
+
+A bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
 order with other queued input. `/help` lists the syntax.
 
 ## Prompt area
@@ -291,7 +317,7 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
 `/new` starts a new saved conversation, without deleting the previous one or
-input recall. `/clear`, or bare `clear`, is an alias of `/new`. Model responses and tool results are not saved to this file.
+input recall. `/clear`, or bare `clear`, does the same and also clears the screen back to the startup banner. Model responses and tool results are not saved to this file.
 
 ## CI coverage
 
@@ -303,7 +329,7 @@ Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875)
 ## Start chatting
 
 Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
-Run `/login codex` to connect your ChatGPT/Codex subscription.
+Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 
@@ -312,7 +338,9 @@ Without installing, run `uvx pydantic-clai2`. The package also installs a
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
-For API-key providers, set the provider's API key environment variable before starting.
+For API-key providers, export the provider's API key before starting, or put it in
+a `.env` in the launch directory. See [Environment variables](#environment-variables)
+for discovery, precedence, and trust requirements.
 Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
 can read and modify files and execute commands with your user permissions. Run it
 in a workspace you trust. CLAI does not add a sandbox or approval layer.
@@ -354,6 +382,24 @@ The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
 again afterwards. Without uv on `PATH`, `/update` prints the complete command to
 run yourself, in PowerShell syntax on Windows. For bleeding installs, it also
 writes the overrides file and includes its path in the printed command.
+
+## Environment variables
+
+CLAI trusts the launch directory and its parents for automatic dotenv loading.
+A `.env` can change provider endpoints while reusing your exported API keys, and
+alter how tool subprocesses execute. Set `PYTHON_DOTENV_DISABLED=1` in your
+environment before launching CLAI in an untrusted directory.
+
+CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
+settings or importing agents and plugins. It searches the launch directory first,
+then its parents, and loads only the first file found. The search is not limited
+to Git repository boundaries. With `--worktree`, loading happens before switching
+directories. Missing files and named pipes are ignored. Unreadable or non-UTF-8
+files are skipped with a diagnostic on stderr.
+
+Use `.env` for provider API keys and settings such as `CLAI_MODEL` or
+`CLAI_NO_SPLASH`. Existing environment variables take precedence, including empty
+values. Keep `.env` files containing credentials out of version control.
 
 ## Your own agent
 
@@ -455,7 +501,7 @@ no agent telemetry spans.
 The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
-`/login codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
+`/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes.
 
@@ -478,7 +524,7 @@ Installing or selecting a plaintext backend can store the key in plaintext. Core
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
-If Codex cannot refresh your login, CLAI tells you to run `/login codex`
+If Codex cannot refresh your login, CLAI tells you to run `/login openai-codex`
 in an interactive session, then retry your message. This replaces the generic
 connection error that can hide an expired login. Headless runs show the same
 advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
@@ -509,7 +555,7 @@ an awaitable string.
 uv run clai2
 ```
 
-In CLAI, run `/login copilot`, then open `/add_model` and choose
+In CLAI, run `/login github-copilot`, then open `/model add` and choose
 `github-copilot`. The provider menu also starts login when no credentials exist.
 You do not need to register an OAuth application or configure a client ID.
 CLAI supplies the same [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -530,20 +576,20 @@ GitHub authorization alone does not establish Copilot access. The model menu
 queries your account's catalog and lists only picker-enabled models with
 `/chat/completions` support. The shared model menu includes details and `Ctrl+S`
 settings. Your subscription and organization policy still control inference access.
-You can also select a known ID with `/add_model github-copilot:claude-haiku-4.5`.
+You can also select a known ID with `/model github-copilot:claude-haiku-4.5`.
 
 Credentials use the existing keyring backend under the `github-copilot` account,
 separate from Codex and API keys. Without a keyring, CLAI reports the plaintext
 `credentials-github-copilot.json` fallback file, created with mode `0600`.
 Tokens and their issuance time stay out of settings, history, and login output.
-Expiring tokens require `/login copilot` again; CLAI does not refresh them.
+Expiring tokens require `/login github-copilot` again; CLAI does not refresh them.
 A failed or cancelled authorization leaves the previous login unchanged.
 
 Without a saved login, CLAI accepts `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, or `COPILOT_GITHUB_TOKEN`, in that order.
 It does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another application's token files.
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
-`/login` without a provider continues to sign in to Codex.
+`/login` without a name asks which sign-in to run.
 
 ## Settings and commands
 
@@ -576,12 +622,23 @@ anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`.
 
-While a turn is running, `/set`, `/model`, `/add_model`, `/model_settings`,
-`/theme`, and `/spinner` typed without arguments open their menu right away
-instead of queueing. The turn keeps running: its output is held while the menu is open
+While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
+`/theme`, and `/spinner` typed without further arguments open their menu right
+away instead of queueing.
+The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
-running turn ends. With arguments, these commands queue like any other.
+running turn ends. `/model settings` edits to the running model apply to its
+next model request in the same turn. With arguments, these commands queue like
+any other.
+
+`/plugins` runs right away during a turn too, with or without arguments, so
+`/plugins disable NAME` does not wait behind the turn or your queued messages.
+Commands, status segments, and model providers change at once. The running turn
+keeps the tools and hooks it started with, because the agent binds them when a
+run begins; the change reaches the agent on your next prompt, and CLAI says so.
+A plugin turned off mid-turn finishes its cleanup when the turn ends. While a
+delegated task is running, `/plugins` still refuses changes, as between turns.
 
 `run.tool_retries` sets the default retry budget per tool call, starting at `3`.
 Use a non-negative integer; `0` disables retries. Changes apply to the next turn.
@@ -592,9 +649,26 @@ not change output-validation or HTTP transport retries.
 
 `/model` selects from models you have already added. Choose **Add a model...**
 to browse providers and select a new model without leaving the command. This
-option is available even when no models have been added. Tab completion uses
-only the saved list. `/model NAME` switches directly to an added model.
+option is available even when no models have been added.
+
+`/model PROVIDER:NAME` switches directly to any model. A model not yet in your
+list is added and selected; CLAI does not check that it exists, so a mistyped
+name fails on the next prompt with the provider's error. Tab completes the saved
+list and the `add` and `settings` subcommands. Model names normally start with a
+provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
 The currently configured model is kept in the list when upgrading.
+
+| Command | What it does |
+| --- | --- |
+| `/model` | Pick a saved model, add one, or delete one |
+| `/model NAME` | Select `NAME`, adding it first if needed |
+| `/model add` | Browse providers and their models |
+| `/model add NAME` | The same as `/model NAME` |
+| `/model settings` | Choose a saved model to configure |
+| `/model settings NAME` | Configure `NAME` |
+
+`/add_model` and `/model_settings` still work as deprecated spellings of
+`/model add` and `/model settings`.
 
 To remove a model you no longer use, highlight it and press **Ctrl+D** or
 **Delete**, then confirm **Delete model**. This removes it from the saved list and
@@ -603,7 +677,7 @@ The current model and saved default cannot be deleted. Select another model firs
 or use `/set model NAME` to change the saved default. **Keep model** or Esc cancels
 without changing anything.
 
-`/add_model` opens a searchable provider list, then a model picker for that provider.
+`/model add` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
 `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
@@ -618,7 +692,7 @@ prices, and any settings you have saved for that model. Type to filter. Enter
 saves it in your model list and makes it the model for the next prompt. `Ctrl+S` opens that model's settings:
 the model-aware request and thinking controls described below. They are
 saved per model and passed to every run with that model. Unsupported settings
-may be ignored or rejected by the provider; select only settings your provider supports. `/add_model NAME` sets the model without the menu.
+may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
 
 CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
 missing from the Python CLAI runs on fails right away, naming the install command, instead
@@ -636,15 +710,16 @@ uv run --package pydantic-clai2 --extra typesafe clai2
 
 ### Model settings and custom parameters
 
-`/model_settings` opens a searchable list of added models. Enter configures a
+`/model settings` opens a searchable list of added models. Enter configures a
 model without changing the active model. Esc returns from settings to this list;
-Esc again closes it. `/model_settings PROVIDER:NAME` opens that model directly.
+Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
-`Ctrl+S` in `/add_model` opens the same editor. Edits save immediately and apply
-on the next prompt. `r` resets a field; Esc or Ctrl-C goes back. Fixed choices
+`Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
+from the model's next request, even in a running turn. `r` resets a field; Esc
+or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
-First add `openai-codex:gpt-6-astra` with `/add_model`, then open `/model_settings openai-codex:gpt-6-astra`
+First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
 turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
@@ -660,14 +735,14 @@ It saves the active model's service tier for subsequent prompts and sessions,
 without changing reasoning effort or other preferences. It is absent from help
 and Tab completion on other models, and typing it there reports an unknown command.
 If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
-with `/model_settings` rather than saving an ineffective change.
+with `/model settings` rather than saving an ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
 compatibility fix. Editing or resetting a known field preserves unknown fields
 in the store. New edits still reject unknown keys and invalid values.
 An invalid value in a known field stops that turn with a repair message, not the
-shell; use `/model_settings` to fix or reset it and try again. CLAI does not silently
+shell; use `/model settings` to fix or reset it and try again. CLAI does not silently
 run with different settings or delete saved preferences.
 
 Older branches must receive this fix too. The minimum read-side backport is
@@ -744,7 +819,7 @@ support what you send. This is also the escape hatch for custom endpoints and
 provider options not listed in the form. Reset `custom_params` to remove all
 pairs. Do not put credentials here: values are stored as plaintext in SQLite.
 
-For `/set` and `/add_model`, Tab completes setting names, boolean values, and model names from Pydantic AI's
+For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
 which core supports but does not currently include in that model catalog. Complete
 the provider prefix, then enter the model identifier; suggestions do not establish
@@ -800,13 +875,19 @@ first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
 `plugins` takes the same declarations as `/plugins add`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
+relative `path` is relative to the folder that holds `.clai`, whichever
+subdirectory you launch from. A
 repository cannot switch a plugin on for you: plugins are trusted code running
 as your user, so every project-declared plugin starts off, CLAI lists the ones
 waiting at startup, and `/plugins enable NAME` is your approval. Approval is
 remembered in your user settings together with the declaration you approved,
 so a later change to the repository's declaration does not run until you
 `/plugins remove NAME` (which forgets your approval and restores the project's
-current declaration, off) and enable it again. Project declarations rank just
+current declaration, off) and enable it again. The approval keeps the file's
+absolute path, so another repository cannot put its own file at the same
+relative path and have it run as the one you approved. An approval saved by an
+older CLAI with a relative path does not load; remove it and enable it again
+from its repository. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
 
@@ -823,7 +904,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/add_model`, `/model_settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
@@ -856,15 +937,22 @@ then move through the suggestions. Editing the recalled text ends the walk, so
 suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
-To steer instead, first queue the message with Enter, then press Alt+Enter
-(Option+Enter). This sends the oldest queued follow-up to the active run at its
-next opportunity without cancelling in-flight tools or changing your draft.
-Each Alt+Enter sends one message. If the run is no longer accepting steering,
-the message stays queued. Slash commands, `!` shell commands, and exit signals
-are not steered or skipped over. With no queued message, Alt+Enter does nothing.
-While running with at least one queued message, the input box shows both shortcuts.
-Shift-Enter inserts a newline. CLAI requests modified
-key reporting while the editor is active and releases it for menus and on exit.
+To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
+draft, this sends the draft to the run at its next opportunity, without
+cancelling in-flight tools. Messages already queued stay queued. With an empty
+draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
+message. Slash commands, `!` shell commands, and exit signals are never steered.
+A draft that cannot steer, including any draft while idle, is taken as if you
+pressed Enter. A queued message that cannot steer stays queued and is not
+skipped over. While running with a draft or a queued message, the input box
+shows both shortcuts. If Option+Enter queues like Enter, see
+[Option keys on macOS](#option-keys-on-macos).
+Shift-Enter inserts a newline when the terminal reports it separately from Enter.
+Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
+GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
+Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
+Kitty or xterm. CLAI enables xterm and Kitty keyboard reporting only while the
+editor is active and releases it for menus and on exit.
 Ctrl-R searches history; Enter accepts a search
 result without submitting it. Ctrl-D exits when the draft is empty. Ctrl-C at
 input clears the line; during a run it cancels the turn and returns to input. No cancelled run is automatically retried.
@@ -1078,7 +1166,8 @@ for that.
 
 ## Compacting the conversation
 
-The built-in `compaction` plugin uses harness's `FallbackCompaction` with
+The built-in `compaction` plugin runs while `coder` is off (`/plugins disable coder`).
+It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
 It protects the most recent 50,000 tokens. `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall
@@ -1094,11 +1183,15 @@ You get one line with the message counts before and after and an estimate of the
 An empty conversation, or one that fits inside the protected tail, says so and
 sends nothing.
 
-The window comes from genai-prices, the same catalog the `/add_model` menu shows
+The window comes from genai-prices, the same catalog the `/model add` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
 assumed to have 200,000 tokens, the harness default. To change any of this,
-redeclare the plugin with your own settings; `/plugins disable compaction`
-turns it off, `/compact` included:
+run `/plugins configure compaction` (or press `c` on its `/plugins` row): each
+edit is validated and saved as you make it, and the plugin reloads so the next
+turn uses the new settings. A turn already running keeps the old ones. While `coder`
+is on, `compaction` is greyed out and cannot be configured, since its settings would
+have no effect. You can also redeclare the plugin with your own settings;
+`/plugins disable compaction` turns it off, `/compact` included:
 
 ```text
 /plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
@@ -1113,8 +1206,10 @@ turns it off, `/compact` included:
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
-The maximum comes from the request's model or the `context_window` override;
-it stays `?` until the plugin reports a known window. An unknown model's fallback
+The maximum comes from the request's model or the `context_window` override.
+It stays `?` until the first request of the session or after a model change, and for
+a model with no known window. With `compaction` off, for example while `coder` is on,
+the shell reads the window from the request's model itself. An unknown model's fallback
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 
@@ -1282,8 +1377,9 @@ Theme selection and cancellation are silent.
 `/theme` opens a searchable picker. Its preview shows a sample conversation with
 Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
 input/status area. Each bundled palette paints the sample's foreground and
-background. Browsing does not apply a palette or save a setting. Enter confirms;
-Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
+background. Browsing does not apply a palette or save a setting. Press `/` to
+search the names. Enter confirms; Esc or Ctrl-C keeps your current choice (while
+searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
 status, and diff highlighting. Starting and exiting with this choice leaves your
@@ -1332,9 +1428,11 @@ and `aesthetic`.
 
 `/spinner` opens a searchable picker with an animated preview. `-`/`+` (or
 Left/Right) make the highlighted spinner slower or faster in steps of 0.02 seconds;
-Enter applies it, Esc keeps your current choice. `/spinner NAME [SECONDS]` applies
-by name, ignoring case, and Tab completes the names. The choice is saved as
-`display.spinner` and shows on the next frame, with no restart.
+Enter applies it, Esc keeps your current choice. Press `/` to search the names;
+while searching, `-` and `+` filter, Enter keeps the matches, and Esc clears the
+search. `/spinner NAME [SECONDS]` applies by name, ignoring case, and Tab
+completes the names. The choice is saved as `display.spinner` and shows on the
+next frame, with no restart.
 
 A changed speed, from the picker or `SECONDS`, is saved as that spinner's
 `interval` in `spinners.json` next to CLAI's settings
@@ -1399,6 +1497,8 @@ rather than adding a separate `Finished:` line to the transcript.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.
+Bare `http://` and `https://` URLs, and `<https://...>` autolinks, are shown in the
+link colour and are clickable too; URLs inside code spans are left as code.
 URLs longer than 2,048 characters are shown without clickable metadata to limit
 streaming output size.
 Links survive viewport resizing; following one uses your terminal's usual click
@@ -1416,8 +1516,9 @@ The model still receives the original tool result.
 Shell output is rendered one completed line at a time. Carriage-return progress
 updates replace the buffered line rather than printing control-code text; the last
 update appears at newline or tool completion. CRLF works across chunk boundaries.
-Long display lines are ellipsized to terminal width. Multiline commands show their
-first line and the number of additional command lines rather than dumping scripts.
+Long display lines are ellipsized to terminal width. The command itself wraps
+under a hanging indent, keeping its own line breaks, up to 10 terminal rows; a
+count summarizes any rows beyond that.
 Full output remains in the log; display formatting does not alter model results.
 
 ## Shell preview limit
@@ -1466,8 +1567,12 @@ Plain shell output stays dim. ANSI generated by Termflow itself is retained.
 
 Press **Ctrl+X Ctrl+S** to switch speculative execution on or off, the same chord
 as Code Puppy. It is off by default and saved as `run.speculative_code_mode`, so
-`/set run.speculative_code_mode true` does the same. The next turn uses the new
-value; a turn already running keeps the tools it started with.
+`/set run.speculative_code_mode true` does the same. Between turns the change
+applies to your next prompt. During a turn the switch and the pinned row change
+at once, but the running turn keeps the tools it started with: the row says
+`on from the next prompt` or `off from the next prompt` until that turn ends.
+The agent's tools are bound when a run starts, so the new value cannot reach
+the turn that is already running.
 
 While it is on, every tool except `write_file` and `edit_file` becomes a
 function inside one harness `CodeMode` `run_code` tool, `shell` included. Other
@@ -1534,8 +1639,9 @@ Speculative Execution  29 hits · 0 misses · 0 wasted    saved ≥ 7.0s
   wall-clock speedup, since concurrent calls can overlap.
 
 Counts are coloured only when non-zero, using `/theme` colours. Switching off
-hides the row; switching back on shows the same session totals. Headless runs
-and redirected output use the same tools but show no row. The `pydantic-monty`
+hides the row once no running turn speculates; switching back on shows the same
+session totals. Headless runs and redirected output use the same tools but show
+no row. The `pydantic-monty`
 sandbox behind speculative execution is a `pydantic-clai2` dependency; if it
 cannot be imported, CLAI prints a warning and runs tools natively.
 
@@ -1546,8 +1652,9 @@ context tokens, and streamed output estimate, including text, thinking, and
 string tool-argument deltas. The estimate is characters divided by four, not a
 provider tokenizer count. On completion it is replaced by reported run output
 usage. Context is the most recent response's reported input plus output tokens,
-not cumulative conversation billing or a context-window percentage; `?` means
-unavailable. As each request goes out, the `compaction` plugin replaces it with
+not cumulative conversation billing or a context-window percentage, over the
+request model's context window (`128k/1m`); `?` means unavailable, such as the
+window before the first request or for a model with no known window. As each request goes out, the `compaction` plugin replaces it with
 that request's estimated size and paints it yellow while the history is
 [over its threshold](#compacting-the-conversation); the response's reported
 usage takes over when it lands. The retained-history cost (`$0.0123`) follows the
@@ -1625,7 +1732,10 @@ class Search(Plugin):
 Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
 importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove. Closing the menu returns to the prompt without printing the
+reload, and remove: Space toggles the highlighted plugin, and `c`, `r`, and `d`
+configure, reload, and remove it. Press `/` to search plugin names; while you
+search, every key you type filters, Enter keeps the matches so the keys act on
+them, and Esc clears the search. Esc or `q` closes the menu without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has every method, event, and rule.
@@ -1713,6 +1823,26 @@ terminal console output is disabled so it does not interfere with the editor.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 
+Agent runs and recorded UI interactions nest under a `CLAI session` root span.
+Its `agent_session_id` attribute is the saved conversation ID.
+`/clear` selects a new root; `/resume` returns to that conversation's root if it
+was already opened by this plugin instance. Unloading the plugin ends its roots;
+reloading starts new traces with the same saved conversation IDs.
+
+Each session root is tagged with your email, as a Logfire tag and the
+`user.email` attribute, never on child spans or logs. `user_tag` picks where it
+comes from. The default, `logfire-account`, uses the account you signed in with
+when you set up the **Logfire project** (below); that account already has access
+to the project, so the tag reveals nothing new to it. With a token from
+`LOGFIRE_TOKEN`, the credentials file, a token changed since setup, a setup made
+before this setting existed, or a server that does not report your email, roots
+are not tagged until you run the setup again. `git-email` uses
+`git config user.email` instead (Git is only queried with this choice; a missing
+email leaves the tag out), and `false` turns the tag off. Choose **User tag** in
+`/plugins configure observability`, or set `user_tag` in the plugin settings.
+Everything CLAI records itself (session roots, UI records, and plugin load
+failures) uses the `clai2` instrumentation scope.
+
 Prompts, responses, tool arguments/results, and binary image attachments are
 included by default, including retained history used by later turns. This can
 send source code, file contents, and screenshots to the configured telemetry
@@ -1727,7 +1857,7 @@ credentials. Keep tokens out of plugin settings, which are saved as plaintext.
 /plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
-`/plugins configure observability`, or `C` on `observability` in `/plugins`, opens
+`/plugins configure observability`, or `c` on `observability` in `/plugins`, opens
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
@@ -1742,8 +1872,8 @@ scrubbing remains enabled.
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `false`) adds spans and logs, tagged
-`clai2-ui`, for UI interactions: menus, slash commands, `/set`, plugin actions,
+rather than falling back. `ui_events` (default `false`) adds spans and logs in the
+`clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never prompt text, typed
 values, or secrets.
@@ -1751,7 +1881,7 @@ values, or secrets.
 ### Setting up where traces go
 
 Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
-`C` on `observability` in `/plugins`):
+`c` on `observability` in `/plugins`):
 
 1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
 2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
@@ -1759,7 +1889,8 @@ Choose **Logfire project** in the settings menu (`/plugins configure observabili
 
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
-reloads and the next turn is traced there. The sign-in itself is not kept. The
+reloads and the next turn is traced there. The sign-in itself is not kept, only
+your account's email, saved with the key name as `account` to tag session roots. The
 URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
 send the token elsewhere, and sending is turned on if it was off. Choose the row
 again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the
@@ -1801,11 +1932,11 @@ See `THIRD_PARTY_NOTICES.md` for attribution.
 
 ## vllm connection
 
-Open `/add_model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
+Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks. The connection is saved like Codex's, see [Codex authentication](#codex-authentication).
 
 ## openrouter connection
 
-Open `/add_model`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -1815,8 +1946,9 @@ The connection is saved in the configured Python keyring backend after selection
 ## Saved API keys
 
 Open `/keys` to browse and manage saved API keys in a full-screen menu.
-Use A to add, Enter to replace a value, R to rename, and D to delete with
-confirmation. Values are masked and are not shown in previews. Changes save
+Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
+confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
+clears the search. Values are masked and are not shown in previews. Changes save
 immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
@@ -1852,5 +1984,5 @@ overwrite each other's key edits. The lock file contains no credentials.
 
 Existing connections with inline credentials, manually entered connection keys,
 and browser logins remain unchanged. To switch an existing connection to a
-reference, reconfigure it through `/add_model` and select a saved key. Changes do not
+reference, reconfigure it through `/model add` and select a saved key. Changes do not
 alter an already running request or revoke credentials at the provider.

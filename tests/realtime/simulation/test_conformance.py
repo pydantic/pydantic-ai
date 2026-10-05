@@ -42,13 +42,10 @@ with try_import() as imports_successful:
     from pydantic_ai.usage import RequestUsage
 
     from ..ws_cassettes import CassetteClose, CassetteMessage, RealtimeCassette
-    from ._cassette_replay import replay_codec_events, replay_lifecycle_events, websocket_cassettes
+    from ._cassette_replay import CASSETTES_DIR, replay_codec_events, replay_lifecycle_events, websocket_cassettes
     from ._conformance import LifecycleChecker
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs not installed'),
-]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs not installed')
 
 
 @pytest.mark.parametrize(
@@ -215,3 +212,16 @@ def test_lifecycle_contract_rules() -> None:
     assert feed_lifecycle(start, details, end, details, inputs_sent=1) == snapshot(
         ['lifecycle.content_outside_response']
     )
+
+
+async def test_recorded_abnormal_close_is_replayed_as_one() -> None:
+    """A socket the recording saw drop with 1011 ends its replay the same way, not as a clean close."""
+    # The xAI reconnect recording, whatever it is called: the test drops it with a 1011.
+    recording = next(
+        path for path in sorted((CASSETTES_DIR / 'test_xai_ws').glob('*.yaml')) if 'code: 1011' in path.read_text()
+    )
+    dropped, resumed = await replay_codec_events(recording)
+    assert isinstance(error := dropped[-1], RealtimeSessionErrorEvent)
+    assert '1011' in error.message
+    assert isinstance(error := resumed[-1], RealtimeSessionErrorEvent)
+    assert '1011' not in error.message

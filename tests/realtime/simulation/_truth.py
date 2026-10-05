@@ -43,6 +43,12 @@ class TruthInput:
     """The session's number for this input (the `event_id` echo), when the frame carried one."""
     rejected: bool = False
     answered_by: str | None = None
+    committed_read: int | None = None
+    """For a spoken turn: when the client read that the provider committed it (`input_audio_buffer.committed`)."""
+    transcript_read: int | None = None
+    """For a spoken turn: when the client read its transcript (or that transcription failed)."""
+    committed_by_client: bool = False
+    """For a spoken turn: whether the client committed it itself (`commit_audio()`), so knows it exists."""
     refused_at: int | None = None
     """When the server refused this input, or the response it asked for."""
     refused_read: int | None = None
@@ -96,6 +102,22 @@ class ToolCallTruth:
 
 
 @dataclass
+class Restoration:
+    """What a re-dialed session held when it started its first response, against what came before it.
+
+    Items are `conversation_fingerprint`s. A session that reports `state_restored` owes the new
+    conversation everything it recorded that an earlier one held (`history.not_restored`).
+    """
+
+    connection: int
+    response: str
+    before: set[str]
+    """What every earlier session's conversation held."""
+    held: set[str]
+    """What this session's conversation held."""
+
+
+@dataclass
 class GroundTruth:
     """The provider-side record of a simulated conversation."""
 
@@ -122,6 +144,8 @@ class GroundTruth:
     """How many usage-bearing frames the client read, duplicates included."""
     repeated_terminals: set[str] = field(default_factory=set[str])
     """Responses the client read a second terminal for."""
+    ambiguous_inputs: set[str] = field(default_factory=set[str])
+    """Inputs a send delivered but reported as failed (an `ambiguous` fault), which the client may send again."""
     speech_started: dict[str, int] = field(default_factory=dict[str, int])
     """When server VAD heard each spoken user turn start, on the shared clock."""
     speech_committed: set[str] = field(default_factory=set[str])
@@ -142,6 +166,8 @@ class GroundTruth:
     """When the client read each word (tracked by the Gemini server, for the async tool round)."""
     merged_requests: int = 0
     """How many requests for a response the client folded into another one's single request."""
+    restorations: list[Restoration] = field(default_factory=list[Restoration])
+    """Each re-dialed session's conversation as its first response started (OpenAI protocol only)."""
 
     def tick(self) -> int:
         self.clock += 1

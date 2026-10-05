@@ -943,7 +943,8 @@ class SessionCore:
 
         Unlike `all_messages()`, this holds nothing back: a spoken turn still waiting for its transcript is in it
         with what it has, and so is everything after it. A response under way isn't: the old connection takes it
-        along.
+        along. Inputs sent that the provider hadn't acknowledged yet come last, as sent: the old connection may
+        never have delivered them, and the reply the reconnect asks for again answers them.
         """
         messages: list[ModelMessage] = list(self._seeded)
         for entry in self._placed:
@@ -955,6 +956,7 @@ class SessionCore:
                 messages.append(entry.message or self._turn_request(entry))
             else:
                 messages.append(entry.request)
+        messages.extend(input_.request for input_ in self._unplaced.values())
         return messages
 
     def _held_from(self) -> int:

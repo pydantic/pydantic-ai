@@ -43,6 +43,9 @@ Checked at rest (`settle()`):
   calls' results reached the server is recorded after those results (asynchronous tool calls, where
   the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
+- `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read;
+- `history.not_restored`: a re-dialed provider conversation started a response without something history
+  records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
 - `response.missing` / `response.truncated`: a response the server completed is missing from history,
   or recorded without all of what it said;
 - `usage.total`: `session.usage` tokens differ from what the server billed in the reports the client read;
@@ -143,6 +146,33 @@ def is_tool_return_request(message: ModelMessage) -> bool:
     return isinstance(message, ModelRequest) and isinstance(message.parts[0], (ToolReturnPart, RetryPromptPart))
 
 
+def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
+    """What recorded history replays into a provider conversation, keyed as the server's `conversation_fingerprint`."""
+    fingerprints: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, UserPromptPart):
+                # The server keys a user message by its first part, when that is text.
+                first = part.content if isinstance(part.content, str) else next(iter(part.content), None)
+                if isinstance(first, str):
+                    fingerprints.add(f'user:{" ".join(first.split())}')
+            elif isinstance(part, ToolReturnPart):
+                fingerprints.add(f'function_call_output:{part.tool_call_id}')
+            elif isinstance(part, RetryPromptPart):
+                # Replayed as the call's output, or (not about a tool call) as a user message.
+                fingerprints.add(
+                    f'function_call_output:{part.tool_call_id}'
+                    if part.tool_name is not None
+                    else f'user:{" ".join(part.model_response().split())}'
+                )
+            elif isinstance(part, ToolCallPart):
+                fingerprints.add(f'function_call:{part.tool_call_id}')
+        said = [part.content for part in message.parts if isinstance(part, TextPart)]
+        said += [part.transcript for part in message.parts if isinstance(part, SpeechPart) and part.speaker != 'user']
+        fingerprints |= {f'assistant:{" ".join(text.split())}' for text in said if text}
+    return fingerprints
+
+
 def is_user_speech_request(message: ModelMessage) -> bool:
     return isinstance(message, ModelRequest) and any(
         isinstance(part, SpeechPart) and part.speaker == 'user' for part in message.parts
@@ -166,7 +196,8 @@ class Checker:
         self._seen: dict[int, tuple[ModelMessage, bytes]] = {}
         self._previous: list[int] = []
         self._judged_waiters: set[int] = set()
-        self._judged_operations = 0
+        self._judged_operations: set[int] = set()
+        """`id()`s of the finished operations already judged (they can finish in any order)."""
         self._judged_events = 0
         self._judged_truncations = 0
         self._consumer_error_judged = False
@@ -206,7 +237,7 @@ class Checker:
             violation.findings = findings
             if self.enforce.intersection(findings):
                 raise FindingReproduced(code, detail, self.sim.trace, context, findings=findings)
-            if self.strict or not findings:  # pragma: no cover (only when the session breaks an invariant)
+            if self.strict or not findings:
                 raise violation
             self.known_hits.append((findings[0], code))
 
@@ -244,8 +275,10 @@ class Checker:
 
     def _check_errors(self) -> None:
         sim = self.sim
-        done = [operation for operation in sim.operations if operation.done]
-        judged, self._judged_operations = done[self._judged_operations :], len(done)
+        judged = [
+            operation for operation in sim.operations if operation.done and id(operation) not in self._judged_operations
+        ]
+        self._judged_operations.update(id(operation) for operation in judged)
         unexpected = [
             (f'{operation.name} raised {operation.error!r}', {'operation': operation.name})
             for operation in judged
@@ -422,6 +455,11 @@ class Checker:
         ]
         # ...or a response it could see was under way when the wait began (unless the client cut it off).
         interrupted = [operation.issued for operation in sim.operations if operation.name.startswith('interrupt_')]
+        # Where a reconnect doesn't restore what was in flight, it settles the exchanges the drop cut into: nothing
+        # more is owed for them, even before the reconnect has run.
+        session = sim.session
+        assert session is not None
+        settled_by_drop = not session._connection.reconnect_restores_in_flight_state  # pyright: ignore[reportPrivateUsage]
         violations += [
             (
                 f'wait_for_reply() #{waiter.index} returned while {response.key} '
@@ -432,6 +470,7 @@ class Checker:
             if response.started_read is not None
             and response.started_read < waiter.started
             and not any(issued > response.seq_start for issued in interrupted)
+            and not (settled_by_drop and any(loss > response.seq_start for loss in truth.connection_losses))
             and not self._exchange_resolved(response, waiter.started, set())
             and not self._exchange_resolved(response, returned, set())
         ]
@@ -449,6 +488,8 @@ class Checker:
         self._check_tool_round_order(messages)
         self._check_order(messages)
         self._check_completeness(messages)
+        self._check_spoken_turns(messages)
+        self._check_restored(messages)
         self._check_usage(messages)
         self._check_playback(messages)
         roundtrip = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
@@ -627,6 +668,63 @@ class Checker:
         ]
         self.report('history.order', violations)
 
+    def _check_spoken_turns(self, messages: list[ModelMessage]) -> None:
+        # By count: a turn recorded without its transcript can't be told apart from another.
+        committed = [
+            input_.key
+            for input_ in self.sim.truth.inputs
+            if input_.kind == 'speech'
+            and (input_.committed_read is not None or input_.committed_by_client)
+            and not input_.rejected
+        ]
+        recorded = sum(1 for message in messages if is_user_speech_request(message))
+        self.report(
+            'history.turn_missing',
+            [(f'{len(committed)} spoken turns committed ({committed}), but {recorded} recorded', {'inputs': committed})]
+            if recorded < len(committed)
+            else [],
+        )
+
+    def _check_restored(self, messages: list[ModelMessage]) -> None:
+        """A re-dialed conversation must hold what history records and the one before held (a local replay's promise).
+
+        The turn a drop cut off is settled instead (a reconnect reports `state_restored=False` for it): that turn is
+        over, so what it said and called before the drop need not reach the new conversation.
+        """
+        sim = self.sim
+        recorded = conversation_fingerprints(messages)
+        settled: set[str] = set()
+        for response in sim.truth.responses.values():
+            if response.lost:
+                # (Each message item it spoke: a tool call ends one and starts the next, so any run of its words.)
+                words = response.words
+                settled |= {
+                    f'assistant:{" ".join(words[start:end])}'
+                    for start in range(len(words))
+                    for end in range(start + 1, len(words) + 1)
+                }
+                settled |= {
+                    f'{kind}:{call}'
+                    for call in response.tool_calls
+                    for kind in ('function_call', 'function_call_output')
+                }
+        missing = [
+            (restoration, sorted((restoration.before & recorded) - restoration.held - settled))
+            for restoration in sim.truth.restorations
+        ]
+        self.report(
+            'history.not_restored',
+            [
+                (
+                    f'connection {restoration.connection} started {restoration.response} without {lost}, '
+                    'which history records and an earlier connection held',
+                    {'response': restoration.response, 'missing': lost},
+                )
+                for restoration, lost in missing
+                if lost
+            ],
+        )
+
     def _check_completeness(self, messages: list[ModelMessage]) -> None:
         truth = self.sim.truth
         recorded: dict[int, list[str]] = {}
@@ -756,13 +854,13 @@ class Checker:
             if input_.kind in ('text', 'context', 'image'):
                 arrivals.setdefault(input_.key, []).append(input_.seq)
         # A send that failed after the frame went out is sent again: the client can't know it arrived.
-        ambiguous = any(fault == 'ambiguous' for *_, fault in sim.failed_sends)
         self.report(
             'wire.duplicate',
             [
                 (f'the server received {key!r} {len(seqs)} times', {'input': key})
                 for key, seqs in arrivals.items()
-                if len(seqs) > 1 and not ambiguous
+                # An ambiguous send may be sent once more, not again after that.
+                if len(seqs) > (2 if key in sim.truth.ambiguous_inputs else 1)
             ],
         )
         callers: dict[str, list[tuple[int, int, str]]] = {}

@@ -29,6 +29,8 @@ from pytest_mock import MockerFixture
 import pydantic_ai._http
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
+from pydantic_ai._cache_health import ConversationCacheMarkStore
+from pydantic_ai.capabilities import instrumentation as instrumentation_capability
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -656,6 +658,13 @@ def no_instrumentation_by_default():
     Agent.instrument_all(False)
     Embedder.instrument_all(False)
     ImageGenerator.instrument_all(False)
+
+
+@pytest.fixture(autouse=True)
+def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
+    id (or pin the clock) must not see each other's."""
+    monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
 
 
 try:

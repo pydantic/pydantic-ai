@@ -443,12 +443,12 @@ async def test_ui_events_are_off_by_default(recorder: Recorder) -> None:
     assert messages(recorder) == []
 
 
-async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Recorder) -> None:
+@pytest.mark.parametrize('model', [Settings().model, None])
+async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Recorder, model: str | None) -> None:
     plugin = load_logfire(make_host(ui_events=True))
     try:
         for event in (
-            SessionStart(agent=Agent(TestModel()), settings=Settings()),
-            SessionStart(agent=Agent(TestModel()), settings=Settings(model=None)),
+            SessionStart(agent=Agent(TestModel()), settings=Settings(model=model)),
             TurnEnd(text='a private prompt', outcome='cancelled'),
         ):
             await plugin.dispatch(event)
@@ -459,16 +459,15 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Reco
     telemetry.record('after the plugin unloaded')
     assert messages(recorder) == [
         'session started',
-        'session started',
         'turn cancelled',
         'setting sessions.naming changed',
         'not a UI event',
+        'CLAI session',
     ]
-    started, default, _, changed, other = recorder.spans()
+    started, _, changed, other, _ = recorder.spans()
     # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
     assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
-    assert (started.attributes or {})['model'] == Settings().model
-    assert (default.attributes or {})['model'] == 'agent default'
+    assert (started.attributes or {})['model'] == (model or 'agent default')
     # Names are exempt from scrubbing; any other attribute that looks like a secret is still scrubbed.
     assert (changed.attributes or {})['value'] == "[Scrubbed due to 'password']"
     assert 'a private prompt' not in json.dumps([dict(span.attributes or {}) for span in recorder.spans()])
@@ -532,10 +531,11 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             pick('service_name'),
             pick('include_content'),
             pick('include_binary_content'),
+            pick('user_tag'),
             pick('ui_events'),
             MenuResult(cancelled=True),
         ],
-        choices=[pick('false'), pick('false'), pick('false'), pick('true')],
+        choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('true')],
         texts=[typed('my-clai')],
     )
     monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
@@ -545,7 +545,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
         assert loader.configurable('observability')
         assert await loader.command(['configure', 'observability']) == (
             'Saved Send to Logfire.\nSaved Service name.\nSaved Message content.\nSaved Binary content.\n'
-            'Saved UI events.'
+            'Saved User tag.\nSaved UI events.'
         )
         [declaration] = store.plugins()
         assert declaration.settings == {
@@ -553,6 +553,8 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'send_to_logfire': False,
             'include_content': False,
             'include_binary_content': False,
+            'user_tag': 'git-email',
+            'account': None,
             'token': None,
             'base_url': None,
             'ui_events': True,
@@ -602,7 +604,12 @@ def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyP
 
 
 def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> None:
-    host = make_host(token={'name': 'LOGFIRE_TOKEN_TEAM'}, base_url='https://logfire.example.com', ui_events=True)
+    host = make_host(
+        token={'name': 'LOGFIRE_TOKEN_TEAM'},
+        base_url='https://logfire.example.com',
+        account={'email': 'mike@example.com', 'token': {'name': 'LOGFIRE_TOKEN_TEAM'}},
+        ui_events=True,
+    )
     source = LogfireSource(host)
     project = source.rows()[0]
     assert project.note == '', 'a chosen key replaces the environment, so no note about it'
@@ -611,4 +618,4 @@ def test_project_row_names_the_chosen_key_and_resets_to_the_environment() -> Non
     assert hosted.current(hosted.rows()[0]) == 'LOGFIRE_TOKEN_US'
     assert source.reset(project) == 'Reset Logfire project.'
     saved = host.settings(logfire_plugin.LogfireSettings)
-    assert (saved.token, saved.base_url, saved.ui_events) == (None, None, True)
+    assert (saved.token, saved.base_url, saved.account, saved.ui_events) == (None, None, None, True)
