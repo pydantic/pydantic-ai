@@ -125,9 +125,9 @@ class _ModelDefaults(AbstractCapability[DepsT]):
     """CLAI's default settings for the model each request uses, beneath other capabilities' settings.
 
     Merged first among capabilities, wrapping every other one, even another `outermost` one, so
-    another capability's settings and the run's own take precedence. An agent's own `model_settings` merge before any capability's, so these defaults
-    still override them, as they did when CLAI passed them to the run. Resolved per request, so
-    the defaults follow a model a capability selects.
+    another capability's settings and the run's own take precedence. An agent's own `model_settings`
+    merge before any capability's, so these defaults still override them, as they did when CLAI
+    passed them to the run. Resolved per request, so the defaults follow a model a capability selects.
     """
 
     defaults: Callable[[str], ModelSettings | None]
