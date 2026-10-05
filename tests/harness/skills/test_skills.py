@@ -570,6 +570,15 @@ class TestSkillLibraryLayering:
 
         assert await _names(_combined(first, second), tmp_path) == ['review']
 
+    async def test_different_skills_from_two_own_workspaces_still_clash(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'a' / 'skills', 'review', description='First.')
+        _write_skill(tmp_path / 'b' / 'skills', 'review', description='Second.')
+        first: Skills[Any] = Skills('skills', workspace=LocalWorkspaceBackend(tmp_path / 'a'))
+        second: Skills[Any] = Skills('skills', workspace=LocalWorkspaceBackend(tmp_path / 'b'))
+
+        with pytest.raises(ValueError, match="Duplicate skill name 'review'"):
+            await _run(_combined(first, second), tmp_path)
+
     @pytest.mark.parametrize(
         ('option', 'value', 'allowed'),
         [
