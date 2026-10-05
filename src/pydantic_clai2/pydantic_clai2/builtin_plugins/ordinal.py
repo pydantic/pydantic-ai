@@ -2,7 +2,7 @@
 
 The built-in `ordinal` plugin: harness `Ordinal`, set up in a settings menu, with no secret in plugin settings.
 
-`/plugins configure ordinal` (also opened by `/plugins enable ordinal`, `/plugins add`, and `C` in `/plugins`)
+`/plugins configure ordinal` (also opened by `/plugins enable ordinal`, `/plugins add`, and `c` in `/plugins`)
 edits the non-secret options, saved to plugin settings as each one changes, and picks the token from `/keys`.
 Plugin settings are plaintext SQLite, so the token never goes there: only the chosen key's name is kept, in the
 credential store, and it is resolved on every run. Replacing the key in `/keys` applies to the next run, deleting

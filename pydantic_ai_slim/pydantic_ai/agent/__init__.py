@@ -3976,6 +3976,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
         provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
@@ -4108,6 +4109,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     handle_barge_in=handle_barge_in,
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
+                    retain_audio_max_seconds=retain_audio_max_seconds,
                     message_history=message_history,
                     conversation_id=resolved.conversation_id,
                     run_id=resolved.run_id,

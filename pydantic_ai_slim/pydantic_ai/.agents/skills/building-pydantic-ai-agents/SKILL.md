@@ -322,7 +322,8 @@ Key facts for building realtime agents:
   `supports_seeding_audio` can also replay retained transcript-less *user* audio recorded at its input
   rate, and assistant audio is never replayed. Streamed images all reach the provider, but
   history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
-  oldest evicted first) record.
+  oldest evicted first) record. Audio kept by `audio_retention` is bounded too (`retain_audio_max_seconds`,
+  default `1800`, oldest evicted first, transcripts kept).
 - **Usage and cost**: each recorded `ModelResponse` carries its response usage, while `session.usage`
   is cumulative; priced models get a `genai-prices` cost and enforce `UsageLimits.cost_limit`.
 - **Context window**: `session.context_window_used` (and `ctx.context_window_used` in a session's tools)
