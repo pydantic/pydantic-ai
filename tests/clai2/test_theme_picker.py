@@ -131,9 +131,9 @@ async def test_shell_applies_saved_theme_and_resets_on_exit(
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
-            pipe.send_text(f'/theme {selected}\n/theme-done\n')
+            pipe.send_text(f'/theme {selected}\r/theme-done\r')
             await changed.wait()
-            pipe.send_text('/exit\n')
+            pipe.send_text('/exit\r')
             await done.wait()
     assert store.load().theme == selected
     text = output.getvalue()
@@ -149,7 +149,7 @@ async def test_shell_applies_saved_theme_and_resets_on_exit(
 async def test_default_shell_leaves_terminal_palette_untouched(tmp_path: Path) -> None:
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
-        pipe.send_text('/theme default\n/exit\n')
+        pipe.send_text('/theme default\r/exit\r')
         await chat(
             Agent(TestModel()),
             deps=None,

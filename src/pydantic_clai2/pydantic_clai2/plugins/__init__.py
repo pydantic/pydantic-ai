@@ -181,7 +181,7 @@ class TurnEnd:
 
 
 SettingsProvider = Literal['anthropic', 'google', 'openai', 'openai-chat']
-"""Providers whose `/model_settings` controls a plugin's models can take."""
+"""Providers whose `/model settings` controls a plugin's models can take."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -195,16 +195,16 @@ class ModelProvider:
     a model under it then fails as an unknown provider until the plugin is enabled again.
 
     When `resolve` returns that provider's model class, such as an `AnthropicModel` subclass, set
-    `settings_from` so `/model_settings` offers its controls (thinking, effort) for these models.
+    `settings_from` so `/model settings` offers its controls (thinking, effort) for these models.
     """
 
     prefix: str
     resolve: Callable[[str], Model]
     """Build the model for a name given without its prefix."""
     models: tuple[str, ...] = ()
-    """Names without the prefix, offered by `/add_model` and `/set model`."""
+    """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
-    """The provider whose `/model_settings` controls these models take; `None` offers the generic ones."""
+    """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
 
     def __post_init__(self) -> None:
         """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
@@ -232,7 +232,7 @@ class PluginLogin:
     NAME cannot be a sign-in CLAI ships (including the earlier `codex` and `copilot`); when two
     plugins add one name, the later one wins. Unloading the plugin removes it. Once the sign-in
     succeeds, `models` (as `PREFIX:NAME`, such as a `ModelProvider`'s `names`) are added to the saved
-    model list, so `/model` and `/model_settings` offer them without `/add_model`.
+    model list, so `/model` and `/model settings` offer them without `/model add`.
     """
 
     name: str
@@ -304,6 +304,7 @@ class PluginHost(Generic[DepsT]):
         settings: dict[str, JsonValue],
         full_screen: FullScreen = bare_screen,
         conversation: Conversation | None = None,
+        session_id: Callable[[], str | None] = lambda: None,
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
         requirements: Requirements | None = None,
@@ -326,10 +327,16 @@ class PluginHost(Generic[DepsT]):
         screen. Between turns it is a no-op.
         """
         self.conversation: Conversation = conversation if conversation is not None else Transcript()
+        self._session_id = session_id
         self.status = status if status is not None else Status()
         self._settings = settings
         self._persist = save_settings
         self._requirements: Requirements = dict(requirements or {})
+
+    @property
+    def session_id(self) -> str | None:
+        """The current saved conversation's ID, or `None` for a host without session persistence."""
+        return self._session_id()
 
     @property
     def requirements(self) -> Requirements:
@@ -476,7 +483,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return ()
 
     def get_model_providers(self) -> Sequence[ModelProvider]:
-        """Model prefixes this plugin runs, offered in `/add_model` and `/set model`."""
+        """Model prefixes this plugin runs, offered in `/model add` and `/set model`."""
         return ()
 
     def get_logins(self) -> Sequence[PluginLogin]:
