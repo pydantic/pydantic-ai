@@ -438,10 +438,11 @@ class DecisionModel(Model[InterfaceClient]):
     requires_instructions: ClassVar[bool] = False
     """Whether the backend refuses a question without `instructions`.
 
-    The profile's `decision_requires_instructions` takes precedence where it is set. A pick-one, a rubric, or a yes/no with described answers can say what it asks through its options alone, so with
-    no field description, output type docstring or agent `instructions` to send, such a question goes without
-    `instructions`. A backend that requires them is sent a generic question instead, which leaves the options to
-    carry the meaning, as they do without it.
+    The profile's `decision_requires_instructions` takes precedence where it is set. A pick-one, a rubric, or a
+    yes/no with described answers can say what it asks through its options alone, so with no field description,
+    output type docstring or agent `instructions` to send, such a question goes without `instructions`. A backend
+    that requires them is sent a generic question instead, which leaves the options to carry the meaning, as they do
+    without it.
     """
 
     @cached_property
