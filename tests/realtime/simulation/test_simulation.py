@@ -888,6 +888,21 @@ def test_known_live_parallel_calls_leak_reservations() -> None:
     reproduce('SIM-6', LiveSimulation(), scenario)
 
 
+@known('SIM-6')
+def test_known_live_results_of_delegations_in_a_row_answered_together() -> None:
+    """Two delegations each call a tool; the model answers both results with one reply, which leaves one owed."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        sim.delegate()
+        sim.backend_call()
+        sim.settle()
+
+    reproduce('SIM-6', LiveSimulation(), scenario)
+
+
 @known('SIM-7')
 def test_known_live_queued_text_answered_together() -> None:
     def scenario(sim: LiveSimulation) -> None:

@@ -23,7 +23,7 @@ from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
-MCP_PATH = '/mcp'
+_MCP_PATH = '/mcp'
 OTHER = 'other'
 """The picker row for a Logfire typed in: self-hosted, or a staging host such as `logfire-eu.pydantic.info`."""
 _LEGACY_HOSTS = {
@@ -44,7 +44,7 @@ class Destination:
     @property
     def mcp_url(self) -> str:
         """Its MCP server."""
-        return f'{self.base_url}{MCP_PATH}'
+        return f'{self.base_url}{_MCP_PATH}'
 
     @property
     def region(self) -> str | None:
@@ -84,7 +84,7 @@ def _is_logfire_address(parts: SplitResult) -> bool:
         parts.scheme == 'https'
         and bool(host)
         and not any(char.isspace() for char in host)
-        and parts.path.rstrip('/') in ('', MCP_PATH)
+        and parts.path.rstrip('/') in ('', _MCP_PATH)
         and not parts.query
         and not parts.fragment
     )

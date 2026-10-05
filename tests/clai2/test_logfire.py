@@ -474,6 +474,18 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Reco
     assert 'a private prompt' not in json.dumps([dict(span.attributes or {}) for span in recorder.spans()])
 
 
+@pytest.mark.parametrize('content', [False, True])
+async def test_ui_events_carry_typed_text_only_with_message_content(recorder: Recorder, content: bool) -> None:
+    plugin = load_logfire(make_host(ui_events=True, include_content=content))
+    try:
+        await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+        telemetry.record('prompt submitted', kind='prompt', **telemetry.prompt_text('fix the session bug'))
+    finally:
+        await close(plugin)
+    submitted = next(span for span in recorder.spans() if span.name == 'prompt submitted')
+    assert (submitted.attributes or {}).get('prompt') == ('fix the session bug' if content else None)
+
+
 @pytest.mark.parametrize(
     ('saved', 'send', 'token', 'sent'),
     [
