@@ -73,7 +73,9 @@ The consequences:
 
 - **The loader collects instead of the plugin registering.** `collect(plugin)`
   calls each `get_*` method once and freezes the results in a `LoadedPlugin`.
-  Unloading discards it; there is nothing to unregister.
+  Unloading discards it; there is nothing to unregister. The loader first awaits
+  `prepare()`, so contributions that depend on files, such as one `/command` per
+  Agent Skill, are read asynchronously instead of blocking in a `get_*` method.
 - **`PluginHost` is only context.** It lost every registration method and list.
 - **Agent-run hooks are core's.** A plugin that wants `before_tool_execute` or a
   typed stream event returns a `Hooks` capability (or its own capability using

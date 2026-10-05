@@ -713,7 +713,7 @@ settings using the former import paths are redirected to the new modules.
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
-| `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, plus task delegation and disk agents |
+| `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, task delegation and disk agents, and Agent Skills with a `/command` each |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
@@ -799,6 +799,20 @@ agents. The stock CLI uses `["agents"]`. Saved `coder` declarations that omit
 `agent_folders` keep disk agents off, so an upgrade never loads new definitions
 without your say. Old `pydantic_ai_harness.coder:Coder` declarations load
 through this module and are not rewritten.
+
+`skill_folders` is a JSON list of [Agent Skills](README.md#agent-skills) folders,
+in precedence order. It defaults to `[".agents/skills", ".claude/skills",
+"~/.agents/skills", "~/.claude/skills"]`, including for saved `coder`
+declarations that omit it; `~/` means your home directory, a relative path is in
+the project, and `[]` turns skills off. `coder` binds harness `Skills` with
+`missing_directories='skip'` and `duplicate_names='keep_first'`, so a missing
+folder is skipped and the earlier of two skills with one name wins. It reads the
+folders once when it loads, in `prepare`, for the `/skill-name` commands and the
+startup notices, and harness reads them again at the start of every turn for the
+model's catalog. A folder setting that fails, such as a path to one skill
+instead of its parent folder, prints `Skills are off: ...` and leaves skills
+out. The setting is tagged `coder-skill-folders`, so a CLAI build without it
+ignores a saved value instead of failing to load `coder`.
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
@@ -1610,6 +1624,7 @@ contributes nothing:
 
 | Method | Contributes |
 |---|---|
+| `prepare()` | reading what the `get_*` methods need, such as files, once per load |
 | `get_capabilities()` | capabilities (or per-run capability functions) added to every agent run |
 | `get_commands()` | `/commands` |
 | `render(event)` | a drawing for a stream event, or `None` for the default |
@@ -1769,8 +1784,38 @@ Set `available=` to a zero-argument callable returning a boolean to gate dispatc
 help, and completion on live session state. It defaults to always available.
 Unavailable commands retain their registered names and ownership, so they still
 participate in duplicate checks and are removed on plugin unload.
-Names must be unique;
-clashing with a built-in is an error at startup, not a silent override.
+Names are letters, digits, underscores, and hyphens, and must be unique;
+clashing with a built-in is an error at startup, not a silent override. A command
+named after something the user names, such as a skill, sets `overridable=True`:
+it gives way to any other command with its name, registered before or after it,
+and CLAI prints one line saying which command is hidden.
+
+A command can start a turn with `self.host.submit_prompt(text)`: the text runs
+as the next prompt once the command returns, ahead of anything queued in the
+editor, and goes through `on_turn_start` like typed input, without being echoed.
+Call it only from a command handler, and not from a `during_turn` command opened
+over a running turn.
+It is always a prompt, even when it starts with `/` or `!`. The built-in skill
+commands use it to send a skill's instructions:
+
+```python
+from collections.abc import Sequence
+
+from pydantic_clai2.commands import Command
+from pydantic_clai2.plugins import Plugin
+
+
+class Standup(Plugin):
+    def get_commands(self) -> Sequence[Command]:
+        def standup(args: list[str]) -> str:
+            self.host.submit_prompt('Summarise what changed in this repository since yesterday.')
+            return ''
+
+        return (Command(name='standup', description='Ask for a standup summary', handler=standup),)
+```
+
+`submit_prompt` raises `RuntimeError` on a host built without a shell, such as
+in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
 Path-like input is not dispatched to commands. A slash, dot, or backslash in the
 first token after the leading `/` makes it a prompt instead, so screenshot paths
@@ -2288,9 +2333,11 @@ offer them without an `/add_model` first. A failed sign-in adds nothing.
 
 - Handlers are `async`. There is no sync variant of anything.
 - `get_*` methods are called once, when the plugin loads. Return what the plugin
-  offers; do not do slow or blocking work there. Use `on_session_start` for
-  that, but keep it asynchronous: it runs on the event loop, so offload blocking
-  work with `anyio.to_thread.run_sync` or a worker.
+  offers; do not do slow or blocking work there. Read what they depend on, such
+  as files that decide which commands exist, in `async def prepare(self)`, which
+  runs just before them; a failure there fails the load. Other setup goes in
+  `on_session_start`. Keep both asynchronous: they run on the event loop, so
+  offload blocking work with `anyio.to_thread.run_sync` or a worker.
 - CLAI's `on_*` handlers return `None`. Core hooks keep their exact core return
   contracts: for example `before_model_request` must return its `ModelRequestContext`.
   For cancelable host events, edit the event or call `event.cancel()`.
@@ -2326,7 +2373,9 @@ assert plugin.capabilities == ()
 ```
 
 `plugin.commands`, `plugin.status_segments`, and the rest hold what the plugin
-declared. A plugin that reads the history gets a `Transcript` by default; pass
+declared. `load_plugin` does not call `prepare`; for a plugin that has one, build
+it with `PluginClass.from_host(host)`, `await plugin.prepare()`, then
+`collect(plugin)`. A plugin that reads the history gets a `Transcript` by default; pass
 `conversation=Transcript(messages=[...], model=TestModel())` to seed it.
 
 ## vllm connection

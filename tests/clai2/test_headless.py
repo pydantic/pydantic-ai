@@ -46,6 +46,8 @@ async def test_delegation_defaults_are_scoped_to_stock_agents(
 async def test_answer_resume_and_no_ask_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # Away from this repository's Agent Skills, whose unsupported frontmatter fields warn on every run.
+    monkeypatch.chdir(tmp_path)
     model = TestModel(call_tools=[], custom_output_text='[literal] ' + 'long ' * 100)
     agent = create_stock_agent(model)
     monkeypatch.setattr(headless, 'create_agent', lambda: agent)

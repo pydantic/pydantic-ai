@@ -255,11 +255,13 @@ class PluginHost(Generic[DepsT]):
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
         requirements: Requirements | None = None,
+        submit_prompt: Callable[[str], None] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
         `save_settings` writes changed settings back to the plugin's declaration; without it they
-        last until the plugin unloads.
+        last until the plugin unloads. `submit_prompt` runs a prompt as the next turn; see the method
+        of the same name.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -278,6 +280,21 @@ class PluginHost(Generic[DepsT]):
         self._settings = settings
         self._persist = save_settings
         self._requirements: Requirements = dict(requirements or {})
+        self._submit_prompt = submit_prompt
+
+    def submit_prompt(self, text: str, /) -> None:
+        """Run `text` as the next turn, as if typed at the prompt but without echoing it.
+
+        Call it from a `/command` handler that starts a turn, such as a skill command sending the
+        skill's instructions. The prompt runs once the command returns, before input queued in the
+        editor, and goes through `on_turn_start` like any prompt. A `during_turn` command opened over a
+        running turn must not call it. Text starting with `/` or `!` is a prompt here, not
+        a command. Raises `RuntimeError` on a host with no shell to run it, such as in a test, unless
+        the host was built with `submit_prompt=`.
+        """
+        if self._submit_prompt is None:
+            raise RuntimeError(f'Plugin {self.name!r} has no shell to run a prompt in.')
+        self._submit_prompt(text)
 
     @property
     def requirements(self) -> Requirements:
@@ -397,6 +414,14 @@ class Plugin(Generic[SettingsT, DepsT]):
     def settings(self) -> SettingsT:
         """The settings the plugin loaded with. A settings menu reads fresh ones with `host.settings`."""
         return self._settings
+
+    async def prepare(self) -> None:
+        """Read what the `get_*` methods need, such as files on disk, before CLAI calls them.
+
+        Called once per load, after `__init__` and before the `get_*` methods, so commands and
+        capabilities can depend on what it finds. A failure fails the load. `load_plugin` does not
+        call it; a test awaits it before `collect`.
+        """
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         """Tools, instructions, hooks, or a capability chosen per run, bound on every run."""

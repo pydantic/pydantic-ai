@@ -519,6 +519,7 @@ def create_shell(
     )
     screen = Screen()
     status = Status()
+    submitted: list[str] = []
     loader: PluginLoader[DepsT] = PluginLoader(
         store=store,
         console=console,
@@ -530,6 +531,7 @@ def create_shell(
         conversation=session,
         status=status,
         enabled=load_plugins,
+        submit_prompt=submitted.append,
     )
     models.plugins = loader.model_providers
     models.logins = loader.logins
@@ -595,6 +597,7 @@ def create_shell(
         session_settings=session_settings,
         spinners=spinners,
         updates=updates,
+        submitted=submitted,
     )
     if prompt is not None:
         prompt.key_bindings = images.bindings()
@@ -645,6 +648,8 @@ class _Shell(Generic[DepsT, OutputT]):
     updates: Updates
     transcript: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     images: ImageInput = field(default_factory=ImageInput)
+    submitted: list[str] = field(default_factory=list[str])
+    """Prompts a command submitted with `host.submit_prompt`, run once it returns."""
     reload_requested: bool = False
     editor: LivePrompt | None = None
     forks: Forks[DepsT, OutputT] = field(init=False)
@@ -887,6 +892,9 @@ class _Shell(Generic[DepsT, OutputT]):
             return self.interrupts.exit_requested
         if is_command_input(text):
             return await self._command(text)
+        return await self._prompt(text)
+
+    async def _prompt(self, text: str) -> bool:
         if self.session.model is None and self.agent.model is None:
             self.images.retry_text = text
             self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
@@ -903,9 +911,13 @@ class _Shell(Generic[DepsT, OutputT]):
             return False
         async with self.forks.busy(), self._released():
             await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
-        return (
-            text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required
-        )
+        if text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required:
+            self.submitted.clear()
+            return True
+        exiting = False
+        while self.submitted and not exiting:
+            exiting = await self._prompt(self.submitted.pop(0))
+        return exiting
 
     async def _turn(self, text: str | None) -> bool:
         automated = text is None
