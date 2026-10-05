@@ -1897,17 +1897,17 @@ has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
-its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the oldest
-queued follow-up to the active run through core's
-`RunContext.enqueue(priority='asap')`, without starting another turn, cancelling
-tools, or changing the draft. Each press sends one message. If the run is no
-longer accepting steering, the message stays queued. Slash commands and exit
-signals are not steered or skipped over. With no queued message, Alt+Enter does
-nothing. When idle, Enter starts a turn. Shift-Enter inserts a newline when the
-terminal distinguishes it from Enter. Ctrl-J inserts a newline on terminals
-that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty keyboard
-reporting is enabled only while the editor owns input and released for menus
-and on exit.
+its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
+draft, or with an empty draft the oldest queued follow-up, to the active run
+through core's `RunContext.enqueue(priority='asap')`, without starting another
+turn or cancelling tools. Each press sends one message. Slash commands, `!` shell
+commands, and exit signals are never steered: such a draft, or any draft the run
+does not accept, is taken as Enter would take it, and such a queued message stays
+queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
+a newline when the terminal distinguishes it from Enter. Ctrl-J inserts a newline
+on terminals that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty
+keyboard reporting is enabled only while the editor owns input and released for
+menus and on exit.
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
