@@ -1683,7 +1683,7 @@ Standard SDK configuration, including explicitly configured OTLP exporters, stil
 applies; disable the plugin to stop its instrumentation altogether.
 
 Agent runs and recorded UI interactions nest under a `CLAI session` root span.
-Its `agent_session_id` attribute is the saved conversation ID shown by `/session`.
+Its `agent_session_id` attribute is the saved conversation ID.
 `/clear` selects a new root; `/resume` returns to that conversation's root if it
 was already opened by this plugin instance. Unloading the plugin ends its roots;
 reloading starts new traces with the same saved conversation IDs.
