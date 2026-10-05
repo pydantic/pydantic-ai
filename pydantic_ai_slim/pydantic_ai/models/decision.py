@@ -295,6 +295,9 @@ class DecisionHandOff(ModelAPIError):
         self.probability = probability
         super().__init__(model_name, message)
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.route, self.probability, self.message)
+
 
 class UnfillableRoute(DecisionHandOff):
     """A decision model picked a route whose fields or arguments it cannot fill.

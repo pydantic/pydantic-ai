@@ -50,7 +50,7 @@ class SurfaceTerminal(io.StringIO):
 
     def write(self, text: str) -> int:
         super().write(text)
-        for token in re.findall(r'\x1b\[[0-9;?>]*[A-Za-z]|\x1b.|[^\x1b]', text):
+        for token in re.findall(r'\x1b\[[0-9;?<>]*[A-Za-z]|\x1b.|[^\x1b]', text):
             if token == '\x1b7':
                 self.saved = (self.row, self.column)
             elif token == '\x1b8':
