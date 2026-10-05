@@ -621,7 +621,7 @@ class TestMCPToolsetIntegration:
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
 
     async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
-        """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are only for the server's UI."""
+        """MCP Apps (SEP-1865) tools with a `_meta.ui.visibility` of `["app"]` or `[]` are hidden from the model."""
         server: FastMCP[None] = FastMCP('apps_server')
 
         @server.tool(meta={'ui': {'visibility': ['app']}})
