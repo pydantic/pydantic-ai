@@ -43,7 +43,6 @@ jobs:
       pull-requests: read
     outputs:
       content_only: ${{ steps.classify.outputs.content_only }}
-      agents_only: ${{ steps.classify.outputs.agents_only }}
       docs_changed: ${{ steps.classify.outputs.docs_changed }}
       clai2_only: ${{ steps.classify.outputs.clai2_only }}
       clai2_changed: ${{ steps.classify.outputs.clai2_changed }}
@@ -58,7 +57,6 @@ jobs:
           # Keep classification inline so this token-bearing job never executes PR-authored files.
           run_all_checks() {
             echo 'content_only=false' >> "$GITHUB_OUTPUT"
-            echo 'agents_only=false' >> "$GITHUB_OUTPUT"
             echo 'docs_changed=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_changed=true' >> "$GITHUB_OUTPUT"
@@ -117,7 +115,7 @@ jobs:
               return 0
             fi
             case "$1" in
-              .agents/*.md|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
+              .agents/*.md|.agents/*.tsv|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
               *.md) [[ "$1" != */* ]] ;;
               *) return 1 ;;
             esac
@@ -150,23 +148,12 @@ jobs:
           }
 
           content_only=true
-          agents_only=true
           docs_changed=false
           clai2_only=true
           clai2_changed=false
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
-            case "$filename" in
-              .agents/*) ;;
-              *) agents_only=false ;;
-            esac
-            if [ -n "$previous_filename" ]; then
-              case "$previous_filename" in
-                .agents/*) ;;
-                *) agents_only=false ;;
-              esac
-            fi
             if ! is_non_test_content "$filename" || \
               { [ -n "$previous_filename" ] && ! is_non_test_content "$previous_filename"; }; then
               content_only=false
@@ -189,7 +176,6 @@ jobs:
             fi
           done
           echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
-          echo "agents_only=$agents_only" >> "$GITHUB_OUTPUT"
           echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
           echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
           echo "clai2_changed=$clai2_changed" >> "$GITHUB_OUTPUT"
@@ -198,7 +184,7 @@ jobs:
   quality:
     name: quality checks
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
@@ -392,7 +378,7 @@ jobs:
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -413,7 +399,7 @@ jobs:
   # Keep this source-repository check for assets that live alongside Pydantic AI docs.
   docs-assets:
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && (needs.classify.outputs.content_only != 'true' || needs.classify.outputs.docs_changed == 'true')
+    if: needs.classify.outputs.content_only != 'true' || needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -443,7 +429,7 @@ jobs:
   docs-only:
     name: docs-only checks on Python 3.13
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed == 'true'
+    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -488,7 +474,7 @@ jobs:
   content-checks:
     name: content checks
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'
+    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -505,7 +491,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -640,7 +626,7 @@ jobs:
   test-all-extras:
     name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.10' && 3 || 2 }})
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -822,7 +808,7 @@ jobs:
   test-durable-exec:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -923,7 +909,7 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -1032,7 +1018,7 @@ jobs:
   test-temporal-latest:
     name: test Temporal latest on Python 3.10
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1058,7 +1044,7 @@ jobs:
   test-examples:
     name: test examples on ${{ matrix.python-version }}
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -1087,7 +1073,7 @@ jobs:
   test-harness-browser-use:
     name: test harness browser-use
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1138,7 +1124,6 @@ jobs:
     needs: classify
     if: >-
       github.ref_type != 'tag'
-      && needs.classify.outputs.agents_only != 'true'
       && needs.classify.outputs.content_only != 'true'
       && needs.classify.outputs.clai2_changed == 'true'
     runs-on: ${{ matrix.os }}
@@ -1185,7 +1170,7 @@ jobs:
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1249,8 +1234,7 @@ jobs:
   # always on tags.
   harness-integration-changes:
     name: classify harness integration changes
-    needs: classify
-    if: needs.classify.outputs.agents_only != 'true' && (github.event_name == 'pull_request' || github.ref_type == 'branch')
+    if: github.event_name == 'pull_request' || github.ref_type == 'branch'
     runs-on: ubuntu-latest
     outputs:
       localstack: ${{ steps.detect.outputs.localstack }}
@@ -1410,7 +1394,7 @@ jobs:
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
     # otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1482,16 +1466,13 @@ jobs:
           # `docs-only` covers published docs and assets; `content-checks` covers other
           # non-test content. Workflow and configuration changes keep the full test matrix.
           # Each reduced path must run its selected checks.
-          # `.agents/`-only PRs skip validation; classification stays required.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
           # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
-              needs.classify.outputs.agents_only == 'true'
-              && 'quality,mypy,docs-assets,docs-only,content-checks,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
-              || needs.classify.outputs.content_only == 'true'
+              needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
               && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'

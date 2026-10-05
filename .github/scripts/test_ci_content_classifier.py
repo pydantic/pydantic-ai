@@ -117,6 +117,10 @@ fi
     ('changed_files', 'expected'),
     [
         ([('README.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
+        (
+            [('docs/agents.md', ''), ('.agents/data/catalog.tsv', '')],
+            {'content_only': 'true', 'docs_changed': 'true'},
+        ),
         ([('docs/guides/agents.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('docs/AGENTS.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('docs/img/logo.svg', '')], {'content_only': 'true', 'docs_changed': 'true'}),
@@ -224,7 +228,6 @@ def test_incomplete_pr_file_list_defaults_to_full_ci(
 
     assert outputs == {
         'content_only': 'false',
-        'agents_only': 'false',
         'docs_changed': 'false',
         'clai2_only': 'false',
         'clai2_changed': 'true',
@@ -237,7 +240,6 @@ def test_non_pr_events_keep_full_ci_defaults(tmp_path: Path):
 
     assert outputs == {
         'content_only': 'false',
-        'agents_only': 'false',
         'docs_changed': 'false',
         'clai2_only': 'false',
         'clai2_changed': 'true',
@@ -264,63 +266,34 @@ def test_clai2_clipboard_runs_only_for_clai2_changes(
     assert outputs['clai2_changed'] == clai2_changed
 
 
+@pytest.mark.parametrize('workflow_path', [WORKFLOW, BENCHMARK_WORKFLOW])
 @pytest.mark.parametrize(
-    ('workflow_path', 'filename'),
+    ('changed_files', 'expected'),
     [
-        (workflow_path, filename)
-        for workflow_path in (WORKFLOW, BENCHMARK_WORKFLOW)
-        for filename in (
-            '.agents/skills/review/SKILL.md',
-            '.agents/data/labels.tsv',
-            '.agents/config/settings.yaml',
-            '.agents/scripts/check.py',
-            '.agents/bin/tool',
-        )
+        ([('.agents/skills/pushing-commits-to-the-repo/labels.tsv', '')], 'true'),
+        ([('.agents/data/catalog.tsv', ''), ('.agents/skills/review/SKILL.md', '')], 'true'),
+        ([('.agents/data/catalog.tsv', ''), ('README.md', '')], 'true'),
+        ([('.agents/data/renamed.tsv', '.agents/data/catalog.tsv')], 'true'),
+        ([('.agents/data/catalog.tsv', 'tests/data/catalog.tsv')], 'false'),
+        ([('tests/data/catalog.tsv', '.agents/data/catalog.tsv')], 'false'),
+        ([('.agents/data/catalog.tsv', ''), ('src/code.py', '')], 'false'),
+        ([('.agents/skills/pushing-commits-to-the-repo/label-catalog', '')], 'false'),
+        ([('.agents/config/settings.yaml', '')], 'false'),
+        ([('.agents/scripts/check.py', '')], 'false'),
     ],
 )
-def test_agents_only_accepts_any_nested_filename_and_extension(tmp_path: Path, workflow_path: Path, filename: str):
-    outputs = _classify(tmp_path, [(filename, '')], workflow_path=workflow_path)
-
-    assert outputs['agents_only'] == 'true'
-
-
-@pytest.mark.parametrize(
-    'changed_files',
-    [
-        [('.agents/skills/review/SKILL.md', '')],
-        [('.agents/skills/new/SKILL.md', '.agents/skills/old/SKILL.md')],
-    ],
-)
-def test_agents_only_is_independent_of_edit_add_or_internal_rename(
-    tmp_path: Path, changed_files: list[tuple[str, str]]
+def test_agent_data_uses_content_only_route(
+    tmp_path: Path, workflow_path: Path, changed_files: list[tuple[str, str]], expected: str
 ):
-    outputs = _classify(tmp_path, changed_files)
+    outputs = _classify(tmp_path, changed_files, workflow_path=workflow_path)
 
-    assert outputs['agents_only'] == 'true'
-
-
-@pytest.mark.parametrize(
-    ('changed_files', 'content_only', 'docs_changed'),
-    [
-        ([('.agents/skills/review/SKILL.md', 'docs/review.md')], 'true', 'true'),
-        ([('docs/review.md', '.agents/skills/review/SKILL.md')], 'true', 'true'),
-        ([('.agents/skills/review/SKILL.md', ''), ('README.md', '')], 'true', 'true'),
-        ([('.agents/skills/review/SKILL.md', ''), ('src/code.py', '')], 'false', 'false'),
-    ],
-)
-def test_agents_only_rejects_cross_boundary_renames_and_mixed_changes(
-    tmp_path: Path, changed_files: list[tuple[str, str]], content_only: str, docs_changed: str
-):
-    outputs = _classify(tmp_path, changed_files)
-
-    assert outputs['agents_only'] == 'false'
-    assert outputs['content_only'] == content_only
-    assert outputs['docs_changed'] == docs_changed
+    assert outputs['content_only'] == expected
 
 
 @pytest.mark.parametrize(
     ('changed_files', 'expected'),
     [
+        ([('.agents/skills/review/SKILL.md', '')], 'true'),
         ([('.macroscope/ignore.md', '')], 'false'),
         ([('.macroscope/correctness/review-discipline.md', '')], 'false'),
         ([('.macroscope/AGENTS.md', '')], 'false'),
@@ -344,27 +317,7 @@ def test_benchmark_classifier_uses_content_only_paths(
 ):
     outputs = _classify(tmp_path, changed_files, workflow_path=BENCHMARK_WORKFLOW)
 
-    assert outputs == {'content_only': expected, 'agents_only': 'false'}
-
-
-def test_benchmark_classifier_skips_agents_only_changes(tmp_path: Path):
-    outputs = _classify(
-        tmp_path,
-        [('.agents/skills/review/SKILL.md', '')],
-        workflow_path=BENCHMARK_WORKFLOW,
-    )
-
-    assert outputs == {'content_only': 'true', 'agents_only': 'true'}
-
-
-def test_benchmark_agents_only_scans_files_after_non_markdown_agent_path(tmp_path: Path):
-    outputs = _classify(
-        tmp_path,
-        [('.agents/data/labels.tsv', ''), ('src/code.py', '')],
-        workflow_path=BENCHMARK_WORKFLOW,
-    )
-
-    assert outputs == {'content_only': 'false', 'agents_only': 'false'}
+    assert outputs == {'content_only': expected}
 
 
 @pytest.mark.parametrize(
@@ -393,23 +346,20 @@ def test_benchmark_classifier_runs_on_count_or_file_api_fallback(
         files_api_failure=files_api_failure,
     )
 
-    assert outputs == {'content_only': 'false', 'agents_only': 'false'}
+    assert outputs == {'content_only': 'false'}
 
 
 def test_benchmark_non_pr_events_keep_full_run_defaults(tmp_path: Path):
     outputs = _classify(tmp_path, [], workflow_path=BENCHMARK_WORKFLOW, event_name='push')
 
-    assert outputs == {'content_only': 'false', 'agents_only': 'false'}
+    assert outputs == {'content_only': 'false'}
 
 
 def test_benchmark_job_is_gated_on_the_classifier_output():
     benchmark = BENCHMARK_JOB_ADAPTER.validate_python(_workflow(BENCHMARK_WORKFLOW)['jobs']['benchmarks'])
 
     assert benchmark['needs'] == 'classify'
-    assert (
-        benchmark['if']
-        == "needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true'"
-    )
+    assert benchmark['if'] == "needs.classify.outputs.content_only != 'true'"
 
 
 def test_python_test_jobs_use_content_only_output():
@@ -431,9 +381,7 @@ def test_python_test_jobs_use_content_only_output():
         assert "needs.classify.outputs.content_only != 'true'" in job['if']
 
     quality = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['quality'])
-    assert quality['if'] == (
-        "needs.classify.outputs.agents_only != 'true' && needs.classify.outputs.content_only != 'true'"
-    )
+    assert quality['if'] == "needs.classify.outputs.content_only != 'true'"
 
 
 def test_docs_checks_cover_harness_readmes():
@@ -455,19 +403,21 @@ def test_docs_checks_cover_harness_readmes():
 
 
 def test_aggregate_requires_the_selected_lightweight_job():
-    check = CHECK_JOB_ADAPTER.validate_python(_workflow()['jobs']['check'])
+    jobs = _workflow()['jobs']
+    content_checks = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['content-checks'])
+    assert content_checks['if'] == (
+        "needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'"
+    )
+    check = CHECK_JOB_ADAPTER.validate_python(jobs['check'])
     assert 'content-checks' in check['needs']
     allowed_skips = check['steps'][0]['with']['allowed-skips']
 
     branches = re.findall(r"(?:&&|\|\|)\s*'([^']+)'", allowed_skips)
-    agents_skips = set(branches[0].split(','))
-    docs_skips = set(branches[1].split(','))
-    content_skips = set(branches[2].split(','))
-    clai2_skips = set(branches[3].split(','))
-    tag_skips = set(branches[4].split(','))
-    default_skips = set(branches[5].split(','))
-
-    assert agents_skips == set(check['needs']) - {'classify'}
+    docs_skips = set(branches[0].split(','))
+    content_skips = set(branches[1].split(','))
+    clai2_skips = set(branches[2].split(','))
+    tag_skips = set(branches[3].split(','))
+    default_skips = set(branches[4].split(','))
 
     assert 'content-checks' in docs_skips
     assert 'docs-only' not in docs_skips
@@ -479,28 +429,6 @@ def test_aggregate_requires_the_selected_lightweight_job():
     assert 'test-clai2-clipboard' in check['needs']
     assert 'test-clai2-clipboard' not in clai2_skips
     assert 'test-clai2-clipboard' in tag_skips
-
-
-def test_ci_work_jobs_are_gated_for_agents_only_changes():
-    jobs = _workflow()['jobs']
-    check = CHECK_JOB_ADAPTER.validate_python(jobs['check'])
-
-    for name in check['needs']:
-        if name == 'classify':
-            continue
-        job = CONDITIONAL_JOB_ADAPTER.validate_python(jobs[name])
-        if (
-            name.startswith('harness-localstack-')
-            or name.startswith('harness-mongodb-')
-            or name.startswith('harness-redis-')
-        ):
-            assert 'needs.harness-integration-changes.outputs.' in job['if'], name
-            integration_changes = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['harness-integration-changes'])
-            assert "needs.classify.outputs.agents_only != 'true'" in integration_changes['if']
-        elif name == 'latest-versions-canary':
-            assert job['if'] == "startsWith(github.ref, 'refs/tags/')"
-        else:
-            assert "needs.classify.outputs.agents_only != 'true'" in job['if'], name
 
 
 def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
