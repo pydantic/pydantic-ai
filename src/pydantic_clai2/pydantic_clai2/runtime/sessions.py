@@ -21,6 +21,7 @@ from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -88,7 +89,9 @@ class Sessions(Generic[DepsT, OutputT]):
 
         `resume` restores a conversation (`''` opens the browser). With `fork`, a restored one is
         copied to `session_id`, or a random ID; otherwise `session_id` names the new conversation.
+        Raises `ValueError` for options Claude Code would refuse, before changing anything.
         """
+        session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork)
         notice = await self.command([resume] if resume else []) if resume is not None else ''
         if fork and notice:
             # Keep the resume notice: it warns about an interrupted session, which the copy no longer records.

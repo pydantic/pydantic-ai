@@ -60,6 +60,7 @@ from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.runtime._session import Session, StockAgent
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
@@ -183,8 +184,11 @@ async def chat(
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
     `resume` restores a saved conversation (`''` opens the browser); `fork_session` then continues in a copy.
-    `session_id` names the new conversation, or the copy.
+    `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
+    or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
     """
+    # Before anything is drawn, as the CLI checks these before it starts.
+    session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     console = console or Console()
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
