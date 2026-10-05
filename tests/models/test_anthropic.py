@@ -11,7 +11,7 @@ from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 if TYPE_CHECKING:
     from cassetter import Cassette
@@ -3633,6 +3633,7 @@ async def test_anthropic_include_citations_tool_return_documents(
                     [
                         BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'),
                         UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf'),
+                        ImageUrl('https://example.com/policy', media_type='application/pdf', force_download=True),
                     ],
                     tool_call_id='call-1',
                 )
@@ -3640,12 +3641,16 @@ async def test_anthropic_include_citations_tool_return_documents(
         ),
     ]
 
-    await Agent(model, model_settings=ModelSettings(include_citations=include_citations)).run(message_history=history)
+    with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = {'data': b'%PDF-1.4 policy', 'content_type': 'application/pdf'}
+        await Agent(model, model_settings=ModelSettings(include_citations=include_citations)).run(
+            message_history=history
+        )
 
     tool_result = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][-1]['content'][0]
     documents = [block for block in tool_result['content'] if block['type'] == 'document']
     assert [document.get('citations') for document in documents] == (
-        [{'enabled': True}] * 2 if include_citations else [None] * 2
+        [{'enabled': True}] * 3 if include_citations else [None] * 3
     )
 
 
