@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Sequence
-from dataclasses import fields
 from os import environ
-from typing import Any, TypeVar
 
-from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._combine import one_per_id
 
-CapabilityT = TypeVar('CapabilityT', bound=AbstractCapability[Any])
+one_connection = one_per_id
+"""Resolve hosted MCP capabilities that share an `id`: one connection stated twice is one, two that disagree raise."""
 
 
 def credential(auth: str | None, *, env: str | None, service: str) -> str:
@@ -62,27 +60,3 @@ def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[A
         return read_only_tools
 
     return toolset.prepared(prepare_read_only)
-
-
-def one_connection(capabilities: Sequence[CapabilityT]) -> CapabilityT:
-    """Resolve hosted MCP capabilities that share an `id`, the way `SubAgents.combine` refuses what it cannot merge.
-
-    One capability is one connection to one account, and its settings are an access boundary, so this narrows
-    rather than unions (see "Deciding What Two Of It Mean" in `agent_docs/capability-authoring.md`): the same
-    configuration stated twice is that one connection; two that disagree raise, naming the fields but not their
-    values, since `auth` is a secret.
-    """
-    first = capabilities[0]
-    for other in capabilities[1:]:
-        disagree = [
-            field.name
-            for field in fields(first)
-            if field.compare and field.name != 'id' and getattr(first, field.name) != getattr(other, field.name)
-        ]
-        if disagree:
-            names = ', '.join(repr(name) for name in disagree)
-            raise UserError(
-                f'Capability id {first.id!r} is used by multiple {type(first).__name__} capabilities that disagree '
-                f'on {names}. Give each its own `id` and wrap them in `PrefixTools`, or make them agree.'
-            )
-    return first

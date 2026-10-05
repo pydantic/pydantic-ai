@@ -84,9 +84,18 @@ async def test_answer_resume_and_no_ask_user(
     assert captured.err == ''
 
 
-@pytest.mark.parametrize('mode', ['cancel', 'raise', 'screen', 'load', 'model'])
+@pytest.mark.parametrize(
+    ('mode', 'error'),
+    [
+        ('cancel', 'declined'),
+        ('raise', "Plugin 'guard': RuntimeError: guard failed"),
+        ('screen', "Plugin 'guard': RuntimeError: User interaction is unavailable in headless mode"),
+        ('load', "Plugin 'guard': RuntimeError: load failed"),
+        ('model', 'Unknown model: unknown:missing'),
+    ],
+)
 async def test_failure_is_nonzero_and_silent_stdout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: str, error: str
 ) -> None:
     plugin = tmp_path / 'guard.py'
     plugin.write_text(
@@ -105,7 +114,7 @@ async def test_failure_is_nonzero_and_silent_stdout(
         )
     )
     store = SettingsStore(tmp_path / 'config.db')
-    monkeypatch.setattr(headless, 'DEFAULT_PLUGINS', (PluginSettings(id='guard', factory='guard', path=str(plugin)),))
+    monkeypatch.setattr(headless, 'STOCK_PLUGINS', (PluginSettings(id='guard', factory='guard', path=str(plugin)),))
     assert (
         await headless.run_headless(
             text='hello',
@@ -117,7 +126,7 @@ async def test_failure_is_nonzero_and_silent_stdout(
     )
     captured = capsys.readouterr()
     assert captured.out == ''
-    assert captured.err
+    assert captured.err == f'{error}\n'
 
 
 async def test_missing_model(tmp_path: Path) -> None:

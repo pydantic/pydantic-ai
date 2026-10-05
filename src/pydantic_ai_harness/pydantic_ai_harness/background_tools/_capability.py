@@ -21,7 +21,6 @@ from pydantic_ai.exceptions import (
     ModelRetry,
     ToolFailedError,
     ToolRetryError,
-    UnexpectedModelBehavior,
     UserError,
 )
 from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnPart, UserContent
@@ -274,13 +273,9 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     # the tool raised this itself and it ends the run like a sequential tool.
                     await anyio.lowlevel.checkpoint_if_cancelled()
                     outcome = e
-                except UnexpectedModelBehavior as e:
-                    # The retry budget ran out: it ends the run, as it would for a sequential tool.
-                    outcome = e
-                except Exception as e:
-                    # Exception messages can contain private details, so the model only learns the type.
-                    outcome = (f"Background tool '{tool_name}' (task {task_id}) failed: {type(e).__name__}",)
                 except BaseException as e:
+                    # Unexpected failures, including an exhausted retry budget, end the run as they
+                    # would for a sequential tool.
                     outcome = e
                 else:
                     outcome = _format_background_result(tool_name, task_id, result)

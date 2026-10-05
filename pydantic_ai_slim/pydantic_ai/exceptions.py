@@ -329,7 +329,8 @@ class RunCancelled(AgentRunError):
         `RunCancelled.from_cancellation(exc)` to access the partial run state attached by Pydantic
         AI. This also works with the `TimeoutError` raised by `asyncio.timeout()` or
         `asyncio.wait_for()`, whose exception chain contains the original `CancelledError`, and with
-        the `KeyboardInterrupt` raised by pressing Ctrl-C during `agent.run_sync()`. An
+        the `KeyboardInterrupt` raised by pressing Ctrl-C during `agent.run_sync()` or
+        `agent.run_stream_sync()`. An
         external `CancelledError` must keep propagating for timeouts and task groups to tear down
         correctly, so re-raise it after capturing the state rather than returning from the handler;
         only a first-party `RunCancelled` is yours to consume.
