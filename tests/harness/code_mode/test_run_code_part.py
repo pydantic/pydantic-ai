@@ -45,14 +45,11 @@ class RecordRunCode(AbstractCapability[Any]):
         return await handler(args)
 
 
-def _run_code_then_answer(
-    code: str, *, json_args: bool = False
-) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
+def _run_code_then_answer(code: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             (run_code,) = info.function_tools
-            args = json.dumps({'code': code}) if json_args else {'code': code}
-            return ModelResponse(parts=[ToolCallPart(run_code.name, args, tool_call_id='c1')])
+            return ModelResponse(parts=[ToolCallPart(run_code.name, {'code': code}, tool_call_id='c1')])
         return ModelResponse(parts=[TextPart('done')])
 
     return model_fn
@@ -87,7 +84,7 @@ class TestRunCodeCallPart:
         assert from_json.code == '1 + 1'
 
     def test_incomplete_args_have_no_code(self) -> None:
-        assert RunCodeCallPart('run_code', '{"code": "1 +').code is None
+        assert RunCodeCallPart('run_code', args='{"code": "1 +').code is None
         assert RunCodeCallPart('run_code').code is None
 
     def test_args_without_code_are_not_promoted(self) -> None:
@@ -97,17 +94,29 @@ class TestRunCodeCallPart:
         assert type(part) is ToolCallPart
 
     async def test_wrap_tool_execute_recognizes_run_code_by_kind(self) -> None:
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('ping', {}, tool_call_id='c0'),
+                        ToolCallPart('run_code', json.dumps({'code': '1 + 1'}), tool_call_id='c1'),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
         codes: list[str | None] = []
-        agent = Agent(
-            FunctionModel(_run_code_then_answer('1 + 1', json_args=True)),
-            capabilities=[CodeMode[object](), RecordRunCode(codes)],
-        )
+        agent = Agent(FunctionModel(model_fn), capabilities=[CodeMode[object](tools=[]), RecordRunCode(codes)])
+
+        @agent.tool_plain
+        def ping() -> str:
+            return 'pong'
 
         result = await agent.run('add')
 
         assert codes == ['1 + 1']
-        call = result.all_messages()[1].parts[0]
-        assert isinstance(call, RunCodeCallPart) and call.code == '1 + 1'
+        ping_call, run_code_call = result.all_messages()[1].parts
+        assert type(ping_call) is ToolCallPart
+        assert isinstance(run_code_call, RunCodeCallPart) and run_code_call.code == '1 + 1'
 
     async def test_history_round_trips(self) -> None:
         agent = Agent(FunctionModel(_run_code_then_answer('3 + 3')), capabilities=[CodeMode[object]()])
