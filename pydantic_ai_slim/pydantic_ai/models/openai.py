@@ -851,6 +851,8 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_cache_instructions: bool
     """Whether to add a prompt cache breakpoint after the last static instruction.
 
+    With no static instructions, the breakpoint goes on the last system prompt instead.
+
     Supported by GPT-5.6 and later models; other models ignore it. OpenAI applies the request-wide
     `ttl` from `openai_prompt_cache_options`. OpenAI writes at most four breakpoints per request and
     drops the earliest first, so if `CachePoint` markers push a request over that limit, the
