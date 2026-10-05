@@ -416,6 +416,21 @@ class _TapView(AsyncIterator[_TapItem]):
         await self._iterator.aclose()
 
 
+class _Pulse:
+    """Broadcast by replacing AnyIO's one-shot event; callers must check state without a checkpoint before waiting."""
+
+    def __init__(self) -> None:
+        self._event = anyio.Event()
+
+    def set(self) -> None:
+        event = self._event
+        self._event = anyio.Event()
+        event.set()
+
+    async def wait(self) -> None:
+        await self._event.wait()
+
+
 @dataclass(eq=False)
 class _AudioTap:
     """One `stream_audio()` subscription, with the accounting `interrupt(played_bytes=...)` needs.
@@ -442,7 +457,7 @@ class _AudioTap:
     """
     played_bytes: int = 0
     """Chunks the consumer finished with — counted when it resumes the iterator for the next one."""
-    progress: asyncio.Event = field(default_factory=asyncio.Event)
+    progress: _Pulse = field(default_factory=_Pulse)
     """Set when playback advances or the view ends, waking `wait_for_playback()`."""
     ended: bool = False
 
@@ -889,7 +904,7 @@ class RealtimeSession:
         # per-response flags above would read as "done" in the gaps. Reads pair with
         # `_pending_response_requests` for the solicited-but-not-started half — see `_reply_outstanding`.
         self._response_active = False
-        self._exchange_progress = asyncio.Event()
+        self._exchange_progress = _Pulse()
         self._pending_provider_response_id: str | None = None
         # The provider id carried by the latest content of the response being assembled, for a reply
         # that never gets the terminal that would otherwise name it: one cut off by a dropped connection
@@ -969,7 +984,7 @@ class RealtimeSession:
         # abandon the reader generator without affecting resource lifetime, and `__aexit__` still
         # drains everything before the connection and toolset close.
         self._queue: deque[RealtimeEvent | object] = deque()
-        self._queue_event = asyncio.Event()
+        self._queue_event = _Pulse()
         self._queue_delta_count = 0
         self._queue_dropped_deltas = 0
         self._queue_structural_count = 0
@@ -1013,8 +1028,8 @@ class RealtimeSession:
         # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
         # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
         # `finally`, including cancellation and failure paths.
-        self._tool_completion_events: set[asyncio.Event] = set()
-        self._last_tool_barrier: asyncio.Event | None = None
+        self._tool_completion_events: set[anyio.Event] = set()
+        self._last_tool_barrier: anyio.Event | None = None
         # OpenAI-protocol tool results can complete before the response's later `response.done` usage
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
@@ -1313,8 +1328,7 @@ class RealtimeSession:
 
     async def _queue_get(self) -> RealtimeEvent | object:
         while not self._queue:
-            # Nothing can append between the clear and the wait: producers run on this event loop.
-            self._queue_event.clear()
+            # Producers run on this event loop, so no item can arrive between the check and wait.
             await self._queue_event.wait()
         return self._queue_get_nowait()
 
@@ -1475,8 +1489,6 @@ class RealtimeSession:
         """
         tap = self._single_audio_tap('`wait_for_playback()`', 'wait for playback from')
         while not self._closed and not tap.ended:
-            # Clear before checking so that progress made between the check and the wait still wakes us.
-            tap.progress.clear()
             playhead = tap.subscribed_at_bytes + tap.played_bytes + tap.dropped_bytes
             # Once the pump has finished, the only item left in the queue is the completion sentinel.
             buffer_empty = tap.queue.empty() or (self._pump_finished and tap.queue.qsize() == 1)
@@ -1520,9 +1532,6 @@ class RealtimeSession:
         self._ensure_streamable()
         self._start_pump()
         while True:
-            # Cleared before the check, so a boundary reached between the check and the wait still
-            # wakes us rather than leaving this parked until the turn after it.
-            self._exchange_progress.clear()
             if not self._reply_outstanding():
                 return
             await self._exchange_progress.wait()
@@ -3542,8 +3551,8 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
+        validation_done: anyio.Event,
+        execution_prerequisites: tuple[anyio.Event, ...],
         response_usage_follows: bool,
         run_step: int,
         reserved_budget: bool,
@@ -3864,9 +3873,9 @@ class RealtimeSession:
         self,
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
-        completion: asyncio.Event,
+        validation_done: anyio.Event,
+        execution_prerequisites: tuple[anyio.Event, ...],
+        completion: anyio.Event,
         response_usage_follows: bool,
         run_step: int,
         reserved_budget: bool,
@@ -4021,7 +4030,7 @@ class RealtimeSession:
         # keeps `output_parts` in emission order whatever the mode.
         order_index = self._next_tool_order_index
         self._next_tool_order_index += 1
-        completion = asyncio.Event()
+        completion = anyio.Event()
         if is_barrier:
             execution_prerequisites = tuple(self._tool_completion_events)
             self._last_tool_barrier = completion
@@ -4030,7 +4039,7 @@ class RealtimeSession:
         else:
             execution_prerequisites = ()
         self._tool_completion_events.add(completion)
-        validation_done = asyncio.Event()
+        validation_done = anyio.Event()
         task = asyncio.create_task(
             self._run_tool(
                 call_part,

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Itera
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
+import anyio
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._run_context import EventStreamBuffer
@@ -51,17 +52,17 @@ async def _iter_completed_or_buffered(
         return
 
     waiters = event_stream_buffer.waiters
-    signal = asyncio.Event()
+    signal = anyio.Event()
     waiters.append(signal)
     try:
         while pending:
             while event_stream_buffer:
                 yield event_stream_buffer.pop(0)
-            # Clearing after the drain rather than before it can't lose a wake-up: `emit` is async,
-            # so appends land on this event loop, and no `await` separates the empty-buffer check
-            # from the clear. An event appended while an earlier one is being yielded above is seen
-            # by the next iteration of that same loop.
-            signal.clear()
+            # Replacing the signal after the drain can't lose a wake-up: appends land on this
+            # event loop, and no `await` separates the empty-buffer check from the replacement.
+            waiters.remove(signal)
+            signal = anyio.Event()
+            waiters.append(signal)
             # Typed `Task[Any]` so the mixed `asyncio.wait` set unifies with the task set; the
             # sentinel is discarded from both result sets before tasks are yielded.
             signal_wait: asyncio.Task[Any] = asyncio.ensure_future(signal.wait())

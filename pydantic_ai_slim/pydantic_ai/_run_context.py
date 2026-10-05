@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 import sys
 import warnings
@@ -63,7 +62,7 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
 
     def __init__(self, iterable: Sequence[_messages.AgentStreamEvent] = ()):
         super().__init__(iterable)
-        self.waiters: list[asyncio.Event] = []
+        self.waiters: list[anyio.Event] = []
 
     def append(self, event: _messages.AgentStreamEvent) -> None:
         super().append(event)

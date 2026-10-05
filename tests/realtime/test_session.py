@@ -2064,6 +2064,30 @@ async def test_wait_for_playback_waits_for_device_paced_consumer() -> None:
             await playback
 
 
+async def test_wait_for_playback_wakes_concurrent_waiters() -> None:
+    session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'a')]), _noop_runner)
+    completed = 0
+
+    async with session:
+        stream = session.stream_audio()
+        assert isinstance(stream, _TapView)
+        assert await anext(stream) == b'a'
+
+        async def wait(task_status: anyio.abc.TaskStatus[None]) -> None:
+            nonlocal completed
+            task_status.started()
+            await session.wait_for_playback()
+            completed += 1
+
+        async with anyio.create_task_group() as group:
+            await group.start(wait)
+            await group.start(wait)
+            assert completed == 0
+            await stream.aclose()
+
+    assert completed == 2
+
+
 async def test_wait_for_playback_returns_immediately_without_audio() -> None:
     session = RealtimeSession(BlockingRealtimeConnection([]), _noop_runner)
     async with session:
@@ -8466,13 +8490,13 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
             priority='asap',
         )
     )
-    validation_done = asyncio.Event()
+    validation_done = anyio.Event()
 
     async def complete_after_usage(
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
+        validation_done: anyio.Event,
+        execution_prerequisites: tuple[anyio.Event, ...],
         response_usage_follows: bool,
         run_step: int,
         reserved_budget: bool,
@@ -8484,7 +8508,7 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
 
     session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
-    completion = asyncio.Event()
+    completion = anyio.Event()
     await session._run_tool(  # pyright: ignore[reportPrivateUsage]
         ToolCallPart(tool_name='noop', args={}, tool_call_id='call'),
         validation_done=validation_done,
@@ -8529,8 +8553,8 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
     async def complete_after_usage(
         call_part: ToolCallPart,
         *,
-        validation_done: asyncio.Event,
-        execution_prerequisites: tuple[asyncio.Event, ...],
+        validation_done: anyio.Event,
+        execution_prerequisites: tuple[anyio.Event, ...],
         response_usage_follows: bool,
         run_step: int,
         reserved_budget: bool,
@@ -8546,9 +8570,9 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
     task = asyncio.create_task(
         session._run_tool(  # pyright: ignore[reportPrivateUsage]
             ToolCallPart(tool_name='noop', args={}, tool_call_id='call'),
-            validation_done=asyncio.Event(),
+            validation_done=anyio.Event(),
             execution_prerequisites=(),
-            completion=asyncio.Event(),
+            completion=anyio.Event(),
             response_usage_follows=True,
             run_step=0,
             reserved_budget=True,
@@ -10551,6 +10575,34 @@ async def test_wait_for_reply_returns_at_the_turn_boundary() -> None:
                 ),
             ]
         )
+
+
+async def test_wait_for_reply_wakes_concurrent_waiters() -> None:
+    answer = anyio.Event()
+
+    class _DelayedReply(FakeRealtimeConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            await answer.wait()
+            yield ResponseDone()
+
+    session = RealtimeSession(_DelayedReply([]))
+    completed = 0
+    async with session:
+        await session.send('Say hello.')
+
+        async def wait(task_status: anyio.abc.TaskStatus[None]) -> None:
+            nonlocal completed
+            task_status.started()
+            await session.wait_for_reply()
+            completed += 1
+
+        async with anyio.create_task_group() as group:
+            await group.start(wait)
+            await group.start(wait)
+            assert completed == 0
+            answer.set()
+
+    assert completed == 2
 
 
 async def test_wait_for_reply_spans_a_tool_calling_turn() -> None:
