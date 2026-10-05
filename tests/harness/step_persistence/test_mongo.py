@@ -12,8 +12,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+import anyio.to_thread
 import pytest
 from mongomock_motor import AsyncMongoMockClient
+from pymongo import AsyncMongoClient
+
+import pydantic_ai_harness.step_persistence as sp
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
@@ -25,9 +29,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pymongo import AsyncMongoClient
-
-import pydantic_ai_harness.step_persistence as sp
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.media import MongoMediaStore
 from pydantic_ai_harness.step_persistence import (
@@ -38,13 +39,6 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     ToolEffectRecord,
 )
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _mock_client() -> AsyncMongoClient[dict[str, object]]:
@@ -86,7 +80,10 @@ class TestMongoStepStoreConstruction:
             closed.append(client)
 
         monkeypatch.setattr(AsyncMongoClient, 'close', _record)
-        store = MongoStepStore(db_url='mongodb://localhost:59017', database='t', media_store=None)
+        # Building a client touches the filesystem; users build stores outside the event loop.
+        store = await anyio.to_thread.run_sync(
+            lambda: MongoStepStore(db_url='mongodb://localhost:59017', database='t', media_store=None)
+        )
         await store.aclose()
         assert len(closed) == 1
         assert closed[0] is store._client  # pyright: ignore[reportPrivateUsage]
@@ -506,4 +503,4 @@ class TestStepPersistenceLazyExport:
     def test_unknown_attribute_raises(self) -> None:
 
         with pytest.raises(AttributeError, match='has no attribute'):
-            _ = sp.NoSuchStore  # type: ignore[attr-defined]
+            _ = sp.NoSuchStore

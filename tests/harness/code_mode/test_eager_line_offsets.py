@@ -6,18 +6,11 @@ import json
 from collections.abc import AsyncIterator
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-
 from pydantic_ai_harness.code_mode import CodeMode
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @pytest.mark.parametrize('warmup', [False, True])

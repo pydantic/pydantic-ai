@@ -7,6 +7,9 @@ from pathlib import Path
 import anyio
 import pytest
 from pydantic import ValidationError
+from rich.console import Console
+from termflow.tui.completion import CompleteEvent, Document
+
 from pydantic_ai import (
     Agent,
     CapabilityEvent,
@@ -23,18 +26,10 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
-
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.commands import Command, Commands, config_command, config_completions, plugins_command
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.splash import Splash
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.rendering.splash import Splash
 
 
 @pytest.fixture(autouse=True)
@@ -103,7 +98,7 @@ async def test_cancel_preserves_history_and_rejects_concurrency() -> None:
     async def wait() -> str:
         started.set()
         await release.wait()
-        return 'ok'
+        return 'ok'  # pragma: lax no cover
 
     session = Session(agent, deps=None, message_history=[ModelRequest(parts=[UserPromptPart('first')])])
     prior = session.messages

@@ -6,20 +6,20 @@ from pathlib import Path
 
 import anyio
 import pytest
+from rich.console import Console
+from rich.text import Text
+
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-from rich.text import Text
-from test_live_prompt import editor
-
 from pydantic_clai2._app import create_shell
-from pydantic_clai2._session import Session
-from pydantic_clai2.live_prompt import LivePrompt
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from tests.clai2.test_live_prompt import editor
 
 
 @pytest.mark.parametrize('supplied_handler', [False, True])
@@ -56,11 +56,6 @@ async def test_enter_during_run_teardown_queues_follow_up(supplied_handler: bool
         assert not session.steer('finished')
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('sequence', ['\x1b\r', '\x1b[13;3u', '\x1b[27;3;13~'])
 async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
     accepted: list[str] = []
@@ -95,7 +90,7 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         assert Text.from_ansi(live.frame()[-1]).plain == 'ready'
 
         def idle(text: str) -> bool:
-            return False
+            return False  # pragma: no cover
 
         live.steer = idle
         live.buffer.replace('idle prompt')
@@ -107,8 +102,8 @@ async def test_bare_clear_queues_as_a_command_that_steering_skips() -> None:
     attempted: list[str] = []
 
     def steer(text: str) -> bool:
-        attempted.append(text)
-        return True
+        attempted.append(text)  # pragma: no cover
+        return True  # pragma: no cover
 
     async with editor() as (live, _, _):
         live.steer = steer

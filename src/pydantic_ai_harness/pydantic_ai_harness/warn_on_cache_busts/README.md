@@ -3,7 +3,7 @@
 Warn when a conversation's prompt cache hit collapses between model requests,
 within a run or across the runs that continue it.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/warn_on_cache_busts/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/warn_on_cache_busts/)
 
 Prompt caching pays off only while the cacheable prefix (tools, then system
 instructions, then message history) stays byte-stable across a run's consecutive
@@ -34,6 +34,14 @@ the monitor starts a fresh mark for it instead of comparing against the previous
 model's. Marks are kept per key rather than reset, so switching back to an earlier
 model within its cache TTL still compares against that model's prefix.
 
+Native tool responses may sum cache reads across internal model calls. The monitor
+can still warn on a low total, but keeps the earlier prefix and waits for an ordinary
+request to confirm recovery. If the provider reports one call to the main model and
+no compaction, the response uses normal cache accounting. Gemini responses with
+separate tool-use prompt accounting do the same. These responses can establish a
+larger prefix, and a healthy cache read confirms recovery so a later collapse can
+warn again.
+
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run
 that continues an earlier one via `message_history` -- including history that was
 serialized and loaded back, which carries the conversation id with it -- is judged
@@ -58,7 +66,7 @@ back measures the returning model's own idle time, not whatever ran in between.
 The verdict is cross-provider for free -- pyai normalizes every provider into the
 `cache_read_tokens` / `cache_write_tokens` fields on `RequestUsage`.
 
-While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 It is the opt-in observe arm of the broader prompt-cache-prefix-stability work.
 

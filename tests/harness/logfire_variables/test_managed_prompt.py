@@ -6,8 +6,7 @@ overrides with `executionEnvironments = [{ root = 'tests' }]`, which makes `test
 root -- so a `tests/logfire/` directory would shadow the third-party `logfire` package for
 every test file's `import logfire`. Keeping the directory off that name avoids the collision.
 
-Style follows `tests/code_mode/test_code_mode.py`: module-level
-`pytestmark = pytest.mark.anyio` and an `anyio_backend` fixture. All resolution runs
+Style follows `tests/code_mode/test_code_mode.py`. All resolution runs
 against the code default (no Logfire provider is configured), which is exactly the
 safety-net behavior `ManagedPrompt` relies on. Each test uses a unique slug because the
 default Logfire instance keeps its variable registry across `configure()` calls.
@@ -28,16 +27,14 @@ from logfire.testing import CaptureLogfire
 from logfire.variables import LabeledValue, Rollout, VariableConfig, VariablesConfig
 from logfire.variables.abstract import NoOpVariableProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import ManagedPrompt
 from pydantic_ai_harness.logfire import ManagedPrompt as ManagedPromptFromPackage
-
-pytestmark = pytest.mark.anyio
 
 DEFAULT = 'You are a helpful assistant.'
 
@@ -46,11 +43,6 @@ DEFAULT = 'You are a helpful assistant.'
 def _configure_logfire() -> None:
     """Configure Logfire once so variable resolution does not warn (warnings are errors)."""
     logfire.configure(send_to_logfire=False, console=False)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def instructions_seen(result_messages: list[ModelMessage]) -> list[str]:
@@ -132,12 +124,12 @@ def test_no_variable_provider_is_configured() -> None:
 
 def test_slug_becomes_prompt_variable_name() -> None:
     capability = ManagedPrompt('support_agent', default=DEFAULT)
-    assert capability._variable.name == 'prompt__support_agent'
+    assert capability._variable.name == 'prompt__support_agent'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_hyphenated_slug_is_normalized() -> None:
     capability = ManagedPrompt('welcome-email', default=DEFAULT)
-    assert capability._variable.name == 'prompt__welcome_email'
+    assert capability._variable.name == 'prompt__welcome_email'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_slug_requires_default() -> None:
@@ -147,7 +139,7 @@ def test_slug_requires_default() -> None:
 
 def test_explicit_logfire_instance_is_used() -> None:
     capability = ManagedPrompt('with_instance', default=DEFAULT, logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
-    assert capability._variable.name == 'prompt__with_instance'
+    assert capability._variable.name == 'prompt__with_instance'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_duplicate_slug_is_allowed() -> None:
@@ -156,13 +148,13 @@ def test_duplicate_slug_is_allowed() -> None:
     # `logfire.var` would raise.
     first = ManagedPrompt('shared_slug', default=DEFAULT)
     second = ManagedPrompt('shared_slug', default=DEFAULT)
-    assert first._variable.name == second._variable.name == 'prompt__shared_slug'
+    assert first._variable.name == second._variable.name == 'prompt__shared_slug'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_prompt_prefix_in_slug_warns_and_is_stripped() -> None:
     with pytest.warns(UserWarning, match='added automatically'):
         capability = ManagedPrompt('prompt__already_prefixed', default=DEFAULT)
-    assert capability._variable.name == 'prompt__already_prefixed'
+    assert capability._variable.name == 'prompt__already_prefixed'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_invalid_slug_raises() -> None:
@@ -191,7 +183,7 @@ async def test_override_is_reflected() -> None:
     capability = ManagedPrompt('override_slug', default=DEFAULT)
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with capability._variable.override('Be terse.'):
+    with capability._variable.override('Be terse.'):  # pyright: ignore[reportPrivateUsage]
         result = await agent.run('hello')
 
     assert instructions_seen(result.all_messages()) == ['Be terse.']
@@ -219,7 +211,7 @@ async def test_records_variable_resolution_span(capfire: CaptureLogfire) -> None
                     'value': '"You are a helpful assistant."',
                     'label': 'null',
                     'version': 'null',
-                    'reason': 'no_provider',
+                    'reason': 'code_default',
                     'logfire.json_schema': '{"type":"object","properties":{"name":{},"targeting_key":{"type":"null"},"attributes":{"type":"object"},"value":{},"label":{"type":"null"},"version":{"type":"null"},"reason":{}}}',
                 },
             }
@@ -342,7 +334,7 @@ async def test_resolved_once_per_run_across_multiple_model_requests() -> None:
     def noop() -> str:
         return 'ok'
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         result = await agent.run('hello')
 
     # TestModel issues one request to call the tool and another for the final output,
@@ -361,7 +353,7 @@ async def test_label_and_callable_targeting_and_attributes() -> None:
     )
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         await agent.run('hello')
 
     spy.assert_called_once_with(
@@ -380,7 +372,7 @@ async def test_static_targeting_and_attributes() -> None:
     )
     agent = Agent(TestModel(), capabilities=[capability])
 
-    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:
+    with patch.object(capability._variable, 'get', wraps=capability._variable.get) as spy:  # pyright: ignore[reportPrivateUsage]
         await agent.run('hello')
 
     spy.assert_called_once_with(

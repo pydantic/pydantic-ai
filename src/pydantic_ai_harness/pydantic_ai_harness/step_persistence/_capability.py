@@ -16,7 +16,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-
 from pydantic_ai_harness.step_persistence._context import (
     current_run_id,
     live_run_history,
@@ -96,8 +95,13 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     agent_name: str | None = None
     """Logical agent name (e.g. `code_librarian`, `reproducer`).
 
-    Used as a stable prefix for the context-derived `run_id` so store
-    inspection identifies both the agent and the durable run.
+    Recorded on the run, its events, and its snapshots. When set, it is also
+    encoded into the context-derived `run_id` so store inspection identifies both
+    the agent and the durable run.
+
+    When unset, the running agent's `name` is recorded instead, but the `run_id`
+    stays `ctx.run_id`: deriving the store key from `Agent.name` would change the
+    key of runs that callers look up by their context run id.
     """
 
     run_id: str | None = None
@@ -203,7 +207,10 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         """
         inferred_parent = self.parent_run_id if self.parent_run_id is not None else current_run_id.get()
         resolved_run_id = self.run_id or self._derive_run_id(ctx)
-        return replace(self, run_id=resolved_run_id, parent_run_id=inferred_parent)
+        agent_name = self.agent_name
+        if agent_name is None and ctx.agent is not None:
+            agent_name = ctx.agent.name
+        return replace(self, run_id=resolved_run_id, parent_run_id=inferred_parent, agent_name=agent_name)
 
     def _derive_run_id(self, ctx: RunContext[AgentDepsT]) -> str:
         if ctx.run_id is None:

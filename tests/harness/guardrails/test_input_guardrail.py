@@ -12,6 +12,7 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import CapabilityOrdering
 from pydantic_ai.exceptions import SkipModelRequest, UserError
@@ -28,16 +29,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import GuardrailResult, InputBlocked, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import _extract_prompt  # pyright: ignore[reportPrivateUsage]
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
@@ -173,7 +166,7 @@ class TestInputGuardrail:
             TestModel(custom_output_text='ok'),
             capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.retry('redo'))],
         )
-        with pytest.raises(UserError, match='cannot return GuardrailResult.retry'):
+        with pytest.raises(UserError, match=r'cannot return GuardrailResult.retry'):
             await agent.run('hello')
 
     async def test_runs_once_across_tool_loop(self):
@@ -188,7 +181,7 @@ class TestInputGuardrail:
         agent = Agent(model, capabilities=[InputGuardrail(guard=guard)])
 
         @agent.tool_plain
-        def ping() -> str:  # pyright: ignore[reportUnusedFunction]
+        def ping() -> str:
             return 'pong'
 
         result = await agent.run('hello')
@@ -486,7 +479,7 @@ class TestInputGuardrailParallel:
             return ModelResponse(parts=[TextPart(content='from handler')])
 
         ig = InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'), parallel=True)
-        with pytest.raises(UserError, match='incompatible with GuardrailResult.replace'):
+        with pytest.raises(UserError, match=r'incompatible with GuardrailResult.replace'):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=handler)
 
     async def test_no_dangling_tasks_when_handler_raises(self):

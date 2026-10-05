@@ -7,7 +7,7 @@ description: "Use an LLM judge to review a live Pydantic AI agent run every N mo
 
 Watch a live agent run with a second model, and steer it back on course mid-run.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/trajectory_judge/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/trajectory_judge/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -48,7 +48,7 @@ print(result.output)
 ## Cadence and window
 
 - `every` counts model requests within the run; the judge evaluates on each multiple.
-- `window` bounds what each evaluation sees: the transcript is clamped to its most recent `window` tokens (estimated at ~4 characters per token), so per-evaluation cost stays bounded no matter how long the run gets.
+- `window` bounds what each evaluation sees: the transcript is clamped to its most recent `window` tokens (estimated at ~4 characters per token), so per-evaluation cost stays bounded no matter how long the run gets. When the transcript is longer than that, the request that started the current run (its user prompts before the agent's first response) is kept at the top, truncated to half the window if it is longer, and the rest of the window holds the most recent trajectory. The judge can then compare the latest work against what was asked even after large tool results. Earlier runs passed as `message_history` are included ahead of it while they fit, and are the first to be dropped.
 - At most one evaluation per judge is in flight at a time. A cadence tick that finds the previous evaluation still running is skipped, so a slow judge falls behind rather than piling up concurrent calls.
 - An evaluation still in flight when the run ends is cancelled: its steering would have nowhere to go.
 
@@ -110,7 +110,7 @@ agent = Agent(
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
 - An evaluation failure is raised on the run at the next cadence tick or at run end; judge failures are never silently dropped. If you need a judge to degrade instead, give it a fallback model through `agent` (for example a `FallbackModel`): resilience policy belongs to the judge agent, not to fields on the capability.
-- A judged run inside a [durable execution](/ai/capabilities/durable_execution/overview/) workflow or flow (Temporal, DBOS, Prefect) is rejected with `UserError` before the first model request: the evaluation is launched from a capability hook in orchestration context, so its model calls would not be checkpointed and could repeat on replay. A durable-capable agent run outside its workflow or flow is unaffected. Run judged work outside durable execution.
+- A judged run inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect) is rejected with `UserError` before the first model request: the evaluation is launched from a capability hook in orchestration context, so its model calls would not be checkpointed and could repeat on replay. A durable-capable agent run outside its workflow or flow is unaffected. Run judged work outside durable execution.
 
 ## Observability
 
@@ -133,12 +133,12 @@ TrajectoryJudge(
 
 ## Not spec-serializable
 
-`TrajectoryJudge.get_serialization_name()` returns `None`: the capability may hold a live `Agent` instance and a callback, which cannot be serialized to an [agent spec](/ai/core-concepts/agent-spec/).
+`TrajectoryJudge.get_serialization_name()` returns `None`: the capability may hold a live `Agent` instance and a callback, which cannot be serialized to an [agent spec](../agent-spec.md).
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
-- [Hooks](/ai/core-concepts/hooks/) -- `after_model_request` drives the cadence; `wrap_run` settles the judge at run end
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Hooks](../hooks.md) -- `after_model_request` drives the cadence; `wrap_run` settles the judge at run end
 - [System Reminders](system-reminders.md) -- rule-based mid-run steering without a second model
 
 ## API reference

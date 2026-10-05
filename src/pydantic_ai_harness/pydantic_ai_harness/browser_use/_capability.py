@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
+
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.browser_use._model import ChatModelInput, resolve_chat_model
 from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 from pydantic_ai_harness.browser_use._toolset import (

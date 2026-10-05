@@ -11,9 +11,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
-from weakref import ReferenceType, ref
 
-from pydantic_ai._run_context import AgentDepsT
+from typing_extensions import Self, assert_never
+
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -35,9 +35,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel, Model
-from pydantic_ai.tools import RunContext
-from typing_extensions import Self, assert_never
-
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -59,10 +57,15 @@ if TYPE_CHECKING:
 _CHARS_PER_TOKEN = 4
 """Rough approximation: ~4 characters per token on average."""
 
-_COMPACTION_RECLAIM: ContextVar[tuple[ReferenceType[object], int] | None] = ContextVar(
+_COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
     'pydantic_ai_harness.compaction.reclaim', default=None
 )
-"""Heuristic reclaim from compaction that ran earlier in this request's hook chain."""
+"""`(run_id, run_step, reclaimed)`: heuristic reclaim from compaction earlier in this request's hook chain.
+
+Keyed by the request (`run_step` advances once per model request) rather than by request-context
+identity: strategies return `replace()` copies of the context, so an identity key would have to be
+re-attached at every hop, and a strategy that forgot would silently drop the correction.
+"""
 
 
 def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
@@ -130,7 +133,7 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # reveal was free.
     elif isinstance(part, ToolAvailabilityDeltaPart):
         return []
-    elif isinstance(part, SpeechPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+    elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
         # words the provider bills against the window -- not the binary audio, which has no
         # character-count meaning (as with `FilePart`).
@@ -222,7 +225,7 @@ def estimate_token_count(
     Args:
         messages: Messages to count tokens for.
         tokenizer: Optional callable that returns the token count for a string.
-            When ``None``, falls back to a ~4 characters-per-token heuristic.
+            When `None`, falls back to a ~4 characters-per-token heuristic.
     """
     segments = _collect_text(messages)
     if tokenizer is not None:
@@ -326,21 +329,26 @@ def _tool_schema_text(tool: ToolDefinition) -> str:
     return ''.join((tool.name, tool.description or '', dumps(tool.parameters_json_schema, sort_keys=True)))
 
 
-def record_compaction_reclaim(request_context: ModelRequestContext, before: int, after: int) -> None:
+def reset_compaction_reclaim() -> None:
+    """Start a run without corrections inherited from a previous invocation."""
+    _COMPACTION_RECLAIM.set(None)
+
+
+def record_compaction_reclaim(ctx: RunContext[AgentDepsT], before: int, after: int) -> None:
     """Record a conservative correction for a later usage reporter in this hook chain."""
     previous = _COMPACTION_RECLAIM.get()
     reclaimed = max(before - after, 0)
-    if previous is not None and previous[0]() is request_context:
-        reclaimed += previous[1]
-    _COMPACTION_RECLAIM.set((ref(request_context), reclaimed))
+    if previous is not None and previous[:2] == (ctx.run_id, ctx.run_step):
+        reclaimed += previous[2]
+    _COMPACTION_RECLAIM.set((ctx.run_id, ctx.run_step, reclaimed))
 
 
-def get_compaction_reclaim(request_context: ModelRequestContext) -> int:
-    """Return the reclaim recorded for *request_context*, if it is still current."""
+def get_compaction_reclaim(ctx: RunContext[AgentDepsT]) -> int:
+    """Return the reclaim recorded for this request, or 0 for one left over from another."""
     previous = _COMPACTION_RECLAIM.get()
-    if previous is None or previous[0]() is not request_context:
+    if previous is None or previous[:2] != (ctx.run_id, ctx.run_step):
         return 0
-    return previous[1]
+    return previous[2]
 
 
 def exceeds(
@@ -595,8 +603,8 @@ def _is_safe_cutoff(
 ) -> bool:
     """Return True if cutting at *cutoff* does not orphan any tool-call pair.
 
-    A tool-call pair is a ``ToolCallPart`` in a ``ModelResponse`` together with
-    the corresponding ``ToolReturnPart`` in a subsequent ``ModelRequest``.  Both
+    A tool-call pair is a `ToolCallPart` in a `ModelResponse` together with
+    the corresponding `ToolReturnPart` in a subsequent `ModelRequest`.  Both
     sides must end up on the same side of the cut.
     """
     if cutoff >= len(messages):
@@ -654,7 +662,7 @@ def find_token_cutoff(
     target_tokens: int,
     tokenizer: Callable[[str], int] | None = None,
 ) -> int:
-    """Binary-search for a cutoff such that ``messages[cutoff:]`` fits in *target_tokens*.
+    """Binary-search for a cutoff such that `messages[cutoff:]` fits in *target_tokens*.
 
     Adjusts the result so that no tool-call pairs are orphaned.
     """
@@ -673,7 +681,7 @@ def find_token_cutoff(
             lo = mid + 1
 
     if candidate >= len(messages):
-        candidate = max(0, len(messages) - 1)  # pragma: no cover
+        candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
     for idx in range(candidate, -1, -1):
@@ -693,7 +701,7 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
 
 
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
-    """Return the first ``ModelRequest`` that contains a ``UserPromptPart``, or ``None``."""
+    """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
     for msg in messages:
         if isinstance(msg, ModelRequest) and any(
             isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in msg.parts
@@ -709,7 +717,7 @@ def prepend_first_user_message(
 ) -> list[ModelMessage]:
     """Ensure the first user message from *original* appears in *trimmed*.
 
-    If the first ``ModelRequest`` containing a ``UserPromptPart`` in *original*
+    If the first `ModelRequest` containing a `UserPromptPart` in *original*
     was discarded (its index is before *cutoff*) and is not already in *trimmed*,
     prepend it.
     """
@@ -729,7 +737,7 @@ def prepend_first_user_message(
 _CLEARED_TOOL_ARGS = '{}'
 """Replacement for cleared tool-call arguments.
 
-Kept JSON-valid: ``ToolCallPart.args_as_json_str()`` returns a ``str`` arg verbatim, so a
+Kept JSON-valid: `ToolCallPart.args_as_json_str()` returns a `str` arg verbatim, so a
 non-JSON placeholder would reach the provider as malformed function arguments.
 """
 
@@ -773,7 +781,7 @@ def rebuild_with_cleared(
 ) -> list[ModelMessage]:
     """Return *messages* with selected tool results (and optionally inputs) blanked.
 
-    The ``ToolReturnPart`` / ``ToolCallPart`` are kept in place with placeholder content,
+    The `ToolReturnPart` / `ToolCallPart` are kept in place with placeholder content,
     so tool-call pairing is never broken.  Already-blanked parts are left untouched.
     """
     out: list[ModelMessage] = []

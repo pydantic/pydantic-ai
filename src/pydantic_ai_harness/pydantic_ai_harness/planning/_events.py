@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from pydantic import BaseModel
-from pydantic_ai import CapabilityEvent
 
+from pydantic_ai import CapabilityEvent
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.planning._types import PlanItem
 

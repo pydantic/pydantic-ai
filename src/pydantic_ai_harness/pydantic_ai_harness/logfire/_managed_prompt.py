@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import logfire
 from logfire.variables import Variable
+
 from pydantic_ai import TemplateStr
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -17,6 +18,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 if TYPE_CHECKING:
     from logfire import Logfire
     from logfire.variables import ResolvedVariable
+
     from pydantic_ai.capabilities.abstract import WrapRunHandler
     from pydantic_ai.run import AgentRunResult
 

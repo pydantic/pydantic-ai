@@ -2,7 +2,7 @@
 
 Let one agent coordinate a whole team of sub-agents by writing a small Python script.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/dynamic_workflow/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
 ## The idea
 
@@ -421,9 +421,10 @@ workflow.reveal(fixer)
 ```
 
 The revealed sub-agent becomes callable on the next step. The model learns about it through a short
-announcement message that carries the new function's signature. The `run_workflow` description itself
-stays frozen at the agents present when the run started, so even a runtime reveal never moves the
-prompt-cache prefix.
+system-level announcement message that carries the new function's signature. The `run_workflow`
+description itself stays frozen at the agents present when the run started, so even a runtime reveal
+never moves the prompt-cache prefix. If compaction or a history processor removes the announcement,
+the capability announces the sub-agent again on the next step.
 
 > **Note**
 >

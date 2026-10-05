@@ -6,6 +6,7 @@ import importlib.util
 from typing import TYPE_CHECKING
 
 import pytest
+
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -21,11 +22,6 @@ collect_ignore = (
     if importlib.util.find_spec('mcp') is None or importlib.util.find_spec('fastmcp') is None
     else []
 )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @pytest.fixture

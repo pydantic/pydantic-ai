@@ -13,31 +13,35 @@ from __future__ import annotations
 import warnings
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
-
 from pydantic_ai_harness.warn_on_cache_busts import (
     CacheBustWarning,
     WarnOnCacheBusts,
 )
 
-pytestmark = pytest.mark.anyio
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-def _usage(*, read: int = 0, write: int = 0) -> RequestUsage:
-    return RequestUsage(input_tokens=10, output_tokens=5, cache_read_tokens=read, cache_write_tokens=write)
+def _usage(*, read: int = 0, write: int = 0, passes: int | None = None) -> RequestUsage:
+    details = {} if passes is None else {'message_iterations': passes}
+    return RequestUsage(
+        input_tokens=10, output_tokens=5, cache_read_tokens=read, cache_write_tokens=write, details=details
+    )
 
 
 def _agent_for_runs(runs: list[list[RequestUsage]], monitor: WarnOnCacheBusts[None]) -> Agent[None, str]:
@@ -531,6 +535,183 @@ async def test_collapse_latch_carries_across_runs() -> None:
         first = await agent.run('first')
     with warnings.catch_warnings():
         warnings.simplefilter('error', CacheBustWarning)
+        await agent.run('second', message_history=first.all_messages())
+
+
+def _native_tool_response(usage: RequestUsage, *, steps: bool = True) -> ModelResponse:
+    """A response containing a native tool call.
+
+    The trailing `ToolCallPart` keeps the run stepping; pass `steps=False` for a final text answer.
+    """
+    parts = [
+        NativeToolCallPart('web_search', {'query': 'x'}, tool_call_id='srv-1', provider_name='test'),
+        NativeToolReturnPart('web_search', 'results', tool_call_id='srv-1', provider_name='test'),
+        ToolCallPart('noop', {}) if steps else TextPart('done'),
+    ]
+    return ModelResponse(parts=parts, usage=usage)
+
+
+async def test_native_tool_response_does_not_raise_the_mark() -> None:
+    """A response with native tool calls reports usage summed over its sampling passes.
+
+    Three web searches inside one request read the ~8k prefix on each of four passes, so the
+    response says ~33k cached tokens. That is not a prefix the next request can read back; raising
+    the mark to it made the next, perfectly healthy request look like a collapse.
+    """
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=8000, write=200)),
+        _native_tool_response(_usage(read=32800, write=600)),
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=8400, write=300)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        result = await agent.run('hi')
+    assert result.output == 'done'
+
+
+async def test_collapse_after_native_tool_response_still_warns() -> None:
+    """The mark established before a native-tool response still judges the requests after it."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        _native_tool_response(_usage(read=32000, write=600)),
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=500)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning, match='request 3.*established ~8000'):
+        await agent.run('hi')
+
+
+async def test_native_tool_response_can_prove_a_collapse() -> None:
+    """A summed read that is still below the threshold means the first pass read little: warn.
+
+    Pins that a native-tool response is judged, not skipped: every pass read at least what the
+    first did, so a low total is a real collapse even though a high one proves nothing.
+    """
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        _native_tool_response(_usage(read=1000, write=9000), steps=False),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning, match='request 2'):
+        await agent.run('hi')
+
+
+async def test_native_tool_response_does_not_clear_the_collapse_latch() -> None:
+    """A healthy-looking summed read cannot prove the cache re-stabilized, so a sustained collapse warns once."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=100)),  # collapse -> warn
+        _native_tool_response(_usage(read=16000, write=8000)),  # two passes, each re-reading a rewritten cache
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=100)),  # still collapsed: latched
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning) as record:
+        await agent.run('hi')
+    busts = [str(w.message) for w in record if issubclass(w.category, CacheBustWarning)]
+    assert len(busts) == 1
+    assert 'request 2' in busts[0]
+
+
+async def test_tool_use_prompt_accounting_updates_the_mark_and_rearms_the_latch() -> None:
+    """Google's separate tool-use prompt count leaves cache reads as an ordinary prefix count."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=100)),  # collapse -> warn
+        _native_tool_response(
+            RequestUsage(
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_tokens=12000,
+                cache_write_tokens=0,
+                details={'tool_use_prompt_tokens': 24000},
+            )
+        ),  # healthy cache read -> raise the mark and re-arm
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=5000)),  # collapse against 12000
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning) as record:
+        await agent.run('hi')
+
+    busts = [str(w.message) for w in record if issubclass(w.category, CacheBustWarning)]
+    assert len(busts) == 2
+    assert 'request 2' in busts[0]
+    assert 'request 4' in busts[1]
+    assert 'established ~12000' in busts[1]
+
+
+async def test_reported_single_pass_with_a_native_tool_establishes_the_mark() -> None:
+    """The reported pass count overrides the native-tool part heuristic."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=4000)),
+        _native_tool_response(_usage(read=4000, write=4000, passes=1)),  # raises the mark to 8000
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=3000)),  # below half of 8000
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning, match='request 3.*established ~8000'):
+        await agent.run('hi')
+
+
+async def test_reported_single_pass_with_compaction_and_a_native_tool_does_not_raise_the_mark() -> None:
+    responses: list[ModelResponse] = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        _native_tool_response(
+            RequestUsage(
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_tokens=20000,
+                cache_write_tokens=0,
+                details={'message_iterations': 1, 'compaction_iterations': 1},
+            )
+        ),
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=8000)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        result = await agent.run('hi')
+    assert result.output == 'done'
+
+
+async def test_reported_multiple_passes_without_a_native_tool_part_keeps_the_mark() -> None:
+    """A reported pass count above one is multi-pass even when no native tool part survived."""
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=24000, write=600, passes=3)),
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=8200)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        result = await agent.run('hi')
+    assert result.output == 'done'
+
+
+async def test_native_tool_response_as_first_request_establishes_no_mark() -> None:
+    """A conversation whose first response ran a native tool starts without a mark, not from its sum."""
+    responses = [
+        _native_tool_response(_usage(read=0, write=8000)),  # one pass wrote 8000; the sum cannot say which
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=100)),  # no mark yet: silent
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=100)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        result = await agent.run('hi')
+    assert result.output == 'done'
+
+
+async def test_mark_kept_across_a_native_tool_response_still_names_the_earlier_run() -> None:
+    """The kept mark keeps its origin: a collapse after a next-turn native-tool response names the earlier run."""
+    responses = [
+        ModelResponse(parts=[TextPart('first')], usage=_usage(read=0, write=8000)),
+        _native_tool_response(_usage(read=24000, write=600)),  # second run opens with three passes
+        ModelResponse(parts=[TextPart('done')], usage=_usage(read=100)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
+    first = await agent.run('first')
+    with pytest.warns(CacheBustWarning, match='request 2.*an earlier run of this conversation established ~8000'):
         await agent.run('second', message_history=first.all_messages())
 
 

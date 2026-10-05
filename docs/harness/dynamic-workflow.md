@@ -185,7 +185,7 @@ orchestrator = Agent('openai:gpt-5', deps_type=MyDeps, capabilities=[workflow])
 workflow.reveal(fixer)
 ```
 
-The revealed sub-agent becomes callable on the next step; the model learns about it through a short announcement message that carries the new function's signature. The `run_workflow` description itself stays frozen at the agents present when the run started, so a runtime reveal never moves the prompt-cache prefix. `reveal()` is append-only and validates immediately -- a missing name, an invalid identifier, a reserved keyword, or a name collision raises `UserError` at the call site.
+The revealed sub-agent becomes callable on the next step; the model learns about it through a short system-level announcement message that carries the new function's signature. The `run_workflow` description itself stays frozen at the agents present when the run started, so a runtime reveal never moves the prompt-cache prefix. If compaction or a history processor removes the announcement, the capability announces the sub-agent again on the next step. `reveal()` is append-only and validates immediately -- a missing name, an invalid identifier, a reserved keyword, or a name collision raises `UserError` at the call site.
 
 ## Loading it only when needed: `defer_loading`
 
@@ -199,7 +199,7 @@ DynamicWorkflow(
 )
 ```
 
-`defer_loading=True` needs a stable `id`. See [on-demand capabilities](/ai/capabilities/on-demand/) for the full picture.
+`defer_loading=True` needs a stable `id`. See [on-demand capabilities](../capabilities/on-demand.md) for the full picture.
 
 ## What runs in the sandbox
 
@@ -222,7 +222,7 @@ Before a script runs it is statically type-checked against the sub-agent signatu
 
 Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each
 sub-agent whose model requests should run as activities, then register every agent with its own
-`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](/ai/harness/code-mode/#temporal-durability),
+`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability),
 and is re-executed during replay against the recorded sub-agent results.
 Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
@@ -260,11 +260,11 @@ WorkflowAgent(
 
 `DynamicWorkflowToolset` and `WorkflowResourceLimits` are also exported from the module for advanced use.
 
-Source: [`pydantic_ai_harness/dynamic_workflow/`](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/dynamic_workflow/).
+Source: [`pydantic_ai_harness/dynamic_workflow/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/).
 
 ## Further reading
 
 - [Code Mode](code-mode.md) -- the same sandbox, calling the agent's own tools instead of sub-agents.
 - [Subagents](subagents.md) -- one-delegation-per-tool-call sub-agents, without the scripted choreography.
 - [Rewriting Bun in Rust](https://bun.com/blog/bun-in-rust) (Bun) -- the same pattern at scale, via Claude Code's dynamic workflows.
-- [Capabilities](/ai/capabilities/overview/) and [on-demand capabilities](/ai/capabilities/on-demand/).
+- [Capabilities](../capabilities/overview.md) and [on-demand capabilities](../capabilities/on-demand.md).

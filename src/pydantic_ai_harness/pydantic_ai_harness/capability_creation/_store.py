@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ValidationError
-from pydantic_ai.capabilities import AbstractCapability
 
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai_harness.capability_creation._validate import (
     CapabilityValidationError,
     load_capability_instance,

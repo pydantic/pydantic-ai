@@ -6,12 +6,14 @@ from enum import Enum
 from pathlib import Path
 
 import httpx
-from pydantic_ai.tools import AgentDepsT
+
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._workspace import workspace_path
 
 _REMOTE_BASE = 'https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs'
 """Raw-markdown base for the live fallback. Tracks `pydantic/pydantic-ai:main`,
-and each topic maps to `{base}/{topic}.md` -- byte-identical to a local checkout."""
+and each topic maps to `{base}/{page}` -- byte-identical to a local checkout."""
 
 _FETCH_TIMEOUT = 30.0
 """Per-request timeout (seconds) for the remote markdown fetch."""
@@ -20,8 +22,9 @@ _FETCH_TIMEOUT = 30.0
 class PydanticAIDocsTopic(str, Enum):
     """A Pydantic AI documentation page that `read_pyai_docs` can return.
 
-    Each value is the on-disk / remote file stem, so `{value}.md` resolves both a
-    local checkout file and a raw-markdown URL.
+    The value is the topic name the model passes. `_PAGES` maps it to the page's
+    path relative to the pydantic-ai `docs/` directory, used for both a local
+    checkout file and a raw-markdown URL.
     """
 
     capabilities = 'capabilities'
@@ -32,13 +35,24 @@ class PydanticAIDocsTopic(str, Enum):
     agent = 'agent'
 
 
+_PAGES: dict[PydanticAIDocsTopic, str] = {
+    PydanticAIDocsTopic.capabilities: 'capabilities/overview.md',
+    PydanticAIDocsTopic.hooks: 'hooks.md',
+    PydanticAIDocsTopic.tools: 'tools.md',
+    PydanticAIDocsTopic.tools_advanced: 'tools-advanced.md',
+    PydanticAIDocsTopic.toolsets: 'toolsets.md',
+    PydanticAIDocsTopic.agent: 'agent.md',
+}
+"""Each topic's page relative to pydantic-ai's `docs/` directory."""
+
+
 class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
     """Exposes one `read_pyai_docs` tool that locates and returns a pyai doc.
 
     Resolution per call: a configured local checkout first (when the topic's
-    `{stem}.md` exists there), otherwise a raw-markdown fetch from `main`. The
-    full doc is returned verbatim. Results are memoized in the shared `cache`
-    dict (when caching is enabled) so a topic is read or fetched at most once.
+    page exists there), otherwise a raw-markdown fetch from `main`. The full doc
+    is returned verbatim. Results are memoized in the run-scoped `cache` dict
+    when caching is enabled.
     """
 
     def __init__(
@@ -49,12 +63,11 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
     ) -> None:
         super().__init__()
         self._local_docs_path = local_docs_path
-        # Shared with the capability so memoized docs outlive a single get_toolset
-        # call; `None` disables caching entirely.
+        # Shared with the run-scoped capability; `None` disables caching entirely.
         self._cache = cache
         self.add_function(self.read_pyai_docs, name='read_pyai_docs')
 
-    async def read_pyai_docs(self, topic: PydanticAIDocsTopic) -> str:
+    async def read_pyai_docs(self, ctx: RunContext[AgentDepsT], topic: PydanticAIDocsTopic) -> str:  # noqa: D417
         """Return the Pydantic AI documentation for `topic` as markdown.
 
         Reads from a configured local docs checkout when available, otherwise
@@ -68,7 +81,7 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         if self._cache is not None and topic in self._cache:
             return self._cache[topic]
 
-        markdown = self._read_local(topic)
+        markdown = await self._read_local(ctx, topic)
         if markdown is None:
             markdown = await self._fetch_remote(topic)
 
@@ -76,18 +89,20 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
             self._cache[topic] = markdown
         return markdown
 
-    def _read_local(self, topic: PydanticAIDocsTopic) -> str | None:
+    async def _read_local(self, ctx: RunContext[AgentDepsT], topic: PydanticAIDocsTopic) -> str | None:
         """Return the local checkout's markdown for `topic`, or `None` to fall back to remote."""
         if self._local_docs_path is None:
             return None
-        path = self._local_docs_path.expanduser() / f'{topic.value}.md'
-        if not path.is_file():
+        local_path = self._local_docs_path / _PAGES[topic]
+        path = await ctx.workspace.resolve(workspace_path(local_path))
+        try:
+            return await ctx.workspace.read_text(path)
+        except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             return None
-        return path.read_text(encoding='utf-8')
 
     async def _fetch_remote(self, topic: PydanticAIDocsTopic) -> str:
         """Fetch `topic`'s markdown from the live source, or raise a descriptive error."""
-        url = f'{_REMOTE_BASE}/{topic.value}.md'
+        url = f'{_REMOTE_BASE}/{_PAGES[topic]}'
         try:
             async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
                 response = await client.get(url)

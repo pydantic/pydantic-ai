@@ -8,16 +8,16 @@ from pathlib import Path
 import anyio
 import pytest
 from pydantic import JsonValue
+from rich.console import Console
+
 from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
-from rich.console import Console
-
-from pydantic_clai2 import notifications
 from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
-from pydantic_clai2.plugins import PluginHost, TurnEnd, TurnOutcome, TurnStart
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.builtin_plugins import notifications
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import PluginHost, TurnEnd, TurnOutcome, TurnStart, load_plugin
 
 
 @pytest.fixture
@@ -46,29 +46,25 @@ def host(*, terminal: bool = True) -> PluginHost[None]:
     ],
 )
 async def test_turn_outcomes(outcome: TurnOutcome, expected: list[str], sent: list[str]) -> None:
-    plugin = host()
-    notifications.activate(plugin)
-    for handler in plugin.handlers:
-        await handler(TurnEnd(text='secret prompt', outcome=outcome, error=ValueError('secret error')))
+    plugin = load_plugin(notifications.NotificationsPlugin, host())
+    await plugin.dispatch(TurnEnd(text='secret prompt', outcome=outcome, error=ValueError('secret error')))
     assert sent == expected
 
 
 @pytest.mark.parametrize('environment', ['pipe', 'SSH_CONNECTION', 'SSH_TTY'])
-def test_nonlocal_or_noninteractive_is_quiet(
+async def test_nonlocal_or_noninteractive_is_quiet(
     environment: str, sent: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     if environment != 'pipe':
         monkeypatch.setenv(environment, 'remote')
-    plugin = host(terminal=environment != 'pipe')
-    notifications.activate(plugin)
-    assert plugin.handlers == []
-    assert plugin.capabilities == []
+    plugin = load_plugin(notifications.NotificationsPlugin, host(terminal=environment != 'pipe'))
+    assert plugin.capabilities == ()
+    await plugin.dispatch(TurnEnd(text='secret prompt', outcome='completed'))
     assert sent == []
 
 
 async def test_question_notifies_before_answerer(sent: list[str]) -> None:
-    plugin = host()
-    notifications.activate(plugin)
+    plugin = load_plugin(notifications.NotificationsPlugin, host())
 
     async def answer(request: AskUserRequest) -> AskUserResponse:
         assert sent == ['Your input is needed.']

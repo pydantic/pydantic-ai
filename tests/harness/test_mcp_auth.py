@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition
-
 from pydantic_ai_harness._mcp import credential, is_read_only, one_connection
 
 

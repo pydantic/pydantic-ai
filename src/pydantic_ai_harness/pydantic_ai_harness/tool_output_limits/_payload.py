@@ -12,9 +12,9 @@ from collections.abc import Callable, Mapping, Sequence
 from enum import Enum
 from typing import TypeGuard
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_core import to_json
 
+from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.compaction._shared import estimate_token_count
 

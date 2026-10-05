@@ -3,20 +3,16 @@
 import keyring
 import pytest
 from keyring.errors import KeyringError, NoKeyringError
-from menu_script import Script, pick, typed
+from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInputResult
+
 from pydantic_ai.exceptions import UserError
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
-
-from pydantic_clai2 import api_keys, key_menu
-from pydantic_clai2.credential_store import save_codex_credentials
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.key_menu import KeyAction, KeysSource, build_keys_menu, keys_command, run_keys_flow
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.credential_store import save_codex_credentials
+from pydantic_clai2.ui.menus import key_menu
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, is_save_and_close, save_and_close_item
+from pydantic_clai2.ui.menus.key_menu import KeyAction, KeysSource, build_keys_menu, keys_command, run_keys_flow
+from tests.clai2.menu_script import Script, pick, typed
 
 
 def test_management_flow() -> None:
@@ -90,6 +86,17 @@ def test_menu_keys(monkeypatch: pytest.MonkeyPatch, key: str) -> None:
         assert result.item.value == expected[key]
 
 
+@pytest.mark.parametrize('message', ['', 'Saved KEY.'])
+def test_save_and_close_is_the_last_row_and_leaves(monkeypatch: pytest.MonkeyPatch, message: str) -> None:
+    pressed = iter(['end', 'enter'])
+    monkeypatch.setattr(key_menu, 'menu_key', lambda: next(pressed))
+    result = build_keys_menu(names=['KEY'], message=message).run()
+    assert result.item is not None and is_save_and_close(result.item)
+    script = Script(lists=[MenuResult(item=save_and_close_item())], choices=[], texts=[])
+    run_keys_flow(runners=script.runners)
+    assert script.opened == ['list']
+
+
 def test_empty_menu_action(monkeypatch: pytest.MonkeyPatch) -> None:
     pressed = iter(['r', 'd', 'a'])
     monkeypatch.setattr(key_menu, 'menu_key', lambda: next(pressed))
@@ -105,7 +112,7 @@ def test_masked_editor(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFi
     assert source.problem(row, '') is not None
     assert source.problem(row, 'new-secret') is None
     pressed = iter([*'new-secret', 'enter'])
-    monkeypatch.setattr('pydantic_clai2.field_menu.menu_key', lambda: next(pressed))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(pressed))
     widget = FieldMenu(source).build_editor(row)
     assert widget.run().value == 'new-secret'
     output = capsys.readouterr().out

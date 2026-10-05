@@ -3,6 +3,7 @@
 import asyncio
 import io
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -10,18 +11,21 @@ import prompt_toolkit
 import pytest
 from prompt_toolkit.completion import CompleteEvent, Completer
 from prompt_toolkit.document import Document
+from rich.console import Console
+
+import pydantic_clai2
 from pydantic_ai import Agent, ModelRequestContext, RunContext, models
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from rich.console import Console
-
-import pydantic_clai2
-from pydantic_clai2 import DEFAULT_PLUGINS, chat, theme
+from pydantic_clai2 import DEFAULT_PLUGINS, chat
+from pydantic_clai2._app import STOCK_PLUGINS
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime._session import StockAgent
+from pydantic_clai2.ui.rendering import theme
 
 models.ALLOW_MODEL_REQUESTS = False
 PromptT = TypeVar('PromptT')
@@ -39,27 +43,25 @@ async def main(root: Path, mode: str) -> None:
         commands.write_text(commands.read_text() + '\nRELOAD_MARKER = "source graph"\n')
         (package / 'reload_bridge.py').write_text('from .commands import RELOAD_MARKER\n')
         updated += '\nfrom .reload_bridge import RELOAD_MARKER\nassert RELOAD_MARKER == "source graph"\n'
-    session = package / '_session.py'
+    session = package / 'runtime' / '_session.py'
     session.write_text(
         session.read_text().replace('                        content,', "                        content + ' updated',")
     )
     plugin = root / 'reload_plugin.py'
     plugin.write_text(
         'from pydantic_clai2.commands import Command\n'
-        'from pydantic_clai2.plugins import SessionStart, SessionEnd, TurnStart\n'
-        'def activate(host):\n'
-        '    @host.on("session_start")\n'
-        '    async def start(event):\n'
+        'from pydantic_clai2.plugins import Plugin, SessionStart, SessionEnd, TurnStart\n'
+        'class Example(Plugin):\n'
+        '    async def on_session_start(self, event):\n'
         '        assert isinstance(event, SessionStart)\n'
-        '        host.console.print(f"plugin start {event.settings.model} {event.settings.thinking}")\n'
-        '    @host.on("session_end")\n'
-        '    async def end(event):\n'
-        '        host.console.print("plugin end")\n'
-        '    @host.on("turn_start")\n'
-        '    async def turn(event):\n'
+        '        self.host.console.print(f"plugin start {event.settings.model} {event.settings.thinking}")\n'
+        '    async def on_session_end(self, event):\n'
+        '        self.host.console.print("plugin end")\n'
+        '    async def on_turn_start(self, event):\n'
         '        assert isinstance(event, TurnStart)\n'
-        '        host.console.print("plugin turn " + event.text)\n'
-        '    host.commands.register(Command(name="example", description="Example", handler=lambda _: "plugin command"))\n'
+        '        self.host.console.print("plugin turn " + event.text)\n'
+        '    def get_commands(self):\n'
+        '        return [Command(name="example", description="Example", handler=lambda _: "plugin command")]\n'
     )
     store = SettingsStore(root / 'config.db')
     declaration = PluginSettings(id='example', factory='reload_plugin')
@@ -120,6 +122,8 @@ async def main(root: Path, mode: str) -> None:
                     elif mode == 'import':
                         (package / 'new_module.py').write_text('VALUE = 1\n')
                         app.write_text(updated + '\nfrom . import new_module\nraise RuntimeError("bad import")\n')
+                    elif mode == 'harness':
+                        app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
                     elif mode == 'build':
                         app.write_text(
                             updated.replace('    commands = Commands()', '    raise RuntimeError("bad build")')
@@ -142,10 +146,18 @@ async def main(root: Path, mode: str) -> None:
                 if isinstance(part, UserPromptPart)
             ]
         )
+        if mode == 'stock':
+            assert 'delegate_task' in {tool.name for tool in request_context.model_request_parameters.function_tools}
+            return replace(request_context, model=TestModel(call_tools=[], custom_output_text='hello'))
         return request_context
 
     output = io.StringIO()
-    agent = Agent(TestModel(call_tools=[], custom_output_text='hello'), deps_type=object)
+    model = TestModel(call_tools=[], custom_output_text='hello')
+    agent = (
+        StockAgent(model, deps_type=object, output_type=str, capabilities=[])
+        if mode == 'stock'
+        else Agent(model, deps_type=object)
+    )
     with (
         pytest.MonkeyPatch.context() as patch,
         agent.override(model=TestModel(call_tools=[], custom_output_text='hello')),
@@ -158,7 +170,11 @@ async def main(root: Path, mode: str) -> None:
             plugins=[hooks],
             store=store,
             console=Console(file=output, width=200),
-            builtin_plugins=(declaration,) if mode == 'custom' else DEFAULT_PLUGINS,
+            builtin_plugins=(declaration,)
+            if mode == 'custom'
+            else STOCK_PLUGINS
+            if mode == 'stock'
+            else DEFAULT_PLUGINS,
             project=ProjectSettings(plugins=(PluginSettings(id='unapproved', factory='unapproved', enabled=False),)),
         )
     conversations = SqliteConversationStore(database=root / 'sessions.db')
@@ -185,12 +201,15 @@ async def main(root: Path, mode: str) -> None:
     if mode == 'custom':
         assert 'example: reload_plugin (built-in) (enabled, loaded)' in text, text
     assert seen[0] == ['first'], seen
-    assert seen[1] == ['first', 'second updated' if mode in ('success', 'custom', 'new_imports') else 'second'], seen
+    assert seen[1] == [
+        'first',
+        'second updated' if mode in ('success', 'custom', 'new_imports', 'stock') else 'second',
+    ], seen
     assert seen[2] == [*seen[1], 'third' if mode == 'unchanged' else 'third updated'], seen
     assert labels[-1] == ('> ' if mode == 'unchanged' else 'updated> ')
     assert store.load().model == 'test' and not store.load().thinking
     assert store.load().theme == 'github_light'
-    if mode in ('unchanged', 'success', 'custom', 'new_imports'):
+    if mode in ('unchanged', 'success', 'custom', 'new_imports', 'stock'):
         assert text.count('CLAI2 reloaded. Conversation preserved.') == 2, text
         assert ('Use /help.' if mode == 'unchanged' else 'Use updated /help.') in text, text
     else:
@@ -198,6 +217,10 @@ async def main(root: Path, mode: str) -> None:
         assert text.count('CLAI2 reloaded. Conversation preserved.') == 1, text
         assert 'Use /help.' in text, text
         assert 'pydantic_clai2.new_module' not in sys.modules
+    assert ('Harness is not refreshed by /reload.' in text) == (mode == 'harness'), text
+    if mode == 'harness':
+        assert '--resume to continue this session.' in text, text
+        assert 'Keep the worktree if asked to remove it.' in text, text
 
 
 asyncio.run(main(Path(sys.argv[1]), sys.argv[2]))

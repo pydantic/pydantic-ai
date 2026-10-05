@@ -15,8 +15,9 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pydantic_ai.messages as messages_module
 import pytest
+
+import pydantic_ai.messages as messages_module
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
@@ -39,10 +40,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
-from pydantic_ai_harness.compaction._summarizing_compaction import _SUMMARY_PREFIX
+from pydantic_ai_harness.compaction._summarizing_compaction import (
+    _SUMMARY_PREFIX,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
     ConversationSearchToolset,
@@ -60,13 +62,6 @@ from pydantic_ai_harness.step_persistence import (
     SqliteStepStore,
     StepPersistence,
 )
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _run_context(conversation_id: str | None = None) -> RunContext[None]:
@@ -271,7 +266,7 @@ class TestSnapshotHistorySource:
             )
 
             @agent.tool_plain
-            def lookup(q: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            def lookup(q: str) -> str:
                 return f'result-{q}'
 
             result = await agent.run('hi', conversation_id='c1')
@@ -699,6 +694,7 @@ class TestSearchScope:
         message = str(record[0].message)
         assert "scope='all'" in message
         assert "scope='conversation'" in message
+        assert 'warning will be removed in the next breaking release' in message
 
     def test_unset_scope_warns_once_per_instance(self) -> None:
         """Per instance, not per search: warning on every tool invocation would be noise."""

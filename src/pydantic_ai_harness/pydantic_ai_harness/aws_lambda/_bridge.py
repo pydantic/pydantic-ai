@@ -30,11 +30,12 @@ import inspect
 import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine
-from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from queue import Queue
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
+
+import anyio
 
 from pydantic_ai.exceptions import UserError
 
@@ -172,7 +173,7 @@ class _AgentLoop:
 
                 # Let callbacks queued by the run's finalizers create any follow-up cleanup tasks
                 # before taking the snapshot that will be drained.
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
                 current = asyncio.current_task()
                 pending = [pending for pending in asyncio.all_tasks(loop) if pending is not current]
                 if task is None:
@@ -232,7 +233,7 @@ class StepBridge:
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
-        self._order = asyncio.Lock()
+        self._order = anyio.Lock(fast_acquire=True)
 
     async def run_step(
         self,
@@ -281,7 +282,7 @@ class StepBridge:
                 raise AgentLoopGone(
                     f'The {ENGINE_NAME} agent event loop stopped before durable step {name!r} could be '
                     'scheduled, so its result can never arrive. This should not happen; please report '
-                    'it at https://github.com/pydantic/pydantic-ai-harness/issues.'
+                    'it at https://github.com/pydantic/pydantic-ai/issues.'
                 ) from None
             while True:
                 try:
@@ -296,7 +297,7 @@ class StepBridge:
                     raise AgentLoopGone(
                         f'The {ENGINE_NAME} agent event loop stopped while durable step {name!r} was in '
                         'flight, so its result can never arrive. This should not happen; please report '
-                        'it at https://github.com/pydantic/pydantic-ai-harness/issues.'
+                        'it at https://github.com/pydantic/pydantic-ai/issues.'
                     ) from None
 
         async with self._order:

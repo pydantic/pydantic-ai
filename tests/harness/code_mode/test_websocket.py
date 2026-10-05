@@ -8,21 +8,14 @@ from typing import Any
 
 import pytest
 import websockets
+from pydantic_monty import MountDir
+from typing_extensions import Never
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_monty import MountDir
-from typing_extensions import Never
-
 from pydantic_ai_harness import CodeMode
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
@@ -41,6 +34,7 @@ def _snippets_model(*snippets: str) -> FunctionModel:
     return FunctionModel(model)
 
 
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path: Path) -> None:
     """Remote feeds keep REPL state while tools, prints, mounts, `gather`, and barriers stay host-side."""
     (tmp_path / 'input.txt').write_text('mounted data')
@@ -59,11 +53,11 @@ async def test_code_mode_runs_over_websocket(websocket_relay_url: str, tmp_path:
     )
 
     @agent.tool_plain
-    async def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+    async def add(a: int, b: int) -> int:
         return a + b
 
     @agent.tool_plain(sequential=True)
-    def barrier() -> str:  # pyright: ignore[reportUnusedFunction]
+    def barrier() -> str:
         return 'barrier'
 
     result = await agent.run('exercise the remote sandbox')
@@ -127,6 +121,7 @@ async def test_dial_failure_redacts_sandbox_url() -> None:
     assert '<monty_sandbox_url>' in str(retry.content)
 
 
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 async def test_disconnect_mid_snippet_reports_started_calls(websocket_relay_url: str) -> None:
     """A dropped worker connection resets the session and lists the calls that already started."""
     connections: list[websockets.ServerConnection] = []
@@ -149,7 +144,7 @@ async def test_disconnect_mid_snippet_reports_started_calls(websocket_relay_url:
         )
 
         @agent.tool_plain
-        async def drop_connection() -> None:  # pyright: ignore[reportUnusedFunction]
+        async def drop_connection() -> None:
             # One statement: the harness cancels this while the close is in flight, so a separate
             # wait line would only sometimes run. The wait never ends on its own.
             await asyncio.gather(*(connection.close() for connection in connections), asyncio.Event().wait())

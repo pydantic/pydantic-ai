@@ -1,7 +1,7 @@
 """Proto cassette utilities for xAI SDK (gRPC) tests.
 
 Why this exists:
-- `pytest-recording`/VCR only records HTTP. The xAI SDK uses gRPC, so VCR can't record/replay model calls.
+- The HTTP cassettes only record HTTP. The xAI SDK uses gRPC, so they can't record/replay model calls.
 - However, xAI responses are protobuf messages. We can serialize them and store them in YAML cassettes.
 
 This is intentionally minimal for now:
@@ -144,7 +144,7 @@ def _truthy_env(name: str) -> bool:
 
 
 def _normalize_record_mode(mode: str | None) -> ProtoCassetteRecordMode | None:
-    """Normalize pytest-recording/VCR-ish record modes to a small supported set.
+    """Normalize cassetter/VCR-ish record modes to a small supported set.
 
     Notes:
     - VCR uses: `none`, `once`, `new_episodes`, `all`

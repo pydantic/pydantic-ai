@@ -17,7 +17,7 @@ pip:
 pip install 'pydantic-ai-harness[logfire]'
 ```
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/logfire/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/logfire/)
 
 ## `ManagedPrompt`
 

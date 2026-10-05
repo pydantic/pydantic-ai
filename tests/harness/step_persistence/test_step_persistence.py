@@ -16,8 +16,9 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
+
 from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
-from pydantic_ai._agent_graph import GraphAgentState  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.messages import (
@@ -36,7 +37,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
@@ -54,14 +54,6 @@ from pydantic_ai_harness.step_persistence import (
 )
 from pydantic_ai_harness.step_persistence._context import current_run_id
 from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Restrict async tests to asyncio (Agent.run uses `asyncio.create_task`)."""
-    return 'asyncio'
 
 
 def build_run_context(
@@ -89,7 +81,7 @@ def make_simple_agent(capabilities: list[Any]) -> Agent[object, str]:
     agent: Agent[object, str] = Agent(TestModel(), capabilities=capabilities)
 
     @agent.tool_plain
-    def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+    def add(a: int, b: int) -> int:
         return a + b
 
     return agent
@@ -827,6 +819,34 @@ class TestStepPersistenceCapability:
         assert {e.run_id for e in events} == {rid}
         assert {e.agent_name for e in events} == {'librarian'}
 
+    async def test_agent_name_falls_back_to_agent_name_without_changing_run_id(self) -> None:
+        """An unset `agent_name` records the running `Agent.name`; the store key stays `ctx.run_id`."""
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(TestModel(), name='librarian', capabilities=[StepPersistence(store=store)])
+
+        result = await agent.run('hello', run_id='ctx-run')
+
+        assert result.run_id == 'ctx-run'
+        record = await store.get_run(run_id='ctx-run')
+        assert record is not None
+        assert record.agent_name == 'librarian'
+        assert {e.agent_name for e in await store.list_events(run_id='ctx-run')} == {'librarian'}
+        snap = await store.latest_snapshot(run_id='ctx-run')
+        assert snap is not None
+        assert snap.agent_name == 'librarian'
+
+    async def test_explicit_agent_name_wins_over_agent_name(self) -> None:
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(
+            TestModel(), name='librarian', capabilities=[StepPersistence(store=store, agent_name='reader')]
+        )
+
+        await agent.run('hello')
+
+        record = await store.get_run(run_id=await first_run_id(store))
+        assert record is not None
+        assert record.agent_name == 'reader'
+
     async def test_helper_based_continuation_replays_prior_messages(self) -> None:
         """`continue_run(store, run_id=...) -> Agent.run(message_history=...)`."""
         store = InMemoryStepStore()
@@ -879,7 +899,7 @@ class TestStepPersistenceCapability:
         agent1: Agent[object, str] = Agent(TestModel(), capabilities=[cap])
 
         @agent1.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             return a + b
 
         await agent1.run('add 1 and 2')
@@ -903,7 +923,7 @@ class TestStepPersistenceCapability:
         )
 
         @delegate.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             return a + b
 
         orchestrator: Agent[object, str] = Agent(
@@ -912,7 +932,7 @@ class TestStepPersistenceCapability:
         )
 
         @orchestrator.tool_plain
-        async def delegate_work() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def delegate_work() -> str:
             res = await delegate.run('add 1 and 2')
             return res.output
 
@@ -949,7 +969,7 @@ class TestStepPersistenceCapability:
         )
 
         @delegate.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             return a + b
 
         orchestrator: Agent[object, str] = Agent(
@@ -958,7 +978,7 @@ class TestStepPersistenceCapability:
         )
 
         @orchestrator.tool_plain
-        async def delegate_work() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def delegate_work() -> str:
             res = await delegate.run('add 1 and 2', conversation_id='target-conv')
             return res.output
 
@@ -1034,7 +1054,7 @@ class TestStepPersistenceCapability:
         agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store)])
 
         @agent.tool_plain
-        def boom() -> int:  # pyright: ignore[reportUnusedFunction]
+        def boom() -> int:
             raise ValueError('kaboom')
 
         with pytest.raises(ValueError, match='kaboom'):
@@ -1121,7 +1141,7 @@ class TestCrashMidToolCallContract:
         agent: Agent[object, str] = Agent(TestModel(), capabilities=[cap])
 
         @agent.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             return a + b
 
         # 1) Drive a full successful run so a provider-valid snapshot exists.
@@ -1204,7 +1224,7 @@ class TestOnRunErrorSnapshot:
         )
 
         @agent.tool_plain
-        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+        def lookup() -> str:
             return 'ok'
 
         with pytest.raises(RuntimeError, match='provider down on request 2'):
@@ -1239,7 +1259,7 @@ class TestOnRunErrorSnapshot:
         )
 
         @agent.output_validator
-        def reject(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        def reject(value: str) -> str:
             raise RuntimeError('validator down')
 
         with pytest.raises(RuntimeError, match='validator down'):
@@ -1268,7 +1288,7 @@ class TestOnRunErrorSnapshot:
         )
 
         @agent.tool_plain
-        def boom() -> str:  # pyright: ignore[reportUnusedFunction]
+        def boom() -> str:
             raise ValueError('kaboom')
 
         with pytest.raises(ValueError, match='kaboom'):
@@ -1308,11 +1328,11 @@ class TestOnRunErrorSnapshot:
         )
 
         @agent.output_validator
-        def gate(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        def gate(value: str) -> str:
             raise ModelRetry('call a tool first')
 
         @agent.tool_plain
-        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+        def lookup() -> str:
             return 'ok'
 
         with pytest.raises(RuntimeError, match='provider down on request 3'):
@@ -1351,7 +1371,7 @@ class TestOnRunErrorSnapshot:
         calls = {'n': 0}
 
         @agent.output_validator
-        def gate(value: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        def gate(value: str) -> str:
             calls['n'] += 1
             if calls['n'] == 1:
                 raise ModelRetry('retry once')
@@ -1568,7 +1588,7 @@ class TestToolEffectMetadataPreservation:
         agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
 
         @agent.tool
-        async def write_label(ctx: RunContext[object], label: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def write_label(ctx: RunContext[object], label: str) -> str:
             await annotate_tool_effect(
                 store,
                 ctx,
@@ -1592,7 +1612,7 @@ class TestToolEffectMetadataPreservation:
         agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
 
         @agent.tool
-        async def boom(ctx: RunContext[object]) -> int:  # pyright: ignore[reportUnusedFunction]
+        async def boom(ctx: RunContext[object]) -> int:
             await annotate_tool_effect(store, ctx, idempotency_key='boom-key')
             raise ValueError('kaboom')
 
@@ -1941,11 +1961,11 @@ class TestInterruptedSnapshotRescue:
         )
 
         @agent.tool_plain
-        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+        def lookup() -> str:
             return 'ok'
 
         @agent.tool_plain
-        def boom() -> str:  # pyright: ignore[reportUnusedFunction]
+        def boom() -> str:
             raise ValueError('kaboom')
 
         with pytest.raises(ValueError, match='kaboom'):
@@ -1998,7 +2018,7 @@ class TestInterruptedSnapshotRescue:
         )
 
         @agent.tool_plain
-        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+        def lookup() -> str:
             return 'ok'
 
         with pytest.raises(RuntimeError, match='provider down on request 2'):
@@ -2124,7 +2144,7 @@ class TestLiveHistoryInvariant:
         )
 
         @agent.tool_plain
-        def lookup() -> str:  # pyright: ignore[reportUnusedFunction]
+        def lookup() -> str:
             return 'ok'
 
         with pytest.raises(RuntimeError, match='provider down on request 2'):

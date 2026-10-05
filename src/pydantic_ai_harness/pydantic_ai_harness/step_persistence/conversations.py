@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from anyio.to_thread import run_sync
 from pydantic import TypeAdapter
+
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -26,7 +27,6 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-
 from pydantic_ai_harness.media import SqliteMediaStore, externalize_media, restore_media
 
 

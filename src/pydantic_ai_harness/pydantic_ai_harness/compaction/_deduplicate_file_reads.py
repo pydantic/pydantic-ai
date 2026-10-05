@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ToolCallPart
-from pydantic_ai.tools import RunContext
-
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
     compact_with_span,
@@ -36,8 +34,8 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
     earlier reads are blanked with a placeholder.  Tool-call pairing is preserved.  No LLM
     calls are made.
 
-    File identity is supplied by the ``file_key`` seam -- given a ``ToolCallPart`` it returns
-    a stable key for the file being read, or ``None`` if the call is not a file read.  There
+    File identity is supplied by the `file_key` seam -- given a `ToolCallPart` it returns
+    a stable key for the file being read, or `None` if the call is not a file read.  There
     is no default: file-read identification is agent-specific, and a wrong guess would drop
     live data.
 
@@ -58,16 +56,16 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
     """
 
     file_key: Callable[[ToolCallPart], str | None]
-    """Map a tool call to a stable file key, or ``None`` if it is not a file read."""
+    """Map a tool call to a stable file key, or `None` if it is not a file read."""
 
     placeholder: str = '[superseded file read]'
     """Replacement content for a superseded file read."""
 
     max_messages: int | None = None
-    """Optional message-count trigger. When both triggers are ``None``, runs whenever invoked."""
+    """Optional message-count trigger. When both triggers are `None`, runs whenever invoked."""
 
     max_tokens: int | None = None
-    """Optional token-count trigger. When both triggers are ``None``, runs whenever invoked."""
+    """Optional token-count trigger. When both triggers are `None`, runs whenever invoked."""
 
     max_fraction: float | None = field(default=None, kw_only=True)
     """Trigger when estimated tokens exceed this fraction of the model's context window.
@@ -93,7 +91,7 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When ``None``, uses a ~4 characters-per-token heuristic.
+    When `None`, uses a ~4 characters-per-token heuristic.
     """
 
     def __post_init__(self) -> None:
@@ -131,7 +129,7 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Deduplicate file reads, optionally gated on a size threshold."""
-        messages: list[ModelMessage] = list(request_context.messages)
+        messages: list[ModelMessage] = list(ctx.messages)
         request_ctx = context_for_request(ctx, request_context)
         if self.max_messages is not None or self.max_tokens is not None or self.max_fraction is not None:
             token_trigger = resolve_token_trigger(
@@ -156,10 +154,10 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,
         )
+        ctx.messages[:] = compacted
         record_compaction_reclaim(
-            request_context,
+            ctx,
             estimate_token_count(messages, self.tokenizer),
             estimate_token_count(compacted, self.tokenizer),
         )
-        request_context.messages = compacted
-        return request_context
+        return replace(request_context, messages=compacted)

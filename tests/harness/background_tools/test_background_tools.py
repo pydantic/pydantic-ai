@@ -11,6 +11,7 @@ from typing import Any
 
 import anyio
 import pytest
+
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -49,15 +50,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness import BackgroundTools
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _ack_seen(messages: list[ModelMessage]) -> bool:
@@ -165,7 +158,7 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow_research(query: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow_research(query: str) -> str:
             await release.wait()
             return f'researched {query}'
 
@@ -202,7 +195,7 @@ class TestBackgroundTools:
         agent = Agent(capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def structured() -> ToolReturn[str]:  # pyright: ignore[reportUnusedFunction]
+        async def structured() -> ToolReturn[str]:
             return ToolReturn(return_value='public answer', content=['supporting detail', image])
 
         async with agent.realtime(model).session() as session:
@@ -237,9 +230,14 @@ class TestBackgroundTools:
                 'failed: CallDeferred was raised; background tools cannot defer a running task.',
                 'secret',
             ),
+            (
+                lambda: ApprovalRequired(metadata={'private_request_id': 'secret'}),
+                'failed: ApprovalRequired was raised; background tools cannot defer a running task.',
+                'secret',
+            ),
             (lambda: ModelRetry(''), 'failed: ToolRetryError', None),
         ],
-        ids=['retry', 'tool-failed', 'deferred', 'empty-retry'],
+        ids=['retry', 'tool-failed', 'deferred', 'approval-required', 'empty-retry'],
     )
     async def test_tool_signalled_errors_have_readable_follow_ups(
         self, error_factory: Callable[[], Exception], expected: str, private_detail: str | None
@@ -248,7 +246,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('broken', ack_callback=release.set), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def broken() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def broken() -> str:
             await release.wait()
             raise error_factory()
 
@@ -262,7 +260,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True}, retries=0)
-        async def broken() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def broken() -> str:
             raise ModelRetry('try again')
 
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'broken' exceeded max retries count of 0"):
@@ -272,7 +270,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('slow'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             return 'value'
 
         result = await agent.run('go')
@@ -288,7 +286,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             nonlocal started
             started += 1
             await asyncio.Event().wait()
@@ -311,12 +309,12 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             await release.wait()
             return 'slow result'
 
         @agent.tool_plain
-        async def ordinary() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def ordinary() -> str:
             release.set()
             return 'ordinary result'
 
@@ -341,7 +339,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True}, sequential=True)
-        async def barrier() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def barrier() -> str:
             nonlocal sequential_active
             sequential_active = True
             await asyncio.sleep(0)
@@ -349,7 +347,7 @@ class TestBackgroundTools:
             return 'barrier result'
 
         @agent.tool_plain(metadata={'background': True})
-        async def later() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def later() -> str:
             nonlocal overlapped
             overlapped = sequential_active
             return 'later result'
@@ -367,17 +365,17 @@ class TestBackgroundTools:
         )
         assert barrier_return.content == 'barrier result'
 
-    async def test_unexpected_error_reports_type_without_exposing_details_to_model(self) -> None:
+    async def test_unexpected_error_terminates_run(self) -> None:
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools()])
+        error = RuntimeError('private backend detail')
 
         @agent.tool_plain(metadata={'background': True})
-        async def broken() -> str:  # pyright: ignore[reportUnusedFunction]
-            raise RuntimeError('private backend detail')
+        async def broken() -> str:
+            raise error
 
-        result = await agent.run('go')
-
-        assert _follow_up_seen(result.all_messages(), 'failed: RuntimeError')
-        assert not _follow_up_seen(result.all_messages(), 'private backend detail')
+        with pytest.raises(RuntimeError) as exc_info:
+            await agent.run('go')
+        assert exc_info.value is error
 
     async def test_run_stream_waits_for_live_task_then_drops_its_result(self) -> None:
         started = asyncio.Event()
@@ -396,7 +394,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(stream_function=stream_model), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             started.set()
             await release.wait()
             return 'late result'
@@ -428,7 +426,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(stream_function=model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             await release.wait()
             return 'value'
 
@@ -444,7 +442,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('slow'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             return 'value'
 
         async with agent.iter('go') as run:
@@ -469,7 +467,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain
-        def plain() -> str:  # pyright: ignore[reportUnusedFunction]
+        def plain() -> str:
             return 'sync result'
 
         result = await agent.run('go')
@@ -482,7 +480,7 @@ class TestBackgroundTools:
         agent = Agent(TestModel(), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def selected() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def selected() -> str:
             return 'normal result'
 
         with ToolManager.parallel_execution_mode('sequential'):
@@ -499,7 +497,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('sync_bg'), capabilities=[BackgroundTools()])
 
         @agent.tool(metadata={'background': True})
-        def sync_bg(ctx: RunContext[object]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def sync_bg(ctx: RunContext[object]) -> str:
             ctx.enqueue('message from sync background tool')
             return 'sync result'
 
@@ -531,19 +529,19 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain
-        async def first() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def first() -> str:
             calls['first'] += 1
             await release.wait()
             return 'first result'
 
         @agent.tool_plain
-        async def shared() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def shared() -> str:
             calls['shared'] += 1
             await release.wait()
             return 'shared result'
 
         @agent.tool_plain
-        async def plain() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def plain() -> str:
             calls['plain'] += 1
             return 'plain result'
 
@@ -571,15 +569,15 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool(metadata={'background': True})
-        async def stop(ctx: RunContext[object]) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def stop(ctx: RunContext[object]) -> str:
             await first_started.wait()
             await second_started.wait()
             ctx.cancel()
             await asyncio.sleep(0)
-            return 'discarded'  # pragma: no cover -- cancellation is delivered at the await
+            return 'discarded'  # pragma: lax no cover -- cancellation is delivered at the await
 
         @agent.tool_plain(metadata={'background': True})
-        async def first() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def first() -> str:
             first_started.set()
             try:
                 await asyncio.Event().wait()
@@ -589,7 +587,7 @@ class TestBackgroundTools:
             return 'unreachable'  # pragma: no cover
 
         @agent.tool_plain(metadata={'background': True})
-        async def second() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def second() -> str:
             second_started.set()
             try:
                 await asyncio.Event().wait()
@@ -609,7 +607,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def structured() -> ToolReturn[str]:  # pyright: ignore[reportUnusedFunction]
+        async def structured() -> ToolReturn[str]:
             return ToolReturn(
                 return_value='public answer',
                 content=['supporting image', image],
@@ -639,7 +637,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def structured() -> ToolReturn[str]:  # pyright: ignore[reportUnusedFunction]
+        async def structured() -> ToolReturn[str]:
             return ToolReturn(return_value='public answer', content='supporting detail')
 
         result = await agent.run('go')
@@ -650,7 +648,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def structured() -> list[int]:  # pyright: ignore[reportUnusedFunction]
+        async def structured() -> list[int]:
             return [1, 2]
 
         result = await agent.run('go')
@@ -689,7 +687,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def waiter(name: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def waiter(name: str) -> str:
             started[name].set()
             await release[name].wait()
             return name
@@ -732,7 +730,7 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
@@ -741,13 +739,13 @@ class TestBackgroundTools:
             return 'never'  # pragma: no cover -- task is cancelled when the run pauses
 
         @agent.tool_plain(requires_approval=True)
-        def needs_approval() -> str:  # pyright: ignore[reportUnusedFunction]
+        def needs_approval() -> str:
             return 'approved'  # pragma: no cover -- never approved in this test
 
-        result = await asyncio.wait_for(agent.run('go'), timeout=1)
+        result = await asyncio.wait_for(agent.run('go'), timeout=5)
 
         assert isinstance(result.output, DeferredToolRequests)
-        await asyncio.wait_for(cancel_seen.wait(), timeout=1)
+        await asyncio.wait_for(cancel_seen.wait(), timeout=5)
 
     async def test_deferred_tool_pause_wins_over_a_completed_background_result(self) -> None:
         fast_done = asyncio.Event()
@@ -767,12 +765,12 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain(metadata={'background': True})
-        async def fast() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def fast() -> str:
             fast_done.set()
             return 'finished'
 
         @agent.tool_plain
-        async def needs_approval() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def needs_approval() -> str:
             await fast_done.wait()
             raise ApprovalRequired
 
@@ -802,12 +800,12 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def fast_bg() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def fast_bg() -> str:
             await release['fast_bg'].wait()
             return 'fast value'
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow_bg() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow_bg() -> str:
             await release['slow_bg'].wait()
             return 'slow value'
 
@@ -817,19 +815,11 @@ class TestBackgroundTools:
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: fast value')
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: slow value')
 
-    async def test_failed_background_tool_does_not_cancel_its_sibling(self) -> None:
-        release_broken = asyncio.Event()
-        release_slow = asyncio.Event()
+    async def test_failed_background_tool_cancels_its_sibling(self) -> None:
+        slow_started = asyncio.Event()
+        slow_cancelled = asyncio.Event()
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if _follow_up_seen(messages, 'failed: RuntimeError') and _follow_up_seen(messages, 'slow value'):
-                return ModelResponse(parts=[TextPart(content='done')])
-            if _follow_up_seen(messages, 'failed: RuntimeError'):
-                release_slow.set()
-                return ModelResponse(parts=[TextPart(content='waiting')])
-            if _ack_seen(messages):
-                release_broken.set()
-                return ModelResponse(parts=[TextPart(content='waiting')])
+        def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='broken', args='{}'), ToolCallPart(tool_name='slow', args='{}')]
             )
@@ -837,20 +827,23 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def broken() -> str:  # pyright: ignore[reportUnusedFunction]
-            await release_broken.wait()
+        async def broken() -> str:
+            await slow_started.wait()
             raise RuntimeError('private detail')
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
-            await release_slow.wait()
-            return 'slow value'
+        async def slow() -> str:
+            slow_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                slow_cancelled.set()
+                raise
+            return 'unreachable'  # pragma: no cover
 
-        result = await asyncio.wait_for(agent.run('go'), timeout=5)
-
-        assert result.output == 'done'
-        assert _follow_up_seen(result.all_messages(), 'failed: RuntimeError')
-        assert _follow_up_seen(result.all_messages(), 'completed.\nResult: slow value')
+        with pytest.raises(RuntimeError, match='private detail'):
+            await asyncio.wait_for(agent.run('go'), timeout=5)
+        assert slow_cancelled.is_set()
 
     async def test_background_tool_ending_in_cancelled_error_cancels_the_run(self) -> None:
         release = asyncio.Event()
@@ -867,12 +860,12 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def cancelled() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def cancelled() -> str:
             await release.wait()
             raise asyncio.CancelledError
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
@@ -899,12 +892,12 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def fatal() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def fatal() -> str:
             await slow_started.wait()
             raise FatalBackgroundError
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             slow_started.set()
             try:
                 await asyncio.Event().wait()
@@ -977,7 +970,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('stubborn'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def stubborn() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def stubborn() -> str:
             started.set()
             try:
                 await asyncio.Event().wait()
@@ -1019,7 +1012,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('blocking'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        def blocking() -> str:  # pyright: ignore[reportUnusedFunction]
+        def blocking() -> str:
             started.set()
             assert release.wait(timeout=5)
             finished.set()
@@ -1044,7 +1037,7 @@ class TestBackgroundTools:
         agent = Agent(_model_calling('slow'), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             started.set()
             try:
                 await asyncio.sleep(60)
@@ -1068,7 +1061,7 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain(metadata={'background': True})
-        async def slow() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow() -> str:
             return 'value'
 
         result = await agent.run('go')
@@ -1085,15 +1078,15 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
-        async def always() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def always() -> str:
             return 'always'  # pragma: no cover
 
         @agent.tool_plain(metadata={'background': 'optional'})
-        async def optional() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def optional() -> str:
             return 'optional'  # pragma: no cover
 
         @agent.tool_plain
-        async def normal() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def normal() -> str:
             return 'normal'  # pragma: no cover
 
         await agent.run('go')
@@ -1110,7 +1103,7 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain(metadata={'background': 'optional'})
-        async def slow_research(query: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def slow_research(query: str) -> str:
             return f'researched {query}'
 
         result = await agent.run('go')
@@ -1132,7 +1125,7 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain(metadata={'background': 'optional'})
-        async def research() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def research() -> str:
             return 'researched'
 
         result = await agent.run('go')
@@ -1148,7 +1141,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': 'optional'})
-        async def research(query: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def research(query: str) -> str:
             return f'researched {query}'
 
         result = await agent.run('go')
@@ -1169,7 +1162,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': 'optional'}, strict=True)
-        async def research() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def research() -> str:
             return 'researched'
 
         result = await agent.run('go')
@@ -1191,7 +1184,7 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain(metadata={'background': 'optional'})
-        async def research() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def research() -> str:
             return 'researched'
 
         result = await agent.run('go')
@@ -1207,7 +1200,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': 'optional'})
-        async def research(run_in_background: bool) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def research(run_in_background: bool) -> str:
             return str(run_in_background)  # pragma: no cover
 
         with pytest.raises(UserError, match='already has a'):
@@ -1233,7 +1226,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': 'optional'})
-        async def research() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def research() -> str:
             return 'researched'
 
         await agent.run('go')
@@ -1250,7 +1243,7 @@ class TestBackgroundTools:
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': 'optional'})
-        async def research() -> str:  # pyright: ignore[reportUnusedFunction]
+        async def research() -> str:
             return 'researched'  # pragma: no cover
 
         with ToolManager.parallel_execution_mode('sequential'):

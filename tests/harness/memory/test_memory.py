@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
@@ -11,26 +12,28 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
+
 from pydantic_ai import Agent, AgentSpec, DeferredToolRequests, ModelRetry, RunContext
 from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
-    UserContent,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness.compaction import SlidingWindowCompaction
 from pydantic_ai_harness.memory import (
     FileStore,
     InMemoryStore,
@@ -46,14 +49,13 @@ from pydantic_ai_harness.memory import (
     MemoryToolset,
     SqliteMemoryStore,
 )
-from tests._recording_durability import RecordingDurability  # pyright: ignore[reportMissingTypeStubs]
-
-pytestmark = pytest.mark.anyio
+from tests.harness._recording_durability import RecordingDurability
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+class FunctionToolsetRejectingDurability(RecordingDurability):
+    """Rejects executing function toolsets added per-run, as Temporal and Prefect do."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, unsupported_runtime_toolset_kinds=frozenset({'function'}))
 
 
 def _ctx(
@@ -78,6 +80,41 @@ def _ctx(
         run_id=run_id,
         tracer=tracer,
     )
+
+
+async def test_memory_symlink_escape_is_model_retry(tmp_path: Path) -> None:
+    root = tmp_path / 'store'
+    (root / 'main').mkdir(parents=True)
+    (tmp_path / 'outside.md').write_text('secret')
+    os.symlink(tmp_path / 'outside.md', root / 'main' / 'topic.md')
+    toolset = MemoryToolset(Memory[None](store=FileStore('.', workspace=LocalWorkspaceBackend(root))))
+    with pytest.raises(ModelRetry, match='outside the store directory'):
+        await toolset.read_memory(_ctx(), 'topic')
+    with pytest.raises(ModelRetry, match='outside the store directory'):
+        await toolset.write_memory(_ctx(), 'new', file='topic')
+    with pytest.raises(ModelRetry, match='outside the store directory'):
+        await toolset.delete_memory(_ctx(), 'topic')
+    assert (tmp_path / 'outside.md').read_text() == 'secret'
+
+
+async def test_file_store_recovers_corrupt_receipts(tmp_path: Path) -> None:
+    root = tmp_path / 'store'
+    root.mkdir()
+    (root / '.memory-operations.json').write_text('not json')
+    toolset = MemoryToolset(Memory[None](store=FileStore('.', workspace=LocalWorkspaceBackend(root))))
+    assert (await toolset.write_memory(_ctx(), 'new'))['status'] == 'created'
+    assert (root / 'main' / 'MEMORY.md').read_text() == 'new\n'
+
+
+async def test_file_store_hides_mutations_on_read_only_run(tmp_path: Path) -> None:
+    ctx = _ctx()
+    ctx.workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+    toolset = MemoryToolset(Memory[None](store=FileStore('.memory')))
+    assert set(await toolset.get_tools(ctx)) == {'read_memory', 'search_memory'}
+    with pytest.raises(ToolFailed):
+        await toolset.write_memory(ctx, 'hello')
+    with pytest.raises(ToolFailed):
+        await toolset.delete_memory(ctx, 'topic')
 
 
 def _latest_instructions(messages: list[ModelMessage]) -> str:
@@ -811,10 +848,16 @@ class TestInjection:
             captured.append(_latest_memory_context(messages))
             return ModelResponse(parts=[TextPart('done')])
 
-        await Agent(
+        agent = Agent(
             FunctionModel(model),
-            capabilities=[Memory(store=FileStore(root), guidance='', max_tokens=20, max_memory_size=25)],
-        ).run('go')
+            capabilities=[Memory(store=FileStore('memory'), guidance='', max_tokens=20, max_memory_size=25)],
+        )
+        # The store keeps its files in the run's workspace, so a run without one fails at its start.
+        with pytest.raises(
+            UserError, match=r"`Memory\(store=FileStore\(\.\.\.\)\)` keeps memory files in the run's workspace"
+        ):
+            await agent.run('go')
+        await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert len(captured[0]) <= 80
         assert 'm' * 26 not in captured[0]
         assert 'search_memory' in captured[0]
@@ -1024,7 +1067,7 @@ class TestInjection:
             assert contexts[0].endswith('\n</memory>')
             assert stored in contexts[0]
 
-    async def test_continued_and_serialized_history_replaces_prior_memory_context(self) -> None:
+    async def test_continued_and_serialized_history_refreshes_request_only_memory_context(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- version one')
 
@@ -1033,7 +1076,7 @@ class TestInjection:
 
         first = await Agent(FunctionModel(finish), capabilities=[Memory(store=store)]).run('first')
         serialized = first.all_messages_json()
-        assert len(_memory_contexts(first.all_messages())) == 1
+        assert not _memory_contexts(first.all_messages())
         await _seed(store, 'main/MEMORY.md', '- version two')
 
         for history in (
@@ -1054,37 +1097,56 @@ class TestInjection:
             assert len(captured[0]) == 1
             assert '- version one' not in captured[0][0]
             assert '- version two' in captured[0][0]
-            assert len(_memory_contexts(continued.all_messages())) == 1
+            assert not _memory_contexts(continued.all_messages())
+
+    async def test_compaction_before_memory_preserves_request_only_injection(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- fresh fact')
+        captured: list[list[str]] = []
+
+        def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(_memory_contexts(messages))
+            return ModelResponse(parts=[TextPart('done')])
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('old')]),
+            ModelResponse(parts=[TextPart('old response')]),
+        ]
+        result = await Agent(
+            FunctionModel(capture),
+            capabilities=[
+                SlidingWindowCompaction(max_messages=2, keep_messages=2, preserve_first_user_message=False),
+                Memory(store=store),
+            ],
+        ).run('continue', message_history=history)
+
+        assert len(captured) == 1
+        assert len(captured[0]) == 1
+        assert '- fresh fact' in captured[0][0]
+        persisted = result.all_messages()
+        assert len(persisted) == 3
+        assert isinstance(persisted[0], ModelResponse)
+        assert not _memory_contexts(persisted)
 
     async def test_cleanup_preserves_user_content_merged_with_memory_context(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- fact')
 
-        def finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart('done')])
-
-        first = await Agent(FunctionModel(finish), capabilities=[Memory(store=store)]).run('ORIGINAL USER PROMPT')
-        history = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
-        for index, message in enumerate(history):
-            if not isinstance(message, ModelRequest) or not _memory_contexts([message]):
-                continue
-            content: list[UserContent] = []
-            other_parts: list[ModelRequestPart] = []
-            for part in [SystemPromptPart('unrelated system context'), *message.parts]:
-                if not isinstance(part, UserPromptPart):
-                    other_parts.append(part)
-                elif isinstance(part.content, str):
-                    content.append(part.content)
-                else:
-                    content.extend(part.content)
-            history[index] = replace(
-                message,
+        history: list[ModelMessage] = [
+            ModelRequest(
                 parts=[
-                    *other_parts,
-                    UserPromptPart([TextContent('UNRELATED USER CONTEXT')]),
-                    UserPromptPart(content),
-                ],
-            )
+                    SystemPromptPart('unrelated system context'),
+                    UserPromptPart(
+                        [
+                            TextContent('UNRELATED USER CONTEXT'),
+                            TextContent('<memory>\n- stale fact\n</memory>', metadata='pydantic-ai-harness.memory.v1'),
+                        ]
+                    ),
+                    UserPromptPart('ORIGINAL USER PROMPT'),
+                ]
+            ),
+            ModelResponse(parts=[TextPart('done')]),
+        ]
 
         captured: list[list[ModelMessage]] = []
 
@@ -1101,6 +1163,8 @@ class TestInjection:
         assert 'UNRELATED USER CONTEXT' in _user_text(captured[0])
         assert len(_memory_contexts(captured[0])) == 1
         assert 'ORIGINAL USER PROMPT' in _user_text(continued.all_messages())
+        assert 'UNRELATED USER CONTEXT' in _user_text(continued.all_messages())
+        assert not _memory_contexts(continued.all_messages())
 
     async def test_disabled_injection_removes_memory_context_from_continued_history(self) -> None:
         store = InMemoryStore()
@@ -1185,7 +1249,7 @@ class TestInjection:
             assert len(contexts) == 2
             assert any('personal fact' in context for context in contexts)
             assert any('org fact' in context for context in contexts)
-        assert len(_memory_contexts(second.all_messages())) == 2
+        assert not _memory_contexts(second.all_messages())
 
     async def test_legacy_unqualified_marker_is_stripped_from_continued_history(self) -> None:
         store = InMemoryStore()
@@ -1215,7 +1279,7 @@ class TestInjection:
         assert len(captured[0]) == 1
         assert 'durable fact' in captured[0][0]
         assert 'stale fact' not in captured[0][0]
-        assert len(_memory_contexts(result.all_messages())) == 1
+        assert not _memory_contexts(result.all_messages())
 
 
 class TestConfigurationAndSpecs:
@@ -1323,7 +1387,7 @@ class TestConfigurationAndSpecs:
 
     def test_from_spec_backends_and_cross_backend_validation(self, tmp_path: Path) -> None:
         assert isinstance(Memory.from_spec().store, InMemoryStore)
-        assert isinstance(Memory.from_spec(backend='file', directory=str(tmp_path)).store, FileStore)
+        assert isinstance(Memory.from_spec(backend='file', directory='memory').store, FileStore)
         assert isinstance(
             Memory.from_spec(backend='sqlite', database=str(tmp_path / 'memory.db')).store, SqliteMemoryStore
         )
@@ -1427,10 +1491,61 @@ class TestTelemetryAndComposition:
 
     def test_temporal_durability_accepts_static_memory_toolset(self) -> None:
         pytest.importorskip('temporalio')
-        from pydantic_ai.durable_exec.temporal import TemporalDurability  # noqa: PLC0415  # needs the temporal extra
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # needs the temporal extra
 
         Agent(
             TestModel(),
             name='memory-agent',
             capabilities=[Memory[object](id='memory', inject_memory=False), TemporalDurability()],
         )
+
+    async def test_run_copy_keeps_registered_toolset(self) -> None:
+        memory = Memory[None](inject_memory=False)
+        registered = memory.get_toolset()
+        run_memory = await memory.for_run(_ctx())
+        assert run_memory.get_toolset() is registered
+
+    @pytest.mark.parametrize('prefix', [None, 'org'])
+    async def test_durability_runs_registered_tools_against_run_scope(self, prefix: str | None) -> None:
+        stores: list[InMemoryStore] = []
+        tool_prefix = f'{prefix}_' if prefix else ''
+
+        def resolver(ctx: RunContext[object]) -> MemoryStore:
+            stores.append(InMemoryStore())
+            return stores[-1]
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart(f'{tool_prefix}write_memory', {'content': '- fact'}, tool_call_id='write')]
+                )
+            if len(messages) == 3:
+                return ModelResponse(
+                    parts=[ToolCallPart(f'{tool_prefix}read_memory', {'file': 'MEMORY.md'}, tool_call_id='read')]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        memory = Memory[object](store_resolver=resolver, inject_memory=False)
+        agent = Agent(
+            FunctionModel(model),
+            name='memory-agent',
+            capabilities=[
+                memory.prefix_tools(prefix) if prefix else memory,
+                FunctionToolsetRejectingDurability(),
+            ],
+        )
+        result = await agent.run('remember')
+
+        # One resolution per run: the tools use the scope the run's copy resolved in `for_run`.
+        assert len(stores) == 1
+        stored = await stores[0].read('main/MEMORY.md', max_chars=1_000)
+        assert stored is not None
+        assert stored.content == '- fact\n'
+        read_returns = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == f'{tool_prefix}read_memory'
+        ]
+        assert read_returns == ['- fact\n']

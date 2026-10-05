@@ -3,19 +3,14 @@
 import io
 
 import pytest
+from rich.console import Console
+from rich.text import Text
+
 from pydantic_ai import FunctionToolCallEvent
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.filesystem import FileEditedEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from rich.console import Console
-from rich.text import Text
-
 from pydantic_clai2 import StreamRenderer
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 async def test_shell_header_includes_argument_once() -> None:
@@ -38,6 +33,15 @@ async def test_shell_header_includes_argument_once() -> None:
         )
     )
     assert output.getvalue() == '● shell ls /tmp\n\n'
+
+
+async def test_shell_header_without_a_command_shows_only_the_tool_name() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': ''}, tool_call_id='empty-shell'))
+    )
+    assert output.getvalue() == '● shell\n\n'
 
 
 async def test_shell_sgr_colors_across_chunks_and_lines() -> None:

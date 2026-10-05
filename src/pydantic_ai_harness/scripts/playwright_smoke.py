@@ -51,6 +51,7 @@ import socket
 from tempfile import TemporaryDirectory
 
 from playwright.async_api import StorageState, async_playwright
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -60,7 +61,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-
 from pydantic_ai_harness.playwright import EgressPolicy, PlaywrightBrowser
 
 _COOKIE = 'smoke_session=abc123'

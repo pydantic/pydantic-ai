@@ -11,7 +11,10 @@ import keyring
 import pytest
 from cassetter import use_cassette
 from keyring.errors import NoKeyringError
-from menu_script import Script, make_context, pick, typed
+from rich.console import Console
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
@@ -20,16 +23,14 @@ from pydantic_ai.providers.github_copilot import (
     GitHubCopilotDeviceAuthorization,
     GitHubCopilotOAuthFlow,
 )
-from rich.console import Console
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from test_app_edges import inputs
-
-from pydantic_clai2 import chat, github_copilot
-from pydantic_clai2.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.model_catalog import github_copilot_models
-from pydantic_clai2.model_menu import ModelMenu, open_add_model_menu
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2 import chat
+from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models import github_copilot
+from pydantic_clai2.models.model_catalog import github_copilot_models
+from pydantic_clai2.ui.menus.model_menu import ModelMenu, open_add_model_menu
+from tests.clai2.menu_script import Script, make_context, pick, typed
+from tests.clai2.test_app_edges import inputs
 
 CREDENTIALS = GitHubCopilotCredentials(access_token='fake-access', token_type='bearer', scope='')
 
@@ -156,7 +157,7 @@ async def test_cancel_stops_polling(device_flow: None, monkeypatch: pytest.Monke
             await anyio.sleep_forever()
         finally:
             stopped.set()
-        raise AssertionError('unreachable')
+        raise AssertionError('unreachable')  # pragma: no cover
 
     monkeypatch.setattr(GitHubCopilotOAuthFlow, 'wait_for_authorization', waiting)
     save_codex_credentials(account='github-copilot', value='previous')
@@ -303,5 +304,5 @@ async def test_discovery_http_failure(monkeypatch: pytest.MonkeyPatch, status: i
 @pytest.mark.parametrize('body', ['{"data": []}', '{"data": [{"id": "responses-only"}]}', '{"bad": true}'])
 async def test_unusable_discovery(monkeypatch: pytest.MonkeyPatch, body: str) -> None:
     monkeypatch.setenv('GITHUB_COPILOT_API_KEY', 'test-token')
-    with pytest.raises(UserError, match='no Chat Completions models|invalid model list'):
+    with pytest.raises(UserError, match=r'no Chat Completions models|invalid model list'):
         await github_copilot.discover(transport=httpx2.MockTransport(lambda request: httpx2.Response(200, text=body)))

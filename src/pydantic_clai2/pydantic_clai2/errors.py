@@ -3,7 +3,7 @@
 
 def error_message(error: BaseException) -> str:
     """Recognize Codex refresh failures even when the SDK wraps them as connection errors."""
-    from pydantic_ai.providers.openai_codex import CredentialsRefreshError  # noqa: PLC0415
+    from pydantic_ai.providers.openai_codex import CredentialsRefreshError
 
     current: BaseException | None = error
     seen: set[int] = set()

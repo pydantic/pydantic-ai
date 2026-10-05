@@ -4,21 +4,15 @@ import io
 from pathlib import Path
 
 import anyio
-import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.config.settings_store import SettingsStore
 
 
 async def test_completion_control_bytes_are_not_executed_by_preview_or_echo(tmp_path: Path) -> None:
@@ -37,13 +31,15 @@ async def test_completion_control_bytes_are_not_executed_by_preview_or_echo(tmp_
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'unsafe_completion.py').write_text(
         'from pydantic_clai2.commands import Command\n'
-        'def activate(host):\n'
-        f'    payload = {payload!r}\n'
-        '    def handle(args):\n'
-        '        assert args == [payload]\n'
-        "        return 'SAFE_COMMAND_HANDLED'\n"
-        "    host.commands.register(Command(name='unsafe', description='Completion test', "
-        'handler=handle, complete=lambda args: [payload]))\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        f'payload = {payload!r}\n'
+        'def handle(args):\n'
+        '    assert args == [payload]\n'
+        "    return 'SAFE_COMMAND_HANDLED'\n"
+        'class Unsafe(Plugin):\n'
+        '    def get_commands(self):\n'
+        "        return [Command(name='unsafe', description='Completion test', "
+        'handler=handle, complete=lambda args: [payload])]\n'
     )
     output = Output()
     done = anyio.Event()

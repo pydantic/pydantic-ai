@@ -15,8 +15,8 @@ from uuid import uuid4
 
 import anyio.to_thread
 from pydantic import TypeAdapter, ValidationError
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaStore,

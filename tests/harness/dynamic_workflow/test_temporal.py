@@ -13,7 +13,6 @@ from datetime import timedelta
 import pytest
 
 try:
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
     from temporalio import workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
@@ -21,6 +20,8 @@ try:
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
     from temporalio.workflow import ActivityConfig
+
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
@@ -35,10 +36,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+from tests.harness._temporal import ignore_source_reads_left_open
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7247  # avoid conflict with the code_mode and spend suites
 TASK_QUEUE = 'pydantic-ai-harness-dynamic-workflow-queue'
@@ -57,16 +59,11 @@ def _workflow_runner() -> SandboxedWorkflowRunner:
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    """Temporal's Python SDK runs on asyncio."""
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 

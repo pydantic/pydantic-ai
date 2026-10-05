@@ -9,9 +9,9 @@ description: "Run your own Pydantic AI agent in GitHub Agentic Workflows (gh-aw)
 Markdown file in `.github/workflows/`: it triggers on issues, pull requests or a schedule,
 starts the agent in a container behind an egress firewall, hands it MCP tools, and writes
 what the agent produces back to GitHub through safe outputs. The
-[`pydantic-ai` engine](https://github.com/pydantic/pydantic-ai-harness/tree/main/gh-aw)
+[`pydantic-ai` engine](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/gh-aw)
 points that machinery at a Pydantic AI agent, which can be the
-[`Coder`](/ai/harness/coder/) composition it runs by default, another agent the harness
+[`Coder`](coder.md) composition it runs by default, another agent the harness
 ships, or one your own repository defines. The three are laid out in
 [Start from `Coder`, `Researcher`, or your own](#start-from-coder-researcher-or-your-own);
 this page then walks through the last of them end to end.
@@ -24,8 +24,8 @@ than an aside.
 
 Every model vendor ships an action for this shape, each one running that vendor's agent on
 that vendor's models. The difference here is that the agent is yours: your instructions,
-your tools, your [capabilities](/ai/capabilities/overview/), and [any
-model](/ai/models/overview/) a string swap away, in a repository you can also run from the
+your tools, your [capabilities](../capabilities/overview.md), and [any
+model](../models/overview.md) a string swap away, in a repository you can also run from the
 terminal, serve over a web UI, or call from your own backend. It is the same `Agent` object
 in all of them.
 
@@ -37,7 +37,7 @@ Two pieces of gh-aw vocabulary to set aside first. A gh-aw **custom agent** (or 
 file") is a Markdown prompt in `.github/agents/`, described under
 [custom agents](https://github.github.com/gh-aw/reference/copilot-custom-agents/); it is
 not what this page builds. Here the agent is a Python
-[`Agent`](/ai/core-concepts/agent/) object in a module in your repository, named by the
+[`Agent`](../agent.md) object in a module in your repository, named by the
 `PAI_AGENT` environment variable. And `engine: driver:` is gh-aw's mechanism for swapping
 the inner driver of its copilot engine (and pi on Node); it has no effect on an
 import-based engine like this one, so it is not part of the configuration below.
@@ -62,9 +62,10 @@ import-based engine like this one, so it is not part of the configuration below.
 
 ## Start from `Coder`, `Researcher`, or your own
 
-**Use `Coder` by default.** Omit `PAI_AGENT` to use [`Coder`](/ai/harness/coder/),
-with filesystem access and unrestricted shell commands inside the sandbox.
-No agent module is needed:
+**Use `Coder` by default.** Omit `PAI_AGENT` to use [`Coder`](coder.md) in a
+[`LocalWorkspace`](../workspace.md) on the checkout, with filesystem access and unrestricted
+shell commands inside the sandbox. Commands get the step's environment minus provider
+credential variables (`OPENAI_*`, `ANTHROPIC_*` and the like). No agent module is needed:
 
 ```yaml
 ---
@@ -75,7 +76,7 @@ permissions:
   contents: read
   issues: read
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: openai/gpt-5
@@ -98,19 +99,22 @@ steps:
     run: python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[researcher]"
 ```
 
-[`Researcher`](/ai/harness/researcher/) needs its own extra for the local search and fetch
+[`Researcher`](researcher.md) needs its own extra for the local search and fetch
 fallbacks, which is what the `steps:` block installs, and its searches need the hosts it
 reaches on the workflow's `network:` allowlist. `pydantic_ai_harness.coder:coder_agent` is
-the same shape for the coder agent, and is worth naming explicitly when a workflow wants
-the default composition but also wants `PAI_AGENT` set for clarity.
+the same shape for the coder agent. It differs from the default composition in one way: its
+`LocalWorkspace` passes commands only `PATH`, `HOME` and the locale variables, not the step's
+environment.
 
 **Your own agent.** The rest of this page. Reach for it when the agent needs its own tools,
-its own instructions, or a composition the harness does not ship.
+its own instructions, or a composition the harness does not ship. A harness capability that
+reads files or runs commands, such as `Coder`, needs a workspace: add `LocalWorkspace('.')`
+next to it for the checkout.
 
 ## The agent module
 
 `my_agent.py` at the root of the repository. `PAI_AGENT` names the variable in it, in the
-same `module:variable` form the [`pai` CLI](/ai/integrations/cli/) takes for `-a`:
+same `module:variable` form the [`pai` CLI](../cli.md) takes for `-a`:
 
 ```python
 """The agent this repository's agentic workflow runs.
@@ -155,13 +159,13 @@ Four things about that module.
   every MCP server it configures behind a gateway and writes them to
   `${RUNNER_TEMP}/gh-aw/mcp-config/mcp-servers.json` on the host runner, which the agent
   step mounts read-only and the engine passes to `pai --mcp-config`;
-  [`load_mcp_toolsets`](/ai/mcp/client/) prefixes each server's tools with its name, so the
+  [`load_mcp_toolsets`](../mcp/client.md) prefixes each server's tools with its name, so the
   `add-comment` safe output arrives as `safeoutputs_add_comment`. That file is deliberately
   outside the checkout: a file committed at a path the engine reads would be
   repository-controlled input to a process holding the gateway's credentials. The comment
   itself is posted by a separate job after the agent finishes; the agent never holds a
   token that can write to the repository.
-- **`label_catalog` is an ordinary [function tool](/ai/tools-toolsets/tools/).** It is
+- **`label_catalog` is an ordinary [function tool](../tools.md).** It is
   here to show that repository code is importable and that the agent's own tools work
   alongside the MCP tools gh-aw supplies.
 - **No third-party imports.** The engine installs `pydantic-ai-harness[cli]` and
@@ -175,7 +179,7 @@ Python traceback rather than a one-line "could not load agent" message.
 
 ## The agent as a spec instead
 
-`PAI_AGENT` takes a `.yml`, `.yaml` or `.json` [agent spec](/ai/core-concepts/agent-spec/)
+`PAI_AGENT` takes a `.yml`, `.yaml` or `.json` [agent spec](../agent-spec.md)
 wherever it takes an import path, so a repository that is already configuring one thing in
 YAML can configure the agent the same way, in a file beside the workflow:
 
@@ -233,7 +237,7 @@ permissions:
   contents: read
   issues: read
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: openai/gpt-5
@@ -279,7 +283,7 @@ Key by key:
   three are OpenAI-shaped and use Chat Completions. Under `PAI_BASE_URL` everything stays
   on Chat Completions.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
-  [`Coder`](/ai/harness/coder/) agent with yours. Setting it also puts the checkout on
+  [`Coder`](coder.md) agent with yours. Setting it also puts the checkout on
   `PYTHONPATH`, which is what makes `my_agent` importable.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
@@ -294,15 +298,16 @@ Key by key:
 
 The compile error you get from a missing `imports:` line carries a tip naming
 `github/gh-aw/.github/workflows/shared/pydantic.md@<version>`. That is gh-aw's own older
-copy of the definition. Ignore it and write the `pydantic/pydantic-ai-harness` line above;
+copy of the definition. Ignore it and write the `pydantic/pydantic-ai` line above;
 the definition in this repository is the one that is maintained.
 
 **Freezing the definition.** `@main` is re-resolved on every compile, so a change to the
 definition reaches you the next time you run `gh aw compile`. To hold a fixed version,
-import a commit SHA that contains `gh-aw/pydantic.md`, or a release tag cut after the
-definition landed on `main`; tags older than the file return a 404 at compile time. That
-ref pins the definition. The harness package version is pinned separately, by
-`engine: version:` in the definition, and a workflow's own `engine: version:` overrides it.
+import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, or a release
+tag cut after the harness moved into this repository; older tags do not carry the file and
+return a 404 at compile time. That ref pins the definition. The harness package version
+is pinned separately, by `engine: version:` in the definition, and a workflow's own
+`engine: version:` overrides it.
 
 ## Compile and commit
 
@@ -314,7 +319,7 @@ The compiler writes:
 
 - `.github/workflows/triage.lock.yml`, the GitHub Actions workflow that actually runs.
 - `.github/aw/actions-lock.json`, the SHA pins for every action the lock uses.
-- `.github/aw/imports/pydantic/pydantic-ai-harness/<sha>/gh-aw_pydantic.md`, a
+- `.github/aw/imports/pydantic/pydantic-ai/<sha>/src_pydantic_ai_harness_gh-aw_pydantic.md`, a
   byte-identical cache of the imported definition at the resolved SHA.
 - `.github/aw/imports/.gitattributes` and a top-level `.gitattributes` marking generated
   files.
@@ -419,7 +424,7 @@ otherwise. The provider credential lives in gh-aw's api-proxy, on the other side
 sandbox boundary, and the agent sends a placeholder bearer token it cannot leak. To reach a
 keyed endpoint of your own, point `PAI_BASE_URL` at a gateway you run that holds the key;
 the engine's
-[README](https://github.com/pydantic/pydantic-ai-harness/blob/main/gh-aw/README.md)
+[README](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/gh-aw/README.md)
 covers that path.
 
 ## Repository settings
@@ -713,7 +718,7 @@ Things to know before you do:
 
 **`error: invalid engine: pydantic-ai. Valid engines are: claude, codex, copilot, gemini,
 pi.`** The `imports:` line is missing. Add
-`pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
+`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
 suggests.
 
 **`error: invalid engine.model for engine 'pydantic-ai': for universal consumer engines,
@@ -761,5 +766,5 @@ The finished repository for this walkthrough is
 [dsfaccini/gh-aw-pydantic-ai-demo](https://github.com/dsfaccini/gh-aw-pydantic-ai-demo).
 The engine's own reference documentation, covering the default coder agent, custom
 endpoints and the credential model, is the
-[`gh-aw/README.md`](https://github.com/pydantic/pydantic-ai-harness/blob/main/gh-aw/README.md)
+[`gh-aw/README.md`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/gh-aw/README.md)
 in this repository.

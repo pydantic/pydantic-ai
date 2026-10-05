@@ -8,11 +8,10 @@ import sys
 from pathlib import Path
 
 import pytest
-from menu_script import Script, pick, typed
 from pydantic import HttpUrl
 from rich.console import Console
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.textinput import TextInputResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInputResult
 
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.mcp import (
@@ -22,16 +21,18 @@ from pydantic_clai2.mcp import (
     PROJECT_MCP_FILE,
     HTTPServer,
     MCPCommand,
+    MCPPlugin,
     MCPServers,
+    MCPSettings,
     MCPStore,
     ServerForm,
     SSEServer,
     StdioServer,
-    activate,
     edit_in_editor,
     run_form,
 )
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, collect
+from tests.clai2.menu_script import Script, pick, typed
 
 ESC = MenuResult(cancelled=True)
 
@@ -64,7 +65,7 @@ async def test_help_errors_and_usage(tmp_path: Path) -> None:
         await command(['install', 'github'])
     with pytest.raises(ValueError, match='Usage: /mcp start NAME'):
         await command(['start'])
-    with pytest.raises(ValueError, match='Unknown MCP server: ghost. Known: none'):
+    with pytest.raises(ValueError, match=r'Unknown MCP server: ghost. Known: none'):
         await command(['status', 'ghost'])
     assert await command(['status']) == await command([])
     assert await command(['start-all']) == 'No MCP servers to start.'
@@ -288,7 +289,7 @@ async def test_project_file_trust(tmp_path: Path) -> None:
 
     project.write_text('{"servers": {"bad_name": {}}}')
     store.trust(project)
-    with pytest.raises(ValueError, match='mcp_servers.json'):
+    with pytest.raises(ValueError, match=r'mcp_servers.json'):
         await command([])
     project.unlink()
     project.mkdir()
@@ -450,9 +451,9 @@ async def test_completion(tmp_path: Path) -> None:
 async def test_registered_completion_through_the_command_registry(tmp_path: Path) -> None:
     host: PluginHost[None] = PluginHost(name='mcp', console=Console(file=io.StringIO()), settings={})
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-    activate(host, store=store)
+    loaded = collect(MCPPlugin(host, MCPSettings(), store=store))
     registry = Commands()
-    registry.register_many(host.commands)
+    registry.register_many(loaded.commands)
     store.put('local', stdio())
     [mcp] = list(registry)
     assert 'local' in mcp.complete(['logs', ''])

@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 
 import acp
 from acp import schema
+
 from pydantic_ai.messages import ToolCallPart
 
 # The tool-call content variants ACP accepts on a `session/update` (inline content, a file

@@ -14,7 +14,7 @@ research question without loading a page, and a web-fetch tool handles a known
 static URL. This capability covers what neither can reach: pages behind login or session cookies,
 JavaScript-rendered SPAs, and interactive multi-step flows.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/playwright/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/playwright/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -57,7 +57,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[PlaywrightBrowser()])
 result = await agent.run('Open https://example.com and tell me the page title.')
 ```
 
-`PlaywrightBrowser` is a [capability](/ai/core-concepts/capabilities/): it registers the
+`PlaywrightBrowser` is a [capability](../capabilities/overview.md): it registers the
 browser toolset, injects short when-to-use guidance into the system prompt, and
 manages the Chromium lifecycle for the run.
 
@@ -130,7 +130,7 @@ before the action that opened it -- that call covers one dialog, not the rest of
 the run.
 
 `screenshot` (and the optional `screenshot_on_navigate` attachment) return the
-image as [`BinaryContent`](/ai/api/pydantic-ai/messages/#pydantic_ai.messages.BinaryContent)
+image as [`BinaryContent`][pydantic_ai.messages.BinaryContent]
 rather than a base64 string, so vision models see the image natively instead of
 a wall of base64 in the text context. A capture over 5 MB (typically a full-page
 screenshot of a long page) is returned as a bounded error instead of image
@@ -312,7 +312,7 @@ between tool calls.
   page did during that operation is attached as span events: console output,
   uncaught script errors, responses, requests the egress policy refused, dialogs
   the page opened, and tabs it opened. The spans go to the run's own tracer, so an agent
-  instrumented for [Logfire](/ai/integrations/logfire/) reports them with everything
+  instrumented for [Logfire](../logfire.md) reports them with everything
   else.
 - The agent can read the same log through `console_messages` and
   `network_requests`, which is often how it recovers from a page that renders
@@ -502,7 +502,7 @@ not a guarantee.
   own browser, so give an agent one or the other.
 - [Playwright for Python](https://playwright.dev/python/) -- the automation
   library underneath, and the reference for selector syntax.
-- [Capabilities](/ai/capabilities/overview/)
+- [Capabilities](../capabilities/overview.md)
 
 ## API reference
 

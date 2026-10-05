@@ -168,7 +168,7 @@ If your strategy depends on `ctx.media_type`, the same context must be supplied 
 | `externalize_media`, `restore_media` | Walk a message node to externalize / rehydrate large binary and text payloads |
 | `media_uri_for`, `parse_media_uri` | Compute and parse a `media+sha256://` URI |
 
-Source: [`pydantic_ai_harness/media/`](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/media/).
+Source: [`pydantic_ai_harness/media/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/media/).
 
 ## Related
 

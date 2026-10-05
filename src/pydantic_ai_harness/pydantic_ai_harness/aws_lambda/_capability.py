@@ -14,7 +14,7 @@ from __future__ import annotations
 
 try:
     import aws_durable_execution_sdk_python  # noqa: F401  # pyright: ignore[reportUnusedImport]
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `aws-durable-execution-sdk-python` package to use the AWS Lambda durability '
         'capability, you can use the `aws-lambda` optional group -- '
@@ -27,6 +27,7 @@ from typing import Any, ClassVar
 
 from aws_durable_execution_sdk_python.config import StepConfig
 from aws_durable_execution_sdk_python.exceptions import ExecutionError
+
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
@@ -37,8 +38,7 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 
-from ._bridge import ENGINE_NAME as _ENGINE_NAME
-from ._bridge import in_durable_context
+from ._bridge import ENGINE_NAME as _ENGINE_NAME, in_durable_context
 from ._operation_backend import AWSLambdaOperationBackend, AWSLambdaOperationConfig
 
 _TOOL_CONFIG_KEY = 'aws_lambda'

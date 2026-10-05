@@ -14,6 +14,7 @@ from typing import TypeGuard
 import httpx
 import pytest
 from httpx import AsyncClient, MockTransport, Request, Response
+
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     BinaryContent,
@@ -25,7 +26,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-
 from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaContext,
@@ -42,8 +42,6 @@ from pydantic_ai_harness.media._s3 import (
     _canonical_uri,  # pyright: ignore[reportPrivateUsage]
     sign_request,
 )
-
-pytestmark = pytest.mark.anyio
 
 
 class TestMediaUriHelpers:
@@ -1261,14 +1259,14 @@ class TestS3MediaStoreWithMockTransport:
         assert path == f'/my-bucket/runs/{digest}.bin'
 
 
-@pytest.mark.skipif(  # pragma: no cover
+@pytest.mark.skipif(  # pragma: lax no cover
     not all(
         os.environ.get(k)
         for k in ('S3_ENDPOINT', 'S3_BUCKET_NAME', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_REGION')
     ),
     reason='live S3/R2 env vars not set',
 )
-class TestS3MediaStoreLive:  # pragma: no cover
+class TestS3MediaStoreLive:  # pragma: lax no cover
     """Live integration against the configured S3 endpoint (e.g. R2).
 
     Activated only when all five S3_* env vars are set. Reads creds out of

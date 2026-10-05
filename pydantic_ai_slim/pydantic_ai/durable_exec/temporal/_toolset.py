@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast, get_type_hints
 
+import anyio
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 from pydantic.errors import PydanticUserError
 from temporalio import activity, workflow
@@ -27,6 +28,12 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.workspaces import (
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 from ._run_context import TemporalRunContext
 
@@ -76,7 +83,7 @@ async def heartbeating() -> AsyncGenerator[None]:
         interval = timeout.total_seconds() / 2 if timeout else 5.0
         while True:
             activity.heartbeat()
-            await asyncio.sleep(interval)
+            await anyio.sleep(interval)
 
     task = asyncio.create_task(beat())
     try:
@@ -165,6 +172,12 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
         PydanticUserError.__name__,
         UnexpectedModelBehavior.__name__,
         FallbackExceptionGroup.__name__,
+        # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
+        # restarting a command could repeat its already-completed side effects.
+        WorkspaceTimeoutError.__name__,
+        WorkspaceOutputLimitError.__name__,
+        WorkspaceReadOnlyError.__name__,
+        WorkspaceUnavailableError.__name__,
         # An over-limit payload is deterministic, so Temporal's default unlimited retries would resend the
         # same oversized result forever and hang the workflow instead of ever surfacing an error (#7110).
         *PAYLOAD_SIZE_ERROR_TYPES,
@@ -239,7 +252,7 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
         yield
 
 
-_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid'))(
+_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
     TypedDict(
         '_ValidatedActivityConfig',
         # The functional syntax is intentionally dynamic so new Temporal keys are included.

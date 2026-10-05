@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.tools import AgentDepsT
 

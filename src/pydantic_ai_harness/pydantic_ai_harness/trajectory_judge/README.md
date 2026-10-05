@@ -8,11 +8,11 @@
 > from pydantic_ai_harness.trajectory_judge import AllGood, Steer
 > ```
 >
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 Watch a live agent run with a second model, and steer it back on course mid-run.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/trajectory_judge/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/trajectory_judge/)
 
 ## The problem
 
@@ -51,7 +51,7 @@ print(result.output)
 ## Cadence and window
 
 - `every` counts model requests within the run; the judge evaluates on each multiple.
-- `window` bounds what each evaluation sees: the transcript is clamped to its most recent `window` tokens (estimated at ~4 characters per token), so per-evaluation cost stays bounded no matter how long the run gets.
+- `window` bounds what each evaluation sees: the transcript is clamped to its most recent `window` tokens (estimated at ~4 characters per token), so per-evaluation cost stays bounded no matter how long the run gets. When the transcript is longer than that, the request that started the current run (its user prompts before the agent's first response) is kept at the top, truncated to half the window if it is longer, and the rest of the window holds the most recent trajectory. The judge can then compare the latest work against what was asked even after large tool results. Earlier runs passed as `message_history` are included ahead of it while they fit, and are the first to be dropped.
 - At most one evaluation per judge is in flight at a time. A cadence tick that finds the previous evaluation still running is skipped, so a slow judge falls behind rather than piling up concurrent calls.
 - An evaluation still in flight when the run ends is cancelled: its steering would have nowhere to go.
 

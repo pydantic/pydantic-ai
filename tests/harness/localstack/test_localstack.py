@@ -13,14 +13,14 @@ from typing import Any
 
 import pytest
 import sniffio
+
+import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-
-import pydantic_ai_harness
-from pydantic_ai_harness.localstack import LocalStack, LocalStackError, LocalStackToolset
-from pydantic_ai_harness.localstack import LocalStack as Exported
+from pydantic_ai_harness.localstack import LocalStack, LocalStack as Exported, LocalStackError, LocalStackToolset
+from tests.harness._recording_durability import RecordingDurability
 
 from ._http_server import HttpResponse, http_server, unused_tcp_port
 
@@ -91,11 +91,11 @@ def _docker_stub(tmp_path: Path) -> tuple[str, Path]:
 
 class TestConstruction:
     def test_allow_and_deny_mutually_exclusive(self) -> None:
-        with pytest.raises(ValueError, match='Specify allowed_services or denied_services, not both.'):
+        with pytest.raises(ValueError, match=r'Specify allowed_services or denied_services, not both.'):
             _toolset(allowed_services=['s3'], denied_services=['dynamodb'])
 
     def test_non_positive_max_output_chars_rejected(self) -> None:
-        with pytest.raises(ValueError, match='max_output_chars must be a positive integer.'):
+        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer.'):
             _toolset(max_output_chars=0)
 
 
@@ -327,6 +327,13 @@ class TestLocalStackHealth:
         assert server.paths == ['/_localstack/health']
         assert '"s3": "available"' in result
 
+    async def test_through_the_capability(self) -> None:
+        with http_server([HttpResponse(200, '{"services": {"s3": "available"}}')]) as server:
+            toolset = LocalStack(endpoint_url=server.endpoint_url).get_toolset()
+            assert isinstance(toolset, LocalStackToolset)
+            result = await toolset.localstack_health()
+        assert '"s3": "available"' in result
+
     async def test_trailing_slash_endpoint(self) -> None:
         with http_server([HttpResponse(200)]) as server:
             await _toolset(endpoint_url=f'{server.endpoint_url}/').localstack_health()
@@ -386,7 +393,6 @@ class TestLocalStackCapability:
     def test_instructions_can_be_disabled(self) -> None:
         assert LocalStack(include_instructions=False).get_instructions() is None
 
-    @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
@@ -437,7 +443,7 @@ class TestContainerManagement:
 
     async def test_managed_defaults_to_edge_port_when_endpoint_has_no_port(self, tmp_path: Path) -> None:
         docker, log = _docker_stub(tmp_path)
-        with pytest.raises(LocalStackError, match='did not become ready within 1.0s'):
+        with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
             async with _toolset(
                 endpoint_url='http://localhost',
                 manage_container=True,
@@ -462,7 +468,30 @@ class TestContainerManagement:
                 pass
         assert 'stop managed-xyz' in log.read_text()
 
-    @pytest.mark.anyio(backends=['asyncio'])
+    @pytest.mark.parametrize('manage_container', [False, True])
+    async def test_only_commands_against_an_external_instance_are_recorded(
+        self, tmp_path: Path, manage_container: bool
+    ) -> None:
+        """A managed container starts empty when a run recovers, so its commands run again to rebuild it."""
+        if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+            pytest.skip('Agent.run() requires asyncio')
+        docker, _ = _docker_stub(tmp_path)
+        with http_server([HttpResponse(200)]) as health:
+            cap = LocalStack(
+                endpoint_url=health.endpoint_url,
+                manage_container=manage_container,
+                docker_path=docker,
+                aws_cli_path=_make_stub(tmp_path, 'echo ok'),
+            )
+            agent: Agent[None, str] = Agent(
+                model=TestModel(call_tools=['aws_cli']), name='localstack', capabilities=[cap, RecordingDurability()]
+            )
+            await agent.run('list buckets')
+        bound = RecordingDurability.from_agent(agent)
+        assert bound is not None
+        recorded = 'localstack__capability__localstack.aws_cli' in {name for name, _ in bound.calls}
+        assert recorded is not manage_container
+
     async def test_agent_integration_manages_container(self, tmp_path: Path) -> None:
 
         if sniffio.current_async_library() != 'asyncio':  # pragma: no cover

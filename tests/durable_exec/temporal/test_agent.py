@@ -9,9 +9,10 @@ import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
@@ -58,6 +59,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     ProcessHistory,
 )
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -72,9 +74,11 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import ImageGenerationTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -86,10 +90,21 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceReadOnlyError,
+    WorkspaceRef,
+    WorkspaceUnavailableError,
+)
 
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
+from ...workspace_fakes import (
+    RecordingWorkspaceBackend,
+)
 
 try:
     from temporalio import activity, workflow
@@ -115,10 +130,15 @@ try:
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._function_toolset import (
+        TemporalFunctionToolset,
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
-    from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
+    from pydantic_ai.durable_exec.temporal._run_context import (
+        TemporalRunContext,
+        deserialize_run_context,
+    )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
 
 except ImportError:  # pragma: lax no cover
@@ -166,6 +186,7 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr
+    from ...workspace_fakes import FakeWorkspace
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -199,7 +220,6 @@ with workflow.unsafe.imports_passed_through():
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal-agent'),
     pytest.mark.filterwarnings(
@@ -728,7 +748,7 @@ async def test_complex_agent_run_in_workflow(
     basic_spans_by_id = {
         span['context']['span_id']: BasicSpan(
             parent_id=span['parent']['span_id'] if span['parent'] else None,
-            content=attributes.get('event') or attributes['logfire.msg'],
+            content=attributes.get('event') or attributes.get('logfire.msg') or span['name'],
         )
         for span in spans
         if (attributes := span.get('attributes'))
@@ -2703,6 +2723,124 @@ def test_temporal_run_context_preserves_run_id():
     assert reconstructed.run_id == 'run-123'
 
 
+def _workspace_context(workspace: Workspace) -> RunContext[None]:
+    return RunContext(deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace)
+
+
+def test_temporal_run_context_omits_ref_until_the_workspace_has_one():
+    workspace = Workspace(FakeWorkspace('not-created-yet'))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert 'workspace_ref' not in serialized
+
+
+def test_temporal_run_context_serializes_the_local_workspace_ref(tmp_path: Path):
+    workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert serialized['workspace_ref'] == WorkspaceRef(provider='local', id=str(tmp_path))
+
+
+async def test_temporal_run_context_serializes_only_a_concrete_workspace_ref():
+    workspace = Workspace(RecordingWorkspaceBackend(WorkspaceRef(provider='fake', id='preprovisioned')))
+    serialized = TemporalRunContext.serialize_run_context(_workspace_context(workspace))
+    assert serialized['workspace_ref'] == WorkspaceRef(provider='fake', id='preprovisioned')
+
+    decoded = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+    assert decoded.workspace is decoded.workspace
+    assert replace(decoded).workspace is decoded.workspace
+    assert decoded.workspace.ref is None
+    # Without a worker agent to rebuild it through, the ref cannot become a workspace.
+    with pytest.raises(WorkspaceUnavailableError, match=r'No workspace is attached to this run'):
+        await decoded.workspace.run(['pwd'])
+
+
+async def test_temporal_application_deserializer_restores_validated_workspace_ref():
+    class ApplicationTemporalRunContext(TemporalRunContext[None]):
+        @classmethod
+        def deserialize_run_context(cls, ctx: dict[str, Any], deps: None) -> TemporalRunContext[None]:
+            ref = TypeAdapter(WorkspaceRef).validate_python(ctx['workspace_ref'])
+            workspace = ReadOnlyWorkspace(Workspace(RecordingWorkspaceBackend(ref)))
+            return cls(**{**ctx, 'workspace': workspace}, deps=deps)
+
+    restored = deserialize_run_context(
+        ApplicationTemporalRunContext,
+        {'workspace_ref': {'provider': 'fake', 'id': 'readonly-ref'}},
+        deps=None,
+        agent=None,
+    )
+    copied = replace(restored, run_id='copy')
+    assert copied.workspace is restored.workspace
+    assert copied.workspace.ref == WorkspaceRef(provider='fake', id='readonly-ref')
+    with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
+        await copied.workspace.run(['touch', 'blocked'])
+
+
+class TemporalAgentWorkspaceCapability(AbstractCapability[None]):
+    def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> FakeWorkspace:
+        return FakeWorkspace(ref.id if ref is not None else 'fresh', ref=ref)
+
+
+temporal_agent_workspace_agent = Agent(
+    TestModel(call_tools=['probe_workspace']),
+    name='temporal_agent_workspace',
+    deps_type=type(None),
+    capabilities=[TemporalAgentWorkspaceCapability()],
+)
+
+
+@temporal_agent_workspace_agent.tool
+async def probe_workspace(ctx: RunContext[None]) -> str:
+    return (await ctx.workspace.run(['pwd'])).stdout
+
+
+temporal_agent_workspace_wrapper = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    temporal_agent_workspace_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class TemporalAgentWorkspaceWorkflow:
+    @workflow.run
+    async def run(self, kind: str) -> str:
+        workspace: Any
+        if kind == 'ref':
+            workspace = WorkspaceRef(provider='fake', id='existing-123')
+        elif kind == 'live':
+            workspace = FakeWorkspace('live')
+        else:
+            workspace = None
+        result = await temporal_agent_workspace_wrapper.run('Use the workspace probe.', workspace=workspace)
+        return result.output  # pragma: no cover
+
+
+@pytest.mark.parametrize('kind', ['ref', 'live', 'capability'])
+async def test_temporal_agent_rejects_a_workspace_inside_a_workflow(client: Client, kind: str) -> None:
+    """The deprecated wrapper has no durability capability, so a workspace's operations could not run as activities."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentWorkspaceWorkflow],
+        plugins=[AgentPlugin(temporal_agent_workspace_wrapper)],
+    ):
+        with workflow_raises(
+            UserError,
+            'Workspaces are not supported inside a Temporal workflow through the deprecated wrapper agent. Use '
+            '`Agent(..., capabilities=[TemporalDurability()])`, which runs every workspace operation as a durable '
+            'unit, and attach the workspace through a capability such as `LocalWorkspace`.',
+        ):
+            await client.execute_workflow(
+                TemporalAgentWorkspaceWorkflow.run,
+                kind,
+                id=f'{TemporalAgentWorkspaceWorkflow.__name__}-{kind}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_temporal_agent_still_takes_a_workspace_outside_a_workflow() -> None:
+    result = await temporal_agent_workspace_wrapper.run('Use the workspace probe.', workspace=FakeWorkspace('live'))
+    assert result.output == '{"probe_workspace":"connected"}'
+
+
 def test_temporal_run_context_context_window_used_is_none_without_messages():
     reconstructed = TemporalRunContext.deserialize_run_context(
         TemporalRunContext.serialize_run_context(RunContext(deps=None, model=TestModel(), usage=RunUsage())), deps=None
@@ -3072,7 +3210,8 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
     A `DynamicCapability` re-resolves the capability's toolset activity-side, so its prepare
     function runs against a rehydrated context that deliberately left the live model behind. The
     native-vs-direct routing the notice describes was already decided in the workflow process, so
-    the read has to degrade to "say nothing" rather than raise out of `get_tools`.
+    the read has to degrade to "say nothing" rather than raise out of `get_tools`, while the tool
+    still carries the `unless_native` stamp that lets a native-capable model drop it.
     """
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
     reconstructed = deserialize_run_context(
@@ -3089,9 +3228,151 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
     toolset = capability.get_toolset()
     assert isinstance(toolset, PreparedToolset)
 
-    prepared = toolset.prepare_func(reconstructed, [])
+    tool_def = ToolDefinition(name='generate_image')
+    prepared = toolset.prepare_func(reconstructed, [tool_def])
     assert inspect.isawaitable(prepared)
-    assert await prepared == []
+    assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
+
+
+@pytest.mark.parametrize(
+    ('default', 'selection', 'capability', 'notice'),
+    [
+        pytest.param(
+            'no_native',
+            'native',
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high'),
+            None,
+            id='selected-native-applies-quality',
+        ),
+        pytest.param(
+            'no_native',
+            'native',
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)),
+            r"supersedes the direct generator on 'native'",
+            id='selected-native-drops-dimensions',
+        ),
+        *(
+            pytest.param(
+                default,
+                selection,
+                capability,
+                None,
+                id=f'{default}-default-{selection or "unselected"}-{setting}',
+            )
+            for default, selection in (('no_native', 'fallback'), ('fallback', 'fallback'), ('fallback', None))
+            for setting, capability in (
+                ('quality', ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high')),
+                (
+                    'dimensions',
+                    ImageGeneration(fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)),
+                ),
+            )
+        ),
+    ],
+)
+async def test_image_generation_prepare_function_reads_the_model_temporal_selected(
+    default: Literal['no_native', 'fallback'],
+    selection: Literal['native', 'fallback'] | None,
+    capability: ImageGeneration[None],
+    notice: str | None,
+):
+    """`ImageGeneration`'s per-request notice reads the model `using_model()` selected, not the default.
+
+    `TemporalModel` prepares a request against its current model's profile, and `wrapped` is only
+    the default, so the notice reads the `TemporalModel`'s own profile to match that routing. A
+    current `FallbackModel` has no profile, and nothing public says which model is current or which
+    of its members runs -- a registered selection can share the default's `model_id` -- so the notice
+    says nothing rather than reading `wrapped` in its place, whether that `FallbackModel` was
+    selected or is the default. `using_model()` is reachable from public code only inside a
+    `TemporalAgent` workflow, so this drives the prepare function directly rather than a VCR run.
+    """
+    no_native = TestModel(model_name='no_native', profile=ModelProfile(supported_native_tools=frozenset()))
+    native = TestModel(
+        model_name='native', profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}))
+    )
+    temporal_model = TemporalModel(
+        no_native if default == 'no_native' else FallbackModel(no_native),
+        activity_name_prefix='image_generation_selected_model',
+        activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
+        deps_type=type(None),
+        models={'native': native, 'fallback': FallbackModel(native)},
+    )
+    ctx = RunContext(deps=None, model=temporal_model, usage=RunUsage(), run_id='run-123')
+    tool_def = ToolDefinition(name='generate_image')
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+
+    with temporal_model.using_model(selection):
+        if notice is None:
+            # `filterwarnings = ['error']` turns an unexpected notice into the failure.
+            prepared = toolset.prepare_func(ctx, [tool_def])
+        else:
+            with pytest.warns(UserWarning, match=notice):
+                prepared = toolset.prepare_func(ctx, [tool_def])
+    assert inspect.isawaitable(prepared)
+    assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
+
+
+def _image_generation_tools_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    native = [tool.kind for tool in info.model_request_parameters.native_tools]
+    function = [tool.name for tool in info.function_tools]
+    return ModelResponse(parts=[TextPart(f'native={native} function={function}')])
+
+
+fallback_image_generation_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        FallbackModel(
+            FunctionModel(
+                _image_generation_tools_fn,
+                model_name='no_native',
+                profile=ModelProfile(supported_native_tools=frozenset()),
+            ),
+            FunctionModel(
+                _image_generation_tools_fn,
+                model_name='native',
+                profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+            ),
+        ),
+        name='fallback_image_generation_agent',
+        capabilities=[
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high', id='fallback_images')
+        ],
+    ),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class FallbackImageGenerationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await fallback_image_generation_temporal_agent.run('Generate an image')).output
+
+
+async def test_image_generation_notice_says_nothing_for_a_temporal_agent_fallback_model(client: Client):
+    """Under `TemporalAgent`, the notice meets a `TemporalModel` over a `FallbackModel` and says nothing.
+
+    In workflow code the run context carries the `TemporalModel`, whose profile is its current
+    model's, and a current `FallbackModel` has none. Nothing public says which model `using_model()`
+    made current, so the notice says nothing rather than read the members of a `FallbackModel` that
+    may not be the one running, even though `no_native` drops `quality`. Under
+    `filterwarnings = ['error']` a crash reading that profile, or a warning naming a member, fails
+    the workflow task, which Temporal retries until the `execution_timeout` fails the test. The
+    output pins that `no_native` answered with the direct generator and without the native tool.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackImageGenerationWorkflow],
+        plugins=[AgentPlugin(fallback_image_generation_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            FallbackImageGenerationWorkflow.run,
+            id=FallbackImageGenerationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot("native=[] function=['generate_image']")
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
@@ -3435,6 +3716,10 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -3470,6 +3755,10 @@ def test_temporal_agent_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]

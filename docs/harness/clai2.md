@@ -5,8 +5,9 @@ Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydanti
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
-Relative paths use the launch workspace. Use a custom agent with `Coder()` to
-retain workspace-scoped file tools. Shell output is displayed dimly.
+CLAI attaches the launch directory as the agent's workspace, so relative paths
+and commands start there. Commands get CLAI's environment minus LLM provider API
+keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools. Shell output is displayed dimly.
 
 ## Word deletion
 
@@ -74,8 +75,9 @@ py-cli clai2 -w
 
 A Git worktree is another checkout of the same repository with its own branch
 and working files. Run these commands inside a repository with at least one
-commit. `--worktree NAME` creates a `clai/NAME` branch from the current `HEAD`
-and starts CLAI at `<repository-root>/.worktrees/NAME`.
+commit. `--worktree NAME` creates a `clai-NAME` branch from the current `HEAD`
+and starts CLAI at `<repository-root>/.worktrees/NAME`. If that worktree already
+exists, CLAI reopens it; if only the `clai-NAME` branch exists, CLAI checks it out.
 `-w` is the short form; omit the name to generate one. Names start with a letter
 or digit and contain only ASCII letters, digits, hyphens, and underscores.
 
@@ -86,8 +88,8 @@ Uncommitted changes, ignored files, and untracked files are not copied. Project 
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the new path and branch. Existing branches and non-empty directories
-are rejected. If checkout fails, CLAI tries to remove only the branch it just
+CLAI prints the path and branch. A directory at that path that is not a Git
+worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery. The worktree and branch
 remain after exit, including startup
@@ -100,7 +102,7 @@ original repository root. Without `--force`, Git refuses to remove a dirty workt
 
 ```bash
 git worktree remove .worktrees/my-task
-git branch -d clai/my-task
+git branch -d clai-my-task
 ```
 
 !!! warning "Worktrees are not sandboxes"
@@ -115,10 +117,15 @@ authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes. The browser
 must be able to reach that callback on the machine running CLAI.
 
-Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
-not in SQLite or `~/.codex/auth.json`. Choose an OS-backed credential store: CLAI
+Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
+(`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
+that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
+backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
+at most once per session, so macOS asks for keychain access at most once, instead of
+once per saved credential. Logins that older versions saved as keyring entries are
+moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
 uses the configured backend and does not enforce its encryption or storage policy.
-Installing or selecting a plaintext backend can store tokens in plaintext. Core owns
+Installing or selecting a plaintext backend can store the key in plaintext. Core owns
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
@@ -177,7 +184,7 @@ Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, and `COPILOT_GITHUB_TOKEN`, checked in that order when
 no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
 application's token files. Core owns inference and its telemetry; CLAI adds no
-login-specific spans. Bare `/login` continues to sign in to Codex.
+login-specific spans. Bare `/login` asks which sign-in to run.
 
 ## Settings and commands
 
@@ -216,8 +223,9 @@ running turn ends. With arguments, these commands queue like any other.
 `/model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, and `gpt-6-astra`; availability
-depends on your account. Unknown prices and context limits are not inferred.
+`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
+`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
+Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
@@ -229,6 +237,20 @@ makes it the model for the next prompt. `Ctrl+S` opens that model's settings:
 penalties, `parallel_tool_calls`, `thinking`, and `service_tier`. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
+
+CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
+missing from the Python CLAI runs on fails right away, naming the install command, instead
+of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+
+```bash
+pip/uv-add "pydantic-clai2[typesafe]"
+```
+
+From a pydantic-ai checkout, run CLAI with the extra instead:
+
+```bash
+uv run --package pydantic-clai2 --extra typesafe clai2
+```
 
 Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
@@ -264,13 +286,13 @@ After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
 `importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
 and session with the updated code. The Python process, agent, dependencies passed
 to `chat`, conversation messages, selected model, and active settings are kept.
-Enabled plugins unload and activate again so their handlers use the refreshed
+Enabled plugins unload and load again so their handlers use the refreshed
 shell types. Disabled and unapproved project plugins stay off.
 
 If an import or shell rebuild fails, CLAI reports the error and restores the
-previous module bindings. Correct the source and retry `/reload`. Plugin hosts
-and their registrations are recreated. Installed module globals not overwritten
-by the new source can survive; initialize mutable state in `activate`.
+previous module bindings. Correct the source and retry `/reload`. Plugin
+instances and their contributions are recreated. Installed module globals not
+overwritten by the new source can survive; initialize mutable state in `__init__`.
 Import-time side effects cannot be undone.
 
 Reload ordering follows the modules' existing imports. Restart after changing
@@ -370,8 +392,10 @@ repeated CLAI heading. Intermediate text is flushed when a tool-call part begins
 before the tool's arguments finish streaming. Incomplete lines within a text part
 still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
-Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Long names
-are truncated to one terminal row. Completion activity remains in the footer
+Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
+without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
+muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
+changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
 ## Grep previews
@@ -450,26 +474,26 @@ or cancellation. No model requests or telemetry are added for status reporting.
 ## Plugins
 
 Everything beyond the prompt loop is a plugin, including the default coding
-tools. A plugin is a Python file with an `activate(host)` function. Through
-`host` it can react to lifecycle moments and typed events, add `/commands`, give
-the agent tools, draw its own output, and read validated settings.
+tools. A plugin is a `Plugin` subclass that declares what it contributes the way
+a [capability](../capabilities/overview.md) does: it overrides methods to react to
+lifecycle moments, add `/commands`, give the agent capabilities, draw its own
+output, and take validated settings.
 
 ```python
-from pydantic_clai2.plugins import PluginHost, TurnEnd
+from pydantic_clai2.plugins import Plugin, TurnEnd
 
 
-def activate(host: PluginHost) -> None:
-    @host.on('turn_end')
-    async def ping(event: TurnEnd) -> None:
-        host.console.bell()
+class Bell(Plugin):
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        self.host.console.bell()
 ```
 
 Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:attr] [JSON]`. It is live for the
+importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Plugins are trusted code running as you.
 
-[PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
+[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
 
 ## Telemetry and references
 

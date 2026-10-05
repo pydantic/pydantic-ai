@@ -7,7 +7,7 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 `Planning` gives the model a structured, self-updating task list through a small toolset -- and surfaces the current plan back to the model every turn without ever invalidating the prompt cache. It can stay in memory for a single run or persist to SQLite/Postgres, break steps into subtasks with dependencies, and emit events from granular changes.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/planning/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
 > This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
 >
@@ -99,7 +99,7 @@ from pydantic_ai_harness.planning import SqlitePlanStore
 planning = Planning(store=SqlitePlanStore('plan.db', session='user-123'))
 ```
 
-Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client) -- so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `SqlitePlanStore` requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
+Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client) -- so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
 
 The tail reminder reads the store on every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. That is deliberate: a plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`, and `PlanStore` is a protocol precisely so you can wrap one:
 
@@ -174,6 +174,10 @@ With a durable-execution capability attached, the plan read used to build that r
 journaled capability operation. Replay reuses the recorded plan instead of reading the store again.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
+Engines that run tools and capability operations in a separate worker, like Temporal, don't
+carry the run's in-memory plan there: each call resolves its store from the run context. Pass a
+persistent `store` or a `store_resolver` (such as `SqlitePlanStore` or `PostgresPlanStore`) to keep
+the plan across steps.
 
 ## Configuration
 
@@ -193,7 +197,7 @@ Planning(
 
 ## Agent spec (YAML/JSON)
 
-`Planning` works with Pydantic AI's [agent spec](/ai/core-concepts/agent-spec/):
+`Planning` works with Pydantic AI's [agent spec](../agent-spec.md):
 
 ```yaml
 # agent.yaml
@@ -213,7 +217,7 @@ print(result.output)
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
 - [Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)
 - [Code Mode](code-mode.md) -- another prompt-cache-aware harness capability
 

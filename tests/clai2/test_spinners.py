@@ -3,35 +3,36 @@
 import io
 import json
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
-from menu_script import Script, make_context, pick
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent
 from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
 
-from pydantic_clai2 import chat, theme
-from pydantic_clai2.command_context import CommandContext
+from pydantic_ai import Agent
+from pydantic_clai2 import chat
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
 from pydantic_clai2.config import Settings
-from pydantic_clai2.field_menu import Runners
-from pydantic_clai2.image_input import ImageInput
-from pydantic_clai2.interrupts import Interrupts
-from pydantic_clai2.live_prompt import LivePrompt
-from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.spinner_picker import SpinnerPicker, spinner_command, spinner_completions
-from pydantic_clai2.spinners import (
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import Plugin, PluginHost, load_plugin
+from pydantic_clai2.ui.menus.field_menu import Runners
+from pydantic_clai2.ui.menus.spinner_picker import SpinnerPicker, spinner_command, spinner_completions
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.spinners import (
     BUILTIN_SPINNERS,
     DEFAULT_SPINNER,
     STARTER_FILE,
@@ -40,6 +41,7 @@ from pydantic_clai2.spinners import (
     make_spinner,
     user_spinners_path,
 )
+from tests.clai2.menu_script import Script, make_context, pick
 
 PromptT = TypeVar('PromptT')
 CODE_PUPPY_BUILTINS = (
@@ -63,11 +65,6 @@ CODE_PUPPY_BUILTINS = (
     'fistBump',
     'aesthetic',
 )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def catalogue(tmp_path: Path, *, selected: str = DEFAULT_SPINNER, registered: tuple[Spinner, ...] = ()) -> Spinners:
@@ -118,10 +115,8 @@ class TestCatalogue:
 
     @pytest.mark.parametrize('interval', [float('nan'), float('inf'), float('-inf')])
     def test_non_finite_interval_is_rejected_before_it_reaches_a_painter(self, interval: float) -> None:
-        host = PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={})
         with pytest.raises(ValueError, match='finite number of seconds'):
-            host.spinner('broken', ['a'], interval=interval)
-        assert host.spinners == []
+            make_spinner('broken', ['a'], interval=interval)
 
     def test_layers_and_lookup(self, tmp_path: Path) -> None:
         plugin = make_spinner('dots', ['o', 'O'], source='plugin')
@@ -295,7 +290,7 @@ class TestCommand:
         spinners = spinners_for(context, tmp_path)
         monkeypatch.setattr('sys.stdout', io.StringIO())
         keys = iter([*'bone', '+', '+', '=', 'right', '-', 'left', '+', 'enter'])
-        monkeypatch.setattr('pydantic_clai2.spinner_picker.menu_key', lambda: next(keys))
+        monkeypatch.setattr('pydantic_clai2.ui.menus.spinner_picker.menu_key', lambda: next(keys))
         message = await spinner_command(context, spinners, [], runners=Runners(run_list=lambda menu: menu.run()))
         assert message.startswith('Spinner set to bone (8 frames at 0.14s). Speed saved')
         assert context.settings.spinner == 'bone'
@@ -328,31 +323,37 @@ class TestPicker:
         monkeypatch.setenv('COLUMNS', '100')
         monkeypatch.setenv('LINES', '30')
         keys = iter(['', '', 'escape'])
-        monkeypatch.setattr('pydantic_clai2.spinner_picker.menu_key', lambda: next(keys))
+        monkeypatch.setattr('pydantic_clai2.ui.menus.spinner_picker.menu_key', lambda: next(keys))
         ticks = iter([0.0, 0.1, 0.2, 0.3])
         picker = SpinnerPicker(catalogue(tmp_path), clock=lambda: next(ticks))
         assert picker.build().run().cancelled
-        painted = Text.from_ansi(output.getvalue()).plain
+        # The menu paints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+        # https://github.com/Textualize/rich/issues/4090
+        painted = Text.from_ansi(output.getvalue().replace('\r\n', '\n')).plain
         assert all(f'Working {glyph} ─' in painted for glyph in '⠋⠙⠹')
 
 
 PLUGIN = """
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.ui.rendering.spinners import make_spinner
 
 
-def activate(host: PluginHost) -> None:
-    host.spinner('wave', ['~ ', ' ~'], interval=0.05, description='from a plugin')
+class Wave(Plugin):
+    def get_spinners(self):
+        return [make_spinner('wave', ['~ ', ' ~'], interval=0.05, description='from a plugin')]
 """
 
 
 class TestRegistration:
-    def test_host_registers_a_normalized_spinner(self) -> None:
-        host = PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={})
-        spinner = host.spinner('wave', ['~', '~~'], interval=0.001, description='d')
-        assert host.spinners == [spinner]
-        assert spinner == Spinner(name='wave', frames=('~ ', '~~'), interval=0.02, description='d', source='plugin')
-        with pytest.raises(ValueError, match='non-empty frame'):
-            host.spinner('nothing', [])
+    def test_plugin_spinners_are_normalized_and_marked_as_plugin(self) -> None:
+        class Waves(Plugin):
+            def get_spinners(self) -> Sequence[Spinner]:
+                return (make_spinner('wave', ['~', '~~'], interval=0.001, description='d'),)
+
+        loaded = load_plugin(Waves, PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={}))
+        assert loaded.spinners == (
+            Spinner(name='wave', frames=('~ ', '~~'), interval=0.02, description='d', source='plugin'),
+        )
 
     async def test_shell_offers_plugin_spinners_and_persists_the_choice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

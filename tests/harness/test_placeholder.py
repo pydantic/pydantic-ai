@@ -1,13 +1,13 @@
 import inspect
 from pathlib import Path
 
-import pydantic_ai.models
 import pytest
+
+import pydantic_ai.models
+import pydantic_ai_harness
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-
-import pydantic_ai_harness
 from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, Coder, FileSystem, Researcher, Shell
 
 

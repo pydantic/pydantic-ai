@@ -5,9 +5,9 @@ server so it can query product analytics, run SQL, and manage feature flags,
 experiments, dashboards, surveys, and error tracking, including tools that make
 changes. The key you connect with decides what those tools can reach.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/posthog/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/posthog/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 ## Before you start
 
@@ -156,7 +156,8 @@ MCP handlers. The client then owns the URL and authentication, so passing
 `read_only=True` keeps only the tools the server marks as read-only, instead of
 asking the server for read-only mode. PostHog's default mode serves one
 `posthog` tool that is not marked read-only, so this filter leaves no PostHog
-tools; have your client send the `x-posthog-read-only: true` header instead.
+tools and emits an `MCPReadOnlyNoToolsWarning`; have your client send the
+`x-posthog-read-only: true` header instead.
 `include_instructions=False` stops the server's own instructions from reaching
 the agent.
 

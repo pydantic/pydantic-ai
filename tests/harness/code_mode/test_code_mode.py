@@ -1,9 +1,7 @@
 """Tests for the `CodeMode` capability and the `CodeModeToolset` it wraps.
 
-Style follows `pydantic_ai/tests/test_toolsets.py`: module-level
-`pytestmark = pytest.mark.anyio`, an `anyio_backend` fixture, async tests, and a
-`build_run_context` factory. The `anyio` package's pytest plugin is already
-loaded by the project (no extra dev dependency needed).
+Style follows `pydantic_ai/tests/test_toolsets.py`: async tests and a `build_run_context`
+factory.
 """
 
 from __future__ import annotations
@@ -26,6 +24,10 @@ from uuid import UUID
 import anyio
 import pytest
 from pydantic import BaseModel
+from pydantic_core import SchemaValidator, core_schema
+from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
+from typing_extensions import Never, TypedDict
+
 from pydantic_ai import (
     AbstractToolset,
     Agent,
@@ -34,10 +36,10 @@ from pydantic_ai import (
     ToolDefinition,
 )
 from pydantic_ai.capabilities import Capability, Instrumentation, ToolSearch
-from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    CompactionPart,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -48,36 +50,37 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn as ToolReturnMsg,
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.messages import ToolReturn as ToolReturnMsg
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
-from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME, ToolSearchToolset, parse_discovered_tools
+from pydantic_ai.toolsets._tool_search import (
+    _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
+    ToolSearchToolset,
+    parse_discovered_tools,
+)
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
-from pydantic_core import SchemaValidator, core_schema
-from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
-from typing_extensions import Never, TypedDict
-
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
-from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolset
+from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeReturnSchemaWarning, CodeModeToolset
 from pydantic_ai_harness.code_mode._capability import (
     _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
-    _SEARCH_TOOLS_MODIFIER,
-    _TOOL_SEARCH_ADDENDUM,
-    _sanitize_tool_name,
+from pydantic_ai_harness.code_mode._toolset import (
+    _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
+    _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
+    _tool_search_addendum,  # pyright: ignore[reportPrivateUsage]
     global_mode_is_sequential,
 )
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 _entered_toolsets: list[CodeModeToolset[Never]] = []
 
@@ -91,15 +94,7 @@ async def _close_direct_toolsets(anyio_backend: str) -> AsyncIterator[None]:
         await toolset.__aexit__(None, None, None)
 
 
-pytestmark = pytest.mark.anyio
-
 T = TypeVar('T')
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
 
 
 def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
@@ -265,7 +260,7 @@ class _StaticToolset(AbstractToolset[object]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover - required by AbstractToolset, never read in tests
+        return None  # pragma: lax no cover - required by AbstractToolset, never read in tests
 
     async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
         return {
@@ -634,7 +629,7 @@ class TestCodeMode:
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
-        docs = (Path(__file__).parents[2] / 'docs' / 'code-mode.md').read_text()
+        docs = (Path(__file__).parents[3] / 'docs' / 'harness' / 'code-mode.md').read_text()
         documented = re.search(r'Allowed stdlib modules: (.*?) \(', docs)
         assert advertised is not None and documented is not None
         modules = re.findall(r'`(\w+)`', advertised.group(1))
@@ -695,7 +690,7 @@ class TestCodeMode:
             return ModelResponse(parts=[TextPart(returned[0].model_response_str())])
 
         agent: Agent[object, str] = Agent(
-            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object]()]
+            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object](store=LocalFileStore())]
         )
         result = await agent.run('what type is x?')
         assert result.output == "<class 'dict'>"
@@ -1234,7 +1229,7 @@ class TestCodeMode:
                 approvals={call.tool_call_id: ToolDenied(message='nope') for call in requests.approvals}
             )
 
-        from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
+        from pydantic_ai.capabilities import HandleDeferredToolCalls  # optional-version probe
 
         wrapper = CodeMode[object](max_tool_calls=1).get_wrapper_toolset(_build_function_toolset(needs_approval))
         assert isinstance(wrapper, CodeModeToolset)
@@ -1562,7 +1557,7 @@ class TestCodeMode:
         agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()])
 
         @agent.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             return a + b
 
         result = await agent.run('use code mode twice')
@@ -2010,7 +2005,7 @@ class TestCodeMode:
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
-        with pytest.warns(UserWarning, match=r"tool 'search' has no return schema"):
+        with pytest.warns(CodeModeReturnSchemaWarning, match=r"tool 'search' has no return schema"):
             tools = await wrapper.get_tools(ctx)
 
         # Tool is still callable despite the warning.
@@ -2023,6 +2018,54 @@ class TestCodeMode:
         with _warnings.catch_warnings():
             _warnings.simplefilter('error')
             await wrapper.get_tools(ctx)
+
+    async def test_tools_without_return_schema_share_one_warning(self) -> None:
+        """Many schema-less tools (typical of an MCP server) produce one warning, not one each."""
+        tool_defs = [
+            ToolDefinition(name=name, parameters_json_schema={'type': 'object', 'properties': {}})
+            for name in ('list_tags', 'search_code', 'search_issues')
+        ]
+        static = _StaticToolset(tool_defs)
+        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter('always')
+            await wrapper.get_tools(build_run_context(None))
+
+        assert [str(warning.message) for warning in caught] == [
+            "CodeMode: 3 tools have no return schema ('list_tags', 'search_code', 'search_issues'); "
+            'their signatures will show `-> Any`, which may reduce code mode effectiveness. Add a return '
+            'annotation to a function tool, or an `outputSchema` to an MCP tool; to silence this, filter '
+            '`CodeModeReturnSchemaWarning`.'
+        ]
+        assert caught[0].category is CodeModeReturnSchemaWarning
+
+    async def test_missing_return_schema_warning_can_be_filtered_alone(self) -> None:
+        """Ignoring `CodeModeReturnSchemaWarning` silences it without hiding other `UserWarning`s."""
+        td = ToolDefinition(name='search', parameters_json_schema={'type': 'object', 'properties': {}})
+        wrapper = CodeMode[object]().get_wrapper_toolset(_StaticToolset([td]))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter('always')
+            _warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)
+            await wrapper.get_tools(build_run_context(None))
+            _warnings.warn('unrelated', UserWarning)
+
+        assert [str(warning.message) for warning in caught] == ['unrelated']
+
+    async def test_escalated_missing_return_schema_warning_raises_again(self) -> None:
+        """With the warning escalated to an error, a retry raises again instead of passing silently."""
+        td = ToolDefinition(name='search', parameters_json_schema={'type': 'object', 'properties': {}})
+        wrapper = CodeMode[object]().get_wrapper_toolset(_StaticToolset([td]))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter('error', UserWarning)
+            for _ in range(2):
+                with pytest.raises(CodeModeReturnSchemaWarning, match=r"tool 'search' has no return schema"):
+                    await wrapper.get_tools(build_run_context(None))
 
     async def test_tool_with_return_schema_does_not_warn(self) -> None:
         """A sandboxed tool WITH a return_schema does not trigger the warning."""
@@ -2080,7 +2123,7 @@ class TestCodeMode:
         agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()])
 
         @agent.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             """Add two numbers."""
             return a + b
 
@@ -2122,7 +2165,7 @@ class TestCodeMode:
         )
 
         @capability.tool_plain
-        def demo_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+        def demo_tool() -> str:
             return 'ok'  # pragma: no cover - deferred tool stays hidden, body is not invoked
 
         model = TestModel(call_tools=[])
@@ -2166,7 +2209,7 @@ class TestCodeMode:
         )
 
         @capability.tool_plain
-        def demo_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+        def demo_tool() -> str:
             return 'ok'  # pragma: no cover - only the signature reaches the model here
 
         seen_tools: list[set[str]] = []
@@ -2396,7 +2439,7 @@ class TestCodeMode:
         with the original denial message preserved in the trace.
         """
         try:
-            from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
+            from pydantic_ai.capabilities import HandleDeferredToolCalls  # optional-version probe
         except ImportError:  # pragma: no cover -- only fires on floor-slim CI, which doesn't gate on coverage
             pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
 
@@ -2425,7 +2468,7 @@ class TestCodeMode:
         deferral after approval is *not* re-resolved -- it bubbles up to the caller.
         """
         try:
-            from pydantic_ai.capabilities import HandleDeferredToolCalls  # noqa: PLC0415  # optional-version probe
+            from pydantic_ai.capabilities import HandleDeferredToolCalls  # optional-version probe
         except ImportError:  # pragma: no cover -- only fires on floor-slim CI, which doesn't gate on coverage
             pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
 
@@ -2614,7 +2657,7 @@ class TestCodeMode:
         )
 
         @agent.tool_plain
-        def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        def add(a: int, b: int) -> int:
             """Add two numbers."""
             return a + b
 
@@ -3197,7 +3240,19 @@ class TestToolSearchIntegration:
 
         run_code_desc = tools['run_code'].tool_def.description
         assert run_code_desc is not None
-        assert _TOOL_SEARCH_ADDENDUM.strip() in run_code_desc
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in run_code_desc
+
+    async def test_renamed_search_tool_is_found_by_kind(self) -> None:
+        """A prefixed search tool is recognized by its `tool_kind`, and the note uses its name."""
+        toolset = _StaticToolset([_search_tool_def(name='mcp_search_tools')])
+        code_mode = CodeModeToolset(wrapped=toolset, tool_selector='all')
+        tools = await code_mode.get_tools(build_run_context(None))
+
+        search_desc = tools['mcp_search_tools'].tool_def.description
+        assert search_desc is not None and search_desc.endswith(_SEARCH_TOOLS_MODIFIER)
+        run_code_desc = tools['run_code'].tool_def.description
+        assert run_code_desc is not None
+        assert _tool_search_addendum('mcp_search_tools').strip() in run_code_desc
 
     async def test_run_code_description_no_search_note_without_search_tools(self) -> None:
         """run_code description does NOT include search addendum when no search_tools."""
@@ -3238,7 +3293,7 @@ class TestToolSearchIntegration:
         assert tools['later'].tool_def.defer_loading is True
         # search_tools is the discovery surface and stays native alongside run_code.
         assert _SEARCH_TOOLS_NAME in tools
-        assert _TOOL_SEARCH_ADDENDUM.strip() in description
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in description
 
     async def test_tool_search_toolset_discovered_tool_in_run_code(self) -> None:
         """End-to-end: once `search_tools` has discovered the deferred tool, it folds into `run_code`."""
@@ -3328,7 +3383,6 @@ class TestDynamicCatalog:
         assert instructions.dynamic is True
 
     async def test_get_instructions_appends_to_upstream_string(self) -> None:
-
         class _UpstreamToolset(FunctionToolset[object]):
             async def get_instructions(self, ctx: RunContext[object]) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
                 return 'wrapped instructions'
@@ -3346,7 +3400,6 @@ class TestDynamicCatalog:
         assert 'async def add' in instructions[1].content
 
     async def test_get_instructions_appends_to_upstream_sequence(self) -> None:
-
         class _UpstreamToolset(FunctionToolset[object]):
             async def get_instructions(  # pyright: ignore[reportIncompatibleMethodOverride]
                 self, ctx: RunContext[object]
@@ -3399,7 +3452,7 @@ class TestDynamicCatalog:
 
         description = tools['run_code'].tool_def.description
         assert description is not None
-        assert _TOOL_SEARCH_ADDENDUM.strip() in description
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in description
 
     async def test_for_run_step_preserves_catalog_stash(self) -> None:
         """A per-step rebuild must carry `_last_catalog` so instructions stay populated."""
@@ -3427,10 +3480,10 @@ class TestDynamicCatalog:
 
     async def test_for_run_returns_fresh_state_when_enabled(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
-        cap._announced_tools.add('foo')  # pyright: ignore[reportPrivateUsage]
+        cap._in_flight_announcements.add('foo')  # pyright: ignore[reportPrivateUsage]
         fresh = await cap.for_run(build_run_context(None))
         assert fresh is not cap
-        assert fresh._announced_tools == set()  # pyright: ignore[reportPrivateUsage]
+        assert fresh._in_flight_announcements == set()  # pyright: ignore[reportPrivateUsage]
 
     async def test_for_run_returns_self_when_disabled(self) -> None:
         cap = CodeMode[object]()
@@ -3439,7 +3492,6 @@ class TestDynamicCatalog:
     # -- discovery announcement: local search path ------------------------
 
     async def test_announce_on_local_search_return(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         await cap.after_tool_execute(
@@ -3473,7 +3525,6 @@ class TestDynamicCatalog:
         assert ctx.pending_messages == []
 
     async def test_announce_skipped_when_no_discoveries(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         await cap.after_tool_execute(
@@ -3502,7 +3553,6 @@ class TestDynamicCatalog:
         assert ctx.pending_messages == []
 
     async def test_no_duplicate_announcement_for_same_tool(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         result = {'discovered_tools': [{'name': 'weather'}]}
@@ -3518,10 +3568,105 @@ class TestDynamicCatalog:
         assert ctx.pending_messages is not None
         assert len(ctx.pending_messages) == 1
 
+    async def test_other_system_prompts_do_not_count_as_announcements(self) -> None:
+        """Only an authored announcement suppresses one: a system prompt naming the tool does not."""
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        ctx.messages.append(ModelRequest(parts=[SystemPromptPart(content='Prefer `weather` for forecasts.')]))
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result={'discovered_tools': [{'name': 'weather'}]},
+        )
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
+
+    async def test_announcement_in_visible_history_deduplicates_across_steps(self) -> None:
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result = {'discovered_tools': [{'name': 'weather'}]}
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+        assert ctx.pending_messages is not None
+        [announcement] = ctx.pending_messages[0].messages
+        assert isinstance(announcement, ModelRequest)
+        ctx.messages.append(announcement)
+        ctx.pending_messages.clear()
+
+        await cap.before_model_request(ctx, request_context=None)  # pyright: ignore[reportArgumentType]
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+
+        assert ctx.pending_messages == []
+
+    async def test_compaction_boundary_allows_announcement_again(self) -> None:
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result = {'discovered_tools': [{'name': 'weather'}]}
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+        assert ctx.pending_messages is not None
+        [announcement] = ctx.pending_messages[0].messages
+        assert isinstance(announcement, ModelRequest)
+        ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()])])
+        ctx.pending_messages.clear()
+
+        await cap.before_model_request(ctx, request_context=None)  # pyright: ignore[reportArgumentType]
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+
+        assert len(ctx.pending_messages) == 1
+
+    async def test_dropped_announcement_is_enqueued_again(self) -> None:
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result = {'discovered_tools': [{'name': 'weather'}]}
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+        assert ctx.pending_messages is not None
+        ctx.pending_messages.clear()  # A history processor omitted the authored announcement.
+
+        await cap.before_model_request(ctx, request_context=None)  # pyright: ignore[reportArgumentType]
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+
+        assert len(ctx.pending_messages) == 1
+
     # -- discovery announcement: native search path -----------------------
 
     async def test_announce_on_native_search_return_part(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         response = ModelResponse(
@@ -3544,7 +3689,6 @@ class TestDynamicCatalog:
         assert isinstance(part, SystemPromptPart) and '`weather`' in part.content
 
     async def test_no_announce_for_unrelated_response_parts(self) -> None:
-
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         response = ModelResponse(
@@ -3569,7 +3713,6 @@ class TestDynamicCatalog:
         ],
     )
     def test_extract_discovered_names_handles_malformed(self, content: Any, expected: list[str]) -> None:
-
         assert _extract_discovered_names(content) == expected
 
     # -- end-to-end via `Agent.run` ---------------------------------------
@@ -4050,7 +4193,7 @@ class TestCodeModeOSAccess:
         assert wrapper.mount is mount
 
 
-def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
+def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH_TOOLS_NAME) -> ToolDefinition:
     """Create a ToolDefinition mimicking the search_tools tool from ToolSearchToolset.
 
     Carries `tool_kind='tool-search'`, matching what pydantic-ai emits (since 1.95.0);
@@ -4058,7 +4201,7 @@ def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
     """
 
     return ToolDefinition(
-        name=_SEARCH_TOOLS_NAME,
+        name=name,
         description=description,
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
         tool_kind='tool-search',
@@ -4137,7 +4280,7 @@ class TestCodeModeOSAccessInTemporal:
         def handler(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
             return NOT_HANDLED
 
-        with pytest.raises(ModelRetry, match="'os.getenv' is not supported in this environment"):
+        with pytest.raises(ModelRetry, match=r"'os.getenv' is not supported in this environment"):
             await self._run('import os\nos.getenv("HOME")', handler)
 
     async def test_handler_error_is_raised_in_the_sandbox(self) -> None:

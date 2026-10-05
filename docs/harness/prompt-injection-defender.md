@@ -14,7 +14,7 @@ Results pass through unchanged by default. Set `block_high_risk=True` to replace
 result that the built-in defense rejects with a short notice. Use `on_detection`
 to observe flagged verdicts.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/prompt_injection_defender/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/prompt_injection_defender/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -69,7 +69,7 @@ replaces the rejected result before the model sees it.
 - `semantic_detection`: add local ML classification beyond known patterns. This
   requires the `prompt-injection-defender-ml` extra.
 - `tool_filter`: classify all tools, selected tool names, or tools accepted by a
-  [`ToolSelector`](/ai/api/pydantic-ai/tools/#pydantic_ai.tools.ToolSelector).
+  [`ToolSelector`][pydantic_ai.tools.ToolSelector].
 - `on_detection`: run a sync or async callback for each flagged verdict. A
   `ToolReturn` can produce separate verdicts for its return value and additional
   content items. An exception from the callback fails the run.
@@ -142,7 +142,7 @@ load the model before the first tool result.
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
 - [defender-py](https://github.com/StackOneHQ/defender-py)
 
 ## API reference

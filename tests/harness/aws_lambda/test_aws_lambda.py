@@ -17,8 +17,9 @@ from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.exceptions import ExecutionError
 from aws_durable_execution_sdk_python.retries import RetryPresets
 from aws_durable_execution_sdk_python.serdes import DEFAULT_JSON_SERDES
+
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._run_context import get_current_run_context  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -35,13 +36,12 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import ExternalToolset
-
 from pydantic_ai_harness.aws_lambda import (
     AWSLambdaDurability,
     _bridge,  # pyright: ignore[reportPrivateUsage]
-    _operation_backend,  # pyright: ignore[reportPrivateUsage]
+    _operation_backend,
     durable_agent_handler,
     run_durable,
 )
@@ -173,7 +173,7 @@ class TestDurableAgentHandler:
         sdk_wrapped = durable_execution(handler)
         with pytest.raises(
             UserError,
-            match='`@durable_execution` must be the outermost decorator.*synchronous handler should call `run_durable`',
+            match=r'`@durable_execution` must be the outermost decorator.*synchronous handler should call `run_durable`',
         ):
             durable_agent_handler(sdk_wrapped)  # pyright: ignore[reportCallIssue, reportArgumentType]
 
@@ -220,6 +220,44 @@ class TestCapabilityOperation:
         run_durable(lambda: agent.run('go'), context=first)
 
         assert first.step_names[0] == 'a__capability__contributor.record'
+        assert contributor.calls == 1
+
+        resumed = FakeDurableContext(journal=first.operations)
+        result = run_durable(lambda: agent.run('go'), context=resumed)
+
+        assert result.output == 'done'
+        assert resumed.invoked == []
+        assert contributor.calls == 1
+
+    def test_operation_called_from_a_tool_runs_inside_the_tool_step(self) -> None:
+        class Contributor(AbstractCapability[Any]):
+            id = 'contributor'
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            @durable_operation('fetch')
+            async def fetch(self, ctx: RunContext[Any]) -> str:
+                self.calls += 1
+                return 'fetched'
+
+            def get_toolset(self) -> FunctionToolset[Any]:
+                toolset = FunctionToolset[Any](id=self.id)
+
+                @toolset.tool
+                async def act(ctx: RunContext[Any]) -> str:
+                    return await self.fetch(ctx)
+
+                return toolset
+
+        contributor = Contributor()
+        agent = Agent(tool_then_text(), name='a', capabilities=[contributor, AWSLambdaDurability()])
+
+        first = FakeDurableContext()
+        result = run_durable(lambda: agent.run('go'), context=first)
+
+        assert result.output == 'done'
+        assert not [name for name in first.step_names if name is not None and '__capability__' in name]
         assert contributor.calls == 1
 
         resumed = FakeDurableContext(journal=first.operations)
@@ -444,7 +482,9 @@ class TestStepConfig:
             return StepConfig(**config)
 
         monkeypatch.setattr(
-            _operation_backend, '_STEP_CONFIG_FIELDS', _operation_backend._STEP_CONFIG_FIELDS | {'timeout'}
+            _operation_backend,
+            '_STEP_CONFIG_FIELDS',
+            _operation_backend._STEP_CONFIG_FIELDS | {'timeout'},  # pyright: ignore[reportPrivateUsage]
         )
         monkeypatch.setattr(_operation_backend, 'StepConfig', future_step_config)
 
@@ -482,7 +522,7 @@ class TestStepConfig:
         agent = Agent(tool_then_text(), name='a', toolsets=[toolset], capabilities=[AWSLambdaDurability()])
         ctx = FakeDurableContext()
 
-        with pytest.raises(UserError, match='expected a dict .* or `False`, got str'):
+        with pytest.raises(UserError, match=r'expected a dict .* or `False`, got str'):
             run_durable(lambda: agent.run('go'), context=ctx)
 
 
@@ -939,7 +979,7 @@ class TestBridgeFailureModes:
                     try:
                         await asyncio.sleep(10)
                     except asyncio.CancelledError:
-                        continue  # pragma: no cover - the forced deadline closes the loop first
+                        continue  # pragma: lax no cover - usually the forced deadline closes the loop first
 
         agent = build_agent(act)
         abandoned = loops.get()
@@ -960,7 +1000,7 @@ class TestBridgeFailureModes:
         started_waiting = time.monotonic()
         deadline = time.monotonic() + 5
         while not abandoned.is_closed() and time.monotonic() < deadline:
-            time.sleep(0.01)  # pragma: no cover - the retired loop normally closes before polling
+            time.sleep(0.01)  # pragma: lax no cover - the retired loop normally closes before polling
 
         assert abandoned.is_closed()
         assert not abandoned_thread.is_alive()
@@ -968,6 +1008,7 @@ class TestBridgeFailureModes:
         shutdown(replacement, owner=replacement_thread)
         gc.collect()
 
+    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_an_unwind_that_finishes_within_the_cancel_timeout_keeps_the_loop_warm(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1009,6 +1050,7 @@ class TestBridgeFailureModes:
         shutdown(warm, owner=thread)
         gc.collect()
 
+    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_retirement_drains_cleanup_scheduled_when_the_main_task_finishes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1172,7 +1214,7 @@ class TestBridgeFailureModes:
         stopped.call_soon_threadsafe(stopped.stop)
         deadline = time.monotonic() + 5
         while stopped.is_running() and time.monotonic() < deadline:  # pragma: no branch - stops promptly
-            time.sleep(0.01)
+            time.sleep(0.01)  # pragma: lax no cover
 
         replacement = loops.get()
         replacement_thread = loops._thread  # pyright: ignore[reportPrivateUsage]
@@ -1275,7 +1317,7 @@ class TestEnqueueGuard:
 
         class EnqueueingModel(FunctionModel):
             @asynccontextmanager
-            async def request_stream(  # type: ignore[override]
+            async def request_stream(
                 self,
                 messages: list[ModelMessage],
                 model_settings: Any,

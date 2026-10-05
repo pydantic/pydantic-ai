@@ -1,9 +1,9 @@
 """Pure editing state, independent of terminal timing or ownership."""
 
 import pytest
-from termflow.ansi.utils import visible_length  # pyright: ignore[reportMissingTypeStubs]
+from termflow.ansi.utils import visible_length
 
-from pydantic_clai2.prompt_buffer import PromptBuffer
+from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 
 
 @pytest.mark.parametrize(

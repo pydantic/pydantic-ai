@@ -5,19 +5,21 @@ from __future__ import annotations
 import os
 import shlex
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import anyio
 import httpx
+from typing_extensions import Self
+
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
-from typing_extensions import Self
-
+from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness.localstack._container import LocalStackContainer
 
@@ -43,6 +45,17 @@ _FORBIDDEN_MODEL_GLOBAL_OPTIONS = {
 }
 
 
+@dataclass(frozen=True)
+class LocalStackOperations:
+    """The durable operations a `LocalStack` capability runs its toolset's commands and health checks through.
+
+    Each takes the endpoint the toolset talks to, which is the managed container's when `manage_container` is set.
+    """
+
+    aws_cli: Callable[[str, str, float | None], Awaitable[str | RetryRequest]]
+    localstack_health: Callable[[str], Awaitable[str]]
+
+
 class LocalStackToolset(FunctionToolset[AgentDepsT]):
     """Gives an agent the ability to drive an emulated AWS environment.
 
@@ -52,6 +65,10 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
 
     Commands are executed as an argument vector (no shell), so shell operators
     and redirection in the command string have no effect.
+
+    `LocalStack` passes `operations` so that each command and health check runs
+    as one of its durable operations, whose result durable execution records
+    instead of running the command again on recovery.
     """
 
     def __init__(
@@ -75,8 +92,10 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         container_env: Mapping[str, str] | None = None,
         docker_path: str = 'docker',
         startup_timeout: float = 120.0,
+        id: str | None = None,
+        operations: LocalStackOperations | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         if allowed_services and denied_services:
             raise ValueError('Specify allowed_services or denied_services, not both.')
         if max_output_chars <= 0:
@@ -101,6 +120,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         self._docker_path = docker_path
         self._startup_timeout = startup_timeout
         self._container: LocalStackContainer | None = None
+        self._operations = operations
 
         self.add_function(self.aws_cli, name='aws_cli')
         self.add_function(self.localstack_health, name='localstack_health')
@@ -131,6 +151,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             container_env=self._container_env,
             docker_path=self._docker_path,
             startup_timeout=self._startup_timeout,
+            id=self.id,
+            operations=self._operations,
         )
 
     async def call_tool(
@@ -273,6 +295,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Labelled stdout/stderr output, with an exit code on non-zero exit.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.aws_cli(self._endpoint_url, command, timeout_seconds))
         tokens = self._normalize_command(command)
         self._check_service(tokens)
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
@@ -350,6 +374,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The health JSON, or an error message if LocalStack is unreachable.
         """
+        if self._operations is not None:
+            return await self._operations.localstack_health(self._endpoint_url)
         url = self._endpoint_url.rstrip('/') + _HEALTH_PATH
         try:
             async with httpx.AsyncClient(timeout=self._default_timeout) as client:

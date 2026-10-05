@@ -33,6 +33,8 @@ from typing import Annotated, Any, Generic, Literal
 
 import anyio
 from pydantic import Strict, TypeAdapter, ValidationError
+from typing_extensions import TypedDict
+
 from pydantic_ai.messages import (
     AgentStreamEvent,
     PartDeltaEvent,
@@ -44,8 +46,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from typing_extensions import TypedDict
-
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -60,6 +60,7 @@ from pydantic_ai_harness.code_mode._streaming import (
     MAX_SCAN_WORK_CHARS,
     closed_statements,
     decode_partial_args,
+    parse_code,
 )
 from pydantic_ai_harness.code_mode._toolset import (
     NestedCallOutcome,
@@ -380,7 +381,7 @@ def _text_literal_calls(code: str, eligible: frozenset[str]) -> tuple[list[_Extr
                 break
             walked += end - match.start()
             try:
-                expression = ast.parse(code[match.start() : end], mode='eval')
+                expression = parse_code(code[match.start() : end], mode='eval')
             except (SyntaxError, ValueError, RecursionError, MemoryError):
                 # Same set `closed_statements` guards: a NUL character is a `ValueError`, not
                 # a `SyntaxError`, and adversarial nesting can exhaust the parser.
@@ -625,7 +626,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         if not final:
             return len(closed_statements(code))
         try:
-            return len(ast.parse(code).body)
+            return len(parse_code(code).body)
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return len(closed_statements(code))
 
@@ -722,7 +723,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             # sandbox parser applies its own resource limits at dispatch.
             return
         try:
-            body = ast.parse(self._ordered_prefix(code)).body
+            body = parse_code(self._ordered_prefix(code)).body
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return
         extracted_calls = _literal_calls(body, step.eligible)
@@ -838,9 +839,9 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         """Run-end cleanup: cancel every launch no snippet ever claimed.
 
         Shielded: a run cancelled through an anyio scope is level-triggered, so without the
-        shield the first ``_cancel_watch`` await below would be re-cancelled and every later
-        watch's launches would keep running past the run's end. Each ``_cancel_watch`` await is
-        bounded by ``CANCEL_TIMEOUT_SECONDS``, so the shield cannot hold the unwind hostage.
+        shield the first `_cancel_watch` await below would be re-cancelled and every later
+        watch's launches would keep running past the run's end. Each `_cancel_watch` await is
+        bounded by `CANCEL_TIMEOUT_SECONDS`, so the shield cannot hold the unwind hostage.
         """
         parts, self._parts = self._parts, {}
         self._index_to_part.clear()

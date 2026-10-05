@@ -8,7 +8,7 @@ description: "Run slow Pydantic AI tools in the background so the agent keeps wo
 `BackgroundTools` lets selected tools run in the background while the agent continues without
 waiting. Use it when the model can work on something else until the result is ready.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/background_tools/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/background_tools/)
 
 Install the OpenAI provider before running this example:
 
@@ -37,7 +37,7 @@ By default, any tool with `metadata={'background': True}` runs in the background
 
 ## Selecting which tools run in the background
 
-`BackgroundTools(tools=...)` accepts the standard [`ToolSelector`](/ai/api/pydantic-ai/tools/#pydantic_ai.tools.ToolSelector):
+`BackgroundTools(tools=...)` accepts the standard [`ToolSelector`][pydantic_ai.tools.ToolSelector]:
 
 ```python
 from pydantic_ai_harness import BackgroundTools
@@ -76,7 +76,7 @@ async def slow_research(query: str) -> str:
 
 ### Marking tools in bulk
 
-Combine with [`SetToolMetadata`](/ai/capabilities/set-tool-metadata/) or `FunctionToolset.with_metadata(...)` to mark several tools as background without touching individual definitions:
+Combine with [`SetToolMetadata`](../capabilities/set-tool-metadata.md) or `FunctionToolset.with_metadata(...)` to mark several tools as background without touching individual definitions:
 
 ```python
 from pydantic_ai import Agent, FunctionToolset
@@ -102,9 +102,10 @@ The model first receives a message saying that the tool has started. The message
 When the tool finishes, the model receives the result with the same task ID.
 
 Text and files returned by the tool are sent to the model. Application-only metadata is not sent.
-If a tool fails unexpectedly, the model sees the error type but not the error message, which may
-contain private information. Running out of retries or raising `CancelledError` ends the run. A tool
-can call `ctx.cancel()` to stop the run and the other background tools.
+`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
+other tool exception ends the run with the original exception, as it does for a sequential tool.
+Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`
+to stop the run and the other background tools.
 
 A normal run waits for its background tools to finish. A pending call counts toward
 `tool_calls_limit`. If the run pauses or stops early, unfinished tools are cancelled and their
@@ -173,5 +174,5 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[BackgroundTools])
 
 ## Further reading
 
-- [Injecting messages during a run](/ai/core-concepts/message-history/#injecting-messages-mid-run)
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Injecting messages during a run](../message-history.md#injecting-messages-mid-run)
+- [Pydantic AI capabilities](../capabilities/overview.md)

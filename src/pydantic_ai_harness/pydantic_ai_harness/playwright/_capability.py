@@ -12,10 +12,9 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.playwright._toolset import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_MAX_CONTENT_TOKENS,
@@ -29,6 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from playwright.async_api import StorageState
+
     from pydantic_ai.agent import AbstractAgent
 
 _INSTRUCTIONS = """\
@@ -112,7 +112,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     Neither is a general security boundary: an unanswered DNS lookup is refused
     but Chromium resolves the name again before it connects, so rebinding is not
     closed, and a proxy-based enforcement mode is tracked in
-    https://github.com/pydantic/pydantic-ai-harness/issues/415. Set
+    https://github.com/pydantic/pydantic-ai/issues/9204. Set
     `allowed_domains` when the agent may act on untrusted input.
 
     Chromium starts lazily on the first browser-tool call and is closed when the

@@ -3,27 +3,22 @@
 from pathlib import Path
 
 import pytest
-from menu_script import Script, make_context, pick
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-from termflow.tui.menu import MenuResult  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
 
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_menu import (
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_options import model_options
+from pydantic_clai2.models.model_settings import model_defaults
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import (
     ModelSettingsSource,
     build_model_settings_picker,
     model_settings_command,
     model_settings_summary,
 )
-from pydantic_clai2.model_options import model_options
-from pydantic_clai2.model_settings import model_defaults
-from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import Script, make_context, pick
 
 
 @pytest.mark.parametrize('provider', ['openai', 'openai-codex', 'openai-chat', 'azure', 'openrouter', 'custom'])

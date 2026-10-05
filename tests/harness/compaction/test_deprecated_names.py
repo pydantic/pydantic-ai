@@ -13,13 +13,13 @@ def test_sliding_window_alias_warns_and_resolves() -> None:
     with pytest.warns(
         HarnessDeprecationWarning, match='renamed to `pydantic_ai_harness.compaction.SlidingWindowCompaction`'
     ):
-        from pydantic_ai_harness.compaction import SlidingWindow  # noqa: PLC0415  # importing is the assertion
+        from pydantic_ai_harness.compaction import SlidingWindow  # importing is the assertion
     assert SlidingWindow is SlidingWindowCompaction
 
 
 def test_limit_warner_alias_warns_and_resolves() -> None:
     with pytest.warns(HarnessDeprecationWarning, match='renamed to `pydantic_ai_harness.compaction.WarnNearLimits`'):
-        from pydantic_ai_harness.compaction import LimitWarner  # noqa: PLC0415  # importing is the assertion
+        from pydantic_ai_harness.compaction import LimitWarner  # importing is the assertion
     assert LimitWarner is WarnNearLimits
 
 

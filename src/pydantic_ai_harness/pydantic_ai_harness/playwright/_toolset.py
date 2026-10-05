@@ -115,13 +115,15 @@ from time import monotonic
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, get_args
 from urllib.parse import urlparse
 
+import anyio
 import idna
 from opentelemetry import trace
+from typing_extensions import Self
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from typing_extensions import Self
 
 try:
     # Import-time gate (mirrors `pydantic_ai_harness.exa._toolset`): importing the
@@ -131,12 +133,14 @@ try:
     # API, and a driver-raised instance only carries `.name` (so isinstance is the
     # reliable discriminator, not the name attribute).
     from playwright._impl._errors import TargetClosedError as TargetClosedError
-    from playwright.async_api import Error as _PlaywrightError
-    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-    from playwright.async_api import async_playwright as async_playwright
+    from playwright.async_api import (
+        Error as _PlaywrightError,
+        TimeoutError as PlaywrightTimeoutError,
+        async_playwright as async_playwright,
+    )
 
     PlaywrightError = _PlaywrightError
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'playwright is required for PlaywrightBrowser. '
         'Install it with: pip install "pydantic-ai-harness[playwright]"\n'
@@ -147,14 +151,16 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine, Sequence
 
     from opentelemetry.trace import Span, Tracer
-    from playwright.async_api import Browser as PlaywrightBrowserHandle
-    from playwright.async_api import BrowserContext as PlaywrightBrowserContext
-    from playwright.async_api import Page as PlaywrightPage
-    from playwright.async_api import Playwright as PlaywrightDriver
-    from playwright.async_api import Request as PlaywrightRequest
-    from playwright.async_api import Route as PlaywrightRoute
-    from playwright.async_api import StorageState
-    from playwright.async_api import WebSocketRoute as PlaywrightWebSocketRoute
+    from playwright.async_api import (
+        Browser as PlaywrightBrowserHandle,
+        BrowserContext as PlaywrightBrowserContext,
+        Page as PlaywrightPage,
+        Playwright as PlaywrightDriver,
+        Request as PlaywrightRequest,
+        Route as PlaywrightRoute,
+        StorageState,
+        WebSocketRoute as PlaywrightWebSocketRoute,
+    )
 
 _T = TypeVar('_T')
 
@@ -309,7 +315,7 @@ class _Page(Protocol):
     ) -> list[str]: ...  # pragma: no cover
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Deadlines:
     """The budget one operation runs under, as time remaining rather than time allowed.
 
@@ -337,6 +343,7 @@ class _Deadlines:
     action_ms: int
     navigation_ms: int
     started: float
+    _first_stage: bool = True
 
     @property
     def action(self) -> int:
@@ -349,12 +356,15 @@ class _Deadlines:
         return self._remaining(self.navigation_ms)
 
     def _remaining(self, budget_ms: int) -> int:
-        """Return `budget_ms` less the time already spent, never reaching zero.
+        """Return the configured budget for the first stage, then what remains.
 
         `0` is Playwright's "no deadline", so a configured `0` stays `0` while
         every other budget keeps at least 1ms: counting down to zero would remove
         the deadline at the exact moment it should expire.
         """
+        if self._first_stage:
+            self._first_stage = False
+            return budget_ms
         if budget_ms == 0:
             return 0
         return max(1, budget_ms - int((monotonic() - self.started) * 1000))
@@ -409,7 +419,7 @@ def is_blocked_address(host: str) -> bool:
     `PlaywrightBrowserSession.decide` resolving it first and passing the answers
     to `refuse`.
     Neither is rebinding-proof, since Chromium resolves the name again before it
-    connects (https://github.com/pydantic/pydantic-ai-harness/issues/415).
+    connects (https://github.com/pydantic/pydantic-ai/issues/9204).
     A trailing dot is stripped so the fully-qualified spelling gets the same
     verdict, and an IPv4-mapped IPv6 literal is classified by its embedded IPv4
     address. The named category flags are checked alongside `is_global` because
@@ -507,10 +517,12 @@ def _scroll_position(reported: object) -> str:
     has no way to tell that repeating it is pointless.
     """
     if not isinstance(reported, str):
-        return ''  # pragma: no cover -- `evaluate` returns what the expression built
+        return ''
     parts = reported.split('|')
     if len(parts) != 3 or not all(part.lstrip('-').isdigit() for part in parts):
-        return ''  # pragma: no cover -- same
+        # The test pages report whole numbers; a browser with subpixel scrolling can report a
+        # fractional `scrollY`, which this does not parse.
+        return ''  # pragma: no cover
     before, after, furthest = (int(part) for part in parts)
     if furthest == 0:
         return 'The page has nothing to scroll.'
@@ -1063,7 +1075,7 @@ class PlaywrightBrowserSession:
         self._browser: PlaywrightBrowserHandle | None = None
         self._context: PlaywrightBrowserContext | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
-        self._launch_lock = asyncio.Lock()
+        self._launch_lock = anyio.Lock(fast_acquire=True)
         self.tracer: Tracer = _FALLBACK_TRACER
         """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
@@ -1599,7 +1611,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         self._max_content_tokens = max_content_tokens
         self._action_timeout_ms = action_timeout_ms
         self._navigation_timeout_ms = navigation_timeout_ms
-        self._operation_lock = asyncio.Lock()
+        self._operation_lock = anyio.Lock(fast_acquire=True)
         self.add_function(self.navigate, name='navigate')
         self.add_function(self.click, name='click')
         self.add_function(self.type_text, name='type_text')

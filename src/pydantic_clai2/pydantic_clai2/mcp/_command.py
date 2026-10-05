@@ -7,12 +7,12 @@ from pathlib import Path
 
 from anyio import to_thread
 
-from ..field_menu import TERMINAL, Runners
-from ..menu_worker import run_worker
-from ._form import Editor, edit_form, edit_in_editor, install_form
-from ._runtime import MCPServers, ServerEntry, State, not_owned
-from ._settings import RemoteServer, references, target
-from ._tokens import TokenStore
+from pydantic_clai2.mcp._form import Editor, edit_form, edit_in_editor, install_form
+from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State, not_owned
+from pydantic_clai2.mcp._settings import RemoteServer, references, target
+from pydantic_clai2.mcp._tokens import TokenStore
+from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
+from pydantic_clai2.ui.menus.menu_worker import run_worker
 
 _GLYPHS: dict[State, str] = {'running': '+', 'ready': 'o', 'stopped': '-', 'error': '!'}
 SERVER_SUBCOMMANDS = ('start', 'stop', 'restart', 'status', 'logs', 'auth', 'edit', 'remove', 'tools')
@@ -58,7 +58,7 @@ def _tail(path: Path, limit: int) -> tuple[int, list[str]]:
     if not path.exists():
         return 0, []
     total, lines = 0, deque[str](maxlen=limit)
-    with path.open(errors='replace') as file:
+    with path.open(encoding='utf-8', errors='replace') as file:
         for line in file:
             total += 1
             lines.append(line.rstrip('\n'))

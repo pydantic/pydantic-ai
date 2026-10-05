@@ -11,7 +11,6 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import CachePoint, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
     SUBTASK_TOOL_NAMES,
@@ -124,8 +123,13 @@ class Planning(AbstractCapability[AgentDepsT]):
 
     _resolved_store: PlanStore | None = field(default=None, init=False, repr=False, compare=False)
 
+    _toolset: PlanningToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    """The one `planning` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Planning[AgentDepsT]:
         """Return a clone with this run's store resolved and cached (per-run isolation)."""
+        # Build the toolset first so it belongs to this capability rather than to the clone.
+        self.get_toolset()
         clone = copy(self)
         clone._resolved_store = clone._resolve_store(ctx)
         return clone
@@ -145,8 +149,10 @@ class Planning(AbstractCapability[AgentDepsT]):
         return InMemoryPlanStore()
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Provide the `planning` toolset over this run's resolved store."""
-        return PlanningToolset[AgentDepsT](self)
+        """Provide the stable `planning` toolset, shared with every per-run copy."""
+        if self._toolset is None:
+            self._toolset = PlanningToolset[AgentDepsT](self)
+        return self._toolset
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide static, cache-stable guidance on using the planning tools.

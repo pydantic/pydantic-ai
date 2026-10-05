@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pydantic_ai.usage import RequestUsage
-
     from pydantic_ai_harness.spend._budget import Budget
 
 MONEY_PRECISION = 40

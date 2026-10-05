@@ -13,9 +13,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from typing_extensions import TypeIs, assert_never
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from typing_extensions import TypeIs, assert_never
 
 
 class _Unset:

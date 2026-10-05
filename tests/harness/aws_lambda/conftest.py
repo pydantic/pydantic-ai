@@ -21,8 +21,7 @@ import pytest
 pytest.importorskip('aws_durable_execution_sdk_python')
 
 from aws_durable_execution_sdk_python.config import StepConfig
-from aws_durable_execution_sdk_python.serdes import deserialize as _deserialize
-from aws_durable_execution_sdk_python.serdes import serialize as _serialize
+from aws_durable_execution_sdk_python.serdes import deserialize as _deserialize, serialize as _serialize
 
 # The SDK's helpers are generic over an unbound TypeVar when no SerDes is supplied.
 deserialize: Callable[..., Any] = _deserialize

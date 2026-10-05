@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
+    LocalWorkspace,
     NativeTool,
     PrefixTools,
     RaiseContentFilterError,
@@ -76,9 +77,7 @@ from .conftest import IsStr, iter_message_parts, remove_schema_descriptions, try
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -96,6 +95,7 @@ def test_capability_types() -> None:
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
             'Instrumentation': Instrumentation,
+            'LocalWorkspace': LocalWorkspace,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
@@ -668,6 +668,7 @@ def test_model_json_schema_with_capabilities():
                                         'claude-opus-4-8',
                                         'claude-opus-4-7',
                                         'claude-opus-4-6',
+                                        'claude-sonnet-5-5',
                                         'claude-sonnet-4-6',
                                     ],
                                     'type': 'string',
@@ -845,6 +846,7 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-sonnet-4-5-20250929',
                         'anthropic:claude-sonnet-4-6',
                         'anthropic:claude-sonnet-5',
+                        'anthropic:claude-sonnet-5-5',
                         'bedrock-mantle:openai.gpt-5.4',
                         'bedrock-mantle:openai.gpt-5.4-2026-03-05',
                         'bedrock-mantle:openai.gpt-5.5',
@@ -894,6 +896,7 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:global.anthropic.claude-opus-5',
                         'bedrock:global.anthropic.claude-opus-5-5',
                         'bedrock:global.anthropic.claude-sonnet-5',
+                        'bedrock:global.anthropic.claude-sonnet-5-5',
                         'bedrock:global.openai.gpt-5.6-luna',
                         'bedrock:global.openai.gpt-5.6-sol',
                         'bedrock:global.openai.gpt-5.6-terra',
@@ -1021,6 +1024,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
                         'gateway/anthropic:claude-sonnet-5',
+                        'gateway/anthropic:claude-sonnet-5-5',
                         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
                         'gateway/bedrock:deepseek.r1-v1:0',
                         'gateway/bedrock:deepseek.v3.2',
@@ -1038,6 +1042,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:global.anthropic.claude-opus-5',
                         'gateway/bedrock:global.anthropic.claude-opus-5-5',
                         'gateway/bedrock:global.anthropic.claude-sonnet-5',
+                        'gateway/bedrock:global.anthropic.claude-sonnet-5-5',
                         'gateway/bedrock:global.openai.gpt-5.6-luna',
                         'gateway/bedrock:global.openai.gpt-5.6-sol',
                         'gateway/bedrock:global.openai.gpt-5.6-terra',
@@ -1093,6 +1098,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3-pro-image',
                         'gateway/google-cloud:gemini-3.1-flash-image',
                         'gateway/google-cloud:gemini-3.1-flash-lite',
+                        'gateway/google-cloud:gemini-3.1-flash-lite-image',
                         'gateway/google-cloud:gemini-3.1-pro-preview',
                         'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/google-cloud:gemini-3.5-flash-lite',
@@ -1107,6 +1113,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3-pro-image',
                         'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
+                        'gateway/google:gemini-3.1-flash-lite-image',
                         'gateway/google:gemini-3.1-pro-preview',
                         'gateway/google:gemini-3.5-flash',
                         'gateway/google:gemini-3.5-flash-lite',
@@ -1171,6 +1178,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-6-astra',
                         'gateway/openai:gpt-6-luna',
                         'gateway/openai:gpt-6-sol',
+                        'gateway/openai:gpt-6.1-sol',
                         'gateway/openai:gpt-daybreak-blue-latest',
                         'gateway/openai:gpt-daybreak-red-latest',
                         'gateway/openai:gpt-rosalind-research',
@@ -1200,6 +1208,7 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.1-flash-image',
                         'google-cloud:gemini-3.1-flash-image-preview',
                         'google-cloud:gemini-3.1-flash-lite',
+                        'google-cloud:gemini-3.1-flash-lite-image',
                         'google-cloud:gemini-3.1-pro-preview',
                         'google-cloud:gemini-3.5-flash',
                         'google-cloud:gemini-3.5-flash-lite',
@@ -1222,6 +1231,7 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-image-preview',
                         'google:gemini-3.1-flash-lite',
+                        'google:gemini-3.1-flash-lite-image',
                         'google:gemini-3.1-pro-preview',
                         'google:gemini-3.5-flash',
                         'google:gemini-3.5-flash-lite',
@@ -1365,6 +1375,7 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-6-astra',
                         'openai-chat:gpt-6-luna',
                         'openai-chat:gpt-6-sol',
+                        'openai-chat:gpt-6.1-sol',
                         'openai-chat:gpt-daybreak-blue-latest',
                         'openai-chat:gpt-daybreak-red-latest',
                         'openai-chat:gpt-rosalind-research',
@@ -1451,6 +1462,7 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-6-astra',
                         'openai:gpt-6-luna',
                         'openai:gpt-6-sol',
+                        'openai:gpt-6.1-sol',
                         'openai:gpt-daybreak-blue-latest',
                         'openai:gpt-daybreak-red-latest',
                         'openai:gpt-rosalind-research',
@@ -1839,6 +1851,18 @@ def test_model_json_schema_with_capabilities():
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
+                'short_spec_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'LocalWorkspace': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Localworkspace',
+                        }
+                    },
+                    'required': ['LocalWorkspace'],
+                    'title': 'short_spec_LocalWorkspace',
+                    'type': 'object',
+                },
                 'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
@@ -1909,6 +1933,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'Instrumentation': {'$ref': '#/$defs/spec_params_Instrumentation'}},
                     'required': ['Instrumentation'],
                     'title': 'spec_Instrumentation',
+                    'type': 'object',
+                },
+                'spec_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {'LocalWorkspace': {'$ref': '#/$defs/spec_params_LocalWorkspace'}},
+                    'required': ['LocalWorkspace'],
+                    'title': 'spec_LocalWorkspace',
                     'type': 'object',
                 },
                 'spec_Thinking': {
@@ -2019,6 +2050,26 @@ def test_model_json_schema_with_capabilities():
                         },
                     },
                     'title': 'spec_params_Instrumentation',
+                    'type': 'object',
+                },
+                'spec_params_LocalWorkspace': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'working_dir': {
+                            'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                            'title': 'Working Dir',
+                        },
+                        'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                        'env': {
+                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                            'title': 'Env',
+                        },
+                    },
+                    'required': ['working_dir'],
+                    'title': 'spec_params_LocalWorkspace',
                     'type': 'object',
                 },
                 'spec_params_Thinking': {
@@ -2218,6 +2269,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                                 {'const': 'Instrumentation', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Instrumentation'},
+                                {'$ref': '#/$defs/short_spec_LocalWorkspace'},
+                                {'$ref': '#/$defs/spec_LocalWorkspace'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
@@ -2443,6 +2496,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
                             {'const': 'Instrumentation', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Instrumentation'},
+                            {'$ref': '#/$defs/short_spec_LocalWorkspace'},
+                            {'$ref': '#/$defs/spec_LocalWorkspace'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},

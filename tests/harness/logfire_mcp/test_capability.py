@@ -12,6 +12,7 @@ from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
@@ -20,18 +21,14 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+pytestmark = [
+    pytest.mark.filterwarnings(
+        "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
+    ),
+]
 
 
 @pytest.fixture
@@ -187,14 +184,30 @@ class TestLogfireMCP:
             ModelRequest(parts=[UserPromptPart('Recent errors', timestamp=stamp)], timestamp=stamp),
             ModelResponse(parts=[TextPart('None.')], timestamp=stamp),
         ]
-        before = datetime.now(timezone.utc).replace(microsecond=0)
+        before = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
         result = await Agent(TestModel(call_tools=[]), capabilities=[LogfireMCP(client=server)]).run(
             message_history=history
         )
         request = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
         instructions = request.instructions or ''
-        timestamp = instructions.split('Current UTC time is `')[1].split('`')[0]
+        timestamp = instructions.split('within the hour starting `')[1].split('`')[0]
         assert before <= datetime.fromisoformat(timestamp) <= datetime.now(timezone.utc)
+
+    def test_current_time_is_stable_within_the_hour(self) -> None:
+        """Instructions precede the history, so they must not change from one request to the next."""
+
+        def current_utc(minute: int, second: int) -> str | None:
+            stamp = datetime(2026, 9, 29, 14, minute, second, 123456, tzinfo=timezone.utc)
+            ctx = RunContext[None](
+                deps=None, model=TestModel(), usage=RunUsage(), messages=[ModelRequest(parts=[], timestamp=stamp)]
+            )
+            return LogfireMCP[None]()._current_utc(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        assert (
+            current_utc(0, 0)
+            == current_utc(59, 59)
+            == ('The current UTC time is within the hour starting `2026-09-29T14:00+00:00`.')
+        )
 
     @pytest.mark.parametrize('messages', [[], [ModelResponse(parts=[TextPart('Hello')])]])
     def test_no_current_time_without_a_request(self, messages: list[ModelMessage]) -> None:

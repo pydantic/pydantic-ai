@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
-from pydantic_ai import AbstractToolset
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from typing_extensions import TypedDict
 
+from pydantic_ai import AbstractToolset
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch as _ToolSearch
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    ModelMessage,
+    ModelResponse,
+    NativeToolSearchReturnPart,
+    SystemPromptPart,
+    post_compaction_window,
+)
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._speculation import (
     MAX_SPECULATIONS_PER_PART,
@@ -40,6 +47,11 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
     'New functions are now available inside `run_code`. Their signatures have been '
     'added to the available-functions catalog in the system prompt'
 )
+_DISCOVERY_ANNOUNCEMENT_RE = re.compile(
+    rf'{re.escape(_DISCOVERY_ANNOUNCEMENT_PREFIX)}: '
+    r'(?P<names>`[^`]+`(?:, `[^`]+`)*)\.'
+)
+_BACKTICKED_NAME_RE = re.compile(r'`([^`]+)`')
 
 
 @dataclass
@@ -198,7 +210,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False)
 
-    _announced_tools: set[str] = field(default_factory=set[str], init=False, repr=False)
+    _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
@@ -214,11 +226,11 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         return CapabilityOrdering(position='outermost', wraps=[_ToolSearch])
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> CodeMode[AgentDepsT]:
-        """Return a fresh instance so concurrent runs don't share `_announced_tools` or speculation state."""
+        """Return a fresh instance so concurrent runs don't share announcement or speculation state."""
         if not self.dynamic_catalog and self.speculate is None:
             return self
         clone = replace(self)
-        # `replace` re-runs `__init__`, resetting `init=False` fields: `_announced_tools` starts
+        # `replace` re-runs `__init__`, resetting `init=False` fields: in-flight announcements start
         # fresh (intended), and the stats object is rebound so callers holding this instance
         # observe counters accumulated by its per-run clones.
         clone.speculation_stats = self.speculation_stats
@@ -230,6 +242,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 launch_cap=min(MAX_SPECULATIONS_PER_PART, self.max_tool_calls),
             )
         return clone
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Clear announcements that the next model step has incorporated or discarded."""
+        self._in_flight_announcements.clear()
+        return request_context
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, splitting it into native + sandboxed subsets if needed."""
@@ -327,16 +348,29 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         return response
 
     def _announce_newly_discovered(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> None:
-        """Enqueue a system-prompt announcement for any names we haven't already announced."""
-        fresh = [n for n in names if n not in self._announced_tools]
+        """Enqueue names absent from visible history and the current step's pending queue."""
+        announced = _visible_announced_tools(ctx.messages)
+        fresh = list(dict.fromkeys(n for n in names if n not in announced and n not in self._in_flight_announcements))
         if not fresh:
             return
-        self._announced_tools.update(fresh)
+        self._in_flight_announcements.update(fresh)
         listing = ', '.join(f'`{name}`' for name in fresh)
         # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
         # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
         # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
         ctx.enqueue(SystemPromptPart(content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.'))
+
+
+def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
+    """Read authored discovery announcements after the latest compaction boundary."""
+    announced: set[str] = set()
+    for message in post_compaction_window(messages):
+        for part in message.parts:
+            if isinstance(part, SystemPromptPart):
+                match = _DISCOVERY_ANNOUNCEMENT_RE.fullmatch(part.content)
+                if match:
+                    announced.update(_BACKTICKED_NAME_RE.findall(match.group('names')))
+    return announced
 
 
 class _DiscoveredCatalog(TypedDict):

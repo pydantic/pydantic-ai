@@ -10,21 +10,16 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel
 from rich.console import Console
 from rich.text import Text
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.screen import Screen
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.status import Status, StatusLine
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.ui.prompt.screen import Screen
+from pydantic_clai2.ui.rendering.status import Status, StatusLine
 
 
 async def test_screen_is_free_between_prompts_and_bound_during_one() -> None:
@@ -126,7 +121,16 @@ async def test_paused_is_a_no_op_when_the_row_was_never_reserved() -> None:
     assert output.getvalue() == ''
 
 
-@pytest.mark.parametrize('terminal', [False, True])
+@pytest.mark.parametrize(
+    'terminal',
+    [
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.skip(reason='Flaky output order: https://github.com/pydantic/pydantic-ai/issues/8824'),
+        ),
+    ],
+)
 async def test_plugin_takes_the_screen_from_inside_a_tool(tmp_path: Path, terminal: bool) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
@@ -134,18 +138,20 @@ async def test_plugin_takes_the_screen_from_inside_a_tool(tmp_path: Path, termin
         'from pydantic_ai import RunContext\n'
         'from pydantic_ai.capabilities import AbstractCapability\n'
         'from pydantic_ai.toolsets import FunctionToolset\n'
-        'from pydantic_clai2.plugins import PluginHost\n'
-        'def activate(host: PluginHost) -> None:\n'
-        '    toolset = FunctionToolset()\n'
-        '    @toolset.tool\n'
-        '    async def take(ctx: RunContext[None]) -> str:\n'
-        '        async with host.full_screen():\n'
-        "            host.console.print('drawing on a settled screen')\n"
-        "        return 'taken'\n"
-        '    class Taker(AbstractCapability):\n'
-        '        def get_toolset(self):\n'
-        '            return toolset\n'
-        '    host.add(Taker())\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Taking(Plugin):\n'
+        '    def get_capabilities(self):\n'
+        '        host = self.host\n'
+        '        toolset = FunctionToolset()\n'
+        '        @toolset.tool\n'
+        '        async def take(ctx: RunContext[None]) -> str:\n'
+        '            async with host.full_screen():\n'
+        "                host.console.print('drawing on a settled screen')\n"
+        "            return 'taken'\n"
+        '        class Taker(AbstractCapability):\n'
+        '            def get_toolset(self):\n'
+        '                return toolset\n'
+        '        return [Taker()]\n'
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):

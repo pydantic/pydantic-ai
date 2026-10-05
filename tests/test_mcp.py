@@ -112,7 +112,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
-    pytest.mark.anyio,
 ]
 
 MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()

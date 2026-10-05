@@ -7,44 +7,40 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Generic, TypeVar
 
+import anyio
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+from rich.text import Text
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-from rich.text import Text
-
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_shell
-from pydantic_clai2._session import Session
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.forks import USAGE, Forks, parse_fork_args
-from pydantic_clai2.image_input import ImageInput
-from pydantic_clai2.interrupts import Interrupts
-from pydantic_clai2.live_prompt import LivePrompt
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
 
 PromptT = TypeVar('PromptT')
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def last_prompt(messages: list[ModelMessage]) -> str:
     for message in reversed(messages):
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+        if isinstance(message, ModelRequest):  # pragma: no branch
+            for part in message.parts:  # pragma: no branch
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str):  # pragma: no branch
                     return part.content
     raise AssertionError('no prompt')  # pragma: no cover
 
@@ -351,8 +347,10 @@ async def test_live_rows_follow_each_fork(tmp_path: Path) -> None:
         assert first.endswith('starting')
         assert second.startswith(' FORK #2  agent default  \u2713 00:0')
         assert second.endswith('done, prints after this turn')
-    await asyncio.sleep(0)
-    assert finished.announced
+    # Announcing takes the terminal lock, and acquiring it is a checkpoint.
+    with anyio.fail_after(5):
+        while not finished.announced:
+            await asyncio.sleep(0)
     assert [Text.from_ansi(row).plain[:9] for row in forks.rows('*')] == [' FORK #1 ']
     for activity in ('thinking', 'tool: grep', 'running: grep', 'responding', 'working'):
         running.progress.activity = activity
@@ -503,7 +501,7 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
 
     async def after_command() -> str:
         # Idle again: the held banner prints before the next prompt returns.
-        for _ in range(20):
+        for _ in range(20):  # pragma: no branch
             if 'FORK #1' in output.getvalue():
                 break
             await asyncio.sleep(0.01)

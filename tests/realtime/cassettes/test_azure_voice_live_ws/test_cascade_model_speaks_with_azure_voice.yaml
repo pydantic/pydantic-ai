@@ -1,0 +1,460 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    event_id: event_1KurjTUthNxZDJ6704ee1o
+    type: session.created
+    session:
+      id: sess_1tKdMpUtrXDKDyCHqPvCHd
+      model: gpt-5
+      modalities:
+      - audio
+      - text
+      instructions: 'You are a speech chat assistant.
+
+        Your personality is: The AI is engaging, informative, and empathetic.
+
+        The AI is curious and is always interested in learning more about the human.
+
+        The AI is calm and polite. You are great at asking questions and is a sensitive
+        listener.
+
+        You are relentlessly curious, but always polite and never probes too much.
+
+        You are pretty smart but humble, and tries to keep things informal. Overall,
+        You are pretty Zen.
+
+        You are also: Relaxed, informal, chatty. Fun, and sometimes funny. Occasionally
+        cheeky, and light-hearted.
+
+        Do not use markdown format, plain text is preferred.'
+      voice:
+        name: en-US-AvaNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_transcription:
+        model: azure-speech
+        language: null
+        prompt: null
+        delay: null
+        custom_speech: null
+        phrase_list: null
+      input_audio_noise_reduction: null
+      turn_detection:
+        type: server_vad
+        threshold: 0.5
+        prefix_padding_ms: 400
+        silence_duration_ms: 500
+        create_response: true
+        interrupt_response: true
+        idle_timeout_ms: null
+        speech_duration_ms: null
+        auto_truncate: false
+        appended_text_after_truncation: null
+      tools: []
+      tool_choice: auto
+      temperature: 1.0
+      max_response_output_tokens: inf
+      expires_at: 1790647383
+      object: realtime.session
+      input_audio_sampling_rate: 24000
+      animation: null
+      input_audio_echo_cancellation: null
+      avatar: null
+      output_audio_timestamp_types: null
+      reasoning_effort: minimal
+      truncation_strategy: null
+      include: null
+      greeting: null
+      handoff: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: Answer in two or three words.
+      modalities:
+      - text
+      - audio
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_sampling_rate: 24000
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      input_audio_transcription:
+        model: azure-speech
+      voice:
+        type: azure-standard
+        name: en-US-AvaMultilingualNeural
+- kind: message
+  direction: received
+  at: 0.065
+  data:
+    event_id: event_YBMrG8rIWyUSndK2f3AdW
+    type: session.updated
+    session:
+      id: sess_1tKdMpUtrXDKDyCHqPvCHd
+      model: gpt-5
+      modalities:
+      - audio
+      - text
+      instructions: Answer in two or three words.
+      voice:
+        name: en-US-AvaMultilingualNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_transcription:
+        model: azure-speech
+        language: ''
+        prompt: null
+        delay: null
+        custom_speech: null
+        phrase_list: null
+      input_audio_noise_reduction: null
+      turn_detection:
+        type: server_vad
+        threshold: null
+        prefix_padding_ms: null
+        silence_duration_ms: null
+        create_response: true
+        interrupt_response: true
+        idle_timeout_ms: null
+        speech_duration_ms: null
+        auto_truncate: false
+        appended_text_after_truncation: null
+      tools: []
+      tool_choice: auto
+      temperature: 1.0
+      max_response_output_tokens: inf
+      expires_at: 1790647383
+      object: realtime.session
+      input_audio_sampling_rate: 24000
+      animation: null
+      input_audio_echo_cancellation: null
+      avatar: null
+      output_audio_timestamp_types: null
+      reasoning_effort: minimal
+      truncation_strategy: null
+      include: null
+      greeting: null
+      handoff: null
+- kind: message
+  direction: sent
+  at: 0.066
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+- kind: message
+  direction: sent
+  at: 0.066
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+- kind: message
+  direction: received
+  at: 0.129
+  data:
+    event_id: event_5ucC4mEZlRuPA46YW3s38X
+    type: conversation.item.created
+    previous_item_id: ''
+    item:
+      id: item_21Th5HYS1sn7uRIgMno1Wo
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+- kind: message
+  direction: received
+  at: 0.129
+  data:
+    event_id: event_toh9hFG3qFd7EU5gMlF0o
+    type: response.created
+    response:
+      object: realtime.response
+      id: resp_DZq4TvGPPnkB2BAtoRQxP
+      status: in_progress
+      status_details: null
+      output: []
+      usage: null
+      conversation_id: ''
+      modalities:
+      - audio
+      - text
+      voice:
+        name: en-US-AvaMultilingualNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      output_audio_format: pcm16
+      temperature: 1.0
+      max_output_tokens: null
+      metadata: null
+- kind: message
+  direction: received
+  at: 1.261
+  data:
+    event_id: event_orGU8pusWJSvDNcxFRrGY
+    type: response.output_item.added
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    output_index: 0
+    item:
+      id: msg_3hJU6pQaFJvFwQm76wcoVH
+      object: realtime.item
+      type: message
+      status: incomplete
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 1.261
+  data:
+    event_id: event_1VtfNAQEvHHZxBTV1nqOkG
+    type: conversation.item.created
+    previous_item_id: ''
+    item:
+      id: msg_3hJU6pQaFJvFwQm76wcoVH
+      object: realtime.item
+      type: message
+      status: incomplete
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 1.261
+  data:
+    event_id: event_53Qu4FL30wcScCnPaRcpPW
+    type: response.content_part.added
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      transcript: ''
+- kind: message
+  direction: received
+  at: 1.261
+  data:
+    event_id: event_jdMWWSV6FdQegpX2lUBUD
+    type: response.audio_transcript.delta
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    delta: Hello
+- kind: message
+  direction: received
+  at: 1.261
+  data:
+    event_id: event_646uauIZLQsNzyFtRRaJt5
+    type: response.audio_transcript.delta
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    delta: ' there'
+- kind: message
+  direction: received
+  at: 1.264
+  data:
+    event_id: event_4G0aZIejnSsVzWmQNz8cKC
+    type: response.audio_transcript.delta
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    delta: '!'
+- kind: message
+  direction: received
+  at: 1.472
+  data:
+    event_id: event_1OMTkQOP4Rk7MYBjjioI7g
+    type: response.audio.delta
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    delta: AAARABwAFgARABIAEAASABEAEwAUABcAGQAZABcAFgAU
+- kind: message
+  direction: received
+  at: 1.529
+  data:
+    event_id: event_PNSlTxAhkXQ5eNDXdrIla
+    type: response.audio.delta
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    delta: PNwl2jXeyeJD5WjnpujE7I75mAkOFdYbHh8bJHAq2zFv
+- kind: message
+  direction: received
+  at: 1.529
+  data:
+    event_id: event_1WcELF4wdoRhmIuYsrjDDT
+    type: response.audio.delta
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    delta: qwFFAbIAOQDz/27/CP+G/gD+uf2G/U79//y1/JD8Wvwq
+- kind: message
+  direction: received
+  at: 1.587
+  data:
+    event_id: event_1JJxF1fsiTILD9JBxYrCmW
+    type: response.audio.delta
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 1.587
+  data:
+    event_id: event_1qdaWhRIaMwmCReGSXFNis
+    type: response.audio.done
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+- kind: message
+  direction: received
+  at: 1.587
+  data:
+    event_id: event_5Ll56ZnF61VQ3h7zuuiIg8
+    type: response.audio_transcript.done
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    transcript: Hello there!
+- kind: message
+  direction: received
+  at: 1.587
+  data:
+    event_id: event_1q3UuCQALx2xpE8dQ7Ekrc
+    type: response.content_part.done
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    item_id: msg_3hJU6pQaFJvFwQm76wcoVH
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      transcript: Hello there!
+- kind: message
+  direction: received
+  at: 1.587
+  data:
+    event_id: event_75IRnHX7zVMfbngfFI3hLt
+    type: response.output_item.done
+    response_id: resp_DZq4TvGPPnkB2BAtoRQxP
+    output_index: 0
+    item:
+      id: msg_3hJU6pQaFJvFwQm76wcoVH
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: audio
+        transcript: Hello there!
+- kind: message
+  direction: received
+  at: 1.587
+  data:
+    event_id: event_5tMDEKV8qr4Q1rt6dQ1jHl
+    type: response.done
+    response:
+      object: realtime.response
+      id: resp_DZq4TvGPPnkB2BAtoRQxP
+      status: completed
+      status_details: null
+      output:
+      - id: msg_3hJU6pQaFJvFwQm76wcoVH
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Hello there!
+      usage:
+        total_tokens: 58
+        input_tokens: 22
+        output_tokens: 36
+        input_token_details:
+          cached_tokens: 0
+          cache_write_tokens: 0
+          text_tokens: 22
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 12
+          audio_tokens: 24
+          reasoning_tokens: 0
+      conversation_id: ''
+      modalities:
+      - audio
+      - text
+      voice:
+        name: en-US-AvaMultilingualNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      output_audio_format: pcm16
+      temperature: 1.0
+      max_output_tokens: null
+      metadata: null

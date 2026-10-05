@@ -7,7 +7,7 @@ natural-language goal, browser-use drives a real Chromium with its own
 perception-action loop (indexed DOM, screenshots, planning, self-healing), and
 the tool returns a text result.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/browser_use/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/browser_use/)
 
 > [!NOTE]
 > This README covers the browser-use integration: one `browse_web` tool that

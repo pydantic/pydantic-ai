@@ -2,22 +2,53 @@
 
 import asyncio
 import io
+import re
+import sys
 from collections.abc import Coroutine, Sequence
 from pathlib import Path
 
 import pytest
+from rich.console import Console
+from termflow.tui import MenuItem
+from termflow.tui.menu import MenuResult
+
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from rich.console import Console
-from termflow.tui import MenuItem  # pyright: ignore[reportMissingTypeStubs]
-
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.plugin_loader import PluginLoader
-from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.describe import describe
+from pydantic_clai2.plugins.loader import PluginEntry, PluginLoader
+from pydantic_clai2.ui.menus.field_menu import is_save_and_close
+from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
 
-PLUGIN = 'from pydantic_clai2.plugins import PluginHost\ndef activate(host: PluginHost) -> None:\n    pass\n'
+
+def unstyled(text: str) -> str:
+    return re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+
+PLUGIN = 'from pydantic_clai2.plugins import Plugin\nclass Quiet(Plugin):\n    pass\n'
+TUNED = """
+from pydantic import BaseModel
+from pydantic_clai2.plugins import Plugin
+
+
+class Settings(BaseModel):
+    greeting: str = 'hi'
+
+
+class Tuned(Plugin[Settings]):
+    async def configure(self) -> str:
+        host = self.host
+        if host.name == 'grumpy':
+            host.save_settings(Settings(greeting='grr'))
+            raise ValueError('grumpy refuses to be configured')
+        if self.settings.greeting != 'hi':
+            return f'{host.name} already says {self.settings.greeting}.'
+        host.save_settings(Settings(greeting='hello'))
+        return f'Configured {host.name}.'
+"""
 
 
 class FakeMenu:
@@ -28,11 +59,13 @@ class FakeMenu:
         self.redraws.append(items)
 
 
-def make_loader(tmp_path: Path, *names: str) -> PluginLoader[None]:
+def make_loader(tmp_path: Path, *names: str, tuned: tuple[str, ...] = ()) -> PluginLoader[None]:
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
     for name in names:
         (store.plugins_dir / f'{name}.py').write_text(PLUGIN)
+    for name in tuned:
+        (store.plugins_dir / f'{name}.py').write_text(TUNED)
     return PluginLoader(
         store=store,
         console=Console(file=io.StringIO()),
@@ -45,24 +78,107 @@ def run_now(action: Coroutine[object, object, object]) -> None:
     asyncio.run(action)
 
 
+def test_details_show_the_docstring_summary(tmp_path: Path) -> None:
+    loader = make_loader(tmp_path)
+    (loader.plugins_dir / 'documented.py').write_text(f'"""Say `hello`\n  on start.\n\nInternals."""\n{PLUGIN}')
+    menu = PluginMenu(loader, apply=run_now)
+    item = menu.items()[0]
+    assert unstyled(menu.details(item)).splitlines()[3:6] == [
+        'Say hello on start.',
+        '',
+        f'source   {loader.plugins_dir / "documented.py"}',
+    ]
+    (loader.plugins_dir / 'documented.py').write_text(f'"""Say goodbye."""\n{PLUGIN}')
+    assert 'Say hello on start.' in unstyled(menu.details(item)), 'read once, not on every repaint'
+    menu.reload(FakeMenu(), item)
+    assert 'Say goodbye.' in unstyled(menu.details(item))
+
+
+def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / 'clai_described.py').write_text(
+        '"""The module."""\nraise RuntimeError("imported")\nclass Plain:\n    pass\nclass Tool:\n    """The tool."""\n'
+    )
+    (tmp_path / 'clai_broken_source.py').write_text('def (:\n')
+    (tmp_path / 'clai_namespace').mkdir()
+    monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
+
+    def text(factory: str, *, project: bool = False, path: Path | None = None) -> str:
+        declaration = PluginSettings(id='x', factory=factory)
+        return describe(PluginEntry[None](declaration=declaration, path=path, project=project))
+
+    assert text('clai_described:Tool') == 'The tool.'
+    assert text('clai_described:Plain') == 'The module.'
+    assert text('clai_described:missing') == 'The module.'
+    assert text('clai_described', project=True) == 'The module.'
+    assert text('x', project=True, path=tmp_path / 'clai_described.py') == 'The module.'
+    assert text('clai_broken_source') == ''
+    assert text('clai_missing_package.plugin') == ''
+    assert text('pydantic_clai2.no_such_module') == ''
+    assert text('clai_namespace') == ''
+    assert text('sys') == ''
+    assert 'clai_described' not in sys.modules
+    package = tmp_path / 'clai_parent_must_not_run'
+    package.mkdir()
+    (package / '__init__.py').write_text('raise RuntimeError("parent imported")')
+    (package / 'tools.py').write_text('class Tool:\n    """A safe description."""\n')
+    assert text('clai_parent_must_not_run.tools:Tool') == 'A safe description.'
+    assert text('clai_parent_must_not_run.tools:Tool', project=True) == 'A safe description.'
+    assert 'clai_parent_must_not_run' not in sys.modules
+    injected = tmp_path / 'injected.py'
+    injected.write_text('"""Before\\x1b]52;c;payload\\x07 after."""')
+    assert text('x', path=injected) == 'Before]52;c;payload after.'
+
+
+def test_remove_refreshes_the_restored_description(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    package = tmp_path / 'clai_description_cache'
+    package.mkdir()
+    (package / '__init__.py').write_text('')
+    (package / 'custom.py').write_text('"""Custom tools."""')
+    (package / 'stock.py').write_text('"""Stock tools."""')
+    monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
+    store = SettingsStore(tmp_path / 'cache.db')
+    store.save_plugin(PluginSettings(id='tools', factory='clai_description_cache.custom', enabled=False))
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(PluginSettings(id='tools', factory='clai_description_cache.stock', enabled=False),),
+    )
+    menu = PluginMenu(loader, apply=run_now)
+    item = menu.items()[0]
+    assert 'Custom tools.' in unstyled(menu.details(item))
+    menu.remove(FakeMenu(), item)
+    assert 'Stock tools.' in unstyled(menu.details(item))
+    assert 'Custom tools.' not in unstyled(menu.details(item))
+
+
 def test_rows_details_and_keys(tmp_path: Path) -> None:
     loader = make_loader(tmp_path, 'alpha', 'beta')
     menu = PluginMenu(loader, apply=run_now)
     labels = [item.label for item in menu.items()]
-    assert labels[0].startswith('[ ] alpha') and labels[1].startswith('[ ] beta')
+    assert labels[0].startswith('○ alpha') and labels[1].startswith('○ beta')
     fake = FakeMenu()
     alpha = menu.items()[0]
     menu.toggle(fake, alpha)
-    assert fake.redraws[-1][0].label.startswith('[x] alpha')
-    assert 'state   enabled, loaded' in menu.details(alpha)
-    assert 'adds    0 commands' in menu.details(alpha)
+    assert fake.redraws[-1][0].label.startswith('● alpha')
+    assert unstyled(fake.redraws[-1][0].description) == 'on     drop-in'
+    assert unstyled(menu.details(alpha)).splitlines() == [
+        'alpha',
+        'on · drop-in',
+        '',
+        f'source   {loader.plugins_dir / "alpha.py"}',
+        'provides nothing yet',
+        'settings none',
+    ]
     menu.reload(fake, alpha)
-    assert fake.redraws[-1][0].label.startswith('[x] alpha')
+    assert fake.redraws[-1][0].label.startswith('● alpha')
     menu.toggle(fake, alpha)
-    assert fake.redraws[-1][0].label.startswith('[ ] alpha')
-    assert 'state   disabled' in menu.details(alpha)
+    assert fake.redraws[-1][0].label.startswith('○ alpha')
+    assert unstyled(menu.details(alpha)).splitlines()[1] == 'off · drop-in'
+    assert 'settings turn on to see' in unstyled(menu.details(alpha))
     menu.remove(fake, alpha)
-    assert 'state   disabled' in menu.details(alpha)
+    assert unstyled(menu.details(alpha)).splitlines()[1] == 'off · drop-in'
     assert menu.details(MenuItem('stray', value=None)) == ''
     assert menu.details(MenuItem('typed', value=0)) == ''
     assert len(fake.redraws) == 4
@@ -75,11 +191,13 @@ def test_errors_become_a_notice(tmp_path: Path) -> None:
     (loader.plugins_dir / 'broken.py').write_text('raise RuntimeError("nope")')
     menu = PluginMenu(loader, apply=run_now)
     fake = FakeMenu()
-    broken, fine = menu.items()
+    broken, fine, _ = menu.items()
     menu.toggle(fake, broken)
     assert menu.notice is not None and 'RuntimeError: nope' in menu.notice
-    assert 'notice  ' in menu.details(broken) and 'error   RuntimeError: nope' in menu.details(broken)
-    assert menu.details(MenuItem('stray', value=None)) == menu.notice
+    details = unstyled(menu.details(broken))
+    assert details.splitlines()[1] == 'failed · drop-in'
+    assert '\nerror\n' in details and 'RuntimeError: nope' in details
+    assert unstyled(menu.details(MenuItem('stray', value=None))) == menu.notice
     menu.toggle(fake, fine)
     assert menu.notice is None
     for handler in (menu.toggle, menu.reload, menu.remove):
@@ -90,17 +208,19 @@ def test_errors_become_a_notice(tmp_path: Path) -> None:
 def test_empty_state(tmp_path: Path) -> None:
     loader = make_loader(tmp_path)
     items = PluginMenu(loader, apply=run_now).items()
-    assert len(items) == 1 and items[0].disabled and str(loader.plugins_dir) in items[0].label
+    assert len(items) == 2 and items[0].disabled and str(loader.plugins_dir) in items[0].label
+    assert is_save_and_close(items[1])
 
 
 async def test_open_menu_applies_actions_from_the_menu_thread(tmp_path: Path) -> None:
     loader = make_loader(tmp_path, 'gamma')
 
-    def run(menu: PluginMenu[None]) -> None:
-        menu.toggle(FakeMenu(), menu.items()[0])
+    def run(menu: PluginMenu[None]) -> MenuResult:
+        assert menu.toggle(FakeMenu(), menu.items()[0]) is None
+        return MenuResult(item=menu.items()[-1])
 
     assert await open_plugins_menu(loader, run=run) == ''
-    assert loader.entries()[0].host is not None
+    assert loader.entries()[0].loaded is not None
     listing = await loader.command(['list'])
     assert 'gamma:' in listing and '(enabled, loaded)' in listing
 
@@ -109,13 +229,109 @@ async def test_open_menu_applies_actions_from_the_menu_thread(tmp_path: Path) ->
 async def test_open_menu_closes_quietly_without_changes(tmp_path: Path, names: tuple[str, ...]) -> None:
     loader = make_loader(tmp_path, *names)
 
-    def run(menu: PluginMenu[None]) -> None:
+    def run(menu: PluginMenu[None]) -> MenuResult:
         assert menu.items()
+        return MenuResult(cancelled=True)
 
     assert await open_plugins_menu(loader, run=run) == ''
-    assert all(entry.host is None for entry in loader.entries())
+    assert all(entry.loaded is None for entry in loader.entries())
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+def test_save_and_close_is_the_last_row(tmp_path: Path) -> None:
+    loader = make_loader(tmp_path, 'alpha')
+    menu = PluginMenu(loader, apply=run_now)
+    *_, last = menu.items()
+    assert is_save_and_close(last)
+    assert menu.details(last) == 'Leave this menu. Each change was saved as you made it.'
+    menu.notice = 'Configured alpha.'
+    assert unstyled(menu.details(last)) == 'Configured alpha.\nLeave this menu. Each change was saved as you made it.'
+    assert menu.toggle(FakeMenu(), last) is None and menu.configure(FakeMenu(), last) is None
+
+
+def test_enabling_hands_back_the_settings_menu_only_when_there_is_one(tmp_path: Path) -> None:
+    loader = make_loader(tmp_path, 'plain', tuned=('tuned',))
+    menu = PluginMenu(loader, apply=run_now)
+    fake = FakeMenu()
+    plain, tuned, _ = menu.items()
+    assert menu.toggle(fake, plain) is None
+    assert fake.redraws[-1][0].label.startswith('● plain')
+    result = menu.toggle(fake, tuned)
+    assert result is not None and result.item is not None and result.item.value == Configure('tuned')
+    assert menu.toggle(fake, tuned) is None, 'disabling never opens a settings menu'
+    assert fake.redraws[-1][1].label.startswith('○ tuned')
+
+
+def test_rows_name_the_origin_and_status(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_plugin(PluginSettings(id='installed', factory='clai_missing.plugin', enabled=False))
+    loader = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(PluginSettings(id='shipped', factory='clai_missing.shipped'),),
+        project=(PluginSettings(id='filed', factory='clai_missing.filed', enabled=False),),
+    )
+    menu = PluginMenu(loader, apply=run_now)
+    rows = {item.value: unstyled(item.description) for item in menu.items()[:-1]}
+    assert rows == {'filed': 'off    project', 'installed': 'off    installed', 'shipped': 'idle   built-in'}
+    assert menu.build() is not None
+
+
+def test_configure_key(tmp_path: Path) -> None:
+    loader = make_loader(tmp_path, 'plain', tuned=('tuned',))
+    menu = PluginMenu(loader, apply=run_now)
+    fake = FakeMenu()
+    plain, tuned, _ = menu.items()
+    assert menu.configure(fake, tuned) is None
+    assert menu.notice == 'Enable tuned to configure it.'
+    menu.toggle(fake, plain)
+    assert menu.configure(fake, plain) is None
+    assert menu.notice == 'plain has no settings menu.'
+    menu.toggle(fake, tuned)
+    assert 'settings press c to configure' in unstyled(menu.details(tuned))
+    result = menu.configure(fake, tuned)
+    assert result is not None and result.item is not None and result.item.value == Configure('tuned')
+
+
+async def test_enabling_from_the_menu_opens_the_settings_menu_then_returns(tmp_path: Path) -> None:
+    loader = make_loader(tmp_path, tuned=('grumpy', 'tuned'))
+    notices: list[str | None] = []
+
+    def run(menu: PluginMenu[None]) -> MenuResult:
+        notices.append(menu.notice)
+        grumpy, tuned, save_and_close = menu.items()
+        steps = [
+            lambda: menu.toggle(FakeMenu(), tuned),
+            lambda: menu.configure(FakeMenu(), tuned),
+            lambda: menu.toggle(FakeMenu(), grumpy),
+            lambda: MenuResult(item=save_and_close),
+        ]
+        result = steps[len(notices) - 1]()
+        assert result is not None
+        return result
+
+    expected = ['Configured tuned.', 'tuned already says hello.', 'grumpy refuses to be configured']
+    assert await open_plugins_menu(loader, run=run) == '\n'.join(expected)
+    assert notices == [None, *expected]
+    grumpy, tuned = loader.entries()
+    assert grumpy.loaded is not None, 'a failing settings menu leaves the plugin on'
+    assert grumpy.declaration.settings == {'greeting': 'grr'}, 'and loaded with what it saved before failing'
+    assert tuned.loaded is not None and tuned.declaration.settings == {'greeting': 'hello'}
+
+
+async def test_enable_and_add_commands_open_the_settings_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    loader = make_loader(tmp_path, 'plain', tuned=('tuned',))
+    assert await loader.command(['enable', 'plain']) == 'Enabled plain.'
+    assert await loader.command(['enable', 'tuned']) == 'Enabled tuned.\nConfigured tuned.'
+    assert await loader.command(['enable', 'tuned']) == 'Enabled tuned.', 'already on: no menu'
+    assert await loader.command(['disable', 'tuned']) == 'Disabled tuned.'
+    with pytest.raises(ValueError, match='tuned is not loaded; enable it before configuring'):
+        await loader.command(['configure', 'tuned'])
+    with pytest.raises(ValueError, match='plain has no settings menu'):
+        await loader.command(['configure', 'plain'])
+    module = tmp_path / 'modules'
+    module.mkdir()
+    (module / 'tuned_module.py').write_text(TUNED)
+    monkeypatch.setattr(sys, 'path', [str(module), *sys.path])
+    assert await loader.command(['add', 'added', 'tuned_module']) == 'Added and loaded added.\nConfigured added.'

@@ -11,6 +11,7 @@ from dataclasses import field
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, overload
 
+import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar, deprecated
 
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
     from .usage import RunUsage, UsageLimits
+    from .workspaces import Workspace, WorkspaceRef
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
@@ -79,7 +81,7 @@ async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentS
     # settlement signal the stream consumer awaits before yielding the event, so consumers never
     # observe a decision event whose listeners are still mutating it. A list per id keeps repeated
     # emissions of one object (a capability re-emitting on behalf of another) exactly-once each.
-    settled = asyncio.Event()
+    settled = anyio.Event()
     ctx._pending_immediate_dispatches.setdefault(id(event), []).append(settled)  # pyright: ignore[reportPrivateUsage]
     try:
         capability = ctx.root_capability
@@ -106,6 +108,24 @@ async def dispatch_event_stream(
         elif capability is not None and capability.listens_to(event):
             await capability.on_event(ctx, event=event)
         yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
+
+
+def no_workspace() -> Workspace:
+    # Imported lazily to keep the run-context module independent of the workspace facade during
+    # package initialization. This factory runs only when a `RunContext` is constructed.
+    from .workspaces import Workspace
+    from .workspaces.unavailable import NO_WORKSPACE
+
+    return Workspace(NO_WORKSPACE)
+
+
+def recorded_workspace_ref(workspace: Workspace, carried: WorkspaceRef | None) -> WorkspaceRef | None:
+    """The `workspace_ref` a run records on its responses.
+
+    A run without an attached workspace (none selected, or an `UnavailableWorkspace`) records `carried`, the
+    conversation's ref, so a turn that couldn't touch the workspace doesn't lose it for the next one.
+    """
+    return workspace.ref if workspace.attached else carried
 
 
 @dataclasses.dataclass(frozen=True)
@@ -176,7 +196,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
-    """Messages exchanged in the conversation so far."""
+    """Persistent messages exchanged in the conversation so far.
+
+    Mutating this list rewrites the run's message history. Model request hooks that only need to
+    change the current request should instead assign a new sequence to
+    [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages].
+    """
     validation_context: Any = None
     """Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) for tool args and run outputs."""
     tracer: Tracer = field(default_factory=NoOpTracer)
@@ -227,13 +252,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Populated before each model request, after all model settings layers
     (model defaults, agent-level, capability, and run-level) have been merged.
-    Available in model request hooks (`before_model_request`, `wrap_model_request`,
-    `after_model_request`). Currently `None` in tool hooks, output validators,
+    Available throughout the model-request lifecycle. An outer `wrap_model_request` sees the
+    initially resolved value before calling its handler and the final `before_model_request`
+    value after the handler returns. Currently `None` in tool hooks, output validators,
     and during agent construction.
 
     During a realtime session this holds the merged
     [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
     with, for the whole session (realtime settings are fixed at connect time).
+    """
+    workspace: Workspace = field(default_factory=no_workspace)
+    """The run's [`Workspace`](../workspace.md): the one passed as `workspace=`, else the first a capability supplies.
+
+    Without one, a placeholder whose operations explain how to attach one.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
@@ -264,8 +295,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     where [`emit`][pydantic_ai.tools.RunContext.emit] raises.
     """
 
-    _pending_immediate_dispatches: dict[int, list[asyncio.Event]] = field(
-        default_factory=dict[int, list[asyncio.Event]], repr=False
+    _pending_immediate_dispatches: dict[int, list[anyio.Event]] = field(
+        default_factory=dict[int, list[anyio.Event]], repr=False
     )
     """Per-event-id settlement signals for buffered events dispatched immediately, shared across the run.
 
@@ -611,8 +642,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         owned by loaded deferred capabilities.
 
         Only fully populated once the turn's tools have been resolved during model-request
-        preparation, so it is reliable in model-request hooks (`before_model_request`,
-        `wrap_model_request`, `after_model_request`) and tool hooks. In earlier hooks like
+        preparation, so it is reliable throughout the wrapped model-request lifecycle and in
+        tool hooks. In earlier hooks like
         `before_run` it falls back to `discovered_tool_names` (reconstructed from history).
         See [hook ordering](../hooks.md#hook-ordering) for how timing affects what you see.
         """

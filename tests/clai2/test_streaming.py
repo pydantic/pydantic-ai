@@ -5,19 +5,14 @@ import io
 from typing import IO
 
 import pytest
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
-from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
 from rich.console import Console
 from rich.text import Text
-from termflow.stream import SmoothWriter  # pyright: ignore[reportMissingTypeStubs]
+from termflow.stream import SmoothWriter
 
+from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent, TextPart
+from pydantic_ai.messages import ThinkingPart, ThinkingPartDelta, ToolCallPart, ToolReturnPart
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
@@ -136,7 +131,7 @@ async def test_cancel_during_drain_stops_writer() -> None:
 
     class ObservedOutput(io.StringIO):
         def write(self, text: str) -> int:
-            if 'x' in text:
+            if 'x' in text:  # pragma: no branch
                 writing.set()
             return super().write(text)
 
@@ -167,7 +162,7 @@ async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPat
             min_chars_per_tick=min_chars_per_tick,
         )
 
-    monkeypatch.setattr('pydantic_clai2._rendering.SmoothWriter', writer)
+    monkeypatch.setattr('pydantic_clai2.ui.rendering._rendering.SmoothWriter', writer)
     output = io.StringIO()
     renderer = StreamRenderer(
         Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=Settings().smooth_seconds

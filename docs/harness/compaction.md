@@ -11,7 +11,7 @@ All strategies preserve tool-call / tool-return **pairing**. Core does not valid
 
 On OpenAI and Anthropic, core also ships [provider-native compaction](https://pydantic.dev/docs/ai/capabilities/compaction/) -- the provider summarizes history server-side. The strategies on this page are the model-agnostic alternative: they work with every model and keep the compaction logic (and its costs) under your control.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/compaction/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/compaction/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -32,6 +32,8 @@ An agent that runs for many turns accumulates history: tool outputs, file reads,
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and deterministic truncation must keep the run alive |
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
+
+Compaction updates persistent run history and replaces the current request view. List request-only injectors such as `Memory` after compaction so they apply to the compacted request. Earlier request-only edits are discarded, even when `ClampOversizedMessages` has nothing to shorten.
 
 ## Triggers
 
@@ -266,7 +268,7 @@ It clamps two kinds of part inside each `ModelResponse`:
 - **Response text** (`TextPart`) -- the critical case, a runaway model-response text part.
 - **Tool-call args** (`ToolCallPart`), when `clamp_tool_call_args=True` (the default) -- the same failure shape for a giant payload (for example a runaway `write_plan`). The args are replaced with a small JSON object `{"_clamped": "<head>...<tail>"}` so they stay valid function arguments; the original call already executed, so this only shrinks the history copy. Set `clamp_tool_call_args=False` to clamp response text only. Framework-typed call parts -- core's `search_tools` and `load_capability` calls -- are never clamped, because their typed args are validated when persisted history is restored (for example a `StepPersistence` resume) and the `_clamped` object would fail that round-trip.
 
-Request-side parts (user prompts, tool *returns*, system prompts) are deliberately out of scope: user input should not be silently rewritten, and oversized tool returns are the job of `ClearToolResults`.
+Request-side parts (user prompts, tool *returns*, system prompts) are deliberately out of scope: user input should not be silently rewritten, and oversized tool returns are the job of [`ToolOutputLimits`](tool-output-limits.md), which reduces a return when the tool produces it. `ClearToolResults` keeps the newest `keep_pairs` results intact, and with `keep_pairs=0` it blanks a fresh return outright rather than shrinking it.
 
 Use it as the first tier of `TieredCompaction`, before `ClearToolResults`:
 

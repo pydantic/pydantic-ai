@@ -2,7 +2,7 @@
 
 Give an agent a structured, self-updating task list -- without ever invalidating the prompt cache. Optionally persist it, break steps into subtasks with dependencies, and react to changes through events.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/planning/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
 > [!NOTE]
 > This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed (`write_todos` -> `write_plan`, `read_todos` -> `read_plan`, `add_todo` -> `add_task`, `update_todo_status(es)` -> `update_task_status(es)`, `remove_todo` -> `remove_task`; subtask tools keep their names).
@@ -77,7 +77,7 @@ agent_store = SqlitePlanStore('plan.db', session='user-123')
 planning = Planning(store=agent_store)
 ```
 
-Built-in stores: `InMemoryPlanStore` (default), `SqlitePlanStore` (local file, session-scoped), `PostgresPlanStore` (server database over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client). The Postgres and Redis stores take a client you already own, so the harness carries no database driver dependency. Any object implementing the `PlanStore` protocol works. `SqlitePlanStore` requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
+Built-in stores: `InMemoryPlanStore` (default), `SqlitePlanStore` (local file, session-scoped), `PostgresPlanStore` (server database over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client). The Postgres and Redis stores take a client you already own, so the harness carries no database driver dependency. Any object implementing the `PlanStore` protocol works. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
 
 The tail reminder reads the store on every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. That is deliberate: a plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`, and `PlanStore` is a protocol precisely so you can wrap one:
 
@@ -152,6 +152,10 @@ With a durable-execution capability attached, the plan read used to build that r
 journaled capability operation. Replay reuses the recorded plan instead of reading the store again.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
+Engines that run tools and capability operations in a separate worker, like Temporal, don't
+carry the run's in-memory plan there: each call resolves its store from the run context. Pass a
+persistent `store` or a `store_resolver` (such as `SqlitePlanStore` or `PostgresPlanStore`) to keep
+the plan across steps.
 
 ## Configuration
 

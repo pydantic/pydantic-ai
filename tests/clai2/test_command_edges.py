@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from termflow.tui.completion import CompleteEvent, Document  # pyright: ignore[reportMissingTypeStubs]
+from termflow.tui.completion import CompleteEvent, Document
 
 from pydantic_clai2.commands import (
     Command,
@@ -14,7 +14,7 @@ from pydantic_clai2.commands import (
     plugins_command,
     set_completions,
 )
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
 
 
 def test_command_boundaries(tmp_path: Path) -> None:
@@ -62,6 +62,35 @@ def test_command_boundaries(tmp_path: Path) -> None:
             plugins_command(store, args)
     with pytest.raises(ValueError):
         store.reset('missing')
+
+
+def test_command_availability_is_live() -> None:
+    commands = Commands()
+    available = False
+    command = Command(
+        name='conditional',
+        description='Conditional',
+        handler=lambda _: 'ok',
+        complete=lambda _: ('value',),
+        available=lambda: available,
+        during_turn=True,
+    )
+    commands.register(command)
+    for available in (False, True, False):
+        assert list(commands) == [command]  # Ownership is retained even while a command is unavailable.
+        assert bool(commands.help([])) is available
+        assert commands.runs_during_turn('/conditional') is available
+        for text in ('/cond', '/conditional '):
+            assert bool(list(commands.get_completions(Document(text), CompleteEvent()))) is available
+        if available:
+            assert commands.execute('/conditional') == 'ok'
+        else:
+            with pytest.raises(ValueError, match='Unknown command'):
+                commands.execute('/conditional')
+    with pytest.raises(ValueError, match='duplicate'):
+        commands.register(command)
+    commands.unregister(['conditional'])
+    assert list(commands) == []
 
 
 @pytest.mark.parametrize(

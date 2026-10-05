@@ -6,12 +6,7 @@ import sys
 
 import pytest
 
-from pydantic_clai2.interrupts import Interrupts
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
 
 
 async def test_worker_thread_does_not_install_signals() -> None:

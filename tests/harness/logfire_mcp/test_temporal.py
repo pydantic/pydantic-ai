@@ -13,7 +13,6 @@ from datetime import timedelta
 import pytest
 
 try:
-    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
     from temporalio import workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
@@ -21,19 +20,23 @@ try:
     from temporalio.worker import Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
     from temporalio.workflow import ActivityConfig
+
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from mcp.server.fastmcp import FastMCP
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
+from tests.harness._temporal import ignore_source_reads_left_open
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7246  # avoid conflict with the code_mode and spend suites
 TASK_QUEUE = 'pydantic-ai-harness-logfire-mcp-queue'
@@ -44,16 +47,11 @@ _SANDBOXED = SandboxRestrictions.default.with_passthrough_modules('coverage', 'a
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    """Temporal's Python SDK runs on asyncio."""
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 
@@ -140,7 +138,7 @@ async def test_current_time_is_read_in_an_activity(client: Client) -> None:
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert 'Current UTC time is `' in output
+    assert 'The current UTC time is within the hour starting `' in output
 
 
 async def test_auth_function_runs_under_temporal(client: Client, whoami_url: str) -> None:

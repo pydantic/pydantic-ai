@@ -5,18 +5,13 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from rich.console import Console
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai_harness.coder import Coder
-from rich.console import Console
-
 from pydantic_clai2 import Session, StreamRenderer
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @pytest.mark.parametrize('existing', [False, True])
@@ -36,8 +31,8 @@ async def test_write_diff_through_agent(tmp_path: Path, existing: bool) -> None:
         else:
             yield 'done'
 
-    agent = Agent(FunctionModel(stream_function=respond), capabilities=[Coder(tmp_path)])
-    session = Session(agent, deps=None, on_stream_event=renderer.on_stream_event)
+    agent = Agent(FunctionModel(stream_function=respond), capabilities=[Coder()])
+    session = Session(agent, deps=None, workspace=tmp_path, on_stream_event=renderer.on_stream_event)
     await session.prompt('write the file')
     assert path.read_text() == 'new content\n'
     assert '+new content' in output.getvalue()

@@ -12,7 +12,7 @@ retrieval for digging into a specific URL, and opt-in deep search that
 synthesizes a cited answer in one call. The separate `ExaAgent` capability
 delegates long-running research to the Exa Agent API as deferred tool calls.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/exa/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/exa/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -26,7 +26,7 @@ prompting the agent to research methodically is boilerplate every research
 agent reinvents.
 
 `ExaSearch` bundles that plumbing into a single
-[capability](/ai/core-concepts/capabilities/): the research tools, per-tool
+[capability](../capabilities/overview.md): the research tools, per-tool
 output budgets, and short research guidance in the system prompt.
 
 ## Usage
@@ -76,7 +76,7 @@ re-applied to the response.
 
 A URL or question that returns no content, a rate limit, or a transient API or
 network failure surfaces to the model as a
-[`ModelRetry`](/ai/tools-toolsets/tools-advanced/#tool-retries) rather than a
+[`ModelRetry`](../tools-advanced.md#tool-retries) rather than a
 hard error: the run continues and the model can correct the URL, rephrase, or
 try again. Authentication failures (401/403) are configuration errors and
 propagate.
@@ -167,6 +167,7 @@ ExaSearch(
     include_deep_search=False,  # also expose the deep_search tool
     include_domains=[],         # only search these domains (allowlist)
     exclude_domains=[],         # never search these domains (denylist)
+    native=False,               # prefer the model's native web search, Exa as fallback
     guidance=None,              # None = default instructions, '' = none, str = custom
     client=None,                # ExaClient -- None builds exa_py.AsyncExa from EXA_API_KEY
 )
@@ -182,7 +183,7 @@ The Exa [Agent API](https://exa.ai/docs/reference/agent-api-guide) runs open-end
 asynchronously: a run is created, moves through `queued -> running`, and
 reaches a terminal status (`completed`, `failed`, or `cancelled`) after up to
 an hour. The separate `ExaAgent` capability maps that lifecycle onto Pydantic
-AI's [deferred tool calls](/ai/tools-toolsets/deferred-tools/): its
+AI's [deferred tool calls](../deferred-tools.md): its
 `exa_agent` tool creates the run and defers, carrying the Exa run ID in the
 deferred call's metadata.
 
@@ -267,11 +268,12 @@ to proceed. Each result includes the run ID, which the model can pass back as
 
 ## Multiple instances
 
-Two instances of the same capability register the same tool names, which is an
+Two instances of the same capability register the same tool names, and share
+the default `id` (`exa_search` or `exa_agent`), so two that differ raise an
 error. To run several differently configured instances in one agent (for
-example one open-web `ExaSearch` and one pinned to specific domains), wrap the
-extra instances in core's `PrefixTools` capability, which prefixes their tool
-names:
+example one open-web `ExaSearch` and one pinned to specific domains), give each
+extra instance a distinct `id` and wrap it in core's `PrefixTools` capability,
+which prefixes their tool names:
 
 ```python
 from pydantic_ai import Agent
@@ -284,7 +286,7 @@ agent = Agent(
     capabilities=[
         ExaSearch(),  # web_search, get_page
         PrefixTools(
-            wrapped=ExaSearch(include_domains=['crunchbase.com'], guidance=''),
+            wrapped=ExaSearch(include_domains=['crunchbase.com'], guidance='', id='crunchbase_search'),
             prefix='cb',
         ),  # cb_web_search, cb_get_page
     ],
@@ -299,6 +301,28 @@ This also works for `ExaAgent`: it identifies its deferred calls by metadata
 it wrote when deferring, not by tool name, so a prefixed `exa_agent` still
 resolves inline, and multiple `ExaAgent` instances never claim each other's
 calls.
+
+## Durable execution
+
+Under [durable execution](durable-execution.md), each Exa request is recorded, so a
+recovered run reuses the result instead of making the request again. Temporal
+and Prefect record each tool call in its own activity or task. DBOS runs
+function tools in workflow code, so there the request runs as its own step.
+`ExaAgent` records creating the Exa run and, with `execution='inline'`,
+polling it to completion.
+
+On Temporal an activity has 60 seconds by default, which `deep_search` can
+exceed. Give the tool calls longer with
+`TemporalDurability(toolset_activity_config={'exa_search': ActivityConfig(...)})`,
+keyed by the capability's `id`,
+as in [Temporal timeouts](durable-execution.md#temporal-timeouts). `ExaAgent` polls its run in a capability
+activity, which takes the base `activity_config`, so set its
+`start_to_close_timeout` above `timeout_ms`.
+
+The records are named after the capability's `id`, which defaults to
+`exa_search` for `ExaSearch` and `exa_agent` for `ExaAgent`, so durable
+execution needs no configuration. Changing an `id` renames the records, which
+in-flight runs then cannot find.
 
 ## Custom client
 
@@ -320,21 +344,35 @@ ExaSearch(client=AsyncExa(api_key='...'))
 ## ExaSearch vs core WebSearch
 
 Pydantic AI core ships a provider-adaptive
-[`WebSearch`](/ai/core-concepts/capabilities/#provider-adaptive-tools)
+[`WebSearch`](../capabilities/overview.md#provider-adaptive-tools)
 capability: on models with a native search tool it uses the provider's own
-search, executed server-side; elsewhere it falls back to a local DuckDuckGo
-tool. Reach for it when you want search that follows the model.
+search, executed server-side. On other models it raises unless you pass a
+`local=` fallback, such as `local=True` for DuckDuckGo. Reach for it when you
+want search that follows the model.
 
-Reach for `ExaSearch` when you want the same search behavior on every model:
-one vendor, excerpts with every hit, explicit page retrieval, domain filters,
-and opt-in deep search.
+Reach for `ExaSearch` when you want the same search behavior on every model.
 
-One caveat when combining them: on Anthropic models the provider-native search
-tool is also named `web_search` on the wire, so
-`capabilities=[WebSearch(), ExaSearch()]` puts two tools with the same name in
-the request. Use one search capability per agent on native-search models, or
-force the local fallback with `WebSearch(native=False)` (its DuckDuckGo tool is
-named `duckduckgo_search`, which does not collide).
+To use the provider's search where there is one and Exa's elsewhere, either:
+
+- Set `ExaSearch(native=True)`. The capability adds the native web search tool,
+  and Exa's `web_search` is only sent to models without one. `get_page` and `deep_search` stay available on every model.
+  `include_domains` and `exclude_domains` become the native tool's
+  `allowed_domains` and `blocked_domains`.
+  Whether the native search applies them depends on the provider: Gemini's
+  native search ignores them, so on Gemini they only restrict the fallback.
+- Or pass Exa's search as the fallback of core `WebSearch`, to configure the
+  native search with `WebSearch`'s own options:
+
+  ```python
+  from pydantic_ai.capabilities import WebSearch
+  from pydantic_ai_harness.exa import ExaSearch
+
+  WebSearch(local=ExaSearch(num_results=10).web_search_tool())
+  ```
+
+Don't combine `WebSearch()` with the default `ExaSearch()` on native-search
+models: on Anthropic models the native tool is also named `web_search` on the
+wire, so the request would carry two tools with the same name.
 
 ## ExaSearch vs Exa's MCP server
 
@@ -364,7 +402,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch(), MCP('htt
 ## Agent spec (YAML/JSON)
 
 `ExaSearch` works with Pydantic AI's
-[agent spec](/ai/core-concepts/agent-spec/), so you can declare it in a config
+[agent spec](../agent-spec.md), so you can declare it in a config
 file instead of Python:
 
 ```yaml
@@ -393,8 +431,8 @@ classes are only available when constructing the capability in Python.
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 - [Exa API documentation](https://docs.exa.ai)
 
 ## API reference

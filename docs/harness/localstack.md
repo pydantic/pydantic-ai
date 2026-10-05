@@ -11,7 +11,7 @@ the AWS CLI to a running [LocalStack](https://www.localstack.cloud/) instance --
 injecting the endpoint, region, and credentials -- and can optionally start and
 stop the LocalStack Docker container for each run.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/localstack/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/localstack/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -146,6 +146,25 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Durable execution
+
+Under [durable execution](durable-execution.md), each AWS CLI command and health check
+against an external LocalStack instance is recorded, so a recovered run reuses
+its output instead of running the command again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the command runs as its own step.
+
+A managed container (`manage_container=True`) starts empty in the process that
+recovers a run, so on DBOS `LocalStack` does not record its commands: recovery
+runs them again, which rebuilds the container's state. Temporal and Prefect
+record every tool call, so there recovery replays the recorded output and the
+new container lacks the resources the earlier commands created. Point
+`endpoint_url` at an external LocalStack instance for durable runs on those
+engines.
+
+The records are named after the capability's `id`, which defaults to
+`localstack`, so durable execution needs no configuration.
+
 ## Configuration
 
 ```python
@@ -182,7 +201,7 @@ you supply your own.
 ## Agent spec (YAML/JSON)
 
 `LocalStack` works with Pydantic AI's
-[agent spec](/ai/core-concepts/agent-spec/):
+[agent spec](../agent-spec.md):
 
 ```yaml
 # agent.yaml
@@ -206,8 +225,8 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 ## Further reading
 
 - [LocalStack documentation](https://docs.localstack.cloud/)
-- [Pydantic AI capabilities](/ai/core-concepts/capabilities/)
-- [Toolsets](/ai/tools-toolsets/toolsets/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Toolsets](../toolsets.md)
 
 ## API reference
 

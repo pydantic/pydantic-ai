@@ -25,8 +25,6 @@ from pydantic_ai.tools import ToolDefinition
 from ._inline_snapshot import snapshot
 from .conftest import remove_schema_descriptions
 
-pytestmark = pytest.mark.anyio
-
 
 class Bar(BaseModel):
     answer: str

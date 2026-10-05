@@ -16,8 +16,10 @@ import pytest
 # `browser_use.Agent` is imported from its defining module: the test package
 # `tests/browser_use` shadows the top-level `browser_use` name in pyright's
 # tests execution environment, while submodule imports resolve correctly.
-from browser_use.agent.service import Agent as BrowserUseAgent
-from browser_use.agent.service import Tools  # pyright: ignore[reportPrivateImportUsage]
+from browser_use.agent.service import (
+    Agent as BrowserUseAgent,
+    Tools,
+)
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.browser.events import NavigateToUrlEvent
 from browser_use.browser.session import ResilientEventBus
@@ -25,12 +27,12 @@ from browser_use.browser.watchdogs.security_watchdog import SecurityWatchdog
 from browser_use.llm.messages import BaseMessage
 from browser_use.llm.views import ChatInvokeCompletion
 from pydantic import BaseModel, ValidationError
+
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.browser_use import (
     BrowserAgent,
     BrowserAgentHistory,
@@ -731,8 +733,8 @@ class TestBrowserAgentSettings:
         )
 
         assert seen['tools'] is custom_tools
-        assert 'read_file' not in custom_tools.registry.registry.actions  # pyright: ignore[reportUnknownMemberType]
-        assert 'upload_file' not in custom_tools.registry.registry.actions  # pyright: ignore[reportUnknownMemberType]
+        assert 'read_file' not in custom_tools.registry.registry.actions
+        assert 'upload_file' not in custom_tools.registry.registry.actions
 
 
 def _distinctly_valued_settings() -> BrowserAgentSettings:
@@ -784,7 +786,7 @@ class TestTeardownFailure:
                 raise RuntimeError('the browser agent itself failed')
 
         def factory(request: BrowserTask) -> BrowserAgent:
-            return _Boom()  # type: ignore[return-value]
+            return _Boom()
 
         toolset = BrowserUse[None](browser_agent=factory, session_scope='agent').get_toolset()
         assert isinstance(toolset, BrowserUseToolset)

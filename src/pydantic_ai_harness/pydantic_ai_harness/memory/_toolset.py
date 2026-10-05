@@ -8,15 +8,20 @@ import re
 from typing import TYPE_CHECKING, Literal
 
 from opentelemetry.trace import Span
-from pydantic_ai import ModelRetry
-from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import FunctionToolset
 from typing_extensions import TypedDict
 
+from pydantic_ai import ModelRetry
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
+from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai_harness._workspace import raise_tool_failure
 from pydantic_ai_harness.memory._store import (
+    FileStore,
     MemoryConflictError,
     MemoryMutation,
     MemoryOperation,
+    MemoryPathEscapeError,
     MemorySearchMatch,
     MemorySearchResult,
     MemoryStore,
@@ -288,6 +293,36 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.delete_memory, name='delete_memory')
         self.add_function(self.search_memory, name='search_memory')
 
+    def _resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
+        """Resolve the scope through the run's copy of the capability, which shares this toolset.
+
+        The copy holds the scope `for_run` resolved once for the run. A durable worker's tree holds
+        the construction-time capability instead, which resolves the scope from `ctx`.
+        """
+        from pydantic_ai_harness.memory._capability import Memory
+
+        run_capability = self._capability
+
+        def select(capability: AbstractCapability[AgentDepsT]) -> None:
+            nonlocal run_capability
+            # A wrapper such as `prefix_tools()` may be visited in place of the `Memory` it wraps.
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, Memory) and capability.get_toolset() is self:
+                run_capability = capability
+
+        if ctx.root_capability is not None:
+            ctx.root_capability.apply(select)
+        return run_capability.resolve_scope(ctx)
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools = await super().get_tools(ctx)
+        store, _ = self._resolve_scope(ctx)
+        # A store with its own workspace need not inherit the run's read-only policy.
+        if isinstance(store, FileStore) and store.workspace is None and ctx.workspace.read_only:
+            return {name: tool for name, tool in tools.items() if name not in {'write_memory', 'delete_memory'}}
+        return tools
+
     async def write_memory(
         self,
         ctx: RunContext[AgentDepsT],
@@ -313,7 +348,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         name = normalize_filename(file)
         if old_text is None and not content.strip():
             raise ModelRetry('Nothing to write -- pass the text to append, or `old_text` to replace.')
-        store, scope = capability.resolve_scope(ctx)
+        store, scope = self._resolve_scope(ctx)
         path = f'{scope}/{name}'
         operation = _operation(ctx, scope, 'write', path, {'content': content, 'file': file, 'old_text': old_text})
         scope_hash = _scope_hash(scope)
@@ -361,6 +396,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     _set_span_result(span, 'ok', chars=len(updated), replayed=mutation.replayed)
                     return result
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
+            except WorkspaceError as exc:
+                _set_span_error(span, exc)
+                raise_tool_failure(exc)
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -376,7 +417,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             file: Memory filename returned by injection or search.
         """
         name = normalize_filename(file)
-        store, scope = self._capability.resolve_scope(ctx)
+        store, scope = self._resolve_scope(ctx)
         with ctx.tracer.start_as_current_span(
             'memory.read', record_exception=False, set_status_on_exception=False
         ) as span:
@@ -390,6 +431,9 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     )
                 _set_span_result(span, 'ok', chars=len(memory_file.content))
                 return memory_file.content + (_READ_TRUNCATION_MARKER if memory_file.truncated else '')
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -407,7 +451,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         name = normalize_filename(file)
         if name == MAIN_FILENAME:
             raise ModelRetry(f'{MAIN_FILENAME} is the main notebook; edit it with `write_memory` instead.')
-        store, scope = self._capability.resolve_scope(ctx)
+        store, scope = self._resolve_scope(ctx)
         path = f'{scope}/{name}'
         operation = _operation(ctx, scope, 'delete', path, {'file': file})
         with ctx.tracer.start_as_current_span(
@@ -437,6 +481,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     _set_span_result(span, result['status'], replayed=mutation.replayed)
                     return result
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
+            except WorkspaceError as exc:
+                _set_span_error(span, exc)
+                raise_tool_failure(exc)
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -453,7 +503,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         """
         query = _normalize_search_query(query)
         capability = self._capability
-        store, scope = capability.resolve_scope(ctx)
+        store, scope = self._resolve_scope(ctx)
         prefix = f'{scope}/'
         with ctx.tracer.start_as_current_span(
             'memory.search', record_exception=False, set_status_on_exception=False

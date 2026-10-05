@@ -65,6 +65,8 @@ repos:
         args: [run, pytest, "clai/update_readme.py"]
         language: system
         types_or: [python, markdown]
+        # `clai` never imports `pydantic-clai2`, so a commit confined to it cannot change the output.
+        exclude: ^(src/pydantic_clai2|tests/clai2)/
         pass_filenames: false
       - id: format
         name: Format
@@ -79,18 +81,6 @@ repos:
         args: [lint]
         types: [python]
         language: system
-        pass_filenames: false
-      - id: typecheck
-        name: Typecheck
-        entry: make
-        # Narrows the run to the files a change can reach; when it cannot, it checks every
-        # tracked file Pyright reports on, minus the unchanged `tests/` files. Only `CI`, an
-        # interpreter older than 3.11 and a Pyright configuration it cannot reproduce hand the
-        # whole project to `make typecheck-pyright`. CI skips this hook by id when nothing
-        # Pyright reads has changed, and runs the full check otherwise.
-        args: [typecheck-changed]
-        language: system
-        types: [python]
         pass_filenames: false
       - id: check-cassettes
         name: Check cassettes

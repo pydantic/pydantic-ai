@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pydantic_ai.tools import AgentDepsT
-
 from pydantic_ai_harness.pydantic_ai_docs._capability import PydanticAIDocs
 
 
