@@ -56,7 +56,7 @@ concurrency:
 # `activation` skips and takes the whole graph with it. That is the live bug in
 # pydantic-ai-ui-security-review (#6766 item 7). Referencing the job in the prompt
 # is what hoists it above `activation` and wires it into `activation.needs`.
-if: ${{ needs.eligibility.outputs.eligible == 'true' }}
+if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.eligibility.outputs.eligible == 'true') }}
 tools:
   github:
     mode: gh-proxy
@@ -74,7 +74,9 @@ safe-outputs:
   needs: [eligibility]
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
+    report-as-issue: false
   create-pull-request-review-comment:
     max: 30
     target: ${{ needs.eligibility.outputs.pr_number }}
@@ -103,16 +105,10 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
+  - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
-pre-steps:
-  # Setting engine.command makes gh-aw skip ALL engine installation steps,
-  # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
-  # own installer (the same call it makes for non-custom-command jobs).
-  - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
-
 pre-agent-steps:
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
   # gh-aw's own "Checkout PR branch" step is gated on `github.event.pull_request` /
@@ -124,13 +120,17 @@ pre-agent-steps:
   # does not backstop that: its "Restore agent config folders from base branch"
   # step is gated on *its* checkout having succeeded, so it never runs here, and
   # nothing restores `AGENTS.md`, `agent_docs/` or `scripts/` from base.
+  #
+  # Fetched by commit, not by head branch: a PR merged in the minutes between
+  # `eligibility` and this step has its branch deleted, and the branch fetch then
+  # failed the whole run. GitHub serves any reachable commit by SHA, and the review
+  # still posts on the merged PR.
   - name: Check out the PR head
     env:
       HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
-      HEAD_REF: ${{ needs.eligibility.outputs.head_ref }}
     run: |
       set -euo pipefail
-      git fetch --no-tags origin "+refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+      git fetch --no-tags origin "$HEAD_SHA"
       git checkout --detach "$HEAD_SHA"
   # Pre-fetch PR context into `$GITHUB_WORKSPACE/.review-context/`: pr-details, PR
   # comments, review threads (with annotated diff hunks + resolved/outdated
@@ -277,8 +277,10 @@ jobs:
 
           [ "$(printf '%s' "$PR_JSON" | jq -r '.state')" = 'OPEN' ] || skip "PR #${PR_NUMBER} is not open"
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isDraft')" = 'false' ] || skip "PR #${PR_NUMBER} is a draft"
-          # The checkout step fetches `refs/heads/<head_ref>` from origin, which a
-          # fork head is not; forks go through the `douwebot` label path instead.
+          # The checkout step fetches the head commit from this repository, where a
+          # fork head is reachable too, and runs workspace scripts over it with
+          # repository secrets in scope; forks go through the `douwebot` label path
+          # instead.
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
             || skip "PR #${PR_NUMBER} is from a fork"
 
@@ -385,6 +387,8 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 ## The pull request under review
 

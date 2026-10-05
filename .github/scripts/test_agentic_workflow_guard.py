@@ -8,6 +8,7 @@ shapes. The final test asserts the live repository is clean.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,9 @@ import agentic_workflow_guard
 from agentic_workflow_guard import (
     Violation,
     changed_files,
+    check_ai_credits_accounting,
+    check_assigned_alert_metadata_gate,
+    check_awf_binary_version,
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
     check_compiler_versions,
@@ -26,6 +30,10 @@ from agentic_workflow_guard import (
     check_job_timeout_env,
     check_lock_regenerated,
     check_prompt_paths,
+    check_provider_engine_config,
+    check_provider_health_identity,
+    check_provider_health_monitor,
+    check_provider_health_wiring,
     check_safe_output_job_max,
     check_timeout_declared,
     run_checks,
@@ -688,6 +696,174 @@ jobs:
     assert check_compiled_runner_contract(lock) == []
 
 
+# --- AWF binary pin (the #8041 skew) ------------------------------------------
+
+_AWF_LOCK = """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        run: bash setup.sh
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Install AWF firewall binary (skipped by custom engine.command)
+        run: bash "${{RUNNER_TEMP}}/gh-aw/actions/install_awf_binary.sh" {pinned}
+"""
+
+
+def test_awf_binary_version_catches_the_gh_aw_upgrade_skew(tmp_path: Path):
+    """The shape #8041 shipped: gh-aw moved to AWF v0.27.44, the hand-written pin stayed.
+
+    The v0.27.42 binary then rejected the v0.27.44 firewall config with
+    `config.apiProxy.providers is not supported`, so the agent job exited before
+    the model ever started.
+    """
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='v0.27.42'))
+
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'v0.27.42' in violations[0].message and 'v0.27.44' in violations[0].message
+
+
+def test_awf_binary_version_accepts_a_matched_pin(tmp_path: Path):
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='v0.27.44'))
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_accepts_a_quoted_version(tmp_path: Path):
+    """The pin is hand-written, so a quoted argument is a shape a maintainer will produce."""
+    lock = _write(tmp_path / 'w.lock.yml', _AWF_LOCK.format(pinned='"v0.27.44"'))
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_reads_every_installer_invocation_in_one_step(tmp_path: Path):
+    """The last install wins, so a stale second call must not hide behind a correct first."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Install AWF firewall binary (skipped by custom engine.command)
+        run: |
+          bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.44
+          bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
+""",
+    )
+
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'v0.27.42' in violations[0].message
+
+
+def test_awf_binary_version_ignores_a_lock_without_the_hand_written_install(tmp_path: Path):
+    """Only workflows setting `engine.command` re-run the installer themselves."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_AWF_VERSION: "v0.27.44"
+      - name: Run agent
+        run: awf -- /bin/bash -c 'agent'
+  detect:
+    runs-on: ubuntu-latest
+""",
+    )
+
+    assert check_awf_binary_version(lock) == []
+
+
+def test_awf_binary_version_rejects_a_pin_with_no_declared_version_to_check(tmp_path: Path):
+    """A pin gh-aw no longer declares a version for is an unchecked pin, not a passing one.
+
+    Returning empty here is how the check would disarm itself if gh-aw ever renamed
+    `GH_AW_INFO_AWF_VERSION` — and the next skew would then ship green, as #8041 did.
+    """
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
+""",
+    )
+
+    violations = check_awf_binary_version(lock)
+
+    assert [v.check for v in violations] == ['awf-binary-version']
+    assert 'GH_AW_INFO_AWF_VERSION' in violations[0].message
+
+
+# --- AI-credits accounting (the overlay that 403'd every agent job) -----------
+
+
+def test_ai_credits_accounting_rejects_a_priced_model_in_the_awf_config(tmp_path: Path):
+    """The shape that shipped: `models.providers` compiled into `apiProxy.providers`.
+
+    AWF then charged `MiniMax-M3` against a 10,000-credit cap no frontmatter field can
+    raise, and every agent job 403'd with `ai_credits_limit_exceeded` on its first call.
+    """
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - run: printf '%s' '{"apiProxy":{"enabled":true,"maxRuns":500,"providers":{"anthropic":{"models":{"MiniMax-M3":{"cost":{"input":0.6}}}}}}}'
+""",
+    )
+
+    violations = check_ai_credits_accounting(lock)
+
+    assert [v.check for v in violations] == ['ai-credits-accounting']
+    assert '`models.providers`' in violations[0].message
+
+
+def test_ai_credits_accounting_reads_the_escaped_nested_config(tmp_path: Path):
+    """The detection job's config is escaped one level deeper than the agent's."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  detection:
+    steps:
+      - run: printf '%s' '{\\"apiProxy\\":{\\"maxRuns\\":500,\\"providers\\":{\\"anthropic\\":{}}}}'
+""",
+    )
+
+    assert [v.check for v in check_ai_credits_accounting(lock)] == ['ai-credits-accounting']
+
+
+def test_ai_credits_accounting_ignores_the_informational_model_costs_env(tmp_path: Path):
+    """`GH_AW_INFO_MODEL_COSTS` carries the same overlay but configures nothing."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  agent:
+    steps:
+      - name: Setup Scripts
+        env:
+          GH_AW_INFO_MODEL_COSTS: '{"providers":{"anthropic":{"models":{"MiniMax-M3":{"cost":{"input":0.6}}}}}}'
+      - run: printf '%s' '{"apiProxy":{"enabled":true,"maxRuns":500}}'
+""",
+    )
+
+    assert check_ai_credits_accounting(lock) == []
+
+
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
     lock = _write(tmp_path / 'w.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.83.4"}\njobs: {}\n')
 
@@ -953,4 +1129,547 @@ jobs:
 
     violations = run_checks(workflows)
 
-    assert [v.check for v in violations] == ['prompt-path-outside-workspace']
+    assert 'prompt-path-outside-workspace' in {violation.check for violation in violations}
+
+
+def test_provider_engine_config_rejects_drift_from_shared_values(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    engine = _write(
+        shared / 'engine-zai.md',
+        """---
+engine:
+  env:
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+safe-outputs:
+  threat-detection:
+    engine:
+      env:
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+---
+""",
+    )
+    _write(shared / 'provider-health.md', '---\n# provider health\n---\n')
+    local = _write(
+        workflows / 'pydantic-ai-local.md',
+        '---\nengine:\n  env:\n    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic\n'
+        '    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}\n---\nPrompt\n',
+    )
+
+    alternate_endpoint = 'https://provider.example/api/anthropic'
+    alternate_credential = '${{ secrets.CURRENT_PROVIDER_API_KEY }}'
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8')
+        .replace('https://api.z.ai/api/anthropic', alternate_endpoint)
+        .replace('${{ secrets.ZAI_API_KEY }}', alternate_credential),
+    )
+    _write(
+        local,
+        local.read_text(encoding='utf-8')
+        .replace('https://api.z.ai/api/anthropic', alternate_endpoint)
+        .replace('${{ secrets.ZAI_API_KEY }}', alternate_credential),
+    )
+
+    assert check_provider_engine_config(workflows) == []
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace(
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: '
+            + alternate_endpoint,
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: https://provider.example/anthropic',
+            1,
+        ),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace(
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: https://provider.example/anthropic',
+            'safe-outputs:\n  threat-detection:\n    engine:\n      env:\n        ANTHROPIC_BASE_URL: '
+            + alternate_endpoint,
+            1,
+        ),
+    )
+    _write(local, local.read_text(encoding='utf-8').replace(alternate_credential, '${{ secrets.OTHER_API_KEY }}'))
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(local, local.read_text(encoding='utf-8').replace('${{ secrets.OTHER_API_KEY }}', alternate_credential))
+    _write(
+        local,
+        local.read_text(encoding='utf-8').replace(alternate_endpoint, 'https://provider.example/anthropic'),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace(
+            'ANTHROPIC_API_KEY: ' + alternate_credential,
+            'ANTHROPIC_API_KEY: ""',
+            1,
+        ),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(
+        engine,
+        engine.read_text(encoding='utf-8').replace(
+            'ANTHROPIC_BASE_URL: ' + alternate_endpoint, 'ANTHROPIC_BASE_URL: ""', 1
+        ),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+
+def test_provider_engine_config_checks_workflow_local_threat_detection(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    _write(
+        shared / 'engine-zai.md',
+        """---
+engine:
+  env:
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+safe-outputs:
+  threat-detection:
+    engine:
+      env:
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+---
+""",
+    )
+    _write(
+        workflows / 'pydantic-ai-local.md',
+        """---
+safe-outputs:
+  threat-detection:
+    engine:
+      env:
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+---
+Prompt
+""",
+    )
+
+    assert check_provider_engine_config(workflows) == []
+
+    local = workflows / 'pydantic-ai-local.md'
+    matching_config = local.read_text(encoding='utf-8')
+    _write(
+        local,
+        matching_config.replace('https://api.z.ai/api/anthropic', 'https://provider.example/api/anthropic'),
+    )
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+    _write(local, matching_config.replace('secrets.ZAI_API_KEY', 'secrets.OTHER_API_KEY'))
+    assert 'provider-engine-config' in {violation.check for violation in check_provider_engine_config(workflows)}
+
+
+def test_provider_health_wiring_requires_the_shared_gate_and_compiled_activation_dependency(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-mini.md',
+        '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\nif: true\n---\nPrompt\n',
+    )
+    lock = _write(
+        source.with_suffix('.lock.yml'),
+        """
+jobs:
+  activation:
+    needs: [pre_activation]
+  provider_health:
+    needs: [activation]
+""",
+    )
+
+    violations = check_provider_health_wiring(workflows)
+
+    assert {violation.check for violation in violations} == {
+        'provider-health-import',
+        'provider-health-prompt',
+        'provider-health-gate',
+        'provider-health-reporting',
+        'provider-health-activation-needs',
+        'provider-health-activation-if',
+        'provider-health-job-order',
+    }
+    assert all(violation.path in (str(source), str(lock)) for violation in violations)
+
+
+def test_provider_health_readiness_must_be_required_in_every_or_branch(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-mini.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+  - shared/provider-health.md
+if: ${{ needs.provider_health.outputs.ready == 'true' }}
+safe-outputs:
+  report-failure-as-issue: false
+  noop:
+    report-as-issue: false
+---
+Readiness: ${{ needs.provider_health.outputs.ready }}
+""",
+    )
+    lock = _write(
+        source.with_suffix('.lock.yml'),
+        """jobs:
+  activation:
+    needs: [provider_health]
+    if: needs.provider_health.outputs.ready == 'true'
+  provider_health:
+    needs: [pre_activation]
+""",
+    )
+
+    assert check_provider_health_wiring(workflows) == []
+
+    source.write_text(
+        source.read_text(encoding='utf-8').replace(
+            "if: ${{ needs.provider_health.outputs.ready == 'true' }}",
+            "if: ${{ needs.provider_health.outputs.ready == 'true' || true }}",
+            1,
+        ),
+        encoding='utf-8',
+    )
+    assert [violation.check for violation in check_provider_health_wiring(workflows)] == ['provider-health-gate']
+
+    source.write_text(
+        source.read_text(encoding='utf-8').replace(
+            "needs.provider_health.outputs.ready == 'true' || true",
+            "needs.provider_health.outputs.ready == 'true'",
+            1,
+        ),
+        encoding='utf-8',
+    )
+    lock.write_text(
+        lock.read_text(encoding='utf-8').replace(
+            "needs.provider_health.outputs.ready == 'true'",
+            "needs.provider_health.outputs.ready == 'true' || true",
+            1,
+        ),
+        encoding='utf-8',
+    )
+    assert [violation.check for violation in check_provider_health_wiring(workflows)] == [
+        'provider-health-activation-if'
+    ]
+
+
+def test_provider_health_identity_is_shared_and_stable_for_workflow_run_retries(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    task_key = (
+        '${{ github.workflow }}:${{ github.event_name }}:${{ github.event.workflow_run.head_branch }}:'
+        "${{ github.event.workflow_run.head_sha }}:${{ (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}"
+    )
+    engine = _write(
+        shared / 'engine-zai.md',
+        f'engine:\n  env:\n    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
+        f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
+        f'    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+    )
+    health = _write(
+        shared / 'provider-health.md',
+        f'job:\n  env:\n    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n'
+        f'    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+    )
+
+    assert check_provider_health_identity(workflows) == []
+    expression = re.search(r'^\s*PYDANTIC_AI_TASK_KEY: (.*)$', engine.read_text(), re.MULTILINE)
+    assert expression is not None
+    assert expression.group(1).count('github.run_id') == 1
+    assert "github.event_name == 'workflow_dispatch' && github.run_id" in expression.group(1)
+    assert 'github.run_attempt' not in expression.group(1)
+
+    health_text = health.read_text(encoding='utf-8')
+    _write(health, health_text.replace('    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}\n', '', 1))
+    assert [violation.check for violation in check_provider_health_identity(workflows)] == ['provider-health-identity']
+    _write(
+        health,
+        health_text.replace(
+            '    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}',
+            '    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}',
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_identity(workflows)] == ['provider-health-identity']
+    unstable_task_key = f'{task_key}:${{{{ github.run_attempt }}}}'
+    _write(engine, engine.read_text().replace(task_key, unstable_task_key, 1))
+    _write(health, health_text.replace(task_key, unstable_task_key, 1))
+    assert [violation.check for violation in check_provider_health_identity(workflows)] == [
+        'provider-health-task-stability'
+    ]
+
+
+def test_provider_health_identity_rejects_gate_shim_drift(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    _write(
+        shared / 'engine-zai.md',
+        'engine:\n  env:\n    GITHUB_WORKFLOW: ${{ github.workflow }}\n'
+        '    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}\n'
+        '    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}: ${{ github.run_id }}\n',
+    )
+    _write(shared / 'provider-health.md', 'job:\n  env:\n    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}\n')
+
+    assert [violation.check for violation in check_provider_health_identity(workflows)] == ['provider-health-identity']
+
+
+def test_provider_health_identity_requires_run_attempt_for_local_engine_config(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    task_key = (
+        '${{ github.workflow }}:${{ github.event_name }}:${{ github.event.workflow_run.head_branch }}:'
+        "${{ github.event.workflow_run.head_sha }}:${{ (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}"
+    )
+    _write(
+        shared / 'engine-zai.md',
+        f'engine:\n  env:\n    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
+        f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
+        f'    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+    )
+    _write(
+        shared / 'provider-health.md',
+        f'job:\n  env:\n    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n'
+        f'    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+    )
+    local = _write(
+        workflows / 'pydantic-ai-local.md',
+        f'---\nengine:\n  env:\n    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic\n'
+        f'    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
+        f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
+        f'    PYDANTIC_AI_TASK_KEY: {task_key}\n---\nPrompt\n',
+    )
+
+    assert [violation.path for violation in check_provider_health_identity(workflows)] == [str(local)]
+    local.write_text(
+        local.read_text(encoding='utf-8').replace(
+            '    PYDANTIC_AI_TASK_KEY:',
+            '    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}\n    PYDANTIC_AI_TASK_KEY:',
+            1,
+        ),
+        encoding='utf-8',
+    )
+    assert check_provider_health_identity(workflows) == []
+
+
+def test_provider_health_monitor_is_explicitly_scoped_and_cannot_recurse(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'pydantic-ai-a.md',
+        '---\nname: Agent A\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n',
+    )
+    _write(
+        workflows / 'pydantic-ai-b.md',
+        '---\nname: Agent B\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n',
+    )
+    monitor = _write(
+        workflows / 'agent-provider-health.yml',
+        """
+name: Agent Provider Health
+on:
+  workflow_run:
+    workflows: [Agent A, Agent B, Agent Provider Health]
+    types: [completed]
+  schedule: [{cron: '0 */6 * * *'}]
+  workflow_dispatch: {}
+concurrency:
+  group: provider-health
+  cancel-in-progress: false
+jobs:
+  monitor:
+    if: >-
+      github.repository == 'pydantic/pydantic-ai' &&
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.event != 'pull_request' ||
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    env:
+      PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@sha
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/agent_provider_health.py
+      - if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@sha
+        with:
+          name: agent
+      - if: github.event_name == 'workflow_run' && steps.agent-artifact.outcome != 'success'
+        run: |
+          mkdir -p agent
+          : > agent/agent-stdio.log
+      - if: github.event_name == 'workflow_run'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          python3 .github/scripts/agent_provider_health.py monitor
+          --run-attempt "$RUN_ATTEMPT"
+          --agent-artifact agent/agent-stdio.log
+      - if: github.event_name == 'schedule'
+        env:
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+        run: python3 .github/scripts/agent_provider_health.py monitor
+      - if: github.event_name == 'workflow_dispatch'
+        env:
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+        run: python3 .github/scripts/agent_provider_health.py monitor --recover-issue 1
+""",
+    )
+
+    violations = check_provider_health_monitor(workflows)
+
+    assert [violation.check for violation in violations] == [
+        'provider-health-monitor-workflows',
+        'provider-health-monitor-recursion',
+        'provider-health-monitor-queue',
+    ]
+    assert all(violation.path == str(monitor) for violation in violations)
+
+    trusted_config = monitor.read_text(encoding='utf-8')
+    _write(
+        monitor,
+        trusted_config.replace(
+            'ref: ${{ github.event.repository.default_branch }}',
+            'ref: ${{ github.event.workflow_run.head_sha }}',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-trusted-checkout' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            'python3 .github/scripts/agent_provider_health.py monitor',
+            'python3 agent/agent-stdio.log',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-artifact-execution' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            "- if: github.event_name == 'schedule'\n        env:",
+            "- if: github.event_name == 'workflow_run'\n        env:",
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-provider-event-scope' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            'python3 .github/scripts/agent_provider_health.py monitor\n'
+            '          --run-attempt "$RUN_ATTEMPT"\n'
+            '          --agent-artifact agent/agent-stdio.log',
+            'bash ./agent/payload',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-artifact-execution' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            '    env:\n      PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}\n',
+            '',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-run-attempt' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            'RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}',
+            'RUN_ATTEMPT: ${{ github.run_attempt }}',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-source-run-attempt' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+
+
+def test_provider_health_monitor_rejects_credentialless_fork_runs(tmp_path: Path):
+    """The ungated monitor that opened #9753 must not pass CI policy checks."""
+    workflows = tmp_path / '.github' / 'workflows'
+    for source in WORKFLOWS_DIR.glob('pydantic-ai-*.md'):
+        _write(workflows / source.name, source.read_text(encoding='utf-8'))
+    trusted_config = (WORKFLOWS_DIR / 'agent-provider-health.yml').read_text(encoding='utf-8')
+    monitor = _write(workflows / 'agent-provider-health.yml', trusted_config)
+    assert check_provider_health_monitor(workflows) == []
+
+    _write(
+        monitor,
+        trusted_config.replace(
+            "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
+            "      (github.event_name != 'workflow_run' ||\n"
+            "       github.event.workflow_run.event != 'pull_request' ||\n"
+            '       github.event.workflow_run.head_repository.full_name == github.repository)',
+            "if: github.repository == 'pydantic/pydantic-ai'",
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-fork-gate'
+    ]
+
+
+def test_assigned_alert_metadata_gate_excludes_operational_incidents(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml', "name: '@claude'\non: issues\nif: contains(github.event.issue.body, '@claude')\n"
+    )
+
+    violations = check_assigned_alert_metadata_gate(workflows)
+
+    assert [violation.check for violation in violations] == ['assigned-alert-metadata-gate']
+
+
+def test_assigned_alert_metadata_gate_checks_each_event_route(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        """name: '@claude'
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+jobs:
+  get-pr-info:
+    if: |
+      (github.event_name == 'issue_comment' &&
+        !contains(github.event.issue.labels.*.name, 'pydanty:meta') &&
+        !contains(github.event.issue.labels.*.name, 'pydanty:meta') &&
+        contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issues' &&
+        contains(github.event.issue.body, '@claude'))
+""",
+    )
+
+    violations = check_assigned_alert_metadata_gate(workflows)
+
+    assert [violation.check for violation in violations] == ['assigned-alert-metadata-gate']

@@ -27,7 +27,14 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._genai_prices import lookup_context_window, preload_pricing_data
-from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
+from .._http import (
+    DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS,
+    DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+    ConnectPoolTimeoutCap,
+    create_async_httpx2_client as create_async_httpx2_client,
+    legacy_httpx,
+)
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -66,6 +73,7 @@ from ..messages import (
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
@@ -130,6 +138,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'deepseek',
         'fireworks',
         'github',
+        'github-copilot',
         'heroku',
         'litellm',
         'moonshotai',
@@ -152,6 +161,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'deepseek',
         'fireworks',
         'nebius',
+        'openai-codex',
         'openrouter',
         'ovhcloud',
         'sambanova',
@@ -292,6 +302,11 @@ class ModelRequestParameters:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class _ModelRequestUsageLedger:
+    responses: list[ModelResponse] = field(default_factory=list[ModelResponse])
+
+
 @dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
@@ -311,6 +326,22 @@ class ModelRequestContext:
 
     model: Model
     messages: list[ModelMessage]
+    """Messages to send for this model request.
+
+    This is an independently owned shallow list, so top-level mutations and assignments change
+    only the current request. To rewrite the persistent
+    message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
+    instead, or update both explicitly when both effects are intended.
+
+    Messages a `before_model_request` hook appends here with `append`, `extend` or `+=` are also
+    added to the message history, but this is deprecated and emits a warning.
+
+    This is an independent top-level list, not an independent object graph. Retained messages
+    and their parts may be the same objects as those in persistent history. Filtering, reordering,
+    or assigning the outer sequence is request-only, but mutating a contained message or part in
+    place can affect persistent history. Construct replacements down to the level being changed
+    when isolation is required.
+    """
     model_settings: ModelSettings | None
 
     model_request_parameters: ModelRequestParameters
@@ -351,6 +382,23 @@ class ModelRequestContext:
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
 
+    _usage_response_ledger: _ModelRequestUsageLedger = field(
+        default_factory=_ModelRequestUsageLedger, repr=False, compare=False
+    )
+
+    @property
+    def _usage_responses(self) -> tuple[ModelResponse, ...]:
+        """The model responses whose usage was counted for this request.
+
+        Empty until the model responds. It includes responses a hook later replaced, and can hold more
+        than one response when a continued response was partly billed before an error hook recovered.
+        Request contexts copied with `dataclasses.replace()` see the same responses.
+
+        Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
+        `SpendLimits`, which pins this package's exact version.
+        """
+        return tuple(self._usage_response_ledger.responses)
+
 
 @dataclass(frozen=True, kw_only=True)
 class ModelResolutionContext(Generic[ModelContextDepsT]):
@@ -377,8 +425,28 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     run_step: int
     """The request step being selected, starting at `1`."""
 
+    prompt: str | Sequence[UserContent] | None = None
+    """The run's user prompt, as [`RunContext.prompt`][pydantic_ai.tools.RunContext.prompt] holds it.
+
+    When a run resumes from a history ending in a request, without a new prompt, this is that request's prompt.
+    """
+
     messages: list[ModelMessage]
-    """The message history available before this request step."""
+    """The messages the selected model will be sent for this step, ending with the request being routed.
+
+    This is what [`RunContext.messages`][pydantic_ai.tools.RunContext.messages] holds for the step, minus
+    what is only added once the model is selected: the request's
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] and, on a fresh run's first step,
+    its system prompt parts. Earlier requests keep the instructions they were sent with.
+
+    When a run resumes from a response with tool calls still to run, the step's request is their
+    results, which don't exist before the model is selected, so the messages end with that response.
+    They also end with the response when it's a suspended one being continued, as no request is sent.
+
+    It's a new list, so adding or removing messages doesn't change the run's. Don't change the
+    messages in it: they're the run's own, except for the request being routed on a run's first
+    step, which is built for selection, so changing it has no effect on what's sent.
+    """
 
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
@@ -464,19 +532,58 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # TODO(v3): remove along with `resolve_prompt_cache_retention`.
+        legacy = cls.__dict__.get('resolve_prompt_cache_retention')
+        if legacy is not None and 'resolve_cache_retention' not in cls.__dict__:
+            warnings.warn(
+                f'`{cls.__name__}` overrides `resolve_prompt_cache_retention`, which is deprecated; '
+                'override `resolve_cache_retention` instead.',
+                PydanticAIDeprecationWarning,
+                # Past `ABCMeta.__new__`, to the class statement.
+                stacklevel=3,
+            )
+            # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
+            cls.resolve_cache_retention = legacy
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by provider-specific model settings.
 
         The model's default settings are merged with the per-request `model_settings`. Only provider-specific settings
         are currently considered; a future unified cache setting is not yet an input. If multiple active settings
         request different retention periods, the longest period wins because any longer-lived cache breakpoint can
         keep the corresponding prompt prefix available. Models without a provider-specific retention setting return
-        `None`.
+        `None`, in which case the provider's
+        [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention] applies.
         """
         return None
 
+    @deprecated(
+        '`resolve_prompt_cache_retention` is deprecated, use `resolve_cache_retention` instead.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Deprecated alias of [`resolve_cache_retention`][pydantic_ai.models.Model.resolve_cache_retention]."""
+        # A subclass that still overrides this name reaches this base implementation only through its
+        # own `super()` call, and `__init_subclass__` routed `resolve_cache_retention` to that override,
+        # so dispatching on `self` would recurse. Continue with the implementation above the outermost
+        # legacy override instead, which is what that `super()` call means.
+        legacy_owner = next(
+            (
+                klass
+                for klass in reversed(type(self).__mro__)
+                if klass is not Model and 'resolve_prompt_cache_retention' in klass.__dict__
+            ),
+            None,
+        )
+        if legacy_owner is None:
+            return self.resolve_cache_retention(model_settings)
+        # `super()` with a class found at runtime is untyped, but that class is a `Model` subclass.
+        return cast('Model[Any]', super(legacy_owner, self)).resolve_cache_retention(model_settings)
+
     @staticmethod
-    def _max_prompt_cache_retention(
+    def _max_cache_retention(
         *cache_settings: bool | Literal['5m', '1h'] | None,
     ) -> timedelta | None:
         if '1h' in cache_settings:
@@ -613,6 +720,55 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_request_parameters
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether this request will think, judged from the unified `thinking` setting and the profile.
+
+        Reads `params.thinking`, falling back to `model_settings` for callers that run before
+        `prepare_request` moves the setting over. Adapters with provider-specific thinking settings
+        override this, since those take precedence.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            thinking = (model_settings or {}).get('thinking')
+        if thinking is False and not self.profile.get('thinking_always_enabled', False):
+            return False
+        if thinking:
+            return True
+        return self.profile.get('thinking_always_enabled', False) or self.profile.get(
+            'thinking_enabled_by_default', False
+        )
+
+    def _forced_tool_choice_disables_thinking(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether forcing a tool call would stop this request from thinking.
+
+        See [`forced_tool_choice_disables_thinking`][pydantic_ai.profiles.ModelProfile.forced_tool_choice_disables_thinking].
+        """
+        return self.profile.get('forced_tool_choice_disables_thinking', False) and self._request_thinks(
+            model_settings, model_request_parameters
+        )
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        """The output mode for a structured `output_type` that doesn't pick one.
+
+        Tool Output forces a call to the output tool on every request that can't end with text, so where that
+        would stop the model from thinking, Native Output is used instead if the model supports it.
+        """
+        mode = self.profile.get('default_structured_output_mode', 'tool')
+        if (
+            mode == 'tool'
+            and model_request_parameters.output_tools
+            and self.profile.get('supports_json_schema_output', False)
+            and self._forced_tool_choice_disables_thinking(model_settings, model_request_parameters)
+        ):
+            return 'native'
+        return mode
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -633,7 +789,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings
+        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
+        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
             supports_thinking = self.profile.get('supports_thinking', False)
@@ -651,7 +808,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
+        params = params.with_default_output_mode(self._default_structured_output_mode(model_settings, params))
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -686,6 +843,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             raise UserError('Native structured output is not supported by this model.')
         if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
+        if params.allow_text_output and not self.profile.get('supports_text_output', True):
+            raise UserError(
+                'Text output is not supported by this model. Give the agent one structured `output_type`, '
+                'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
+            )
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
@@ -743,6 +905,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
+        # history was authored with, and an announcement opening the first request is not part of it.
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -799,7 +965,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
-            messages = _wrap_non_leading_system_prompts(messages)
+            messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
         return messages
 
@@ -925,8 +1091,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             pass
         elif callable(user):
             # The callable form's result bypasses `merge_profile`, so translate deprecated key
-            # spellings here too.
-            resolved = _translate_legacy_profile_keys(user(resolved))
+            # spellings here too. It starts from `resolved`, so a current spelling it carries
+            # over unchanged doesn't count as set.
+            base = ModelProfile(**resolved)  # the callable may mutate its argument in place
+            resolved = _translate_legacy_profile_keys(user(resolved), base)
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
@@ -942,11 +1110,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
-        if item.provider_name != self.system:
-            raise UserError(
-                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
-                f'Expected `provider_name` to be `{self.system!r}`.'
-            )
+        _utils.validate_uploaded_file_provider(item, system=self.system, model_type_name=type(self).__name__)
 
     @staticmethod
     def _get_instruction_parts(
@@ -1430,8 +1594,9 @@ This global setting allows you to disable request to most models, e.g. to make s
 make costly requests to a model during tests.
 
 The testing models [`TestModel`][pydantic_ai.models.test.TestModel],
-[`FunctionModel`][pydantic_ai.models.function.FunctionModel] and
-[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] are not affected by this setting, nor is
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel],
+[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] and
+[`TestImageGenerationModel`][pydantic_ai.images.TestImageGenerationModel] are not affected by this setting, nor is
 [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel],
 which runs inference locally and so has no per-call provider cost.
 """
@@ -1445,8 +1610,9 @@ def check_allow_model_requests() -> None:
     [`Model.request_stream`][pydantic_ai.models.Model.request_stream],
     [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens],
     [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages],
-    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed] and
-    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens].
+    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed],
+    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens] and
+    [`ImageGenerationModel.generate`][pydantic_ai.images.ImageGenerationModel.generate].
 
     Methods that produce their result locally don't need it — for example
     [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel]'s `count_tokens`, which tokenizes with
@@ -1632,8 +1798,9 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
-    # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
+    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI, Snowflake, GitHub Copilot and OpenAI Codex need to
+    # be checked before OpenAI, as they are in `OpenAIChatCompatibleProvider` or
+    # `OpenAIResponsesCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
 
@@ -1658,6 +1825,14 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
+    elif model_kind == 'github-copilot':
+        from .github_copilot import GitHubCopilotModel
+
+        return GitHubCopilotModel(model_name, provider=provider)
+    elif model_kind == 'openai-codex':
+        from .openai_codex import OpenAICodexModel
+
+        return OpenAICodexModel(model_name, provider=provider)
     elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 
@@ -1682,6 +1857,17 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'typesafe':
+        from .typesafe import TypeSafeModel
+
+        return TypeSafeModel(model_name, provider=provider)
+    elif model_kind == 'system-one':
+        from ..providers.system_one import SystemOneProvider
+        from .system_one import SystemOneModel
+
+        if not isinstance(provider, SystemOneProvider):
+            raise UserError('System One models require a `SystemOneProvider`.')
+        return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -1708,11 +1894,14 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
     providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+    Each call creates a new client instance. A provider that calls this itself, because you didn't pass
+    an `http_client`, closes the client when the provider (or agent) exits. A client you create with it
+    and pass as `http_client` is yours to close.
 
-    The default timeouts match those of OpenAI,
+    The default timeouts and connection pool limits match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
+    A number of seconds passed as an individual request's timeout can shorten the client's `connect`
+    timeout and its pool timeout (`timeout`), but never lengthen them.
 
     Raises:
         ImportError: If legacy `httpx` is not installed.
@@ -1728,7 +1917,11 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
+        limits=httpx.Limits(
+            max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+        ),
         headers={'User-Agent': get_user_agent()},
+        event_hooks={'request': [ConnectPoolTimeoutCap(connect=connect, pool=timeout)]},
     )
 
 
@@ -2211,12 +2404,14 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
-def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
-    parts those are is `_standing_system_prompt_count`'s
-    question, and it is not simply "everything in the first request".
+    parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
+    in the first request". The caller counts them on the history as authored and passes
+    `standing_prompt_count`, because rendering a `ToolAvailabilityDeltaPart` can put an announcement
+    in front of the first request, where counting again would take it for the standing prompt.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2231,7 +2426,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     new_messages: list[ModelMessage] = list(messages[:first_request_idx])
     changed = False
     for offset, msg in enumerate(messages[first_request_idx:]):
-        start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
+        start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
                 UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
@@ -2309,6 +2504,10 @@ def _legacy_fabricated_tool_search_reveals(
 
     All three confidence signals are required: a framework-prefixed id, direct adjacency to a
     `load_capability` return, and discoveries confined to that capability's current tools.
+
+    This is the one place core identifies its own tools by name rather than by `tool_kind`: these
+    exchanges come from history written by earlier versions, whose parts may lack a `tool_kind`
+    or have it stripped on loading, so the name is the only signal left.
     """
     capability_by_load_call_id = _load_capability_ids_by_call(messages)
     tools_by_capability: dict[str, set[str]] = {}
@@ -2390,7 +2589,11 @@ def _search_return_discovered_names(part: ToolReturnPart) -> list[str] | None:
 def _replace_tool_search_exchanges_with_deltas(
     messages: list[ModelMessage], translated_call_ids: dict[str, list[str]]
 ) -> list[ModelMessage]:
-    """Replace selected search call/return pairs with wire-only availability deltas."""
+    """Replace selected search call/return pairs with wire-only availability deltas.
+
+    Part of the legacy-history path (see `_legacy_fabricated_tool_search_reveals`), so the pair is
+    matched by name: a call id alone could also belong to another tool.
+    """
     transformed: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):
@@ -2447,9 +2650,6 @@ def _announce_tool_availability_delta_messages(
     runs after this — degrades it to `<system>`-tagged user text. Either way it's append-only, so the
     cached prefix ahead of it survives.
     """
-    # If truncation promotes a never-sent delta request to first position, its announcement may
-    # hoist with the standing prompt. All parts still precede the same assistant response, and the
-    # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
     is_first_kept_request = True
@@ -2483,12 +2683,12 @@ def _announce_tool_availability_delta_messages(
             # so the announcements sort to the back. One exception: system prompts opening the
             # history's first request are the agent's standing prompt, which the adapters lift into
             # the provider's dedicated system field based on exactly this position, so they stay at
-            # the front.
-            request = replace(message, parts=replacement_parts)
-            keep = _standing_system_prompt_count(request) if is_first_kept_request else 0
+            # the front. They're counted on the authored parts: an announcement is never part of the
+            # standing prompt, even when its delta opened the request.
+            keep = _standing_system_prompt_count(message) if is_first_kept_request else 0
             head, tail = replacement_parts[:keep], replacement_parts[keep:]
             tail.sort(key=_tool_results_first_sort_key)
-            transformed.append(replace(request, parts=[*head, *tail]))
+            transformed.append(replace(message, parts=[*head, *tail]))
             is_first_kept_request = False
 
     return transformed if changed else messages
@@ -2506,9 +2706,8 @@ def _synthesize_tool_availability_delta_messages(
     the model ran a search.
 
     The exchange spans a turn boundary — an assistant call, then its return — so a request holding
-    other parts alongside the delta has to be split at the delta's position. Emitting the whole
-    rebuilt request after the synthetic `ModelResponse` instead would hoist an assistant turn ahead
-    of a user prompt that originally preceded the delta, reordering the conversation.
+    other parts alongside the delta has to be split around it. When parallel tool results and deltas
+    are interleaved, all results stay together before the synthetic exchanges. No other parts move.
     """
     transformed: list[ModelMessage] = []
     changed = False
@@ -2535,6 +2734,11 @@ def _synthesize_tool_availability_delta_messages(
         for part in message.parts
         if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
     }
+
+    def is_tool_result(part: ModelRequestPart) -> bool:
+        # A retry without a tool name is output-validation feedback, not a tool result.
+        return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
@@ -2543,12 +2747,30 @@ def _synthesize_tool_availability_delta_messages(
             continue
 
         changed = True
-        # Parts accumulated since the last split; flushed as their own `ModelRequest` before each
-        # synthetic assistant turn so everything keeps the order it was authored in.
-        pending: list[ModelRequestPart] = []
-        for part in message.parts:
+        # Find the leading group containing only tool results and deltas. Its stable sort moves
+        # deltas after all results without reordering either group or any later parts.
+        first_unrelated_part_index = next(
+            (
+                index
+                for index, part in enumerate(message.parts)
+                if not isinstance(part, ToolAvailabilityDeltaPart) and not is_tool_result(part)
+            ),
+            len(message.parts),
+        )
+        parallel_results_and_deltas = message.parts[:first_unrelated_part_index]
+        parts = [
+            *sorted(
+                parallel_results_and_deltas,
+                key=lambda part: isinstance(part, ToolAvailabilityDeltaPart),
+            ),
+            *message.parts[first_unrelated_part_index:],
+        ]
+
+        # Parts to emit before the next synthetic call.
+        request_parts: list[ModelRequestPart] = []
+        for part in parts:
             if not isinstance(part, ToolAvailabilityDeltaPart):
-                pending.append(part)
+                request_parts.append(part)
                 continue
             added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
             if not added:
@@ -2570,19 +2792,19 @@ def _synthesize_tool_availability_delta_messages(
                     if tool_call_id not in synthesized_ids and tool_call_id not in history_call_ids:
                         break
             synthesized_ids.add(tool_call_id)
-            if pending:
-                transformed.append(replace(message, parts=pending))
-                pending = []
+            if request_parts:
+                transformed.append(replace(message, parts=request_parts))
+                request_parts = []
             transformed.append(
                 ModelResponse(parts=[ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id)])
             )
-            pending.append(
+            request_parts.append(
                 ToolSearchReturnPart(
                     content={'discovered_tools': [{'name': name} for name in added]},
                     tool_call_id=tool_call_id,
                 )
             )
-        if pending:
-            transformed.append(replace(message, parts=pending))
+        if request_parts:
+            transformed.append(replace(message, parts=request_parts))
 
     return transformed if changed else messages

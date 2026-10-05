@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -57,10 +58,12 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.tool_manager import ParallelExecutionMode
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -74,9 +77,7 @@ from .conftest import IsDatetime, IsStr, iter_message_parts
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 async def test_deferred_capability_catalog_mentions_search_only_when_search_surface_exists() -> None:
@@ -1249,6 +1250,241 @@ async def test_processed_history_determines_request_reveal_state() -> None:
     assert seen == [set()]
 
 
+def _inject_load(capability_id: str) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
+    """Build a processor that injects a complete `load_capability` exchange for `capability_id`."""
+
+    def processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if any(True for _ in iter_message_parts(messages, ModelResponse, LoadCapabilityCallPart)):
+            return messages
+        return [
+            messages[0],
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': capability_id}, tool_call_id='injected')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='injected')]),
+            *messages[1:],
+        ]
+
+    return processor
+
+
+def _secret_op_returns(messages: list[ModelMessage]) -> list[object]:
+    return [
+        part.content
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.tool_name == 'secret_op'
+    ]
+
+
+def _call_secret_op_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    """Call `secret_op` on the first request, then finish however that call was answered."""
+    answered = any(
+        part.tool_name == 'secret_op' for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+    ) or any(True for _ in iter_message_parts(messages, ModelRequest, RetryPromptPart))
+    if answered:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('secret_op', {}, tool_call_id='call-1')])
+
+
+@pytest.mark.parametrize('inject_load', [False, True])
+async def test_processor_injected_load_lets_capability_prepare_tools_govern_its_tools(inject_load: bool) -> None:
+    """A capability made active by history processing still has `prepare_tools` over its own tools.
+
+    Availability is an input to tool *resolution*, not just to the execution gate: the tool set
+    resolved at the start of the step was built while the capability was inactive, so its
+    `prepare_tools` never ran and its tools sat in that set ungoverned. Caching the resolved set on
+    `run_step` alone would then hand that set to a dispatch that reads the (now changed)
+    availability live, and a `prepare_tools` used as a permission filter would be silently bypassed.
+
+    Both directions are pinned: with no injection the tool is refused as not-yet-available (the
+    filter is never reached, and must not need to be), and with the injection it is refused because
+    the filter removed it — never executed either way.
+    """
+    prepare_tools_calls: list[list[str]] = []
+    loaded_ids_seen: list[list[str]] = []
+
+    class FilteringSecrets(Capability[object]):
+        """Uses `prepare_tools` as a permission filter over its own tool."""
+
+        async def prepare_tools(self, ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            prepare_tools_calls.append(sorted(tool_def.name for tool_def in tool_defs))
+            loaded_ids_seen.append(sorted(ctx.loaded_capability_ids))
+            return [tool_def for tool_def in tool_defs if tool_def.name != 'secret_op']
+
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:  # pragma: no cover
+        return 'EXECUTED'
+
+    capabilities: list[AbstractCapability[object]] = [
+        FilteringSecrets(id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True)
+    ]
+    if inject_load:
+        capabilities.append(ProcessHistory[object](processor=_inject_load('secrets')))
+
+    agent = Agent(FunctionModel(_call_secret_op_once), capabilities=capabilities)
+    result = await agent.run('call secret_op')
+
+    assert _secret_op_returns(result.all_messages()) == []
+    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    if inject_load:
+        # The capability is active, so its own filter decides — and it removed the tool.
+        assert prepare_tools_calls[0] == snapshot(['secret_op'])
+        # The run's own prospective state agrees with the history it is sending, so the documented
+        # "has the runbook been loaded?" check (`id in ctx.loaded_capability_ids`) answers yes on
+        # this step, rather than the capability being active only through dispatch-time evidence.
+        assert loaded_ids_seen[0] == snapshot(['secrets'])
+        assert refusals == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])
+    else:
+        # The capability never loaded, so the availability gate refuses before any filter is reached.
+        assert prepare_tools_calls == snapshot([])
+        assert refusals == snapshot(
+            [
+                "Tool 'secret_op' is not available yet: it belongs to capability 'secrets'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
+            ]
+        )
+
+
+async def test_processor_injected_load_makes_capability_tool_callable() -> None:
+    """Without a filter, a processor-injected load makes the capability's tool callable that same step.
+
+    The mirror of the test above, and the reason availability is refreshed after processing at all:
+    the reveal state the request ships is derived from the processed history, so the execution gate
+    has to read the same history or the model is offered a tool that comes back refused.
+    """
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:
+        return 'EXECUTED'
+
+    agent = Agent(
+        FunctionModel(_call_secret_op_once),
+        capabilities=[
+            Capability[object](
+                id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True
+            ),
+            ProcessHistory[object](processor=_inject_load('secrets')),
+        ],
+    )
+    result = await agent.run('call secret_op')
+
+    assert _secret_op_returns(result.all_messages()) == snapshot(['EXECUTED'])
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot([])
+
+
+async def test_processor_removed_load_leaves_advertisement_and_gate_in_agreement() -> None:
+    """Refreshing availability from processed history must not advertise a tool the gate will refuse.
+
+    The mirror of the injection tests, and the direction where making the request and the gate agree
+    could have gone wrong: the refresh takes the capability *out* of the loaded set for a step whose
+    tool set was resolved while it was in. `_with_outgoing_reveal_state` derives the request's reveal
+    state from the same processed messages, so the tool is withheld from the wire rather than shipped
+    and then refused — the model is never offered something `ToolManager` would reject.
+    """
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:  # pragma: no cover
+        return 'EXECUTED'
+
+    advertised: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        advertised.append(sorted(tool.name for tool in info.function_tools))
+        return _call_secret_op_once(messages, info)
+
+    def drop_load_exchange(messages: list[ModelMessage]) -> list[ModelMessage]:
+        kept: list[ModelMessage] = []
+        for message in messages:
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, (LoadCapabilityCallPart, LoadCapabilityReturnPart))
+            ]
+            if parts:
+                kept.append(replace(message, parts=parts))
+        return kept
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Capability[object](
+                id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True
+            ),
+            ProcessHistory[object](processor=drop_load_exchange),
+        ],
+    )
+    result = await agent.run(
+        'call secret_op',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='load it')]),
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'secrets'}, tool_call_id='l1')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='l1')]),
+        ],
+    )
+
+    # Withheld from the wire, so the model was never offered it...
+    assert advertised[0] == snapshot(['load_capability'])
+    # ...and the call the stub makes anyway is refused, rather than running ungoverned.
+    assert _secret_op_returns(result.all_messages()) == []
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot(
+        [
+            "Tool 'secret_op' is not available yet: it belongs to capability 'secrets'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
+        ]
+    )
+
+
+async def test_processor_injected_load_is_governed_when_resuming_a_suspended_response() -> None:
+    """The same governance holds on the request that resumes a provider-suspended turn.
+
+    That path prepares its request separately from the normal one — the history already ends in the
+    suspended response, so there is no new `ModelRequest` to append — but it runs the same history
+    processing and dispatches the continuation's tool calls against the result, so it needs the same
+    post-processing availability refresh.
+    """
+    prepare_tools_calls: list[list[str]] = []
+    loaded_ids_seen: list[list[str]] = []
+
+    class FilteringSecrets(Capability[object]):
+        """Uses `prepare_tools` as a permission filter over its own tool."""
+
+        async def prepare_tools(self, ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            prepare_tools_calls.append(sorted(tool_def.name for tool_def in tool_defs))
+            loaded_ids_seen.append(sorted(ctx.loaded_capability_ids))
+            return [tool_def for tool_def in tool_defs if tool_def.name != 'secret_op']
+
+    secrets_toolset = FunctionToolset[object]()
+
+    @secrets_toolset.tool_plain
+    def secret_op() -> str:  # pragma: no cover
+        return 'EXECUTED'
+
+    agent = Agent(
+        FunctionModel(_call_secret_op_once),
+        capabilities=[
+            FilteringSecrets(id='secrets', description='Secret tools.', toolsets=[secrets_toolset], defer_loading=True),
+            ProcessHistory[object](processor=_inject_load('secrets')),
+        ],
+    )
+    result = await agent.run(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='call secret_op')]),
+            ModelResponse(parts=[TextPart('paused')], state='suspended'),
+        ]
+    )
+
+    assert _secret_op_returns(result.all_messages()) == []
+    assert prepare_tools_calls[0] == snapshot(['secret_op'])
+    assert loaded_ids_seen[0] == snapshot(['secrets'])
+    assert [
+        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+    ] == snapshot(["Unknown tool name: 'secret_op'. Available tools: 'load_capability'"])
+
+
 async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_revealed() -> None:
     """Evidence orphaned by a history processor is stripped before reveal derivation.
 
@@ -2286,3 +2522,56 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
     ]
     assert len(load_returns) == 1
     assert load_returns[0].instructions == 'Deferred instructions.'
+
+
+@pytest.mark.parametrize('mode', ['parallel', 'sequential'])
+async def test_load_capability_called_twice_in_one_response_loads_once(mode: ParallelExecutionMode) -> None:
+    """Only the first `load_capability` call for an id in a response delivers its instructions (#7298).
+
+    Sibling calls can't see each other's load through `active_capability_ids` (a load only counts once
+    its return reaches history), so the duplicate is refused by response position instead, and a load
+    of a different capability in the same response is unaffected.
+    """
+
+    def dyn_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    dyn = Capability[object](
+        id='dyn', description='Dynamic.', instructions='Dyn runbook.', tools=[dyn_tool], defer_loading=True
+    )
+    other = Capability[object](id='other', description='Other.', instructions='Other runbook.', defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'dyn'}, tool_call_id='first'),
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'other'}, tool_call_id='other'),
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'dyn'}, tool_call_id='duplicate'),
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[dyn, other])
+    with Agent.parallel_tool_call_execution_mode(mode):
+        result = await agent.run('load dyn twice')
+
+    assert result.output == 'done'
+    messages = result.all_messages()
+    tool_results = [
+        part
+        for part in messages[2].parts
+        if isinstance(part, LoadCapabilityReturnPart | RetryPromptPart | ToolAvailabilityDeltaPart)
+    ]
+    assert [(type(part).__name__, part.tool_call_id) for part in tool_results] == [
+        ('LoadCapabilityReturnPart', 'first'),
+        ('ToolAvailabilityDeltaPart', 'first'),
+        ('LoadCapabilityReturnPart', 'other'),
+        ('RetryPromptPart', 'duplicate'),
+    ]
+    first, _, other_return, duplicate = tool_results
+    assert isinstance(first, LoadCapabilityReturnPart) and first.instructions == 'Dyn runbook.'
+    assert isinstance(other_return, LoadCapabilityReturnPart) and other_return.instructions == 'Other runbook.'
+    assert isinstance(duplicate, RetryPromptPart)
+    assert duplicate.content == LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id='dyn')
+    assert parse_loaded_capabilities(messages) == {'dyn', 'other'}

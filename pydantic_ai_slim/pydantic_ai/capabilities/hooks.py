@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
@@ -30,6 +30,7 @@ import anyio
 from pydantic import ValidationError
 
 from pydantic_ai import _utils
+from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, ModelResponse, ToolCallPart
@@ -785,6 +786,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
     """
 
     _registry: dict[str, list[_HookEntry[Any]]]
+    _ordering: CapabilityOrdering | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def _emits_app_events(self) -> bool:
@@ -1066,7 +1068,9 @@ class Hooks(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         for entry in self._get('before_model_request'):
+            messages = request_context.messages
             request_context = await _call_entry(entry, 'before_model_request', ctx, request_context)
+            keep_mirroring(messages, request_context)
         return request_context
 
     async def after_model_request(

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from datetime import timedelta
 from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
@@ -26,7 +27,13 @@ from ._openai_compatible import (
 
 
 class OpenAIProvider(_OpenAICompatibleProvider):
-    """Provider for OpenAI API."""
+    """Provider for OpenAI API.
+
+    Changing `base_url` does not change the OpenAI model profile selection. For another service,
+    use its dedicated provider when available. For a custom gateway, subclass this provider and
+    override `model_profile`, or configure the model's `profile` explicitly.
+    See [OpenAI-compatible models](https://pydantic.dev/docs/ai/models/openai/#openai-compatible-models).
+    """
 
     @property
     def name(self) -> str:
@@ -53,9 +60,35 @@ class OpenAIProvider(_OpenAICompatibleProvider):
         # The flag stays here rather than moving into `openai_model_profile`, which is shared with
         # OpenAI-compatible endpoints (Azure, OpenRouter, vLLM, ...) that speak the Responses API without
         # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
+        profile = openai_model_profile(model_name)
         return merge_profile(
-            openai_model_profile(model_name),
-            OpenAIModelProfile(tool_addition_mode='with_definitions', tool_deferral_mode='with_tool_search'),
+            profile,
+            OpenAIModelProfile(
+                tool_addition_mode='with_definitions',
+                tool_deferral_mode='with_tool_search',
+                # GPT-5.6 and later document a model-determined floor: a cached prefix stays eligible for
+                # reuse for at least 30 minutes after its last write or reuse. These are the models with
+                # explicit cache breakpoints. Earlier models have no honest boundary to record, because
+                # their retention policy defaults to `24h` for organizations without zero data retention and
+                # to `in_memory` (5-10 minutes of inactivity) for organizations with it — an org setting that
+                # isn't knowable from the model. Those stay unset (`'unknown'`) rather than guess in either
+                # direction: too low a boundary would declare a live cache cold and throw away a real hit, too
+                # high a one would report expiry as an unexpected collapse. Explicitly requested retention,
+                # such as `openai_prompt_cache_retention='24h'`, is resolved by the model's
+                # `resolve_cache_retention`.
+                # https://developers.openai.com/api/docs/guides/prompt-caching
+                default_cache_retention=timedelta(minutes=30)
+                if profile.get('openai_supports_prompt_cache_breakpoints')
+                else None,
+                # Prompt cache diagnostics are documented for GPT-5.6 and later, the models with explicit cache
+                # breakpoints. Earlier models accept the field but always answer `unavailable`. Set here rather than
+                # in `openai_model_profile` because OpenAI-compatible Responses endpoints don't all accept it:
+                # OpenRouter rejects it with a 400.
+                # https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics
+                openai_responses_supports_prompt_cache_diagnostics=bool(
+                    profile.get('openai_supports_prompt_cache_breakpoints')
+                ),
+            ),
         )
 
     @staticmethod

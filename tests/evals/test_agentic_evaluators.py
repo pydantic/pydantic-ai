@@ -31,7 +31,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel.span_tree import SpanNode, SpanStatus, SpanTree
 
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 _EPOCH = datetime(2025, 1, 1, tzinfo=timezone.utc)

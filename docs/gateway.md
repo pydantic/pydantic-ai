@@ -1,6 +1,7 @@
 ---
 title: Pydantic AI Gateway
 status: new
+description: "Pydantic AI Gateway: one API key for OpenAI, Anthropic, Google, Groq and Bedrock models, with spending limits, failover, load balancing and observability."
 ---
 
 # Pydantic AI Gateway
@@ -69,6 +70,8 @@ Examples of providers and models that can be used are:
 | Google Cloud (formerly Vertex AI) | `google-cloud` | `gateway/google-cloud:gemini-3-flash-preview` |
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
+
+[Image generation](image-generation.md) routes through the gateway as `gateway/google:<model>`, which serves the Gemini image models over Google Cloud.
 
 ### Pydantic AI
 
@@ -281,7 +284,9 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
         model='claude-sonnet-4-5',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
-    print(response.content[0].text)
+    content = response.content[0]
+    assert isinstance(content, anthropic.types.TextBlock)
+    print(content.text)
     #> Hello user
     ```
 
@@ -300,7 +305,9 @@ Use the base URL that matches your Logfire region (`gateway-us` or `gateway-eu`)
         model='claude-sonnet-4-5',
         messages=[{'role': 'user', 'content': 'Hello world'}],
     )
-    print(response.content[0].text)
+    content = response.content[0]
+    assert isinstance(content, anthropic.types.TextBlock)
+    print(content.text)
     #> Hello user
     ```
 

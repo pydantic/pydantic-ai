@@ -7,8 +7,10 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 | Name | Where | Runs when |
 |------|-------|-----------|
-| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. MiniMax engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
-| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and the stronger model. Deletes the label when it finishes. Inline comments, no verdict. |
+| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
+| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
+
+`douwebot` requests changes when a completed review finds a blocking issue. It approves when a completed review finds no blocking issues, including reviews with non-blocking suggestions. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
 
 **They are independent.** Neither reads the other's state, and the label suppresses
 nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested when a
@@ -156,6 +158,71 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
 
+## Shared Z.AI account limits
+
+Treat Pydanty and these workflows as consumers of one Z.AI account.
+The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
+Correlate overlapping workflow and Pydanty requests when investigating rate-limit failures.
+Include delegates and SDK retries in the request timeline.
+
+Record the endpoint, model, HTTP status, provider `error.code`, and any `Retry-After` or quota reset time.
+For abnormal streaming termination without an error code, record `finish_reason`.
+Use [Z.AI's error codes](https://docs.z.ai/api-reference/api-code) to distinguish
+`1302` request rate limits, `1305` temporary overload, and quota exhaustion such as `1308` or `1310`.
+HTTP 429 alone does not identify the failure.
+
+Check the [Coding Plan usage policy](https://docs.z.ai/devpack/usage-policy) for concurrency.
+Check the [usage credit allowance](https://docs.z.ai/devpack/overview#usage-credit-allowance) for 5-hour and weekly quotas.
+Concurrency changes with plan tier and resource availability.
+Read account-specific values from the [rate-limit console](https://z.ai/manage-apikey/rate-limits).
+Do not infer an account limit from Pydanty's observed concurrency or the provider's project-count recommendations.
+A healthy usage-quota check does not establish spare request concurrency.
+
+## Z.AI provider health
+
+Every Z.AI-backed workflow must import `shared/provider-health.md` and include
+`needs.provider_health.outputs.ready == 'true'` in its top-level gate. Keep its
+existing eligibility and security conditions. Reference
+`${{ needs.provider_health.outputs.ready }}` in the prompt body so gh-aw hoists
+the custom job before activation; after compilation, verify `activation.needs`
+includes `provider_health` and that `provider_health` does not depend on `activation`.
+If a workflow has a local engine config, forward the same workflow, event, and
+stable task-key values that `shared/engine-zai.md` forwards.
+
+The provider-health job checks out the default branch and runs outside the agent
+container. Keep `ZAI_API_KEY` scoped to that job. It writes a decision summary
+and the `provider-health` artifact on blocked decisions. A blocked gate must skip
+inference without emitting a passing review or other fabricated agent result. The
+non-model provider-health monitor owns incident issue creation and recovery; do not
+enable gh-aw's generic failure-as-issue reporting for these workflows.
+
+The controller keeps one assigned operational incident for a matching failure
+scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
+in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow from
+starting on controller metadata. Do not create a second issue for the same open
+provider, workflow, or task incident.
+
+The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
+with the raw `ZAI_API_KEY` value in the `Authorization` header. Both
+`TOKENS_LIMIT` windows must be valid: unit `3` / number `5` is the 5-hour
+window, and unit `6` / number `1` is the weekly window. `percentage` is the
+percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
+epoch milliseconds. A missing or malformed required window makes health unknown
+and keeps agent workflows gated. No quota-resource repository variable is needed.
+
+To request manual recovery, run **Agent Provider Health** with `workflow_dispatch`
+and enter the incident's number as `recover_issue`. The controller finds that one
+open, marked incident whose provider key matches the currently configured provider.
+It never closes another incident in the same run. A fresh health check must pass
+before the controller closes the named incident. A scheduled run automatically closes
+only provider rate-limit or quota-exhaustion incidents with a known, elapsed reset time
+after a fresh healthy check. Unknown or malformed quota, missing reset time,
+credentials/configuration incidents, and workflow/task incidents need operator
+attention rather than automatic recovery.
+
+The health controller never enables a disabled agent workflow. After a fresh healthy
+provider-health check, an operator may deliberately enable a disabled workflow.
+
 ## Policy guard
 
 `.github/scripts/agentic_workflow_guard.py` statically checks these workflows in CI. Every check encodes a defect that actually reached `main` and burned model budget before anyone noticed (see #6766) — a failure here is a real bug, not a style nit:
@@ -163,12 +230,17 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure reporting left enabled, a compiled activation graph that cannot see `provider_health`, or a monitor that accepts unlisted workflows or itself | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. |
+| `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
+| `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
 | `prompt-path-outside-workspace` | prompt text pointing at `/tmp/gh-aw/...` | Outside the agent's file-tool root — `Read` rejects it and the agent burns turns rediscovering the file. Stage context under `$GITHUB_WORKSPACE`. |
 | `timeout-declared` | a source with no `timeout-minutes:` | An unbounded agent can spend a full run and be killed with nothing to show. |
 | `job-timeout-env-missing` / `job-timeout-env-mismatch` | a source whose `env.PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is absent, or set to something other than its `timeout-minutes` | The shim derives the agent's own wall-clock budget from that variable, because gh-aw's `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and never reaches the agent container. Drift means the agent either stops early and wastes the time it was granted, or overruns and is killed with nothing emitted. Every new workflow trips this until it declares the pair. |
 | `job-timeout-too-short` | `timeout-minutes:` at or below the shim's teardown headroom (2) | The shim reserves that headroom for container teardown and artifact upload, so it falls back to 30 minutes rather than granting a non-positive budget — the agent then runs far past the point Actions kills the job. |
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
+| `awf-binary-version` | a lock whose `install_awf_binary.sh` pin differs from the `GH_AW_INFO_AWF_VERSION` gh-aw compiled it against, or that carries a pin the lock declares no such version for | `engine.command` makes gh-aw skip its own AWF install, so `shared/pre-steps.md` re-runs the installer with a version written by hand. A gh-aw upgrade moves the bundled version and leaves that pin behind, and the older binary then rejects the newer firewall config — the agent job dies before the model starts. Bump the pin in the same change as the compiler. The skip is tracked upstream at [github/gh-aw#58340](https://github.com/github/gh-aw/issues/58340) — retire this check and the hand-written pre-step once gh-aw installs the firewall binary independently of the engine. |
+| `ai-credits-accounting` | an AWF config carrying `apiProxy.providers` | That key is the API proxy's AI-credits *pricing* table, not reporting metadata — a model priced there gets charged, and AWF caps a run at 10,000 credits that no frontmatter field lifts (`max-ai-credits` only drops gh-aw's own budget, and the schema types it `exclusiveMinimum: 0`). One ordinary request costs tens of thousands, so every agent job 403s on its first call with `ai_credits_limit_exceeded`. The weekly spend report reads token counts from each run's `agent_usage.json`, so nothing here needs the overlay. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 
 Run it locally before pushing:
@@ -176,5 +248,7 @@ Run it locally before pushing:
 ```
 uv run python .github/scripts/agentic_workflow_guard.py check --base-ref origin/main
 ```
+
+Pass both the script project and changed file paths to Pyright, e.g. `uv run pyright -p .github/scripts .github/scripts/agent_provider_health.py`. The root Pyright project skips dot directories, even when a file is named explicitly.
 
 When adding a check, pair it with a regression test in `test_agentic_workflow_guard.py` built from the configuration that actually broke — the existing cases are reconstructed from the parent commit of the PR that fixed each one.

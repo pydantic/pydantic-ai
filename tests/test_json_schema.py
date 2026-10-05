@@ -8,6 +8,9 @@ from typing import Any
 import pytest
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+from ._inline_snapshot import snapshot
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -225,8 +228,6 @@ def test_typed_schema_anyof_member_is_recursed_openai_strict():
     Before the fix, composition members of a typed node were never walked, so OpenAI strict
     mode additions (`additionalProperties: false` and `required`) were missing from them.
     """
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-
     schema = {
         'type': 'object',
         'properties': {'p': {'type': 'string'}},
@@ -241,6 +242,58 @@ def test_typed_schema_anyof_member_is_recursed_openai_strict():
     assert member['required'] == ['q']
 
 
+def test_described_options_fold_into_one_enum_google():
+    """An `Enum` with member docstrings renders as `anyOf` of described `const`s; Gemini gets one `enum` again.
+
+    Gemini does not hold the model to an `anyOf` of one-value `enum`s the way it holds it to a plain `enum`,
+    so the options fold back together and each description moves into the parent's.
+    """
+    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
+    schema = {
+        'type': 'string',
+        'description': 'How urgent the ticket is.',
+        'anyOf': [
+            {'const': 'low', 'description': 'Can wait a week.'},
+            {'const': 'high', 'description': 'Needs attention today.'},
+            {'const': 'unknown'},
+        ],
+    }
+
+    assert GoogleJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {
+            'type': 'string',
+            'enum': ['low', 'high', 'unknown'],
+            'description': 'How urgent the ticket is.\nlow: Can wait a week.\nhigh: Needs attention today.',
+        }
+    )
+    # A union of real alternatives is left alone, and so is one of single values of different types.
+    mixed = {'anyOf': [{'const': 'low'}, {'type': 'integer'}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(mixed)).walk() == snapshot(
+        {'anyOf': [{'enum': ['low'], 'type': 'string'}, {'type': 'integer'}]}
+    )
+    typed_apart = {'anyOf': [{'const': 'low'}, {'const': 1}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(typed_apart)).walk() == snapshot(
+        {'anyOf': [{'enum': ['low'], 'type': 'string'}, {'enum': [1], 'type': 'integer'}]}
+    )
+    # A parent with its own `enum`, or typed differently from its options, is left alone: folding would widen it.
+    own_enum = {'type': 'string', 'enum': ['low'], 'anyOf': [{'const': 'low'}, {'const': 'high'}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(own_enum)).walk() == snapshot(
+        {
+            'type': 'string',
+            'enum': ['low'],
+            'anyOf': [{'enum': ['low'], 'type': 'string'}, {'enum': ['high'], 'type': 'string'}],
+        }
+    )
+    typed_parent = {'type': 'string', 'anyOf': [{'const': 1}, {'const': 2}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(typed_parent)).walk() == snapshot(
+        {'type': 'string', 'anyOf': [{'enum': [1], 'type': 'integer'}, {'enum': [2], 'type': 'integer'}]}
+    )
+    # Options with no descriptions and no type fold into a bare `enum`, with nothing added to the description.
+    bare = {'anyOf': [{'enum': ['a']}, {'enum': ['b']}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(bare)).walk() == snapshot({'enum': ['a', 'b']})
+
+
 def test_typeless_anyof_member_still_recursed():
     """Control: typeless anyOf members continue to be recursed via _handle_union."""
     from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
@@ -253,6 +306,45 @@ def test_typeless_anyof_member_still_recursed():
 
     # Single-member union collapses into the member, which is still transformed.
     assert result == {'type': 'integer'}
+
+
+def test_list_form_items_are_walked():
+    """A draft-7 tuple, spelled as an `items` list rather than `prefixItems`, has each of its schemas walked.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
+    The walk runs before any request is built, so the transformer output is asserted directly.
+    """
+    schema = {
+        '$defs': {'Point': {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'items': [{'type': 'string', 'title': 'A'}, {'$ref': '#/$defs/Point'}]}
+        },
+    }
+
+    # OpenAI keeps `$defs` and strips `title` from each element.
+    assert OpenAIJsonSchemaTransformer(deepcopy(schema), strict=False).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {'pair': {'type': 'array', 'items': [{'type': 'string'}, {'$ref': '#/$defs/Point'}]}},
+            '$defs': {'Point': {'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        }
+    )
+    # Inlining resolves the `$ref` inside the list.
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'pair': {
+                    'type': 'array',
+                    'items': [
+                        {'type': 'string', 'title': 'A'},
+                        {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+                    ],
+                }
+            },
+        }
+    )
 
 
 def test_inline_defs_preserves_ref_sibling_keywords():
@@ -429,6 +521,34 @@ def test_inline_defs_repeated_ref_with_siblings():
     assert result['properties']['described'] == {**pet, 'description': 'field-level description'}
     assert result['properties']['plain'] == pet
     assert result['properties']['defaulted'] == {**pet, 'default': None}
+
+
+def test_inline_defs_skips_keywords_without_matching_type():
+    """Object and array keywords are deliberately left as written, `$ref`s included, without a matching `type`.
+
+    They're walked only when `type` is exactly `'object'` or `'array'` respectively. The dangling `$ref` is the
+    documented output, not a bug: see the `InlineDefsJsonSchemaTransformer` docstring, and the comment in
+    `JsonSchemaTransformer._handle` for why these keywords aren't walked. Setting `type` to `'object'` gets the
+    reference inlined. Unit test: the behavior is the walker's own, and a cassette would only pin one provider's
+    copy of the payload.
+    """
+    schema = {
+        '$defs': {'Payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+        'properties': {'payload': {'$ref': '#/$defs/Payload'}},
+    }
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {'properties': {'payload': {'$ref': '#/$defs/Payload'}}}
+    )
+    assert InlineDefsJsonSchemaTransformer({**deepcopy(schema), 'type': ['object', 'null']}).walk() == snapshot(
+        {'properties': {'payload': {'$ref': '#/$defs/Payload'}}, 'type': ['object', 'null']}
+    )
+    assert InlineDefsJsonSchemaTransformer(
+        {'$defs': deepcopy(schema['$defs']), 'items': {'$ref': '#/$defs/Payload'}}
+    ).walk() == snapshot({'items': {'$ref': '#/$defs/Payload'}})
+    assert InlineDefsJsonSchemaTransformer({**deepcopy(schema), 'type': 'object'}).walk() == snapshot(
+        {'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}, 'type': 'object'}
+    )
 
 
 def test_inline_defs_recursive_ref():

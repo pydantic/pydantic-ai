@@ -17,14 +17,14 @@ XSearchFallbackModelFunc = Callable[
     [RunContext[Any]],
     Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str,
 ]
-"""Callable that resolves a fallback model dynamically per-run.
+"""Callable that resolves the subagent's model dynamically per-run.
 
 May return a `Model` instance or a model name string (e.g. `'xai:grok-4-1-fast-non-reasoning'`);
 strings are resolved to a model at call time.
 """
 
 XSearchFallbackModel = Model | KnownModelName | str | XSearchFallbackModelFunc | None
-"""Type for the fallback model: a model, model name, factory callable, or None."""
+"""Type of [`XSearch.fallback_subagent_model`][pydantic_ai.capabilities.XSearch.fallback_subagent_model]: a model, model name, factory callable, or None."""
 
 XSearchNativeTool: TypeAlias = XSearchTool | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool] | XSearchTool]
 """Type for the native tool: an `XSearchTool` instance, or a callable resolving one from the run context.

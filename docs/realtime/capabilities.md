@@ -1,3 +1,7 @@
+---
+description: "See which Pydantic AI capabilities and hooks run in a realtime voice session, which do not, and how tools and hooks reach the live session through RunContext."
+---
+
 # Capabilities and hooks
 
 A [capability](../capabilities/overview.md) attached to the agent or passed to
@@ -51,12 +55,14 @@ a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeMo
 | `RunContext` field | Value in a realtime session |
 | --- | --- |
 | [`ctx.model_settings`][pydantic_ai.tools.RunContext.model_settings] | The merged [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was connected with. |
-| [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] | `True` from `before_run` onward. |
-| [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] | The live [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] once it is connected. |
+| [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] | `True` for the whole run, including `for_run` and instruction functions that run before the connection exists. |
+| [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] | The live [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] in tool and `on_event` contexts; `None` in run hooks. |
 
 !!! note
-    `ctx.realtime_session` is still `None` in `before_run`, in instruction functions, and in the
-    pre-handler part of `wrap_run`, which all run before the connection is established.
+    `ctx.realtime_session` is `None` throughout `wrap_run`, both before and after `handler()`, because
+    the hook keeps the context copy captured before the session exists. It is also `None` in
+    `before_run` and instruction functions. Use tool hooks or `on_event` when a capability needs the
+    live session.
 
 ## Seeded history is not processed
 
@@ -69,10 +75,10 @@ session when filtering or redaction is required.
 Deferred capabilities load in a session the same way they do in a regular run: the capability
 catalog is part of the session's instructions, and calling the `load_capability` tool returns the
 loaded capability's instructions as its result — which works on every provider. What a session
-cannot do is advertise *new tools* mid-conversation (the connection's tools are fixed when it
-opens; see [#7288](https://github.com/pydantic/pydantic-ai/issues/7288)), so opening a session with
-a `defer_loading=True` capability that contributes tools or native tools raises
+cannot do yet is advertise *new tools* mid-conversation: Pydantic AI fixes the connection's tools
+when it opens (OpenAI and xAI accept a mid-session tool update;
+[#7288](https://github.com/pydantic/pydantic-ai/issues/7288)), so opening a session with a
+`defer_loading=True` capability that contributes tools or native tools raises
 [`UserError`][pydantic_ai.exceptions.UserError] before connecting — accepting it would silently
-provide less than requested. Realtime per-turn/exchange hooks are expected to widen this boundary
-in the future; see [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) and
+provide less than requested. Loading those tools on providers that accept the update is tracked in
 [#7191](https://github.com/pydantic/pydantic-ai/issues/7191).

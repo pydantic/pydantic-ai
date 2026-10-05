@@ -28,9 +28,13 @@ messages = result.all_messages()
 assert isinstance(result.output, DeferredToolRequests)
 results = DeferredToolResults()
 for call in result.output.approvals:
-    results.approvals[call.tool_call_id] = ToolDenied('Deleting files is not allowed')
+    # Your decision logic (ask a human, check a policy); here an exact-match allowlist
+    allowed = call.args_as_dict()['path'] in {'tmp/cache.txt'}
+    # True approves; ToolDenied(message) denies and tells the model why
+    results.approvals[call.tool_call_id] = allowed or ToolDenied('That file may not be deleted')
 
-result = agent.run_sync('Continue', message_history=messages, deferred_tool_results=results)
+# Resume from the history plus the decisions; no new prompt is needed
+result = agent.run_sync(message_history=messages, deferred_tool_results=results)
 print(result.output)
 ```
 
@@ -39,7 +43,7 @@ Two key rules:
 - `DeferredToolRequests` must be in the output type
 - for conditional approval, raise `ApprovalRequired(...)` instead of marking the whole tool `requires_approval=True` — from the tool function, or from its `args_validator=` so invalid arguments are rejected before a human is asked (see below)
 
-Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`).
+Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`). A realtime session emits both the same way, with each deferred call as its own batch.
 
 ## Make an Agent Resilient with Retries
 
@@ -150,6 +154,8 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
         metadata={'coordinates': {'x': x, 'y': y}},
     )
 ```
+
+Whether a file returned from a tool can travel inside the tool result depends on the model and the file's media type. It goes inside the tool result on Anthropic and OpenAI Responses (images and documents), Gemini 3 (the types in `google_supported_mime_types_in_tool_returns`), and Bedrock (the media kinds a family supports). Everything else — OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face, Gemini 2.5 and earlier, plus a media type Gemini 3 or Bedrock can't carry, such as audio or video on Gemini 3 — travels on the user channel instead, framed as `<tool_result tool_name="..." tool_call_id="..." file_id="...">` ... `</tool_result>` — one set of tags per file — so the model doesn't read tool output as something the user uploaded; the tool result carries `See file <id>.` in its place, except on a failed Gemini return, whose native `error` string takes no file references. Anthropic and OpenAI Responses have no such fallback: audio or video from a tool raises `NotImplementedError`. Cohere drops such a file entirely (#7646). The framing is applied while the request is built — the file itself stays on the `ToolReturnPart` in history — and it is prompt text, so it says where content came from without attesting it. `ToolReturn.content` is sent unframed: that is user content you chose to add.
 
 Set `tools=['tool_name']` when the call makes a tool declared with `defer_loading=True` available. The executor deduplicates names in first-occurrence order, omits names already revealed, and stores a `ToolAvailabilityDeltaPart` immediately after that call's `ToolReturnPart`. The recorded name remains revealed when history is resumed; an unknown or already-visible name is a no-op when rendered.
 

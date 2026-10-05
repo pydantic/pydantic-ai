@@ -14,6 +14,7 @@ from ._warnings import (
     CostCalculationFailedWarning as CostCalculationFailedWarning,
     CostNotFoundWarning as CostNotFoundWarning,
     PydanticAIDeprecationWarning as PydanticAIDeprecationWarning,
+    UsageExtractionFailedWarning as UsageExtractionFailedWarning,
 )
 
 if sys.version_info < (3, 11):
@@ -48,6 +49,7 @@ __all__ = (
     'MessageHistoryMutatedWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
+    'UsageExtractionFailedWarning',
     'PydanticAIDeprecationWarning',
     'FallbackExceptionGroup',
     'ToolFailed',
@@ -326,7 +328,9 @@ class RunCancelled(AgentRunError):
         it with `except asyncio.CancelledError as exc`, then call
         `RunCancelled.from_cancellation(exc)` to access the partial run state attached by Pydantic
         AI. This also works with the `TimeoutError` raised by `asyncio.timeout()` or
-        `asyncio.wait_for()`, whose exception chain contains the original `CancelledError`. An
+        `asyncio.wait_for()`, whose exception chain contains the original `CancelledError`, and with
+        the `KeyboardInterrupt` raised by pressing Ctrl-C during `agent.run_sync()` or
+        `agent.run_stream_sync()`. An
         external `CancelledError` must keep propagating for timeouts and task groups to tear down
         correctly, so re-raise it after capturing the state rather than returning from the handler;
         only a first-party `RunCancelled` is yours to consume.
