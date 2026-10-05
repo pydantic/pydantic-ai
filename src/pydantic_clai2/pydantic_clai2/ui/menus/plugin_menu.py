@@ -12,7 +12,7 @@ from termflow.tui.terminal import terminal_size
 
 from pydantic_clai2.plugins import DepsT
 from pydantic_clai2.plugins.describe import describe
-from pydantic_clai2.plugins.loader import PluginEntry, PluginError, PluginLoader
+from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginEntry, PluginError, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, is_save_and_close, save_and_close_item
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
@@ -125,6 +125,8 @@ class PluginMenu(Generic[DepsT]):
             lines += ['', _paint(theme.ERROR, 'error', bold=True), *self._wrap(entry.error, theme.ERROR)]
         if self.notice:
             lines += ['', self._notice()]
+        if self._loader.in_turn:
+            lines += ['', *self._wrap(TURN_NOTICE, theme.MUTED)]
         return '\n'.join(lines)
 
     def toggle(self, menu: Redrawable, item: MenuItem) -> MenuResult | None:

@@ -132,6 +132,19 @@ including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
 
+## Option keys on macOS
+
+CLAI asks the terminal to report modified keys, so Option+Enter (steer) works in
+Herdr, and in iTerm2 even with its default Option key setting. If Option+Enter
+still queues the message like Enter, the terminal is sending a plain Enter:
+
+- Terminal.app: turn on Settings > Profiles > Keyboard > Use Option as Meta key.
+- tmux: tmux forwards Alt+Enter, but does not pass CLAI's request on to the
+  outer terminal. Set that terminal to send Option as Alt, for example iTerm2's
+  Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
+- For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
+  `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+
 ## Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
@@ -615,7 +628,17 @@ away instead of queueing.
 The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
-running turn ends. With arguments, these commands queue like any other.
+running turn ends. `/model settings` edits to the running model apply to its
+next model request in the same turn. With arguments, these commands queue like
+any other.
+
+`/plugins` runs right away during a turn too, with or without arguments, so
+`/plugins disable NAME` does not wait behind the turn or your queued messages.
+Commands, status segments, and model providers change at once. The running turn
+keeps the tools and hooks it started with, because the agent binds them when a
+run begins; the change reaches the agent on your next prompt, and CLAI says so.
+A plugin turned off mid-turn finishes its cleanup when the turn ends. While a
+delegated task is running, `/plugins` still refuses changes, as between turns.
 
 `run.tool_retries` sets the default retry budget per tool call, starting at `3`.
 Use a non-negative integer; `0` disables retries. Changes apply to the next turn.
@@ -692,7 +715,8 @@ model without changing the active model. Esc returns from settings to this list;
 Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
 `Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
-on the next prompt. `r` resets a field; Esc or Ctrl-C goes back. Fixed choices
+from the model's next request, even in a running turn. `r` resets a field; Esc
+or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
 First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
@@ -913,15 +937,22 @@ then move through the suggestions. Editing the recalled text ends the walk, so
 suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
-To steer instead, first queue the message with Enter, then press Alt+Enter
-(Option+Enter). This sends the oldest queued follow-up to the active run at its
-next opportunity without cancelling in-flight tools or changing your draft.
-Each Alt+Enter sends one message. If the run is no longer accepting steering,
-the message stays queued. Slash commands, `!` shell commands, and exit signals
-are not steered or skipped over. With no queued message, Alt+Enter does nothing.
-While running with at least one queued message, the input box shows both shortcuts.
-Shift-Enter inserts a newline. CLAI requests modified
-key reporting while the editor is active and releases it for menus and on exit.
+To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
+draft, this sends the draft to the run at its next opportunity, without
+cancelling in-flight tools. Messages already queued stay queued. With an empty
+draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
+message. Slash commands, `!` shell commands, and exit signals are never steered.
+A draft that cannot steer, including any draft while idle, is taken as if you
+pressed Enter. A queued message that cannot steer stays queued and is not
+skipped over. While running with a draft or a queued message, the input box
+shows both shortcuts. If Option+Enter queues like Enter, see
+[Option keys on macOS](#option-keys-on-macos).
+Shift-Enter inserts a newline when the terminal reports it separately from Enter.
+Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
+GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
+Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
+Kitty or xterm. CLAI enables xterm and Kitty keyboard reporting only while the
+editor is active and releases it for menus and on exit.
 Ctrl-R searches history; Enter accepts a search
 result without submitting it. Ctrl-D exits when the draft is empty. Ctrl-C at
 input clears the line; during a run it cancels the turn and returns to input. No cancelled run is automatically retried.
@@ -1155,8 +1186,12 @@ sends nothing.
 The window comes from genai-prices, the same catalog the `/model add` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
 assumed to have 200,000 tokens, the harness default. To change any of this,
-redeclare the plugin with your own settings; `/plugins disable compaction`
-turns it off, `/compact` included:
+run `/plugins configure compaction` (or press `c` on its `/plugins` row): each
+edit is validated and saved as you make it, and the plugin reloads so the next
+turn uses the new settings. A turn already running keeps the old ones. While `coder`
+is on, `compaction` is greyed out and cannot be configured, since its settings would
+have no effect. You can also redeclare the plugin with your own settings;
+`/plugins disable compaction` turns it off, `/compact` included:
 
 ```text
 /plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
@@ -1171,8 +1206,10 @@ turns it off, `/compact` included:
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
-The maximum comes from the request's model or the `context_window` override;
-it stays `?` until the plugin reports a known window. An unknown model's fallback
+The maximum comes from the request's model or the `context_window` override.
+It stays `?` until the first request of the session or after a model change, and for
+a model with no known window. With `compaction` off, for example while `coder` is on,
+the shell reads the window from the request's model itself. An unknown model's fallback
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 
@@ -1460,6 +1497,8 @@ rather than adding a separate `Finished:` line to the transcript.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.
+Bare `http://` and `https://` URLs, and `<https://...>` autolinks, are shown in the
+link colour and are clickable too; URLs inside code spans are left as code.
 URLs longer than 2,048 characters are shown without clickable metadata to limit
 streaming output size.
 Links survive viewport resizing; following one uses your terminal's usual click
@@ -1528,8 +1567,12 @@ Plain shell output stays dim. ANSI generated by Termflow itself is retained.
 
 Press **Ctrl+X Ctrl+S** to switch speculative execution on or off, the same chord
 as Code Puppy. It is off by default and saved as `run.speculative_code_mode`, so
-`/set run.speculative_code_mode true` does the same. The next turn uses the new
-value; a turn already running keeps the tools it started with.
+`/set run.speculative_code_mode true` does the same. Between turns the change
+applies to your next prompt. During a turn the switch and the pinned row change
+at once, but the running turn keeps the tools it started with: the row says
+`on from the next prompt` or `off from the next prompt` until that turn ends.
+The agent's tools are bound when a run starts, so the new value cannot reach
+the turn that is already running.
 
 While it is on, every tool except `write_file` and `edit_file` becomes a
 function inside one harness `CodeMode` `run_code` tool, `shell` included. Other
@@ -1596,8 +1639,9 @@ Speculative Execution  29 hits · 0 misses · 0 wasted    saved ≥ 7.0s
   wall-clock speedup, since concurrent calls can overlap.
 
 Counts are coloured only when non-zero, using `/theme` colours. Switching off
-hides the row; switching back on shows the same session totals. Headless runs
-and redirected output use the same tools but show no row. The `pydantic-monty`
+hides the row once no running turn speculates; switching back on shows the same
+session totals. Headless runs and redirected output use the same tools but show
+no row. The `pydantic-monty`
 sandbox behind speculative execution is a `pydantic-clai2` dependency; if it
 cannot be imported, CLAI prints a warning and runs tools natively.
 
@@ -1608,8 +1652,9 @@ context tokens, and streamed output estimate, including text, thinking, and
 string tool-argument deltas. The estimate is characters divided by four, not a
 provider tokenizer count. On completion it is replaced by reported run output
 usage. Context is the most recent response's reported input plus output tokens,
-not cumulative conversation billing or a context-window percentage; `?` means
-unavailable. As each request goes out, the `compaction` plugin replaces it with
+not cumulative conversation billing or a context-window percentage, over the
+request model's context window (`128k/1m`); `?` means unavailable, such as the
+window before the first request or for a model with no known window. As each request goes out, the `compaction` plugin replaces it with
 that request's estimated size and paints it yellow while the history is
 [over its threshold](#compacting-the-conversation); the response's reported
 usage takes over when it lands. The retained-history cost (`$0.0123`) follows the
@@ -1778,6 +1823,26 @@ terminal console output is disabled so it does not interfere with the editor.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 
+Agent runs and recorded UI interactions nest under a `CLAI session` root span.
+Its `agent_session_id` attribute is the saved conversation ID.
+`/clear` selects a new root; `/resume` returns to that conversation's root if it
+was already opened by this plugin instance. Unloading the plugin ends its roots;
+reloading starts new traces with the same saved conversation IDs.
+
+Each session root is tagged with your email, as a Logfire tag and the
+`user.email` attribute, never on child spans or logs. `user_tag` picks where it
+comes from. The default, `logfire-account`, uses the account you signed in with
+when you set up the **Logfire project** (below); that account already has access
+to the project, so the tag reveals nothing new to it. With a token from
+`LOGFIRE_TOKEN`, the credentials file, a token changed since setup, a setup made
+before this setting existed, or a server that does not report your email, roots
+are not tagged until you run the setup again. `git-email` uses
+`git config user.email` instead (Git is only queried with this choice; a missing
+email leaves the tag out), and `false` turns the tag off. Choose **User tag** in
+`/plugins configure observability`, or set `user_tag` in the plugin settings.
+Everything CLAI records itself (session roots, UI records, and plugin load
+failures) uses the `clai2` instrumentation scope.
+
 Prompts, responses, tool arguments/results, and binary image attachments are
 included by default, including retained history used by later turns. This can
 send source code, file contents, and screenshots to the configured telemetry
@@ -1807,8 +1872,8 @@ scrubbing remains enabled.
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `false`) adds spans and logs, tagged
-`clai2-ui`, for UI interactions: menus, slash commands, `/set`, plugin actions,
+rather than falling back. `ui_events` (default `false`) adds spans and logs in the
+`clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never prompt text, typed
 values, or secrets.
@@ -1824,7 +1889,8 @@ Choose **Logfire project** in the settings menu (`/plugins configure observabili
 
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
-reloads and the next turn is traced there. The sign-in itself is not kept. The
+reloads and the next turn is traced there. The sign-in itself is not kept, only
+your account's email, saved with the key name as `account` to tag session roots. The
 URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
 send the token elsewhere, and sending is turned on if it was off. Choose the row
 again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the

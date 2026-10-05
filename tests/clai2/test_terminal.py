@@ -60,7 +60,7 @@ async def test_set_without_initial_model(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
         pipe.send_text(
-            'hello\n/set model test\n/set display.thinking false\n/set run.request_limit 123\nhello\n/exit\n'
+            'hello\r/set model test\r/set display.thinking false\r/set run.request_limit 123\rhello\r/exit\r'
         )
         await chat(Agent(), deps=None, console=Console(file=output), store=store)
     assert 'Choose a model first' in output.getvalue()
@@ -92,7 +92,7 @@ async def test_drop_in_plugin_commands_and_hooks(tmp_path: Path) -> None:
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/help\n/greet Mike\nhello\n/plugins list\n/exit\n')
+        pipe.send_text('/help\r/greet Mike\rhello\r/plugins list\r/exit\r')
         await chat(
             Agent(TestModel(custom_output_text='hi')),
             deps=None,
@@ -120,7 +120,7 @@ async def test_coder_is_a_builtin_plugin(tmp_path: Path) -> None:
 
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/plugins list\nhello\n/plugins disable coder\nhello\n/plugins remove coder\n/exit\n')
+        pipe.send_text('/plugins list\rhello\r/plugins disable coder\rhello\r/plugins remove coder\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='hi'), deps_type=type(None)),
             deps=None,
@@ -152,7 +152,7 @@ async def test_plugin_can_cancel_a_turn(tmp_path: Path) -> None:
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('stop\nboom\n/exit\n')
+        pipe.send_text('stop\rboom\r/exit\r')
         await chat(Agent(TestModel(custom_output_text='never')), deps=None, console=Console(file=output), store=store)
     text = output.getvalue()
     assert 'Turn cancelled by a plugin: not today' in text
@@ -306,12 +306,12 @@ async def test_prompt_frame_stays_visible_during_tools(
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             bottom = max(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             assert bottom - top == 3
-            pipe.send_text('\n')
+            pipe.send_text('\r')
             await working.wait()
             pipe.send_text('next message')
             await drafted.wait()
             assert any(line.startswith('next message') for line in frame)
-            pipe.send_text('\n/set display.thinking false\nretained draft')
+            pipe.send_text('\r/set display.thinking false\rretained draft')
             await queued.wait()
             follow_up = next(row for row, line in enumerate(frame) if 'Follow-up: next message' in line)
             command = next(row for row, line in enumerate(frame) if 'Command: /set display.thinking false' in line)
@@ -326,7 +326,7 @@ async def test_prompt_frame_stays_visible_during_tools(
             finish.set()
             await second.wait()
             assert any('retained draft' in line for line in frame)
-            pipe.send_text('\x15/exit\n')
+            pipe.send_text('\x15/exit\r')
             await done.wait()
     assert 'Goodbye.' in output.getvalue()
     assert 'Turn not saved' not in output.getvalue()
@@ -339,7 +339,7 @@ async def test_prompt_frame_stays_visible_during_tools(
 async def test_prompt_loop_commands(tmp_path: Path) -> None:
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/help\nhello\n/new\n/exit\n')
+        pipe.send_text('/help\rhello\r/new\r/exit\r')
         await chat(
             Agent(TestModel(custom_output_text='hello back')),
             deps=None,
@@ -422,7 +422,7 @@ async def test_model_adds_and_selects_any_model(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/model unknown\n/add_model test\n/model test\nhello\n/exit\n')
+        pipe.send_text('/model unknown\r/add_model test\r/model test\rhello\r/exit\r')
         await chat(Agent(), deps=None, console=Console(file=output, width=200), store=store)
     assert 'Model not added' not in output.getvalue()
     assert 'success' in output.getvalue()
@@ -475,11 +475,11 @@ async def test_live_editor_interrupts_slow_turn_hooks(
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
-            pipe.send_text('hello\n')
+            pipe.send_text('hello\r')
             await started.wait()
             pipe.send_text('draft' + key)
             await cleaned.wait()
-            pipe.send_text('\x15/exit\n')
+            pipe.send_text('\x15/exit\r')
             await done.wait()
     assert 'Goodbye.' in output.getvalue()
     if phase == 'start':
@@ -515,7 +515,7 @@ async def test_absolute_screenshot_paths_are_prompts(tmp_path: Path, terminal: b
 
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text(f'\x1b[200~{text}\x1b[201~\n/missing-command\n/exit\n')
+        pipe.send_text(f'\x1b[200~{text}\x1b[201~\r/missing-command\r/exit\r')
         await chat(
             Agent(TestModel(custom_output_text='received screenshot path'), deps_type=type(None), capabilities=[hooks]),
             deps=None,
