@@ -174,7 +174,7 @@ def test_install_commands(tmp_path: Path) -> None:
     ]
     assert bleeding.overrides() == (
         f'pydantic-clai2 @ {archive}src/pydantic_clai2\n'
-        f'pydantic-ai-harness[coder] @ {archive}src/pydantic_ai_harness\n'
+        f'pydantic-ai-harness[coder,skills] @ {archive}src/pydantic_ai_harness\n'
         f'pydantic-ai-slim[anthropic,mcp,openai] @ {archive}pydantic_ai_slim\n'
         f'pydantic-graph @ {archive}pydantic_graph\n'
     )
@@ -211,7 +211,7 @@ def _updates(
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
             text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
-            assert 'pydantic-ai-harness[coder] @ ' in text
+            assert 'pydantic-ai-harness[coder,skills] @ ' in text
             assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
             assert environment == {'UV_DYNAMIC_VERSIONING_BYPASS': f'0.0.0+{NEWER}'}
         else:

@@ -36,7 +36,7 @@ DISTRIBUTION = 'pydantic-clai2'
 REPOSITORY = 'https://github.com/pydantic/pydantic-ai'
 PACKAGES = {
     'pydantic-clai2': 'src/pydantic_clai2',
-    'pydantic-ai-harness[coder]': 'src/pydantic_ai_harness',
+    'pydantic-ai-harness[coder,skills]': 'src/pydantic_ai_harness',
     'pydantic-ai-slim[anthropic,mcp,openai]': 'pydantic_ai_slim',
     'pydantic-graph': 'pydantic_graph',
 }
