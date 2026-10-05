@@ -43,6 +43,13 @@ async def main(prior_history=()):
         await session.send('Continue where we left off.')
 ```
 
+To continue a text run's conversation, pass its
+[`conversation`][pydantic_ai.agent.AgentRunResult.conversation] as `conversation=` instead. It seeds the
+history and also carries the running [`usage`][pydantic_ai.usage.RunUsage] and the `conversation_id`, so
+[usage limits](../agent.md#usage-limits) keep counting across the handoff and the session correlates with the run
+in telemetry. Going the other way, [`session.conversation`][pydantic_ai.realtime.RealtimeSession.conversation]
+is the bundle to hand to the next text run.
+
 Seeded tool calls and results are replayed as native function calls where the provider's protocol
 permits, and as readable text where it doesn't. Thinking signatures and provider-native execution
 metadata are omitted because they belong to the session that produced them.
@@ -139,6 +146,20 @@ to [`session()`][pydantic_ai.agent.AgentRealtime.session] to retain finalized WA
 
 Retention affects history only. Live input and output remain raw PCM16; finalized retained audio is
 wrapped in a WAV container.
+
+Retained audio is bounded the same way as [retained images](#retaining-images). Pass
+`retain_audio_max_seconds=` to [`session()`][pydantic_ai.agent.AgentRealtime.session] to set how many
+seconds of audio the session keeps, counting both speakers and the turns still being spoken. It
+defaults to `1800` (30 minutes, about 86 MB at 24 kHz) and evicts the oldest retained audio when the
+budget is reached: that turn's `SpeechPart` keeps its transcript and its `audio` becomes `None`, so the
+history stays valid to [hand off](#handing-off-to-a-text-agent) or seed a session with. A single turn
+longer than the budget keeps only its most recent audio. Set it to `0` to retain none or `None` to
+remove the bound. Like the image settings, this bounds local history, not provider context: the
+provider still receives all of the audio. Audio in the `message_history` you seed a session with is
+kept as given; the budget covers only the audio the session retains itself. Events the session hasn't
+delivered to your app yet, such as a queued [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] or a part
+waiting in a [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.stream_transcripts] view, keep
+their part's audio until they are consumed.
 
 Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
 Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.

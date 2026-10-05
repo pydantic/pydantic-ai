@@ -1,8 +1,8 @@
 """Tests for OpenAI GPT-5.6 explicit prompt caching on the Chat Completions and Responses APIs.
 
 Covers the `openai_prompt_cache_options` setting, `CachePoint` to `prompt_cache_breakpoint`
-mapping, the `openai_supports_prompt_cache_breakpoints` profile gate, and cache-write usage
-mapping.
+mapping, the `openai_supports_prompt_cache_breakpoints` profile gate, cache-write usage
+mapping, and prompt cache diagnostics.
 
 Most adapter-level tests here intentionally use mocked SDK clients rather than VCR
 recordings: they pin exact SDK request kwargs, omission of unsupported fields, and
@@ -23,12 +23,23 @@ from cassetter import Cassette
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import request_json
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -55,6 +66,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
     )
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -255,6 +267,111 @@ async def test_openai_chat_cache_point_first_content_raises(allow_model_requests
         await Agent(model).run([CachePoint(), 'This should fail.'])
 
     assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+def _history_ending_in(*tail: ModelMessage) -> list[ModelMessage]:
+    """A tool call answered by a tool return, then `tail`: the shape a capability's tail reminder follows."""
+    return [
+        ModelRequest(parts=[UserPromptPart('Look it up.')]),
+        ModelResponse(parts=[ToolCallPart('lookup', {'n': 1}, tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', 'result 1', tool_call_id='call_1')]),
+        *tail,
+    ]
+
+
+async def test_openai_chat_leading_cache_point_attaches_to_previous_message(allow_model_requests: None):
+    """A `CachePoint` opening a user message after a tool result marks the tool result instead of raising.
+
+    That is where a tail reminder (`SystemReminders`, `Planning`) puts its breakpoint once a tool loop
+    is underway; the request used to fail with `CachePoint cannot be the first content in a user message`.
+    """
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        _history_ending_in(ModelRequest(parts=[UserPromptPart([CachePoint(), 'Stay focused.'])])),
+        None,
+        ModelRequestParameters(),
+    )
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert messages[2:] == snapshot(
+        [
+            {
+                'role': 'tool',
+                'tool_call_id': 'call_1',
+                'content': [{'type': 'text', 'text': 'result 1', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Stay focused.'}]},
+        ]
+    )
+
+
+async def test_openai_chat_leading_cache_point_skips_messages_without_content(allow_model_requests: None):
+    """An assistant turn holding only tool calls can't carry the marker, so the one before it does."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart(['Look it up.'])]),
+            ModelResponse(parts=[ToolCallPart('lookup', {'n': 1}, tool_call_id='call_1')]),
+            ModelRequest(parts=[UserPromptPart([CachePoint()])]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert [message['role'] for message in messages] == ['user', 'assistant']
+    assert messages[0]['content'] == snapshot(
+        [{'type': 'text', 'text': 'Look it up.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}]
+    )
+
+
+async def test_openai_chat_leading_cache_point_with_merged_system_messages(allow_model_requests: None):
+    """A leading `CachePoint` after system prompts marks the merged system message, which must still be joined as text."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_supports_prompt_cache_breakpoints=True, openai_chat_supports_multiple_system_messages=False
+        ),
+    )
+
+    await model.request(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart('First.'), SystemPromptPart('Second.'), UserPromptPart([CachePoint(), 'Hi.'])],
+                instructions='Be brief.',
+            )
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': """\
+First.
+
+Second.
+
+Be brief.\
+""",
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'Hi.', 'type': 'text'}]},
+        ]
+    )
 
 
 async def test_openai_chat_cache_point_filtered_without_support(allow_model_requests: None):
@@ -479,6 +596,82 @@ async def test_openai_responses_cache_point_first_content_raises(allow_model_req
         await Agent(model).run([CachePoint(), 'This should fail.'])
 
     assert get_mock_responses_kwargs(mock_client) == []
+
+
+async def test_openai_responses_leading_cache_point_attaches_to_previous_item(allow_model_requests: None):
+    """The Responses counterpart: the breakpoint lands on the `function_call_output` before the reminder."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        _history_ending_in(
+            ModelRequest(parts=[UserPromptPart([CachePoint(), 'Stay focused.'])]),
+            ModelResponse(parts=[ToolCallPart('lookup', {'n': 2}, tool_call_id='call_2')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart('lookup', 'result 2', tool_call_id='call_2'),
+                    UserPromptPart([CachePoint()]),
+                ]
+            ),
+        ),
+        None,
+        ModelRequestParameters(),
+    )
+
+    request_input = get_mock_responses_kwargs(mock_client)[0]['input']
+    assert request_input[2:] == snapshot(
+        [
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_1',
+                'output': [{'type': 'input_text', 'text': 'result 1', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
+            },
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Stay focused.'}]},
+            {'name': 'lookup', 'arguments': '{"n":2}', 'call_id': 'call_2', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_2',
+                'output': [{'type': 'input_text', 'text': 'result 2', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
+            },
+        ]
+    )
+
+
+async def test_openai_responses_leading_cache_point_skips_assistant_output(allow_model_requests: None):
+    """Assistant output (`output_text`) can't carry a breakpoint, so a leading `CachePoint` after it marks the user input before."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart('Question.')]),
+            ModelResponse(parts=[TextPart('Sent as output.', id='msg_1')], provider_name='openai'),
+            ModelResponse(parts=[TextPart('Sent as a string.')]),
+            ModelRequest(parts=[UserPromptPart([CachePoint(), 'Follow-up.'])]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'Question.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+                ],
+            },
+            {
+                'role': 'assistant',
+                'id': 'msg_1',
+                'content': [{'text': 'Sent as output.', 'type': 'output_text', 'annotations': []}],
+                'type': 'message',
+                'status': 'completed',
+            },
+            {'role': 'assistant', 'content': 'Sent as a string.'},
+            {'role': 'user', 'content': [{'text': 'Follow-up.', 'type': 'input_text'}]},
+        ]
+    )
 
 
 async def test_openai_responses_cache_point_filtered_without_support(allow_model_requests: None):
@@ -806,3 +999,170 @@ async def test_openrouter_responses_prompt_cache_e2e(
         assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
         assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
     _assert_cache_usage(first.usage, second.usage)
+
+
+# ===== Prompt cache diagnostics =====
+
+
+def _last_response(messages: list[Any]) -> ModelResponse:
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    return response
+
+
+def _diagnostics_model(model_name: str, openai_api_key: str, request_capture: RequestCapture) -> OpenAIResponsesModel:
+    return OpenAIResponsesModel(
+        model_name, provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+
+
+@pytest.mark.vcr
+async def test_openai_responses_prompt_cache_diagnostics_e2e(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """Each turn compares against the previous OpenAI response, including across a model switch.
+
+    Recorded with `openai_store=False`: diagnostics don't need the compared response to be stored.
+    """
+    agent = Agent(
+        _diagnostics_model('gpt-5.6-sol', openai_api_key, request_capture),
+        model_settings=OpenAIResponsesModelSettings(openai_store=False),
+    )
+
+    first = await agent.run([_STABLE_PREFIX, 'Reply with exactly: OK'])
+    second = await agent.run('Reply with exactly: AGAIN', message_history=first.all_messages())
+    third = await agent.run(
+        'Reply with exactly: DONE',
+        message_history=second.all_messages(),
+        model=_diagnostics_model('gpt-5.6-luna', openai_api_key, request_capture),
+    )
+
+    first_response = _last_response(first.all_messages())
+    second_response = _last_response(second.all_messages())
+    third_response = _last_response(third.all_messages())
+    assert [body.get('prompt_cache_options') for body in request_capture.bodies('/v1/responses')] == [
+        None,
+        {'comparison_response_id': first_response.provider_response_id},
+        {'comparison_response_id': second_response.provider_response_id},
+    ]
+    assert first_response.provider_details is not None
+    assert 'prompt_cache_diagnostics' not in first_response.provider_details
+    assert second_response.provider_details is not None
+    assert second_response.provider_details['prompt_cache_diagnostics'] == snapshot({'type': 'cache_hit'})
+    assert third_response.provider_details is not None
+    assert third_response.provider_details['prompt_cache_diagnostics'] == snapshot(
+        {
+            'cache_missed_tokens': 4175,
+            'reason': 'model_changed',
+            'type': 'cache_miss',
+            'comparison_reusable_tokens': 4175,
+        }
+    )
+    # The recorded shape survives message-history serialization.
+    round_tripped = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(third.all_messages()))
+    round_tripped_details = _last_response(round_tripped).provider_details
+    assert round_tripped_details is not None
+    assert (
+        round_tripped_details['prompt_cache_diagnostics'] == third_response.provider_details['prompt_cache_diagnostics']
+    )
+
+
+@pytest.mark.vcr
+async def test_openai_responses_prompt_cache_diagnostics_stream(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """A streamed response takes the diagnostics from the terminal event.
+
+    Earlier status events can report `unavailable` before the comparison has finished.
+    """
+    agent = Agent(_diagnostics_model('gpt-5.6-sol', openai_api_key, request_capture))
+
+    first = await agent.run([_STABLE_PREFIX, 'Reply with exactly: OK'])
+    async with agent.run_stream('Reply with exactly: DONE', message_history=first.all_messages()) as streamed:
+        await streamed.get_output()
+
+    assert request_capture.body('/v1/responses', index=1)['prompt_cache_options'] == {
+        'comparison_response_id': _last_response(first.all_messages()).provider_response_id
+    }
+    streamed_response = _last_response(streamed.all_messages())
+    assert streamed_response.provider_details is not None
+    assert streamed_response.provider_details['prompt_cache_diagnostics'] == snapshot({'type': 'cache_hit'})
+
+
+@pytest.mark.vcr
+async def test_openai_responses_prompt_cache_diagnostics_not_requested_before_gpt_5_6(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """Models before GPT-5.6 accept the field but always answer `unavailable`, so it isn't sent."""
+    agent = Agent(_diagnostics_model('gpt-5.5', openai_api_key, request_capture))
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: AGAIN', message_history=first.all_messages())
+
+    assert 'prompt_cache_options' not in request_capture.body('/v1/responses', index=1)
+    second_response = _last_response(second.all_messages())
+    assert second_response.provider_details is not None
+    assert 'prompt_cache_diagnostics' not in second_response.provider_details
+
+
+def _history(
+    provider_name: str, provider_response_id: str, provider_details: dict[str, Any] | None = None
+) -> list[ModelRequest | ModelResponse]:
+    return [
+        ModelRequest.user_text_prompt('Say hi.'),
+        ModelResponse(
+            parts=[TextPart('Hi!')],
+            model_name='gpt-5.6-sol',
+            provider_name=provider_name,
+            provider_response_id=provider_response_id,
+            provider_details=provider_details,
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('provider', 'history', 'settings', 'expected'),
+    [
+        pytest.param(
+            'openai', _history('openai', 'resp_1'), {}, {'comparison_response_id': 'resp_1'}, id='previous-openai'
+        ),
+        pytest.param(
+            'openai',
+            _history('openai', 'resp_1'),
+            {'openai_prompt_cache_options': {'mode': 'explicit', 'ttl': '30m'}},
+            {'mode': 'explicit', 'ttl': '30m', 'comparison_response_id': 'resp_1'},
+            id='merged-with-options',
+        ),
+        pytest.param(
+            'openai', _history('openai', 'resp_1'), {'openai_prompt_cache_diagnostics': False}, None, id='disabled'
+        ),
+        pytest.param('openai', _history('anthropic', 'msg_1'), {}, None, id='previous-other-provider'),
+        # Azure also issues `resp_` IDs, but OpenAI can't look them up.
+        pytest.param('openai', _history('azure', 'resp_1'), {}, None, id='previous-azure'),
+        # OpenAI rejects an ID that doesn't start with `resp` with a 400.
+        pytest.param('openai', _history('openai', 'chatcmpl-1'), {}, None, id='previous-non-response-id'),
+        pytest.param('openai', [ModelRequest.user_text_prompt('Say hi.')], {}, None, id='no-previous-response'),
+        # A `/compact` response's ID can't be used as `previous_response_id`, and the request after it starts a new prefix.
+        pytest.param(
+            'openai', _history('openai', 'resp_1', {'compaction': True}), {}, None, id='previous-compaction-response'
+        ),
+        # OpenRouter's Responses API rejects the field with a 400.
+        pytest.param('openrouter', _history('openrouter', 'resp_1'), {}, None, id='openrouter'),
+    ],
+)
+async def test_openai_responses_prompt_cache_diagnostics_request_field(
+    allow_model_requests: None,
+    provider: Literal['openai', 'openrouter'],
+    history: list[ModelRequest | ModelResponse],
+    settings: OpenAIResponsesModelSettings,
+    expected: dict[str, str] | None,
+):
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    if provider == 'openai':
+        model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    else:
+        model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(model, model_settings=settings).run('Reply with exactly: OK', message_history=history)
+
+    assert get_mock_responses_kwargs(mock_client)[0].get('prompt_cache_options') == expected

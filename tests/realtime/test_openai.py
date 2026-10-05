@@ -68,6 +68,7 @@ from pydantic_ai.realtime import (
     RealtimeSessionReconnectEvent,
     WebRTCSession,
 )
+from pydantic_ai.realtime._lifecycle import UserTurnEnded, UserTurnStarted
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
@@ -2651,6 +2652,74 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
             ),
             response_scoped=False,
         ),
+    ]
+
+
+async def test_idle_timeout_commit_with_failed_transcription_records_no_user_turn() -> None:
+    """A failed transcription of the silent idle-timeout item is no spoken turn either, so history gets none."""
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+        {
+            'type': 'conversation.item.input_audio_transcription.failed',
+            'item_id': 'idle',
+            'content_index': 0,
+            'error': {'type': 'server_error', 'code': 'transcription_failed', 'message': 'No speech.'},
+        },
+    ]
+    connection = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        events = await collect_session_events(session)
+
+    assert not any(isinstance(event, RealtimeInputTranscriptionErrorEvent) for event in events)
+    assert session.new_messages() == []
+    assert connection._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_idle_timeout_commit_without_transcription_is_not_a_spoken_turn() -> None:
+    """With transcription off, no transcript retires the idle-timeout item, so its commit does."""
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+    ]
+    ws = FakeWebSocket([json.dumps(frame) for frame in frames])
+    conn = OpenAIRealtimeConnection(ws, input_transcription_enabled=False)  # type: ignore[arg-type]
+    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+
+    assert not any(isinstance(event, UserTurnStarted | UserTurnEnded) for event in events)
+    assert conn._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_idle_timeout_commit_is_not_a_spoken_turn() -> None:
+    """The silent buffer server VAD commits when `idle_timeout_ms` runs out yields no user turn or transcript.
+
+    Its transcription is still billed, so its usage is reported. The recorded conversation is
+    `test_openai_ws.py::test_idle_timeout_nudge_is_not_a_user_turn`; this pins the transcript deltas it lacks,
+    and that a later spoken turn is still reported.
+    """
+    usage = {'type': 'duration', 'seconds': 5}
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+        {'type': 'conversation.item.input_audio_transcription.delta', 'item_id': 'idle', 'delta': ''},
+        {
+            'type': 'conversation.item.input_audio_transcription.completed',
+            'item_id': 'idle',
+            'transcript': '',
+            'usage': usage,
+        },
+        {'type': 'input_audio_buffer.committed', 'item_id': 'spoken', 'previous_item_id': 'idle'},
+    ]
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
+    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+
+    assert events[:-1] == [
+        SessionUsage(usage=RequestUsage(details={'input_transcription_seconds': 5}), response_scoped=False),
+        UserTurnStarted(turn_id='spoken'),
+        UserTurnEnded(turn_id='spoken'),
     ]
 
 
