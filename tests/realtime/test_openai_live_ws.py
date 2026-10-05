@@ -668,6 +668,28 @@ async def test_webrtc_call_continues_the_bound_history(
     assert 'Ada' in spoken
 
 
+@pytest.mark.vcr
+async def test_webrtc_hang_up_ends_the_call(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`hang_up()` on a sideband ends the browser's call; `close()` alone would only detach from it.
+
+    Live ends the session when the call is hung up, and asking again finds no call to end, which is not an
+    error. The offer and both hangups are an HTTP VCR cassette, the sideband a WebSocket cassette.
+    """
+    provider, _ = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    realtime = Agent(_BACKEND, instructions='Answer in a few words.').realtime(model)
+
+    answer = await realtime.answer_webrtc_offer(REAL_SDP_OFFER)
+    async with realtime.session(provider_session=answer.session) as session:
+        await session.hang_up()
+    assert session.closed
+
+    # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
+    await realtime.hang_up(answer.session)
+
+
 _FAVORITE_COLOR = [
     ModelRequest(parts=[UserPromptPart(content='My favorite color is turquoise.')]),
     ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Got it, turquoise.')]),

@@ -43,7 +43,7 @@ except ImportError:  # pragma: no cover
     _api_key_sentinel = None
 
 
-_DEFAULT_VOICE_LIVE_API_VERSION = '2026-04-10'
+_DEFAULT_VOICE_LIVE_API_VERSION = '2026-07-15'
 """Default Azure AI Voice Live API version when neither `AZURE_VOICELIVE_API_VERSION` nor an argument is set."""
 
 
