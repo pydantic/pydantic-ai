@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from pydantic import BaseModel
 
+import pydantic_ai.durable_exec as durable_exec
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
@@ -404,6 +405,21 @@ class _RecordedPlanStore(Generic[AgentDepsT]):
         return await self.operations.remove_item(self.ctx, item_id)
 
 
+def _runs_function_tools_in_workflow_code(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether this run is in durable workflow code under an engine that doesn't wrap function tools in units."""
+    if not ctx.in_durable_context or ctx.root_capability is None:
+        return False
+    in_workflow_code = False
+
+    def check(capability: AbstractCapability[AgentDepsT]) -> None:
+        nonlocal in_workflow_code
+        if isinstance(capability, durable_exec.BaseDurabilityCapability):
+            in_workflow_code = 'function' not in capability.engine_spec.wrapped_toolset_kinds
+
+    ctx.root_capability.apply(check)
+    return in_workflow_code
+
+
 class PlanningToolset(FunctionToolset[AgentDepsT]):
     """Plan tools registered against a `Planning` capability's resolved store.
 
@@ -411,6 +427,12 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     `read_plan`, `add_task`, `update_task_status`, `update_task_statuses`, and
     `remove_task`. When `enable_subtasks` is set, `add_subtask`, `set_dependency`,
     and `get_available_tasks` are added and the `blocked` status becomes valid.
+
+    `Planning` passes `operations` so that each store call a plan tool makes runs
+    as one of its durable operations, whose result durable execution records
+    instead of repeating the call on recovery. A `PlanningToolset` built without
+    `operations` calls its store directly, so under durable execution its store
+    calls are neither recorded nor kept in order.
     """
 
     def __init__(
@@ -481,14 +503,15 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        """Run plan tools one at a time in durable workflow code, where their store calls are recorded steps.
+        """Run each plan tool call alone when the engine runs function tools in workflow code, as DBOS does.
 
-        A plan tool makes several store calls with awaits between them, so two run concurrently would
-        interleave their steps by timing, and a replay could record them in a different order than the
-        run did. Outside a durable workflow they keep running alongside other tools.
+        There a plan tool's store calls are recorded steps in the workflow, and a plan tool makes several
+        with awaits between them, so one running alongside other tool calls would interleave its steps by
+        timing, and a replay could find them in a different order. Engines that run each tool in its own
+        unit, like Temporal and Prefect, record no such steps, so tools keep running alongside each other.
         """
         tools = await super().get_tools(ctx)
-        if self._operations is None or not ctx.in_durable_context:
+        if self._operations is None or not _runs_function_tools_in_workflow_code(ctx):
             return tools
         return {name: replace(tool, tool_def=replace(tool.tool_def, sequential=True)) for name, tool in tools.items()}
 

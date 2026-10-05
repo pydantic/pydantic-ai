@@ -94,9 +94,24 @@ async def test_plan_read_dispatches_as_durable_operation() -> None:
     assert 'planning__capability__planning.read_plan' in {name for name, _ in bound.calls}
 
 
-@pytest.mark.parametrize('durable', [False, True])
-async def test_plan_tools_run_one_at_a_time_only_in_durable_workflow_code(durable: bool) -> None:
-    """Concurrent plan tools would interleave their recorded store steps by timing, which a replay can't repeat."""
+class FunctionToolWrappingDurability(RecordingDurability):
+    """Runs each function tool in its own unit, as Temporal and Prefect do."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, wrapped_toolset_kinds=frozenset({'function'}))
+
+
+@pytest.mark.parametrize(
+    ('durability', 'expected'),
+    [
+        pytest.param(None, False, id='no-durability'),
+        pytest.param(RecordingDurability, True, id='tools-in-workflow-code'),
+        pytest.param(FunctionToolWrappingDurability, False, id='tools-in-their-own-units'),
+    ],
+)
+async def test_plan_tool_calls_run_alone_only_where_tools_run_in_workflow_code(
+    durability: type[RecordingDurability] | None, expected: bool
+) -> None:
+    """Concurrent plan tools in workflow code would interleave their recorded store steps by timing."""
     sequential: dict[str, bool] = {}
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -104,13 +119,13 @@ async def test_plan_tools_run_one_at_a_time_only_in_durable_workflow_code(durabl
         return ModelResponse(parts=[TextPart('done')])
 
     capabilities: list[AbstractCapability[None]] = [Planning[None]()]
-    if durable:
-        capabilities.append(RecordingDurability())
+    if durability is not None:
+        capabilities.append(durability())
     agent = Agent(FunctionModel(respond), name='sequential_plan', deps_type=type(None), capabilities=capabilities)
 
     await agent.run('plan')
 
-    assert sequential and set(sequential.values()) == {durable}
+    assert sequential and set(sequential.values()) == {expected}
 
 
 class FunctionToolsetRejectingDurability(RecordingDurability):
