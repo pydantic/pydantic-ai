@@ -168,7 +168,7 @@ OpenAI may serve a request on a different tier than the one requested, for examp
 
 ### Prompt caching
 
-OpenAI applies [prompt caching](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) automatically to prompts of at least 1,024 tokens — no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. See [Prompt Caching](../prompt-caching.md#enabling-prompt-caching) for the cross-provider contract and how to monitor cache efficiency.
+OpenAI applies [prompt caching](https://platform.openai.com/docs/guides/prompt-caching#how-it-works) automatically — no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. See [Prompt Caching](../prompt-caching.md#enabling-prompt-caching) for the cross-provider contract and how to monitor cache efficiency.
 
 How long a cached prefix survives depends on the [retention policy](https://platform.openai.com/docs/guides/prompt-caching#prompt-cache-retention) in effect: `in_memory` clears it after 5–10 minutes of inactivity, while `24h` keeps it for up to a day. For models before GPT-5.6, the default follows your organization's data-retention configuration — `24h` without zero data retention, `in_memory` with it — and [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request:
 
@@ -182,7 +182,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-GPT-5.6 and later ignore the retention policy and keep a cached prefix eligible for reuse for at least 30 minutes instead. GPT-5.6 and GPT-6 models also support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
+For GPT-5.6 and later, OpenAI deprecates `prompt_cache_retention` in favor of the `ttl` in [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], which sets a minimum lifetime rather than a maximum: a cached prefix remains eligible for reuse for 30 minutes after its most recent write or reuse, though OpenAI may retain it longer. GPT-5.6 and GPT-6 models also support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
