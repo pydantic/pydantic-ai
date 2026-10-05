@@ -1013,11 +1013,14 @@ async def test_openai_responses_cache_instructions_skipped_for_dynamic_system_pr
     ]
 
 
-async def test_openai_responses_cache_instructions_skipped_with_conversation_id(allow_model_requests: None):
+@pytest.mark.parametrize('conversation_id', ['conv_123', 'auto'])
+async def test_openai_responses_cache_instructions_skipped_with_conversation_id(
+    allow_model_requests: None, conversation_id: str
+):
     """A conversation persists its input messages, so instructions stay in the top-level field."""
     mock_client = MockOpenAIResponses.create_mock(responses_completion())
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
-    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_conversation_id='conv_123')
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_conversation_id=conversation_id)
 
     await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
 
