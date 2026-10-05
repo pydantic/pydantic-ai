@@ -1,4 +1,4 @@
-"""The `logfire` plugin's setup menu: destination, Logfire's device sign-in, project, and a saved write token."""
+"""The `observability` plugin's setup menu: destination, Logfire's device sign-in, project, and a saved write token."""
 
 import io
 import json
@@ -18,8 +18,9 @@ from pydantic_clai2.builtin_plugins import logfire as logfire_plugin, logfire_se
 from pydantic_clai2.builtin_plugins.logfire import LogfireSettings
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError, https_origin
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, save_key
-from pydantic_clai2.plugins import PluginHost, SessionEnd
+from pydantic_clai2.plugins import PluginHost, SessionEnd, load_plugin
 from pydantic_clai2.ui.menus.field_menu import Runners
+from tests.clai2.menu_script import Script, pick
 from tests.clai2.test_logfire import Recorder
 
 US = 'https://logfire-us.pydantic.dev'
@@ -116,7 +117,9 @@ class Harness:
 
 
 def make_host(**settings: object) -> PluginHost[None]:
-    return PluginHost(name='logfire', console=Console(file=io.StringIO()), settings=json.loads(json.dumps(settings)))
+    return PluginHost(
+        name='observability', console=Console(file=io.StringIO()), settings=json.loads(json.dumps(settings))
+    )
 
 
 Configure = Callable[[PluginHost[None], Setup], Awaitable[str]]
@@ -134,7 +137,7 @@ def recorder() -> Generator[Recorder]:
 
 @pytest.fixture
 def configure(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> Configure:
-    """Open the plugin's real setup menu, as `/plugins configure logfire` does, with `setup` in place."""
+    """Open the plugin's real setup menu, as `/plugins configure observability` does, with `setup` in place."""
 
     # The recorder keeps the SDK local: a saved token would otherwise make it check the token over the network.
     monkeypatch.setattr(logfire_plugin.logfire, 'configure', recorder.configure)
@@ -144,13 +147,15 @@ def configure(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> Configure:
             return setup
 
         monkeypatch.setattr(logfire_plugin, 'SETUP', scripted_setup)
-        logfire_plugin.activate(host)
+        # The settings menu: Enter on the project row runs setup, then Esc closes the menu.
+        menu = Script(lists=[pick(logfire_plugin.PROJECT), MenuResult(cancelled=True)], choices=[], texts=[])
+        monkeypatch.setattr(logfire_plugin, 'RUNNERS', menu.runners)
+        plugin = load_plugin(logfire_plugin.LogfirePlugin, host)
         try:
-            assert host.configurer is not None
-            return await host.configurer()
+            assert plugin.plugin.has_configure
+            return await plugin.plugin.configure()
         finally:
-            for handler in host.handlers:
-                await handler(SessionEnd(reason='exit'))
+            await plugin.dispatch(SessionEnd(reason='exit'))
 
     return run
 
@@ -259,7 +264,7 @@ async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatc
     await configure(make_host(), Harness(server=blips).setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
     assert not blips.polls
     monkeypatch.setattr(logfire_setup, 'SIGN_IN_TIMEOUT', 0)
-    with pytest.raises(SetupError, match='sign-in link expired'):
+    with pytest.raises(SetupError, match='Run /plugins configure observability to retry'):
         await configure(make_host(), Harness().setup(scripted([US])))
 
 

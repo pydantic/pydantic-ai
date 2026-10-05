@@ -383,6 +383,9 @@ or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `Absur
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 
+`ToolCallJudge` is spec-loadable when its model is a string and `tools` is `'all'`, a name list, or a
+metadata match. A live model, predicate selector, and `on_verdict` callback are code-only.
+
 A spec whose `model` is a provider string (`'openai:gpt-5'`) needs that provider's API key when the
 agent is built. In tests, pass `defer_model_check=True` and run under `agent.override(model='test')`.
 
@@ -442,8 +445,8 @@ loop. Silence the warning with `warnings.filterwarnings('ignore', category=Harne
 ## GitHub Agentic Workflows
 
 The gh-aw `pydantic-ai` engine runs a Pydantic AI agent in GitHub Actions on issues, PRs, or a schedule.
-In the workflow `.md`, import `pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main`, set
-`engine: {id: pydantic-ai, model: openai/gpt-5}` (`provider/model` is required), and point
+In the workflow `.md`, import `pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`,
+set `engine: {id: pydantic-ai, model: openai/gpt-5}` (`provider/model` is required), and point
 `engine.env.PAI_AGENT` at `module:variable` (for example `my_agent:agent`), at
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
 `Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the

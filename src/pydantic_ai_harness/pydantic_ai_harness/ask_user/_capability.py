@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness.ask_user._toolset import TOOL_NAME, AskUserToolset
@@ -28,7 +29,8 @@ class AskUser(AbstractCapability[AgentDepsT]):
     The capability owns the question schema and validation; the `answerer` owns the person.
     Whatever it is, a terminal menu, a web form, or a scripted function in a test, the run waits
     for it inside the tool call and the model gets the picked labels back. There is no default:
-    a capability that reads stdin would be unusable from a server.
+    a capability that reads stdin would be unusable from a server. Pass `answerer=None` to defer
+    each call instead, so the run pauses with `DeferredToolRequests` until the host answers.
 
     ```python
     from pydantic_ai import Agent
@@ -45,8 +47,24 @@ class AskUser(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    answerer: Answerer
-    """Presents each `AskUserRequest` to the user and returns their `AskUserResponse`."""
+    answerer: Answerer | None
+    """Presents each `AskUserRequest` to the user and returns their `AskUserResponse`.
+
+    `None` defers every call: the run ends with `DeferredToolRequests` output, and the host answers
+    in a later run with `ask_user_result` in `DeferredToolResults.calls`.
+    """
+
+    timeout: float | None = None
+    """Seconds to wait for the answerer before cancelling it and telling the model the user did not answer.
+
+    Must be positive; `None` waits indefinitely. Needs an answerer: a deferred call has nothing to wait on.
+    """
+
+    def __post_init__(self) -> None:
+        if self.timeout is not None and self.timeout <= 0:
+            raise UserError('`AskUser.timeout` must be positive, or `None` to wait indefinitely.')
+        if self.answerer is None and self.timeout is not None:
+            raise UserError('`AskUser.timeout` bounds the answerer, so it cannot be combined with `answerer=None`.')
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static, cache-stable guidance on when to ask."""
@@ -54,4 +72,4 @@ class AskUser(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """The `ask_user_question` tool bound to this capability's answerer."""
-        return AskUserToolset[AgentDepsT](answerer=self.answerer)
+        return AskUserToolset[AgentDepsT](answerer=self.answerer, timeout=self.timeout)

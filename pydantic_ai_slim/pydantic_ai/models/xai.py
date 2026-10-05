@@ -1028,46 +1028,29 @@ class XaiStreamedResponse(StreamedResponse):
             self.finish_reason = finish_reason
 
     def _collect_reasoning_events(
-        self,
-        *,
-        response: chat_types.Response,
-        prev_reasoning_content: str,
-        prev_encrypted_content: str,
-    ) -> tuple[str, str, list[ModelResponseStreamEvent]]:
-        """Collect thinking/reasoning events and return updated previous values.
+        self, chunk: chat_types.Chunk, encrypted_contents: dict[int, str]
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Collect thinking events from this chunk's output deltas, one thinking part per output.
 
-        Note: xAI exposes reasoning via the accumulated Response object (not the per-chunk delta), so we compute
-        deltas ourselves to avoid re-emitting the entire accumulated content on every chunk.
+        With server-side tools, one response has several outputs (e.g. reasoning and a tool call, the tool result,
+        then more reasoning and the answer), each with its own reasoning and encrypted content, like
+        `XaiModel._process_response` builds one `ThinkingPart` per output. `encrypted_contents` accumulates each
+        output's encrypted content, which can arrive in pieces, as the signature replaces the previous one.
         """
-        events: list[ModelResponseStreamEvent] = []
-
-        if response.reasoning_content and response.reasoning_content != prev_reasoning_content:
-            if response.reasoning_content.startswith(prev_reasoning_content):
-                reasoning_delta = response.reasoning_content[len(prev_reasoning_content) :]
-            else:
-                reasoning_delta = response.reasoning_content
-            prev_reasoning_content = response.reasoning_content
-            if reasoning_delta:  # pragma: no branch
-                events.extend(
-                    self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='reasoning',
-                        content=reasoning_delta,
-                        # Only set provider_name when we have an encrypted signature to send back.
-                        provider_name=self.system if response.encrypted_content else None,
-                    )
-                )
-
-        if response.encrypted_content and response.encrypted_content != prev_encrypted_content:
-            prev_encrypted_content = response.encrypted_content
-            events.extend(
-                self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning',
-                    signature=response.encrypted_content,
-                    provider_name=self.system,
-                )
+        for output in chunk.proto.outputs:
+            delta = output.delta
+            if not delta.reasoning_content and not delta.encrypted_content:
+                continue
+            if delta.encrypted_content:
+                encrypted_contents[output.index] = encrypted_contents.get(output.index, '') + delta.encrypted_content
+            signature = encrypted_contents.get(output.index)
+            yield from self._parts_manager.handle_thinking_delta(
+                vendor_part_id=f'reasoning-{output.index}',
+                content=delta.reasoning_content or None,
+                signature=signature if delta.encrypted_content else None,
+                # Only set provider_name when we have an encrypted signature to send back.
+                provider_name=self.system if signature else None,
             )
-
-        return prev_reasoning_content, prev_encrypted_content, events
 
     def _handle_server_side_tool_call(
         self,
@@ -1127,12 +1110,11 @@ class XaiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
             # Local state to avoid re-emmiting duplicate events.
-            prev_reasoning_content = ''
-            prev_encrypted_content = ''
+            encrypted_contents: dict[int, str] = {}
             seen_tool_call_ids: set[str] = set()
             seen_tool_return_ids: set[str] = set()
             last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
-            # Track previous tool call args to compute deltas (like we do for reasoning content).
+            # Track previous tool call args to compute deltas from the accumulated response.
             prev_tool_call_args: dict[str, str] = {}
             # xAI exposes x_search results as top-level `response.citations` that only arrive with the
             # final chunk. Track the emitted x_search return parts so we can backfill their content
@@ -1144,12 +1126,7 @@ class XaiStreamedResponse(StreamedResponse):
                 self._update_response_state(response)
                 last_citations = response.citations
 
-                prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
-                    response=response,
-                    prev_reasoning_content=prev_reasoning_content,
-                    prev_encrypted_content=prev_encrypted_content,
-                )
-                for event in reasoning_events:
+                for event in self._collect_reasoning_events(chunk, encrypted_contents):
                     yield event
 
                 # Handle text content (property filters for ROLE_ASSISTANT)
@@ -1186,7 +1163,7 @@ class XaiStreamedResponse(StreamedResponse):
                         else:
                             # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
                             # (not repeated PartStartEvents). Use accumulated args from response.tool_calls
-                            # and compute the delta like we do for reasoning content.
+                            # and compute the delta.
                             accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
                             accumulated_args = (
                                 accumulated.function.arguments

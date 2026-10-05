@@ -1,7 +1,14 @@
 import asyncio
+import importlib.metadata
+import os
+import subprocess
+import sys
 
 import anyio
+import anyio.from_thread
+import anyio.to_thread
 import pytest
+import trio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -21,6 +28,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     command_argv,
     command_deadline,
+    running_on_asyncio,
     safe_credential_reason,
     stop_shielded,
 )
@@ -63,7 +71,8 @@ async def test_failed_stop_does_not_replace_original_cancellation() -> None:
             await anyio.sleep_forever()
 
 
-async def test_stop_shielded_finishes_under_outer_cancellation() -> None:
+@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+async def test_stop_shielded_finishes_under_outer_cancellation(anyio_backend: str) -> None:
     stopped: list[str] = []
 
     async def stop() -> None:
@@ -80,7 +89,7 @@ async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) ->
     if anyio_backend != 'asyncio':  # pragma: no cover
         pytest.skip('Native task.cancel() is asyncio-specific')
 
-    async def exercise(timeout: float | None, cancellations: int) -> None:
+    async def exercise(timeout: float | None, cancellations: int, expected: type[BaseException]) -> None:
         entered = asyncio.Event()
         release = asyncio.Event()
         finished = asyncio.Event()
@@ -106,19 +115,21 @@ async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) ->
             task.cancel()
             await asyncio.sleep(0)
         release.set()
-        try:
+        with pytest.raises(expected):
             await asyncio.wait_for(task, 5)
-        except (asyncio.CancelledError, WorkspaceTimeoutError):
-            pass
         await asyncio.wait_for(finished.wait(), 5)
         assert calls == 1
 
-    await exercise(0.01, 0)
-    await exercise(None, 1)
-    await exercise(None, 2)
+    await exercise(0.01, 0, WorkspaceTimeoutError)
+    # A cancel that lands while the timeout's stop runs is the caller's, not the timeout's.
+    await exercise(0.01, 1, asyncio.CancelledError)
+    await exercise(0.01, 2, asyncio.CancelledError)
+    await exercise(None, 1, asyncio.CancelledError)
+    await exercise(None, 2, asyncio.CancelledError)
 
 
-async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
+@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+async def test_stop_cleanup_finishes_before_stop_shielded_returns(anyio_backend: str) -> None:
     events: list[str] = []
 
     async def stop() -> None:
@@ -131,6 +142,50 @@ async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
     await stop_shielded(stop, grace=0.05)
     events.append('returned')
     assert events == ['stop cleanup', 'returned']
+
+
+@pytest.mark.skipif(
+    any(req.startswith('sniffio') for req in importlib.metadata.requires('anyio') or []),
+    reason='AnyIO before 4.12 depends on and imports `sniffio`, so every install has it',
+)
+def test_imports_without_sniffio() -> None:
+    # Nothing the harness declares installs `sniffio`, so a clean install has none. Every sandbox backend imports this module.
+    code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_ai_harness._workspace_provider\n"
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    subprocess.run([sys.executable, '-c', code], check=True, env=env)
+
+
+async def test_running_on_asyncio() -> None:
+    assert running_on_asyncio()
+    # `anyio.from_thread.run_sync` calls it on the loop, but outside any asyncio task.
+    assert await anyio.to_thread.run_sync(anyio.from_thread.run_sync, running_on_asyncio)
+    assert not await anyio.to_thread.run_sync(running_on_asyncio)
+
+
+def test_trio_guest_mode_is_not_asyncio() -> None:
+    # Trio guest mode runs Trio tasks on a thread whose asyncio loop is running.
+    results: list[bool] = []
+
+    async def guest() -> None:
+        results.append(running_on_asyncio())
+
+    async def host() -> None:
+        done = asyncio.Event()
+        trio.lowlevel.start_guest_run(
+            guest,
+            run_sync_soon_threadsafe=asyncio.get_running_loop().call_soon_threadsafe,
+            done_callback=lambda _: done.set(),
+        )
+        await done.wait()
+
+    asyncio.run(host())
+    assert results == [False]
+
+
+async def test_running_on_asyncio_without_sniffio(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('pydantic_ai_harness._workspace_provider._sniffio', None)
+    assert running_on_asyncio()
+    assert not await anyio.to_thread.run_sync(running_on_asyncio)
 
 
 def test_absolute_path_passes_none_and_absolute_paths_through() -> None:

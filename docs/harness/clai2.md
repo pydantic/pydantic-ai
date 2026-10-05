@@ -184,7 +184,7 @@ Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, and `COPILOT_GITHUB_TOKEN`, checked in that order when
 no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
 application's token files. Core owns inference and its telemetry; CLAI adds no
-login-specific spans. Bare `/login` continues to sign in to Codex.
+login-specific spans. Bare `/login` asks which sign-in to run.
 
 ## Settings and commands
 
@@ -286,13 +286,13 @@ After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
 `importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
 and session with the updated code. The Python process, agent, dependencies passed
 to `chat`, conversation messages, selected model, and active settings are kept.
-Enabled plugins unload and activate again so their handlers use the refreshed
+Enabled plugins unload and load again so their handlers use the refreshed
 shell types. Disabled and unapproved project plugins stay off.
 
 If an import or shell rebuild fails, CLAI reports the error and restores the
-previous module bindings. Correct the source and retry `/reload`. Plugin hosts
-and their registrations are recreated. Installed module globals not overwritten
-by the new source can survive; initialize mutable state in `activate`.
+previous module bindings. Correct the source and retry `/reload`. Plugin
+instances and their contributions are recreated. Installed module globals not
+overwritten by the new source can survive; initialize mutable state in `__init__`.
 Import-time side effects cannot be undone.
 
 Reload ordering follows the modules' existing imports. Restart after changing
@@ -474,26 +474,26 @@ or cancellation. No model requests or telemetry are added for status reporting.
 ## Plugins
 
 Everything beyond the prompt loop is a plugin, including the default coding
-tools. A plugin is a Python file with an `activate(host)` function. Through
-`host` it can react to lifecycle moments and typed events, add `/commands`, give
-the agent tools, draw its own output, and read validated settings.
+tools. A plugin is a `Plugin` subclass that declares what it contributes the way
+a [capability](../capabilities/overview.md) does: it overrides methods to react to
+lifecycle moments, add `/commands`, give the agent capabilities, draw its own
+output, and take validated settings.
 
 ```python
-from pydantic_clai2.plugins import PluginHost, TurnEnd
+from pydantic_clai2.plugins import Plugin, TurnEnd
 
 
-def activate(host: PluginHost) -> None:
-    @host.on('turn_end')
-    async def ping(event: TurnEnd) -> None:
-        host.console.bell()
+class Bell(Plugin):
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        self.host.console.bell()
 ```
 
 Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:attr] [JSON]`. It is live for the
+importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Plugins are trusted code running as you.
 
-[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has the full list of hooks, events, and rules.
+[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
 
 ## Telemetry and references
 
