@@ -513,6 +513,35 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss()
         )
 
 
+async def test_instruction_updates_compaction_drops_earlier_deltas_without_new_baseline():
+    """Compaction supersedes earlier deltas even when the next request records no new baseline."""
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = Agent(FunctionModel(respond), deps_type=str)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[str]) -> str:
+        return ctx.deps
+
+    first = await agent.run('one', deps='A')
+    second = await agent.run('two', deps='B', message_history=first.all_messages())
+    history = [*second.all_messages(), ModelResponse(parts=[CompactionPart(content='Summary', provider_name='test')])]
+
+    await Agent(FunctionModel(respond), instructions='Plain').run('three', message_history=history)
+    assert [
+        [part.content for part in message.parts if isinstance(part, (SystemPromptPart, UserPromptPart))]
+        for message in received[-1]
+        if isinstance(message, ModelRequest)
+    ] == snapshot([['one'], ['two'], ['three']])
+    request = received[-1][-1]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'Plain'
+
+
 async def test_instruction_updates_multiple_blocks_and_later_sources():
     history: list[ModelMessage] = []
     updates: list[list[tuple[str, str | None]]] = []

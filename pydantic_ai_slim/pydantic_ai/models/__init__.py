@@ -890,7 +890,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
-        instruction baseline.
+        instruction baseline or compaction.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
@@ -912,11 +912,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         if _has_instruction_deltas(messages):
+            # Compaction starts a fresh instruction window, as in `update_instruction_history`: deltas
+            # from before it are superseded even when no request since has recorded a new baseline.
             baseline_index = max(
                 (
                     index
                     for index, message in enumerate(messages)
-                    if isinstance(message, ModelRequest) and message.instruction_baseline is not None
+                    if (isinstance(message, ModelRequest) and message.instruction_baseline is not None)
+                    or (
+                        isinstance(message, ModelResponse)
+                        and any(isinstance(part, CompactionPart) for part in message.parts)
+                    )
                 ),
                 default=0,
             )
