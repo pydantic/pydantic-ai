@@ -24,11 +24,15 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session, chat
 from pydantic_clai2._app import create_shell
+from pydantic_clai2.builtin_plugins.google_workspace import GoogleWorkspacePlugin
+from pydantic_clai2.builtin_plugins.grain import GrainPlugin
+from pydantic_clai2.builtin_plugins.pylon import PylonPlugin
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.plugins.loader import TURN_NOTICE
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
@@ -65,6 +69,34 @@ def test_only_bare_opted_in_commands_run_during_a_turn() -> None:
     assert not commands.runs_during_turn('/unknown')
     assert not commands.runs_during_turn('/tmp/menu')
     assert not commands.runs_during_turn('menu')
+
+
+async def test_key_login_resume_and_plugin_settings_menus_open_mid_turn(tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=Settings(model='test'),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    assert all(shell.commands.runs_during_turn(text) for text in ('/keys', '/login', '/resume'))
+    assert not any(shell.commands.runs_during_turn(text) for text in ('/login openai-codex', '/resume ID'))
+
+    def host(name: str) -> PluginHost[None]:
+        return PluginHost(name=name, console=Console(file=io.StringIO()), settings={})
+
+    for name, loaded in (
+        ('google_workspace', load_plugin(GoogleWorkspacePlugin, host('google_workspace'))),
+        ('grain', load_plugin(GrainPlugin, host('grain'))),
+        ('pylon', load_plugin(PylonPlugin, host('pylon'))),
+    ):
+        assert loaded.commands.runs_during_turn(f'/{name}')
+        assert not loaded.commands.runs_during_turn(f'/{name} status')
 
 
 async def test_run_worker_holds_output_only_while_the_widget_runs() -> None:
