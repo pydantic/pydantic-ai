@@ -522,9 +522,6 @@ def test_known_failed_deferred_create_after_a_refusal_keeps_its_reservation() ->
     reproduce('SIM-4', OpenAISimulation(), scenario)
 
 
-XAI_PUSH_TO_TALK = OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)
-
-
 @known('SIM-4')
 def test_known_xai_held_audio_failing_after_a_reply_drops_its_terminal() -> None:
     """Audio sent during a reply is held back, and goes out from the receive loop once the reply ends."""
@@ -535,7 +532,11 @@ def test_known_xai_held_audio_failing_after_a_reply_drops_its_terminal() -> None
         sim.send_audio()
         sim.settle()
 
-    reproduce('SIM-4', OpenAISimulation(openai=XAI_PUSH_TO_TALK), scenario)
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
 
 
 @known('SIM-4')
@@ -549,7 +550,11 @@ def test_known_xai_held_audio_failing_before_a_deferred_request_loses_it() -> No
         sim.send_audio()
         sim.settle()
 
-    reproduce('SIM-4', OpenAISimulation(openai=XAI_PUSH_TO_TALK), scenario)
+    reproduce(
+        'SIM-4',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
 
 
 @known('SIM-32')
@@ -687,7 +692,11 @@ def test_known_xai_clear_after_a_request_committed_speech_drops_the_turn() -> No
         sim.clear_audio()
         sim.settle()
 
-    reproduce('SIM-35', OpenAISimulation(openai=XAI_PUSH_TO_TALK), scenario)
+    reproduce(
+        'SIM-35',
+        OpenAISimulation(openai=OpenAIOptions(dialect='xai', turn_detection='manual', transcription=False)),
+        scenario,
+    )
 
 
 @known('SIM-36')
