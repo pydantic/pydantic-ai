@@ -578,6 +578,47 @@ It does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another application's token file
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
 `/login` without a name asks which sign-in to run.
 
+### Several accounts and fallback chains
+
+Sign in to more than one account per provider with a profile. Write
+`/login PROVIDER@PROFILE`, then use `PROVIDER@PROFILE:MODEL` as the model:
+
+```text
+/login openai-codex@work         # a second ChatGPT/Codex account
+/login github-copilot@work       # a second GitHub login
+/login openrouter@team           # an OpenRouter browser sign-in or key
+/login vllm@lab                  # another vLLM server
+/login openai@work               # any provider that takes an API key: a /keys entry or a typed key
+/model openai-codex@work:gpt-6-astra
+```
+
+A model without `@PROFILE` uses the default account, exactly as before. For
+Codex, Copilot, OpenRouter, and vLLM that is the existing login. Providers such as
+`openai` and `anthropic` still read their usual environment variables by default;
+a profile uses the key saved at `/login`. Plugins can support profiles too, such
+as `/login claude@work` for a plugin's `claude-code` models. A profile name is 1
+to 32 lowercase letters, digits, hyphens, or underscores; `default` is reserved
+for the account without a profile. Each profile's
+credentials are stored separately, the same way as the default login.
+
+A fallback chain tries its models in order, moving on when a request fails with
+a model API error, such as a rate or usage limit. Pool accounts with one:
+
+```text
+/chain codex openai-codex:gpt-6-astra openai-codex@work:gpt-6-astra
+/model chain:codex
+/chain                    # list chains
+/chain codex              # show one
+/chain remove codex
+```
+
+Saving a chain adds `chain:NAME` to `/model`. A chain uses its first model's
+`/model settings` controls and defaults, and saves overrides under
+`chain:NAME`, so `/fast` works for a chain of Codex accounts. A chain cannot
+contain another chain. A model whose profile is not signed in fails the turn
+instead of falling back, so a missing login is not hidden. Older CLAI builds keep
+the rest of your settings, but cannot run a profile or chain model.
+
 ## Settings and commands
 
 Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
@@ -654,7 +695,7 @@ The currently configured model is kept in the list when upgrading.
 | `/model settings` | Choose a saved model to configure |
 | `/model settings NAME` | Configure `NAME` |
 
-`/add_model` and `/model_settings` still work as deprecated spellings of
+`/model add` and `/model settings` still work as deprecated spellings of
 `/model add` and `/model settings`.
 
 To remove a model you no longer use, highlight it and press **Ctrl+D** or

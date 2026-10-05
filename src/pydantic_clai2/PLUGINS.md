@@ -2343,6 +2343,30 @@ Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
 `names`) are added to the saved model list, so `/model` and `/model settings`
 offer them without adding them first. A failed sign-in adds nothing.
 
+### Several accounts: `resolve_profile` and `profile_handler`
+
+Users can sign in to more than one account per provider. An account other than
+the default is a profile: `/login NAME@PROFILE` signs in to it, and
+`PREFIX@PROFILE:MODEL` runs on it. A fallback chain (`/chain`) can then pool
+accounts, moving to the next one when a request fails. To support profiles, set
+both optional fields:
+
+```python
+PROVIDER = ModelProvider(
+    prefix='my-service', resolve=resolve, resolve_profile=resolve_profile, models=('fast', 'smart')
+)
+PluginLogin(name='my-service', handler=sign_in, profile_handler=sign_in_profile, models=PROVIDER.names)
+```
+
+`resolve_profile(NAME, PROFILE)` builds the model for that account, in a worker
+thread like `resolve`. `profile_handler(PROFILE)` signs in to it; on success the
+`models` are saved with the profile, as `PREFIX@PROFILE:NAME`. Keep each profile's
+tokens apart, for example one keyring entry per profile, and keep the default
+profile where it was so existing sign-ins still work. A profile name is 1 to 32
+lowercase letters, digits, hyphens, or underscores, and never `default`, so you can
+keep the default account under that name. CLAI checks it before calling you. Without these fields, a model or sign-in naming a profile fails with a
+message saying the plugin has one account.
+
 ## Rules that keep plugins predictable
 
 - Handlers are `async`. There is no sync variant of anything.
@@ -2473,8 +2497,8 @@ checking that the provider serves it, so a wrong name fails on the next prompt.
 `/model add PROVIDER:NAME` does the same. Adding a model also selects it for the
 next prompt. `/model settings [NAME]` edits a model's settings. Tab suggests the
 `add` and `settings` subcommands and added models; model names normally start
-with a provider, so no real model is called `add` or `settings`. `/add_model`
-and `/model_settings` remain as deprecated spellings.
+with a provider, so no real model is called `add` or `settings`. `/model add`
+and `/model settings` remain as deprecated spellings.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 

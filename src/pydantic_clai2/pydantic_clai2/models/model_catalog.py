@@ -14,6 +14,7 @@ from genai_prices.data_snapshot import get_snapshot
 from pydantic_ai.models import known_model_names
 from pydantic_ai.providers import infer_provider_class
 from pydantic_clai2.models import github_copilot
+from pydantic_clai2.models.profiles import provider_of
 
 CODEX_MODELS = tuple(
     f'openai-codex:{model}'
@@ -54,7 +55,7 @@ def check_installed(name: str) -> None:
 
     Core imports provider SDKs lazily, so without this a missing extra only surfaces on the next turn.
     """
-    provider = name.partition(':')[0]
+    provider = provider_of(name)
     try:
         infer_provider_class(provider)
     except ValueError:

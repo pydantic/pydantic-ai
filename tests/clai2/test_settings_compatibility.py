@@ -404,6 +404,45 @@ def test_database_without_requirement_tags_loads_unchanged(tmp_path: Path) -> No
         assert 'plugin_requirements' in tables
 
 
+def test_database_without_chains_keeps_models_and_gains_chains(tmp_path: Path) -> None:
+    """A database from before fallback chains and auth profiles keeps its models and settings unchanged."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('CREATE TABLE models (name TEXT PRIMARY KEY)')
+        connection.execute('CREATE TABLE model_settings (model TEXT PRIMARY KEY, settings_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"openai-codex:gpt-6-astra"'))
+        connection.execute('INSERT INTO models VALUES (?)', ('openai-codex:gpt-6-astra',))
+        connection.execute(
+            'INSERT INTO model_settings VALUES (?, ?)', ('openai-codex:gpt-6-astra', '{"service_tier":"priority"}')
+        )
+    store = SettingsStore(path)
+    assert store.load().model == 'openai-codex:gpt-6-astra'
+    assert store.models() == ['openai-codex:gpt-6-astra']
+    assert store.model_settings('openai-codex:gpt-6-astra') == {'service_tier': 'priority'}
+    assert store.chains() == {}
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+        # Older builds refuse any other version; chains live in a table they never read.
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    store.save_chain(name='pool', models=['openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra'])
+    with closing(sqlite3.connect(path)) as connection, connection:
+        # A row another build wrote in a shape this one cannot read is skipped, not rewritten.
+        connection.execute('INSERT INTO model_chains VALUES (?, ?)', ('future', '{"models": []}'))
+    reopened = SettingsStore(path)
+    assert reopened.chains() == {'pool': ['openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra']}
+    assert reopened.models() == ['chain:pool', 'openai-codex:gpt-6-astra']
+    assert reopened.model_settings('openai-codex:gpt-6-astra') == {'service_tier': 'priority'}
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT models_json FROM model_chains WHERE name = 'future'").fetchone() == (
+            '{"models": []}',
+        )
+
+
 def test_saved_spinner_from_a_removed_plugin_is_kept(tmp_path: Path) -> None:
     """Plugin and user spinners are unknown when settings load, so any saved name survives."""
     path = tmp_path / 'config.db'

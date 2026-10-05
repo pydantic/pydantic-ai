@@ -6,6 +6,7 @@ import sys
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -21,6 +22,7 @@ from rich.console import Console
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
@@ -45,6 +47,8 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
+from pydantic_clai2.models.chains import chain_command, chain_completions, settings_model as chain_settings_model
+from pydantic_clai2.models.profiles import provider_of
 from pydantic_clai2.plugins import (
     ModelProvider,
     PluginLogin,
@@ -311,25 +315,45 @@ class _ModelResolver:
         return await login_command(args, codex=self.codex_auth(), plugins=self.logins(), store=self.store)
 
     async def resolve(self, name: str) -> Model | str:
-        if name.startswith('openrouter:'):
-            from pydantic_clai2.models import openrouter
+        """Build `PROVIDER[@PROFILE]:NAME` or `chain:NAME`; a core model without a profile stays a string."""
+        from pydantic_clai2.models.chains import chain_name
+        from pydantic_clai2.models.profiles import parse_model
 
-            return await to_thread.run_sync(openrouter.model, name, abandon_on_cancel=True)
-        if name.startswith('vllm:'):
-            from pydantic_clai2.models import vllm
+        if (chain := chain_name(name)) is not None:
+            return await self._chain(chain)
+        try:
+            ref = parse_model(name)
+        except ValueError as exc:
+            raise UserError(f'{name}: {exc}') from None
+        if ref.provider in ('openrouter', 'vllm', 'github-copilot'):
+            from pydantic_clai2.models import github_copilot, openrouter, vllm
 
-            return await to_thread.run_sync(vllm.model, name, abandon_on_cancel=True)
-        if name.startswith('github-copilot:'):
-            from pydantic_clai2.models import github_copilot
-
-            return await to_thread.run_sync(github_copilot.model, name, abandon_on_cancel=True)
-        if name.startswith('openai-codex:'):
+            build = {'openrouter': openrouter.model, 'vllm': vllm.model, 'github-copilot': github_copilot.model}
+            return await to_thread.run_sync(build[ref.provider], name, abandon_on_cancel=True)
+        if ref.provider == 'openai-codex':
             return self.codex_auth().model(name)
-        prefix, separator, model_name = name.partition(':')
-        provider = self.plugins().get(prefix) if separator else None
-        return (
-            name if provider is None else await to_thread.run_sync(provider.resolve, model_name, abandon_on_cancel=True)
-        )
+        if (provider := self.plugins().get(ref.provider)) is not None:
+            if ref.profile is None:
+                return await to_thread.run_sync(provider.resolve, ref.name, abandon_on_cancel=True)
+            if provider.resolve_profile is None:
+                raise UserError(f'{ref.provider} does not support profiles. Use {ref.provider}:{ref.name}.')
+            resolve = partial(provider.resolve_profile, ref.name, ref.profile)
+            return await to_thread.run_sync(resolve, abandon_on_cancel=True)
+        if ref.profile is not None:
+            from pydantic_clai2.models import key_profiles
+
+            return await to_thread.run_sync(key_profiles.model, name, abandon_on_cancel=True)
+        return name
+
+    async def _chain(self, chain: str) -> Model:
+        """Resolve every model of a saved chain and fall back through them in order."""
+        from pydantic_ai.models.fallback import FallbackModel
+
+        models = self.store.chains().get(chain) if self.store is not None else None
+        if not models:
+            raise UserError(f'No chain named {chain}. Save one with /chain {chain} MODEL MODEL...')
+        first, *rest = [await self.resolve(model) for model in models]
+        return FallbackModel(first, *rest)
 
 
 def create_shell(
@@ -402,7 +426,9 @@ def create_shell(
             description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
             handler=fast,
             complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
-            available=lambda: (session.model or _model_label(agent)).startswith('openai-codex:'),
+            available=lambda: (
+                provider_of(context.settings_model(session.model or _model_label(agent))) == 'openai-codex'
+            ),
         )
     )
     commands.register(Command(name='resume', description='Browse or restore a saved session', handler=sessions.command))
@@ -410,9 +436,20 @@ def create_shell(
     commands.register(
         Command(
             name='login',
-            description='Sign in to a subscription: openai-codex, github-copilot, or one a plugin adds',
+            description=(
+                'Sign in: openai-codex, github-copilot, or one a plugin adds; NAME@PROFILE adds another account'
+            ),
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
+        )
+    )
+    commands.register(
+        Command(
+            name='chain',
+            description='Save fallback chains of models, then select one with /model chain:NAME',
+            handler=lambda args: chain_command(store, args),
+            complete=lambda args: chain_completions(store, args),
+            during_turn=True,
         )
     )
     commands.register(
@@ -535,7 +572,7 @@ def create_shell(
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
-    context.settings_model = loader.settings_model
+    context.settings_model = lambda model: loader.settings_model(chain_settings_model(store, model))
     spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
     commands.register(
         Command(

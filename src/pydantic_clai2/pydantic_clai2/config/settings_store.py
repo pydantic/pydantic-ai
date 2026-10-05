@@ -13,6 +13,7 @@ from pydantic_clai2.config.plugin_requirements import Requirements, merged_requi
 
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+_CHAIN: TypeAdapter[list[str]] = TypeAdapter(list[str])
 # Keep the original IDs on disk so older builds share the same preferences, without loading a second plugin.
 _PLUGIN_NAMES = {'logfire': 'observability'}
 _STORED_PLUGIN_NAMES = {name: stored for stored, name in _PLUGIN_NAMES.items()}
@@ -68,6 +69,10 @@ class SettingsStore:
             # which those builds would refuse.
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS plugin_requirements (id TEXT PRIMARY KEY, requirements_json TEXT NOT NULL)'
+            )
+            # Fallback chains are their own table for the same reason: builds without chains never read it.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS model_chains (name TEXT PRIMARY KEY, models_json TEXT NOT NULL)'
             )
             connection.execute('PRAGMA user_version = 1')
 
@@ -125,6 +130,34 @@ class SettingsStore:
                 return False
             connection.execute('DELETE FROM models WHERE name = ?', (name,))
             connection.execute('DELETE FROM model_settings WHERE model = ?', (name,))
+        return True
+
+    def chains(self) -> dict[str, list[str]]:
+        """Saved fallback chains by name, each its models in order; an unreadable row is skipped, not changed."""
+        chains: dict[str, list[str]] = {}
+        with self._connect() as connection:
+            for name, models in connection.execute('SELECT name, models_json FROM model_chains ORDER BY name'):
+                try:
+                    chains[name] = _CHAIN.validate_json(models)
+                except ValidationError:
+                    continue
+        return chains
+
+    def save_chain(self, *, name: str, models: list[str]) -> None:
+        """Save a chain and offer it as `chain:NAME` in the model list."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO model_chains VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET models_json = excluded.models_json',
+                (name, _CHAIN.dump_json(models).decode()),
+            )
+            connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (f'chain:{name}',))
+
+    def delete_chain(self, *, name: str) -> bool:
+        """Forget a chain, its model-list entry, and its settings; `False` if it is the saved default."""
+        if not self.remove_model(name=f'chain:{name}'):
+            return False
+        with self._connect() as connection:
+            connection.execute('DELETE FROM model_chains WHERE name = ?', (name,))
         return True
 
     def reset(self, key: str) -> None:

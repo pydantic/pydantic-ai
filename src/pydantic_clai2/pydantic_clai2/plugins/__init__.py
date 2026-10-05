@@ -154,6 +154,12 @@ class ModelProvider:
     """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
     """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
+    resolve_profile: Callable[[str, str], Model] | None = None
+    """Build NAME for another account: called as `resolve_profile(NAME, PROFILE)` for `PREFIX@PROFILE:NAME`.
+
+    Called in a worker thread like `resolve`. `None` means the prefix has one account, and a model
+    naming a profile fails with a message saying so.
+    """
 
     def __post_init__(self) -> None:
         """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
@@ -189,6 +195,12 @@ class PluginLogin:
     """Sign in and return the message to show."""
     models: tuple[str, ...] = ()
     """Models, as `PREFIX:NAME`, added to the saved model list once the sign-in succeeds."""
+    profile_handler: Callable[[str], Awaitable[str]] | None = None
+    """Sign in to another account: called as `profile_handler(PROFILE)` for `/login NAME@PROFILE`.
+
+    On success `models` are saved with the profile, as `PREFIX@PROFILE:NAME`. `None` means the
+    sign-in has one account, and `/login NAME@PROFILE` says so.
+    """
 
     def __post_init__(self) -> None:
         """Reject a malformed name, or one CLAI already signs in to, before any plugin can offer it."""

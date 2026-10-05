@@ -15,6 +15,7 @@ from pydantic_clai2.models import github_copilot, openrouter, vllm
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
+from pydantic_clai2.models.profiles import provider_of
 from pydantic_clai2.ui.menus.custom_params import CustomParamsMenu
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -53,7 +54,7 @@ class ModelSettingsSource:
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
                 continue
-            codex_tier = key == 'service_tier' and self.model.startswith('openai-codex:')
+            codex_tier = key == 'service_tier' and provider_of(self._settings_as) == 'openai-codex'
             rows.append(
                 FieldRow(
                     key=key,
@@ -72,7 +73,7 @@ class ModelSettingsSource:
                     choice_labels={'priority': 'Fast (priority)', 'default': 'Standard (default)'}
                     if codex_tier
                     else {},
-                    default=shown(model_defaults(model=self.model).get(key)),
+                    default=shown(model_defaults(model=self._settings_as).get(key)),
                     choices=options.get(key, ()) or _choices(info.annotation),
                 )
             )
@@ -80,7 +81,7 @@ class ModelSettingsSource:
 
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
-        values = {**model_defaults(model=self.model), **self._store.model_settings(self.model)}
+        values = {**model_defaults(model=self._settings_as), **self._store.model_settings(self.model)}
         return shown(values.get(row.key))
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -387,16 +388,20 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
         .searchable()
         .list_width(40)
         .initial_index(names.index(current) if current in names else 0)
-        .preview(lambda item: model_settings_summary(store=context.store, model=str(item.value)))
+        .preview(
+            lambda item: model_settings_summary(
+                store=context.store, model=str(item.value), settings_as=context.settings_model(str(item.value))
+            )
+        )
         .footer_hint('type filter - Enter configure - Esc exit')
         .key_source(menu_key)
         .build()
     )
 
 
-def model_settings_summary(*, store: SettingsStore, model: str) -> str:
+def model_settings_summary(*, store: SettingsStore, model: str, settings_as: str | None = None) -> str:
     """Preview effective settings without mutating the model or its saved overrides."""
-    values = {**model_defaults(model=model), **store.model_settings(model)}
+    values = {**model_defaults(model=settings_as or model), **store.model_settings(model)}
     lines = [model, '', 'Configured settings:' if values else 'No custom settings (model defaults).']
     lines.extend(f'{_setting_label(key)}: {shown(value)}' for key, value in values.items())
     return '\n'.join(lines)

@@ -90,13 +90,14 @@ async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: st
 
 
 async def test_login_dispatches_copilot_by_short_and_provider_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def copilot(*, console: Console) -> str:
-        return 'Copilot connected.'
+    async def copilot(*, console: Console, account: str) -> str:
+        return f'Copilot connected as {account}.'
 
     monkeypatch.setattr('pydantic_clai2.models.github_copilot.login', copilot)
     auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
-    assert await login_command(['copilot'], codex=auth) == 'Copilot connected.'
-    assert await login_command(['github-copilot'], codex=auth) == 'Copilot connected.'
+    assert await login_command(['copilot'], codex=auth) == 'Copilot connected as github-copilot.'
+    assert await login_command(['github-copilot'], codex=auth) == 'Copilot connected as github-copilot.'
+    assert await login_command(['copilot@work'], codex=auth) == 'Copilot connected as github-copilot@work.'
 
 
 async def test_login_runs_a_plugin_sign_in_and_lists_it_in_usage() -> None:
@@ -106,9 +107,9 @@ async def test_login_runs_a_plugin_sign_in_and_lists_it_in_usage() -> None:
     auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
     plugins = {'claude': PluginLogin(name='claude', handler=claude)}
     assert await login_command(['claude'], codex=auth, plugins=plugins) == 'Signed in to Claude Code.'
-    with pytest.raises(ValueError, match=r'^Usage: /login \[openai-codex\|github-copilot\|claude\]$'):
+    with pytest.raises(ValueError, match=r'^Usage: /login \[openai-codex\|github-copilot\|claude\]\[@PROFILE\]$'):
         await login_command(['grok'], codex=auth, plugins=plugins)
-    with pytest.raises(ValueError, match=r'^Usage: /login \[openai-codex\|github-copilot\]$'):
+    with pytest.raises(ValueError, match=r'^Usage: /login \[openai-codex\|github-copilot\]\[@PROFILE\]$'):
         await login_command(['codex', 'extra'], codex=auth)
 
 

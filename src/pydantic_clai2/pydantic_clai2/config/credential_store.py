@@ -39,6 +39,12 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
     return root / f'credentials-{account}.json'
 
 
+def profile_accounts() -> list[str]:
+    """Saved `PROVIDER@PROFILE` accounts, read from file names alone; nothing is decrypted."""
+    paths = credentials_path(account='').parent.glob('credentials-*@*')
+    return sorted({path.stem.removeprefix('credentials-') for path in paths if path.suffix in ('.enc', '.json')})
+
+
 @contextmanager
 def credential_lock(*, account: str, busy: str) -> Generator[None]:
     """Serialize one account's read-modify-write across processes; the SQLite lock file holds no secrets.

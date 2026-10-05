@@ -19,6 +19,7 @@ from pydantic_clai2.config.credential_store import (
     credentials_path,
     delete_credentials,
     load_codex_credentials,
+    profile_accounts,
     save_codex_credentials,
 )
 from pydantic_clai2.ui import telemetry
@@ -71,7 +72,7 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
             raise UserError(
-                f'The selected API key no longer exists. Select a saved key again through {_KEY_CONSUMERS[account]}.'
+                f'The selected API key no longer exists. Select a saved key again through {_setup(account)}.'
             )
         save_codex_credentials(account=account, value=value)
 
@@ -166,7 +167,14 @@ _KEY_CONSUMERS = {
     'grain': '/grain key',
     'linear': '/plugins configure linear',
 }
-"""Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
+"""Credential-store accounts that may reference a saved key, and the command that reconfigures each.
+
+Auth profiles (`PROVIDER@PROFILE` accounts) may too; `/login PROVIDER@PROFILE` reconfigures them.
+"""
+
+
+def _setup(account: str) -> str:
+    return _KEY_CONSUMERS.get(account, f'/login {account}')
 
 
 class _Credential(BaseModel):
@@ -176,7 +184,8 @@ class _Credential(BaseModel):
 def key_users(*, name: str) -> list[str]:
     """Find saved provider and plugin references without exposing their inline credentials."""
     users: list[str] = []
-    for account, command in _KEY_CONSUMERS.items():
+    for account in [*_KEY_CONSUMERS, *profile_accounts()]:
+        command = _setup(account)
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:

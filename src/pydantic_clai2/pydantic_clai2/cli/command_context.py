@@ -37,7 +37,10 @@ class CommandContext:
     plugin_models: Callable[[], Sequence[str]] = lambda: ()
     """Models loaded plugins offer with `PluginHost.model_provider`, as `PREFIX:NAME`."""
     settings_model: Callable[[str], str] = lambda model: model
-    """The model whose `/model settings` controls a model takes; differs for a plugin's `settings_from`."""
+    """The model whose `/model settings` controls and defaults a model takes.
+
+    Differs for a plugin's `settings_from`, and for a chain, which takes its first model's.
+    """
 
     def __post_init__(self) -> None:
         """Keep the configured model selectable, including preferences saved before the model list existed."""
@@ -84,7 +87,8 @@ class CommandContext:
         """Family defaults plus saved overrides, ready for `agent.run`."""
         from pydantic_clai2.models.model_settings import model_settings_from_json
 
-        return model_settings_from_json(self.store.model_settings(model), model=model).to_model_settings()
+        form = model_settings_from_json(self.store.model_settings(model), model=self.settings_model(model))
+        return form.to_model_settings()
 
     def live_model_settings(self, model: str) -> Callable[[object], ModelSettings]:
         """`model_settings` for a run, read again before each model request.
