@@ -904,15 +904,15 @@ def _clear_after_an_unread_vad_commit(sim: Simulation) -> bool:
     """Without transcription, the app cleared the buffer after server VAD committed a turn, before reading that it had."""
     if not _server_vad(sim) or getattr(sim, 'openai').transcription:
         return False
+    truth = sim.truth
     clears = [operation.issued for operation in sim.operations if operation.name == 'clear_audio']
-    for key, started in sim.truth.speech_started.items():
-        input_ = sim.truth.input(key)
-        if input_ is None or key not in sim.truth.speech_committed or input_.committed_by_client:
-            continue
-        read = input_.committed_read
-        if any(started < issued and (read is None or issued < read) for issued in clears):
-            return True
-    return False
+    # Turns server VAD committed (not the app), and when the client read that it had.
+    vad_turns = [
+        (started, input_.committed_read)
+        for key, started in truth.speech_started.items()
+        if key in truth.speech_committed and (input_ := truth.input(key)) is not None and not input_.committed_by_client
+    ]
+    return any(started < issued and (read is None or issued < read) for started, read in vad_turns for issued in clears)
 
 
 def _push_to_talk_audio_after_a_repeated_terminal(sim: Simulation) -> bool:
@@ -1093,7 +1093,7 @@ def _request_commit_spoken_over(sim: Simulation) -> bool:
     requests = [
         operation.issued
         for operation in sim.operations
-        if operation.name in ('create_response', 'send_text', 'send_image')
+        if operation.name in ('create_response', 'send_text', 'send_image_respond')
     ]
     audio = [operation.issued for operation in sim.operations if operation.name == 'send_audio']
     return (
@@ -1111,7 +1111,7 @@ def _request_deferred_behind_an_answer_to_speech(sim: Simulation) -> bool:
     requests = [
         operation.issued
         for operation in sim.operations
-        if operation.name in ('create_response', 'send_text', 'send_image')
+        if operation.name in ('create_response', 'send_text', 'send_image_respond')
     ]
     answering_speech = [
         response
