@@ -623,14 +623,17 @@ An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`.
 
 While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
-`/theme`, and `/spinner` typed without further arguments open their menu right
-away instead of queueing.
+`/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
+`/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
+arguments open right away instead of queueing.
 The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
 running turn ends. `/model settings` edits to the running model apply to its
-next model request in the same turn. With arguments, these commands queue like
-any other.
+next model request in the same turn. `/resume` can browse, rename, and delete
+sessions mid-turn, but a running conversation cannot be swapped out: picking one
+tells you to enter `/resume ID`, which restores it once the turn ends. With
+arguments, these commands queue like any other.
 
 `/plugins` runs right away during a turn too, with or without arguments, so
 `/plugins disable NAME` does not wait behind the turn or your queued messages.
@@ -1875,8 +1878,11 @@ Two more options choose where telemetry goes and what it covers. `token` names a
 rather than falling back. `ui_events` (default `false`) adds spans and logs in the
 `clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
-clear, and resume. They record names and listed choices, never prompt text, typed
-values, or secrets.
+clear, and resume. They record names and listed choices, never typed values or
+secrets. The one exception: while `include_content` is on, a submitted prompt also
+carries its text as `prompt`, cut to 64,000 characters. `!` lines record only
+that they were shell commands and their length, and slash-command arguments are
+never recorded, since both can hold secrets such as `/plugins add` settings.
 
 ### Setting up where traces go
 

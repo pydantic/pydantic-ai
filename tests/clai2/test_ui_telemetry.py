@@ -1,4 +1,4 @@
-"""UI telemetry: the shared chokepoints record what the user chose, nested, and never what they typed."""
+"""UI telemetry: the shared chokepoints record what the user chose, nested, and typed text only as content."""
 
 import io
 import json
@@ -46,7 +46,17 @@ Recorded = tuple[str, dict[str, object]]
 
 @pytest.fixture
 def exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
-    """A local Logfire instance subscribed to UI telemetry, exporting to memory."""
+    """A local Logfire instance subscribed to UI telemetry without message content, exporting to memory."""
+    yield from _subscribed(tmp_path, include_content=False)
+
+
+@pytest.fixture
+def content_exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
+    """The same, subscribed with message content, as the `observability` plugin does by default."""
+    yield from _subscribed(tmp_path, include_content=True)
+
+
+def _subscribed(tmp_path: Path, *, include_content: bool) -> Generator[InMemorySpanExporter]:
     spans = InMemorySpanExporter()
     propagator = propagate.get_global_textmap()
     instance = logfire.configure(
@@ -61,7 +71,9 @@ def exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(logfire.Logfire(config=instance.config, otel_scope=telemetry.SCOPE))
+    unsubscribe = telemetry.subscribe(
+        logfire.Logfire(config=instance.config, otel_scope=telemetry.SCOPE), include_content=include_content
+    )
     try:
         yield spans
     finally:
@@ -374,3 +386,48 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
         ('prompt steer', {'steered': True, 'source': 'queue'}),
         ('prompt steer', {'steered': True, 'source': 'draft'}),
     ]
+
+
+async def test_only_prompt_text_is_recorded_with_content(
+    content_exporter: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With content on, prompts keep their words unscrubbed; `!` lines and command arguments stay out."""
+    monkeypatch.setattr(telemetry, 'MAX_CONTENT_CHARS', 20)
+    commands = Commands()
+    commands.register(Command(name='plugins', description='Plugins', handler=lambda args: ''))
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+        live = LivePrompt(
+            console=Console(file=io.StringIO(), force_terminal=True, width=80, height=24),
+            commands=commands,
+            history=InMemoryHistory(),
+            images=ImageInput(),
+            interrupts=Interrupts(),
+            toolbar=lambda: [('', 'ready')],
+            clock=lambda: 0,
+        )
+        async with live.opened():
+            for text in (
+                'fix the session bug',
+                'a prompt longer than twenty characters',
+                '!export TOKEN=sk-y',
+                '/plugins add x m {"token": "sk-x"}',
+            ):
+                live.buffer.replace(text)
+                live.feed('enter')
+                assert await live.read() == text
+    assert recorded(content_exporter) == [
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 19, 'prompt': 'fix the session bug'},
+        ),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 38, 'prompt': 'a prompt longer than'},
+        ),
+        ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'shell', 'chars': 18}),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'command', 'command': 'plugins', 'chars': 34},
+        ),
+    ]
+    assert 'sk-' not in json.dumps([own for _, own in recorded(content_exporter)])
