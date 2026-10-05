@@ -110,7 +110,8 @@ class SkillDefinition:
         Pass `arguments` when a user invokes the skill with a command such as `/code-review src/app.py`:
         every `$ARGUMENTS` in the body becomes `arguments`, and a body without `$ARGUMENTS` gets
         `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude Code's indexed `$0` and
-        `$ARGUMENTS[0]`, are left unchanged. Without `arguments`, the result is the instructions the model gets when it loads the skill.
+        `$ARGUMENTS[0]`, are left unchanged. Without `arguments`, the result is the instructions the
+        model gets when it loads the skill.
 
         The directory line is left out unless `in_run_workspace`.
         """
