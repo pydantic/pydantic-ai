@@ -52,11 +52,12 @@ class _SlashSearch:
             return ''
         if key in self.hotkeys and not _typed(key):
             return _HOTKEY + key
+        before = self.query
         if _typed(key):
             self.query += key
         elif key == Key.BACKSPACE:
             self.query = self.query[:-1]
-        self.edited = self.edited or _typed(key) or key == Key.BACKSPACE
+        self.edited = self.edited or self.query != before
         return key
 
     def browsing(self, key: str) -> str:

@@ -223,6 +223,12 @@ EMPTY = '(type to filter)'
         pytest.param(['/', *'zz', Key.ESCAPE], EMPTY, 'alpha', id='esc-leaves-search-with-no-matches'),
         pytest.param([Key.DOWN, '/', Key.ESCAPE], EMPTY, 'beta', id='esc-from-an-empty-search-keeps-the-cursor'),
         pytest.param(
+            [Key.DOWN, '/', Key.BACKSPACE, Key.ESCAPE],
+            EMPTY,
+            'beta',
+            id='backspace-in-an-empty-search-keeps-the-cursor',
+        ),
+        pytest.param(
             ['/', 'x', Key.BACKSPACE, Key.ENTER, Key.DOWN, '/', Key.ESCAPE],
             EMPTY,
             'beta',
