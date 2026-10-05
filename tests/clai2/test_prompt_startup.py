@@ -46,7 +46,7 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
-        pipe.send_text('/exit\n')
+        pipe.send_text('/exit\r')
         await chat(
             Agent(TestModel()),
             deps=None,
@@ -70,7 +70,7 @@ async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
-        pipe.send_text(f'hello\n{command}\n/exit\n')
+        pipe.send_text(f'hello\r{command}\r/exit\r')
         await chat(
             Agent(TestModel()),
             deps=None,

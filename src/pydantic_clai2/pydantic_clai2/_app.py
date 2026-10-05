@@ -3,8 +3,8 @@
 import asyncio
 import math
 import sys
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
@@ -56,7 +56,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.runtime._session import Session, StockAgent
+from pydantic_clai2.runtime._session import Session, StockAgent, current_session_id
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
@@ -66,7 +66,7 @@ from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.menu_worker import holding_output
-from pydantic_clai2.ui.menus.model_picker import model_command, model_completions
+from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command
@@ -214,15 +214,21 @@ async def chat(
                         try:
                             with transcript.capture(console):
                                 # Restore a named session first, so plugins start with it. The browser
-                                # waits for plugins, whose models may name the sessions it lists.
+                                # waits for plugins, whose models may name the sessions it lists, and
+                                # until it picks one, telemetry has no session to assign.
+                                restored = bool(resume)
                                 if resume:
-                                    console.print(await shell.sessions.command([resume]), markup=False)
+                                    console.print(await shell.session.resume(resume, record=False), markup=False)
                                     resume = None
-                                await shell.loader.load_all(fresh=fresh)
-                                _report_project_plugins(shell.loader, console)
-                                if resume is not None:
-                                    console.print(await shell.sessions.command([]), markup=False)
-                                    resume = None
+                                with shell.defer_identity() if resume is not None else nullcontext():
+                                    await shell.loader.load_all(fresh=fresh)
+                                    _report_project_plugins(shell.loader, console)
+                                    if restored:
+                                        # Now that observability has subscribed, under the restored session.
+                                        shell.session.record_resumed()
+                                    if resume is not None:
+                                        console.print(await shell.sessions.command([]), markup=False)
+                                        resume = None
                             warming = warming or warm_imports.start()
                             reason = await shell.run()
                         finally:
@@ -368,23 +374,11 @@ def create_shell(
     models = _ModelResolver(console=console, store=store)
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
-        console.print('Add a model with /add_model.', style=theme.color(theme.INFO))
+        console.print('Add a model with /model add.', style=theme.color(theme.INFO))
 
     session_settings = SessionSettings(session=session, console=console, settings=settings)
 
     context = CommandContext(settings=settings, store=store, apply_setting=session_settings, project=project)
-
-    async def add_model(args: list[str]) -> str:
-        if args:
-            return context.set_setting(['model', *args])
-        from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
-
-        return await open_add_model_menu(context)
-
-    async def model_settings(args: list[str]) -> str:
-        from pydantic_clai2.ui.menus.model_menu import model_settings_command
-
-        return await model_settings_command(context, args)
 
     def fast(args: list[str]) -> str:
         if args not in ([], ['on'], ['off']):
@@ -394,7 +388,7 @@ def create_shell(
         saved = store.model_settings(model)
         custom = saved.get('custom_params')
         if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
-            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model_settings first.')
+            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
         enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
         tier = 'priority' if enabled else 'default'
         store.save_model_settings(model, {**saved, 'service_tier': tier})
@@ -445,29 +439,29 @@ def create_shell(
     commands.register(
         Command(
             name='model',
-            description='Select an added model; no arguments opens the picker',
+            description='Select any model, or open the picker; also /model add [NAME] and /model settings [NAME]',
             handler=lambda args: model_command(context, args),
             complete=lambda args: model_completions(context, args),
             during_turn=True,
+            during_turn_subcommands=MODEL_SUBCOMMANDS,
         )
     )
+    # Deprecated spellings of `/model add` and `/model settings`, kept working for existing habits.
     commands.register(
         Command(
             name='add_model',
-            description='Add and use a model, or browse providers and model settings',
-            handler=add_model,
-            complete=lambda args: (
-                set_completions(['model', *args], plugin_models=context.plugin_models()) if len(args) <= 1 else ()
-            ),
+            description='Deprecated: use /model add',
+            handler=lambda args: model_command(context, ['add', *args]),
+            complete=lambda args: model_completions(context, ['add', *args]),
             during_turn=True,
         )
     )
     commands.register(
         Command(
             name='model_settings',
-            description='Choose an added model to configure, or edit a named model',
-            handler=model_settings,
-            complete=lambda args: model_completions(context, args),
+            description='Deprecated: use /model settings',
+            handler=lambda args: model_command(context, ['settings', *args]),
+            complete=lambda args: model_completions(context, ['settings', *args]),
             during_turn=True,
         )
     )
@@ -537,6 +531,7 @@ def create_shell(
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
+        session_id=lambda: shell.session_id,
         status=status,
         enabled=load_plugins,
     )
@@ -660,6 +655,21 @@ class _Shell(Generic[DepsT, OutputT]):
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
+    _identity_pending: bool = field(default=False, init=False)
+
+    @property
+    def session_id(self) -> str | None:
+        """The active saved ID, unavailable while startup is choosing a conversation to resume."""
+        return None if self._identity_pending else current_session_id() or self.session.summary.id
+
+    @contextmanager
+    def defer_identity(self) -> Generator[None]:
+        """Keep startup telemetry unassigned until the requested conversation is selected."""
+        self._identity_pending = True
+        try:
+            yield
+        finally:
+            self._identity_pending = False
 
     def __post_init__(self) -> None:
         self.tasks = Tasks(
@@ -981,7 +991,7 @@ class _Shell(Generic[DepsT, OutputT]):
             self.session.model_settings = self.context.model_settings(model)
         except ValidationError as exc:
             self.console.print(
-                f'Invalid saved model settings for {model}. Fix or reset them with /model_settings {model}.',
+                f'Invalid saved model settings for {model}. Fix or reset them with /model settings {model}.',
                 style=theme.ERROR,
                 markup=False,
             )

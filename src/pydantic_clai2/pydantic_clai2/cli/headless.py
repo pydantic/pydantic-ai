@@ -61,7 +61,7 @@ async def run_headless(
                 try:
                     # Restore first, so plugins start with the conversation the user asked for.
                     if resume is not None:
-                        await shell.session.resume(resume)
+                        await shell.session.resume(resume, record=False)
                     # Skip before activation, even when a saved declaration overrides the built-in.
                     for entry in shell.loader.entries():
                         if entry.declaration.enabled and entry.name != 'ask_user':
@@ -69,6 +69,9 @@ async def run_headless(
                             current = next(other for other in shell.loader.entries() if other.name == entry.name)
                             if current.included_in is None:
                                 await shell.loader.load(entry.name)
+                    if resume is not None:
+                        # Now that observability has subscribed, under the restored session.
+                        shell.session.record_resumed()
                     start = TurnStart(text=text)
                     ended = TurnEnd(text=text, outcome='cancelled')
                     try:
