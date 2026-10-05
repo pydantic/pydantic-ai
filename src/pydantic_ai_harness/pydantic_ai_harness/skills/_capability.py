@@ -21,7 +21,7 @@ from pydantic_ai_harness.skills._loader import (
     SkillDefinition,
     duplicate_name,
     load_skill_libraries,
-    same_file,
+    same_skill,
 )
 
 _MAX_DESCRIPTION_LENGTH = 1024
@@ -70,7 +70,7 @@ class Skills(AbstractCapability[AgentDepsT]):
     the skill: the model sees its name and description, and loads its Markdown body, with the
     skill's directory, with `load_capability`. Bundled files are not loaded or executed.
     Descriptions longer than the Agent Skills limit are preserved and emit a warning. A
-    `SKILL.md` reached twice, such as through a symlink, counts once.
+    skill found twice, through a symlink or as an identical copy, counts once.
 
     `load` reads the same skills outside a run, for a host that lets a person invoke a skill
     itself; render one with `SkillDefinition.render`.
@@ -220,13 +220,14 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
 
         Returns one deferred capability per skill, or, without skills, this capability, which adds
-        no instructions or tools. Emits each of the catalog's warnings as a `UserWarning`. Raises
-        `UserError` when a configuration without `workspace=` meets a run without a workspace.
+        no instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md`, an overlong
+        description, or unsupported frontmatter. Raises `UserError` when a configuration without
+        `workspace=` meets a run without a workspace.
         """
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
         catalog = await self._load(ctx.workspace)
-        for message in catalog.warnings:
+        for message in (*catalog.skipped, *self._advice(catalog.skills)):
             warnings.warn(message, UserWarning, stacklevel=2)
         return CombinedCapability([_Skill[AgentDepsT](skill) for skill in catalog.skills]) if catalog.skills else self
 
@@ -234,8 +235,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Read the selected skills now, as a run does at its start, without emitting warnings.
 
         For a host that offers skills to a person as well as to the model, such as a `/code-review`
-        command that sends `skill.render(arguments)` as a prompt. The catalog's `warnings` say what
-        was skipped, for the host to show.
+        command that sends `skill.render(arguments)` as a prompt. The catalog's `skipped` messages
+        say which `SKILL.md` files were left out, for the host to show.
 
         Args:
             workspace: Where libraries without their own `workspace=` live, as the run's workspace
@@ -274,12 +275,11 @@ class Skills(AbstractCapability[AgentDepsT]):
                     by_name[skill.name] = (workspace, skill)
                     continue
                 previous_workspace, previous_skill = previous
-                if previous_workspace is not workspace or not await same_file(
+                if previous_workspace is not workspace or not await same_skill(
                     workspace, previous_skill.path, skill.path
                 ):
                     messages.append(duplicate_name(skill.name, previous_skill.path, skill.path, source.duplicate_names))
-        definitions = tuple(skill for _, skill in by_name.values())
-        return SkillCatalog(skills=definitions, warnings=(*messages, *self._advice(definitions)))
+        return SkillCatalog(skills=tuple(skill for _, skill in by_name.values()), skipped=tuple(messages))
 
     @staticmethod
     def _advice(definitions: tuple[SkillDefinition, ...]) -> list[str]:

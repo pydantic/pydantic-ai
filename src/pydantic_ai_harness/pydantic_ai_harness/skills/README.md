@@ -188,9 +188,9 @@ skills = Skills([
 ```
 
 By default, selected skill names must be unique across those libraries.
-Repeated references to the same resolved library are scanned once, and a
-`SKILL.md` reached twice, such as through a symlinked library or skill
-directory, counts once.
+Repeated references to the same resolved library are scanned once, and a skill
+found twice, through a symlinked library or skill directory or as a
+byte-identical copy of its `SKILL.md`, counts once.
 
 ## Layer project and personal skills
 
@@ -218,8 +218,8 @@ Directories are listed in precedence order. Paths are workspace paths, and `~`
 is not expanded, because the workspace may be a sandbox with a home directory of
 its own; spell out the absolute path for a library on this machine.
 
-If `.agents/skills` is a symlink to `.claude/skills`, as in many repositories,
-each skill is listed once.
+If `.agents/skills` is a symlink to `.claude/skills`, or holds identical copies
+of its skills, as in many repositories, each skill is listed once.
 
 ## Bundled files
 
@@ -272,8 +272,8 @@ result = await agent.run(review.render('src/app.py'))
 ```
 
 `load` reads the libraries as a run would, without emitting warnings: the
-catalog's `warnings` list each skipped `SKILL.md`, and the like, for the host to
-show. Each `SkillDefinition` has the skill's `name`, `description`, `body`,
+catalog's `skipped` messages name each `SKILL.md` left out, malformed or named
+like a skill found earlier, for the host to show. Each `SkillDefinition` has the skill's `name`, `description`, `body`,
 `path`, and `directory`.
 
 `render(arguments)` returns what loading the skill returns, with every

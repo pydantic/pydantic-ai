@@ -216,8 +216,8 @@ class TestSkills:
         assert run.instructions == _catalog('- alpha: Help with the task.', '- beta: Help with the task.')
 
     async def test_two_libraries_sharing_a_skill_name_collide(self, tmp_path: Path) -> None:
-        _write_skill(tmp_path / 'first', 'shared')
-        _write_skill(tmp_path / 'second', 'shared')
+        _write_skill(tmp_path / 'first', 'shared', description='First.')
+        _write_skill(tmp_path / 'second', 'shared', description='Second.')
 
         with pytest.raises(ValueError, match="Duplicate skill name 'shared'"):
             await _run(_combined(Skills('first'), Skills('second')), tmp_path)
@@ -456,8 +456,8 @@ class TestSkillValidation:
         assert listed == f'- verbose: {description}'
 
     async def test_duplicate_names_across_roots_are_rejected(self, tmp_path: Path) -> None:
-        _write_skill(tmp_path / 'first', 'duplicate')
-        _write_skill(tmp_path / 'second', 'duplicate')
+        _write_skill(tmp_path / 'first', 'duplicate', description='First.')
+        _write_skill(tmp_path / 'second', 'duplicate', description='Second.')
 
         with pytest.raises(ValueError, match="Duplicate skill name 'duplicate'"):
             await _run(Skills(['first', 'second']), tmp_path)
@@ -551,6 +551,17 @@ class TestSkillLibraryLayering:
 
         assert names == ['review']
 
+    async def test_identical_copies_count_once(self, tmp_path: Path) -> None:
+        # Repositories that keep a copy of each skill in both `.agents/skills` and `.claude/skills`.
+        _write_skill(tmp_path / '.agents' / 'skills', 'review', description='Review.')
+        _write_skill(tmp_path / '.claude' / 'skills', 'review', description='Review.')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            names = await _names(Skills(['.agents/skills', '.claude/skills']), tmp_path)
+
+        assert names == ['review']
+
     async def test_symlinked_skill_selected_by_two_configurations_counts_once(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'real', 'review')
         (tmp_path / 'linked').mkdir()
@@ -610,9 +621,10 @@ class TestSkillLibraryLayering:
 
 
 class TestSkillsLoad:
-    async def test_load_returns_the_catalog_and_its_warnings_without_emitting_them(self, tmp_path: Path) -> None:
+    async def test_load_returns_the_catalog_and_what_it_skipped_without_warning(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'project', 'review', body='Review $ARGUMENTS.')
         _write_skill(tmp_path / 'personal', 'review')
+        _write_skill(tmp_path / 'personal', 'tooled', frontmatter='description: Tooled.\nallowed-tools: Read')
         _write_skill(tmp_path / 'personal', 'broken', frontmatter='not: [valid')
         skills: Skills[Any] = Skills(
             ['project', 'personal', 'missing'], duplicate_names='keep_first', missing_directories='skip'
@@ -623,9 +635,11 @@ class TestSkillsLoad:
             catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
 
         workspace = tmp_path.resolve()
-        assert [skill.name for skill in catalog.skills] == ['review']
+        # Unsupported frontmatter is advice for a run's developer, not a skipped skill.
+        assert [skill.name for skill in catalog.skills] == ['review', 'tooled']
+        assert catalog.skills[1].ignored_behavioral_fields == ('allowed-tools',)
         assert catalog.skills[0].directory == f'{workspace}/project/review'
-        assert catalog.warnings == (
+        assert catalog.skipped == (
             f"Skipping {workspace}/personal/review/SKILL.md: skill name 'review' is already taken by "
             f'{workspace}/project/review/SKILL.md.',
             IsStr(regex=rf'(?s)Skipping {workspace}/personal/broken/SKILL.md: Invalid YAML frontmatter.*'),
@@ -647,8 +661,8 @@ class TestSkillsLoad:
             await Skills('skills').load(LocalWorkspace(tmp_path))  # pyright: ignore[reportArgumentType]
 
     async def test_load_raises_what_a_run_would(self, tmp_path: Path) -> None:
-        _write_skill(tmp_path / 'first', 'shared')
-        _write_skill(tmp_path / 'second', 'shared')
+        _write_skill(tmp_path / 'first', 'shared', description='First.')
+        _write_skill(tmp_path / 'second', 'shared', description='Second.')
 
         with pytest.raises(ValueError, match="Duplicate skill name 'shared'"):
             await Skills(['first', 'second']).load(LocalWorkspaceBackend(tmp_path))

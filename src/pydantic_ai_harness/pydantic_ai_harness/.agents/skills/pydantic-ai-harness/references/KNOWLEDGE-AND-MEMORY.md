@@ -234,7 +234,7 @@ earlier directory's skill wins, the other is skipped with a `UserWarning`).
 A host that lets a person invoke a skill (a `/code-review src/app.py` command) reads the catalog
 with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
 `skill.render(arguments)` as the prompt: `$ARGUMENTS` in the body is substituted, else
-`ARGUMENTS: ...` is appended. `catalog.warnings` lists what was skipped, for the host to show;
+`ARGUMENTS: ...` is appended. `catalog.skipped` lists the `SKILL.md` files left out, for the host to show;
 `load` emits no warnings itself.
 
 Gotchas:
@@ -244,7 +244,7 @@ Gotchas:
   works in a sandbox.
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
-  `SKILL.md` count. A `SKILL.md` reached twice through a symlink counts once.
+  `SKILL.md` count. A skill found twice (symlink or identical copy) counts once.
 - `include` and `exclude` are mutually exclusive; unknown names fail at run start, and so do
   duplicate selected names and missing library paths with the default `'error'` options.
   Malformed frontmatter or a name not matching its directory warns and skips that skill.

@@ -124,8 +124,8 @@ class SkillCatalog:
     skills: tuple[SkillDefinition, ...]
     """The selected, valid skills, in catalog order."""
 
-    warnings: tuple[str, ...]
-    """One message per problem: a skipped `SKILL.md`, a name another skill already took, and the like.
+    skipped: tuple[str, ...]
+    """One message per `SKILL.md` left out: malformed, or named like a skill found earlier.
 
     A run emits each as a `UserWarning`; a host showing skills to a person can show them instead.
     """
@@ -242,12 +242,14 @@ async def _libraries(
     return libraries
 
 
-async def same_file(workspace: Workspace, first: str, second: str) -> bool:
-    """Whether two paths reach one file, such as a skill and its symlinked copy.
+async def same_skill(workspace: Workspace, first: str, second: str) -> bool:
+    """Whether two `SKILL.md` paths hold one skill: the same file, such as through a symlink, or an identical copy.
 
     Asked only when two skills share a name, so a catalog without clashes costs no extra round trips.
     """
-    return await workspace.realpath(first) == await workspace.realpath(second)
+    if await workspace.realpath(first) == await workspace.realpath(second):
+        return True
+    return await workspace.read_bytes(first) == await workspace.read_bytes(second)
 
 
 def duplicate_name(name: str, kept: str, skipped: str, duplicate_names: DuplicateNames) -> str:
@@ -308,8 +310,8 @@ async def load_skill_libraries(
     """Discover immediate child skill packages under configured directories in `workspace`.
 
     Relative directories resolve against the workspace's working directory. Returns the parsed
-    skills and a warning for each skipped `SKILL.md`. A `SKILL.md` reached twice, such as through a
-    symlinked library or skill directory, counts once.
+    skills and a message for each skipped `SKILL.md`. A skill found twice, through a symlinked
+    library or skill directory or as an identical copy, counts once.
     """
     libraries = await _libraries(workspace, directories, missing_directories)
     discovered = await _discover_skills(workspace, libraries)
@@ -329,7 +331,7 @@ async def load_skill_libraries(
             continue
         if (previous := paths_by_name.get(name)) is None:
             paths_by_name[name] = skill_file
-        elif not await same_file(workspace, previous, skill_file):
+        elif not await same_skill(workspace, previous, skill_file):
             warnings.append(duplicate_name(name, previous, skill_file, duplicate_names))
 
     parsed: list[SkillDefinition] = []
