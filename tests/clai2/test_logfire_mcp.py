@@ -605,7 +605,10 @@ async def test_a_new_setup_starts_from_the_logfire_last_set_up(tmp_path: Path, m
         'Logfire tools connect to Logfire EU, the Logfire you last set up. Change it under Which Logfire.'
     )
     assert shell.saved()['url'] == LOGFIRE_EU_MCP_URL
-    assert shell.capability().url == LOGFIRE_EU_MCP_URL
+    # With no key, browser sign-in connects: the URL is the client's, as `LogfireMCP` takes no `url` with a client.
+    client = shell.capability().client
+    assert isinstance(client, Client)
+    assert str(client.transport.url) == LOGFIRE_EU_MCP_URL
     # Once chosen here, even as the default, it stays: a later setup elsewhere does not move it.
     remember(REGIONS['Logfire US'])
     script(monkeypatch, lists=[])
