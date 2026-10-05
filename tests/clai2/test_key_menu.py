@@ -179,6 +179,6 @@ def test_rename_preserves_other_keys() -> None:
 
 def test_disabled_row_has_no_key_actions(monkeypatch: pytest.MonkeyPatch) -> None:
     # Filtering can focus a disabled status row, which is not a credential.
-    pressed = iter(['z', 'r', 'd', 'escape'])
+    pressed = iter(['/', 'z', 'enter', 'r', 'd', 'escape', 'escape'])
     monkeypatch.setattr(key_menu, 'menu_key', lambda: next(pressed))
     assert build_keys_menu(names=['KEY'], message='zzz status').run().cancelled

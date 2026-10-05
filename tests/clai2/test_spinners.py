@@ -289,7 +289,8 @@ class TestCommand:
         context, _ = make_context(tmp_path)
         spinners = spinners_for(context, tmp_path)
         monkeypatch.setattr('sys.stdout', io.StringIO())
-        keys = iter([*'bone', '+', '+', '=', 'right', '-', 'left', '+', 'enter'])
+        # While searching, `-` and `+` would filter; arrows still change the speed.
+        keys = iter(['/', *'bone', 'right', 'enter', '+', '+', '=', '-', 'left', '+', 'enter'])
         monkeypatch.setattr('pydantic_clai2.ui.menus.spinner_picker.menu_key', lambda: next(keys))
         message = await spinner_command(context, spinners, [], runners=Runners(run_list=lambda menu: menu.run()))
         assert message.startswith('Spinner set to bone (8 frames at 0.14s). Speed saved')
