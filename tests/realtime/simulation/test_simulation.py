@@ -98,12 +98,16 @@ def reproduce(finding_id: str, sim: Simulation, scenario: Callable[[Any], object
 
 
 def test_merged_requests_release_their_reservations() -> None:
-    """Two turns typed while the first is answered: the connection merges their requests into one (OR3, #8765)."""
+    """Two turns typed while the first is answered: the connection merges their requests into one (OR3, #8765).
+
+    A wait taken then is owed both turns' replies, which the one merged response answers.
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
         sim.send_text()
         sim.send_text()
+        sim.wait_for_reply()
 
     run_clean(OpenAISimulation(), scenario)
 
