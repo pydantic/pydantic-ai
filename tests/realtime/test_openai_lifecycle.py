@@ -919,13 +919,18 @@ async def test_a_turn_cleared_before_it_joined_never_does() -> None:
 
 
 def test_a_failed_commit_drops_only_what_it_noted() -> None:
-    """Another commit noted meanwhile stays; one a reconnect already forgot is nothing to drop."""
+    """Another commit noted meanwhile stays, whichever of the two fails; one a reconnect already forgot is nothing to drop."""
     lifecycle = OpenAILifecycle()
     lifecycle.message_sent(0)
     first = lifecycle.audio_commit_sent()
     second = lifecycle.audio_commit_sent()
+    # The two notes are equal, so only identity tells them apart.
+    assert first == second
     lifecycle.audio_commit_failed(second)
-    assert list(lifecycle._sent_before_commits) == [first]  # pyright: ignore[reportPrivateUsage]
-    lifecycle.socket_replaced()
+    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(first)]  # pyright: ignore[reportPrivateUsage]
+    third = lifecycle.audio_commit_sent()
     lifecycle.audio_commit_failed(first)
+    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(third)]  # pyright: ignore[reportPrivateUsage]
+    lifecycle.socket_replaced()
+    lifecycle.audio_commit_failed(third)
     assert not lifecycle._sent_before_commits  # pyright: ignore[reportPrivateUsage]
