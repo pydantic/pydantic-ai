@@ -30,6 +30,7 @@ from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 
 NEW_ID = '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'
 OTHER_ID = '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b'
+THIRD_ID = '7d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6'
 
 
 def session_in(tmp_path: Path) -> Session[None, str]:
@@ -137,6 +138,31 @@ async def test_launch_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert (session.conversation_id, session.messages) == (OTHER_ID, [])
     assert 'Resumed' in await service.start(resume=saved)
     assert session.conversation_id == saved
+
+    # The Python API refuses what the CLI refuses, before changing the conversation.
+    with pytest.raises(ValueError, match='only be combined with --resume when --fork-session'):
+        await service.start(resume=saved, session_id=THIRD_ID)
+    with pytest.raises(ValueError, match='--fork-session requires --resume'):
+        await service.start(resume=None, fork=True)
+    with pytest.raises(ValueError, match="'not-a-uuid' is not a valid UUID"):
+        await service.start(resume=None, session_id='not-a-uuid')
+    assert session.conversation_id == saved
+    # A UUID in another case is saved as CLAI writes UUIDs.
+    await service.start(resume=None, session_id=THIRD_ID.upper())
+    assert session.conversation_id == THIRD_ID
+
+
+async def test_chat_checks_launch_options_before_drawing(tmp_path: Path) -> None:
+    output = StringIO()
+    with pytest.raises(ValueError, match='--fork-session requires --resume'):
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            console=Console(file=output),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            fork_session=True,
+        )
+    assert output.getvalue() == ''
 
 
 class Launched(Plugin):

@@ -15,6 +15,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.plugins import SessionEndReason, TurnEnd, TurnStart
+from pydantic_clai2.runtime.launch import launch_session_id
 
 
 @asynccontextmanager
@@ -40,6 +41,7 @@ async def run_headless(
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
     """
+    session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     load_plugins = agent is None
     agent = create_agent() if agent is None else agent
     if settings.model is None and agent.model is None:

@@ -5,8 +5,8 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from uuid import UUID
 
+from pydantic_clai2.runtime.launch import launch_session_id
 from pydantic_clai2.ui.rendering.splash import Splash
 
 
@@ -18,7 +18,6 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument(
         '--session-id',
-        type=_session_id,
         metavar='UUID',
         help='Start the new session under this ID, or with --fork-session, save the copy under it',
     )
@@ -169,14 +168,6 @@ def relaunch_argv(
     return argv
 
 
-def _session_id(value: str) -> str:
-    """A session ID is a UUID, as Claude Code's `--session-id` takes, in the form CLAI saves."""
-    try:
-        return str(UUID(value))
-    except ValueError:
-        raise argparse.ArgumentTypeError(f'{value!r} is not a valid UUID') from None
-
-
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.command and (
         args.resume is not None
@@ -188,10 +179,10 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(
             '--resume, --session-id, --fork-session, --worktree, and --agent cannot be combined with config or plugins'
         )
-    if args.fork_session and args.resume is None:
-        parser.error('--fork-session requires --resume')
-    if args.session_id is not None and args.resume is not None and not args.fork_session:
-        parser.error('--session-id can only be combined with --resume when --fork-session is given')
+    try:
+        args.session_id = launch_session_id(resume=args.resume, session_id=args.session_id, fork=args.fork_session)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.worktree is not None and args.resume is not None:
         parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
     if args.prompt is not None:
