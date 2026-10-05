@@ -1090,8 +1090,10 @@ class RealtimeSession:
         underlying connection, so it remains open until that context exits.
 
         A tool can call this method through
-        [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] to hang up. The calling
-        tool does not resume, and its call is recorded as interrupted.
+        [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] to end the session. The
+        calling tool does not resume, and its call is recorded as interrupted. On a WebRTC sideband this only
+        detaches, and the browser's call stays up: use
+        [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] to end it.
 
         Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
         tool — unless it was already raised by event iteration or an outbound session method.
