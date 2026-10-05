@@ -114,12 +114,24 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
+  Default-on CLI `.env` loading is a deliberate exception to this repository-content
+  trust rule: it assumes trusted launch and parent directories, without plugin
+  approval. [Environment variables](README.md#environment-variables) documents the
+  scope and opt-out.
 - **A load failure leaves the session as it was.** Import, construction, or
   `get_*` errors are reported and the plugin stays unloaded; nothing it declared
   is kept. When construction succeeded, `on_session_end` runs with
   `reason='error'` under a shield with a five-second cooperative timeout before a
   failed/cancelled load drops the plugin. Cleanup must tolerate an incomplete
   `on_session_start`.
+
+**Overlapping plugins go in the compatibility matrix.** `plugins/compatibility.py`
+maps a plugin's factory to the factories it already includes (`coder` includes
+`compaction`, and harness `SubAgents` while it binds one, which it does with
+`sub_agents` on). While the including plugin is loaded, the
+loader keeps the included ones unloaded and refuses to enable them, and `/plugins`
+greys their rows out. Their saved `enabled` flag is untouched, so turning the
+including plugin off loads them again. Add a row there; do not special-case ids.
 
 Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
@@ -141,8 +153,10 @@ summary failure; other exceptions propagate.
 
 Built on termflow's `MenuBuilder` (and `TextInputBuilder` for typed values),
 exactly like Code Puppy's `/agent`, `/mcp`, `/set`, and `/model` menus:
-alternate screen, a `.preview` panel on the right, `.on_key` for single-key
-actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
+alternate screen, a `.preview` panel on the right, `markdown_style()` for
+colours. Single-key actions and the key legend go through `slash_search`'s
+`hotkeys` and `footer` in a searchable menu, `.on_key` and `.footer_hint` in
+one that is not.
 
 - Split it in two: a pure `build_plugins_menu(...)` that returns the menu (so
   tests drive it headless, no terminal), and a thin async runner that owns the
@@ -158,6 +172,11 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
+- Make a new or changed menu searchable with `slash_search`
+  (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
+  hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
+  `hotkeys` so they type into the search instead of firing while the user
+  searches.
 - A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers
@@ -201,8 +220,9 @@ Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences and theme previews. Default diff colours stay unchanged; bundled
-palettes get diff lines from `theme.diff_renderer()`, tinted from the palette.
+streamed fences and theme previews. The default theme's diff lines use Claude Code's
+green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
+from the palette.
 
 ## Source layout
 
@@ -238,18 +258,21 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker |
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
+| `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
+| `plugins/compatibility.py` | the compatibility matrix: which plugins another plugin already includes |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
+| `ui/menus/slash_search.py` | `slash_search`: plain-letter hotkeys plus `/` to search, for any termflow menu |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
 | `ui/menus/model_menu.py` | `/add_model`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
-| `ui/menus/model_picker.py` | `/model`: selection and completion of saved models |
+| `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models; protects the current model and saved default |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
@@ -261,7 +284,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `commands.py` | `Command`, the registry, completion |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
-| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue and menu handoff |
+| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue, timed double-Esc gesture, and menu handoff |
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
@@ -270,7 +293,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/prompt_keys.py` | keyboard decoder attachment only; no prompt-toolkit Application or renderer |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
-| `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
+| `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
 | `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
 | `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |

@@ -44,7 +44,7 @@ imports:
   - shared/rigor.md
   - shared/adversarial-review.md
   - shared/checkout.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
   - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md

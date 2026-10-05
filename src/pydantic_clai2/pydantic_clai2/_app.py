@@ -5,7 +5,7 @@ import math
 import sys
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -21,7 +21,7 @@ from rich.console import Console
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
@@ -68,6 +68,7 @@ from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.menus.model_picker import model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
+from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
 from pydantic_clai2.ui.menus.task_menu import open_tasks
@@ -76,7 +77,7 @@ from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, Promp
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.rendering import theme
@@ -135,6 +136,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
 Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
 
 `coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
+`compaction` stays off while `coder` is on, which includes context management; see `plugins.compatibility`.
 """
 
 STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
@@ -183,14 +185,8 @@ async def chat(
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
-        console.print()
-        print_banner(console)
-        console.print(
-            '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
-            style=theme.color(theme.MUTED),
-        )
         project = project or ProjectSettings()
-        _report_project(project, console)
+        _print_welcome(project, console)
         use_defaults = builtin_plugins is DEFAULT_PLUGINS
         use_stock_defaults = builtin_plugins is STOCK_PLUGINS
         shell = create_shell(
@@ -353,6 +349,7 @@ def create_shell(
     """Build shared session services, without attaching terminal input in headless mode."""
     settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
     store = store or SettingsStore()
+    transcript = transcript if transcript is not None else TranscriptBuffer()
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
     session = Session(
         agent,
@@ -422,7 +419,7 @@ def create_shell(
     commands.register(
         Command(
             name='login',
-            description='Sign in to a subscription: codex, copilot, or one a plugin adds',
+            description='Sign in to a subscription: openai-codex, github-copilot, or one a plugin adds',
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
         )
@@ -478,13 +475,26 @@ def create_shell(
         Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
     )
 
-    new_command = Command(
-        name='new',
-        description='Start a new session; preserve the previous session',
-        handler=lambda _: session.clear() or 'New session started. Previous session remains saved.',
+    new_session = 'New session started. Previous session remains saved.'
+
+    def clear(_: list[str]) -> str:
+        session.clear()
+        console.clear()
+        # Forget the old conversation too, or the next resize would replay it.
+        transcript.clear()
+        _print_welcome(project, console)
+        return ''
+
+    commands.register(
+        Command(
+            name='new',
+            description='Start a new session; preserve the previous session',
+            handler=lambda _: session.clear() or new_session,
+        )
     )
-    commands.register(new_command)
-    commands.register(replace(new_command, name='clear', description='Alias of /new'))
+    commands.register(
+        Command(name='clear', description='Like /new, and also clear the screen back to the banner', handler=clear),
+    )
     commands.register(
         Command(
             name='usage',
@@ -585,7 +595,7 @@ def create_shell(
         status=status,
         prompt=prompt,
         history=history,
-        transcript=transcript if transcript is not None else TranscriptBuffer(),
+        transcript=transcript,
         images=images,
         interrupts=Interrupts(),
         screen=screen,
@@ -815,12 +825,23 @@ class _Shell(Generic[DepsT, OutputT]):
 
     async def _run_mid_turn(self, text: str) -> None:
         if self.plugins_busy(text):
-            return
+            # `/plugins` is not a `during_turn` command, so `run_now` never hands it over.
+            return  # pragma: no cover
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
             with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
                 await _execute_command(self.commands, text, console=self.console, status=self.status)
+
+    async def _rewind(self) -> None:
+        assert self.editor is not None
+        async with self.forks.busy(), self._released():
+            try:
+                notice = await rewind(self.session, self.editor)
+            except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
+                self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
+            else:
+                self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
@@ -840,6 +861,9 @@ class _Shell(Generic[DepsT, OutputT]):
                 else:
                     assert self.prompt is not None
                     text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+            except PromptRewind:
+                await self._rewind()
+                continue
             except PromptWakeup:
                 if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
                     continue
@@ -868,7 +892,10 @@ class _Shell(Generic[DepsT, OutputT]):
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
-                await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                context = await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                await self.session.commit_messages(
+                    [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
+                )
             return self.interrupts.exit_requested
         if is_command_input(text):
             return await self._command(text)
@@ -992,6 +1019,17 @@ class _Shell(Generic[DepsT, OutputT]):
                     self._mid_turn_commands = None
                     send.close()
         return ended
+
+
+def _print_welcome(project: ProjectSettings, console: Console) -> None:
+    """The banner and hints a fresh launch shows, which `/clear` returns to."""
+    console.print()
+    print_banner(console)
+    console.print(
+        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
+        style=theme.color(theme.MUTED),
+    )
+    _report_project(project, console)
 
 
 def _report_project(project: ProjectSettings, console: Console) -> None:

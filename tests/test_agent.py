@@ -9147,7 +9147,10 @@ async def test_provider_reentry_after_close():
 @requires_openai
 async def test_gateway_provider_reentry_after_close():
     """Gateway provider restores event_hooks on re-entry."""
-    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.gateway import (
+        _GatewayRequestHook,  # pyright: ignore[reportPrivateUsage]
+        gateway_provider,
+    )
 
     provider = gateway_provider('openai', api_key='test-key', base_url='https://gateway.example.com/proxy')
 
@@ -9155,7 +9158,7 @@ async def test_gateway_provider_reentry_after_close():
         first_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
         assert first_client is not None
         assert not first_client.is_closed
-        assert len(first_client.event_hooks.get('request', [])) == 1
+        assert sum(isinstance(hook, _GatewayRequestHook) for hook in first_client.event_hooks['request']) == 1
     assert first_client.is_closed
 
     async with provider:
@@ -9163,7 +9166,7 @@ async def test_gateway_provider_reentry_after_close():
         assert second_client is not None
         assert not second_client.is_closed
         assert second_client is not first_client
-        assert len(second_client.event_hooks.get('request', [])) == 1
+        assert sum(isinstance(hook, _GatewayRequestHook) for hook in second_client.event_hooks['request']) == 1
     assert second_client.is_closed
 
 
@@ -14782,6 +14785,26 @@ async def test_continuation_chain_error_converted_to_model_retry_preserves_parti
     assert result.usage.requests == 2
     # The partial's pending server-side job was cancelled before the error escaped the loop.
     assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['c1']
+
+
+async def test_continuation_error_recovery_returning_partial_copy_does_not_double_count_usage() -> None:
+    """Returning a copy of the accounted partial response from an error hook is idempotent."""
+    partial = scripted_response(
+        texts=['usable partial'], state='suspended', provider_response_id='c1', input_tokens=3, output_tokens=2
+    )
+    model = ScriptedContinuationModel(responses=[partial, RuntimeError('segment two failed')])
+
+    class ReturnPartial(AbstractCapability):
+        async def on_model_request_error(
+            self, ctx: RunContext, *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return replace(partial, state='complete')
+
+    result = await Agent(model, capabilities=[ReturnPartial()]).run('go')
+
+    assert result.output == 'usable partial'
+    assert result.usage.input_tokens == 3
+    assert result.usage.output_tokens == 2
 
 
 def test_check_continuation_usage_without_limits() -> None:
