@@ -135,7 +135,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 maps a plugin's factory to the factories it already includes (`coder` includes
 `compaction`, and harness `SubAgents` while it binds one, which it does with
 `sub_agents` on). While the including plugin is loaded, the
-loader keeps the included ones unloaded and refuses to enable them, and `/plugins`
+loader keeps the included ones unloaded and refuses to enable or configure them, and `/plugins`
 greys their rows out. Their saved `enabled` flag is untouched, so turning the
 including plugin off loads them again. Add a row there; do not special-case ids.
 
@@ -145,7 +145,10 @@ threshold math or an orchestrator in CLAI. Register the usage gauge after the
 chain so yellow means the compacted request still exceeds the threshold.
 `/compact` drives the same chain regardless of threshold. Only `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
-summary failure; other exceptions propagate.
+summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
+over `CompactionSettings`; the loader's reload builds the new chain. The status
+row's window does not depend on it: `Session.on_context_window` reports each
+streamed request model's window, and the shell fills it in when no gauge has.
 
 ## Adding or changing a CLAI moment or contribution
 
@@ -287,7 +290,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
 | `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content |
-| `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
+| `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert, its settings menu |
 | `commands.py` | `Command`, the registry, completion |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |

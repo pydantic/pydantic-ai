@@ -3,7 +3,7 @@
 import asyncio
 import io
 import threading
-from collections.abc import AsyncGenerator, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
@@ -14,9 +14,12 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from rich.text import Text
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session, chat
@@ -396,3 +399,79 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
     else:
         assert f'Disabled alpha.\n{TURN_NOTICE}' in text
         assert text.index(reply) < text.index('alpha ended') < text.index('> /exit')
+
+
+async def test_speculation_toggled_mid_turn_shows_at_once_and_binds_on_the_next_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`Ctrl+X Ctrl+S` saves the switch and repaints at once; the running turn keeps its tools."""
+    working, finish, noticed, answered, done = (anyio.Event() for _ in range(5))
+    written: list[str] = []
+    frames: list[str] = []
+
+    class Surface(PromptSurface):
+        def write(self, text: str) -> int:
+            written.append(text)
+            if ''.join(written).count('Finished work') >= 2:
+                answered.set()
+            return super().write(text)
+
+        def paint(self, rows: tuple[str, ...]) -> None:
+            frames.append('\n'.join(Text.from_ansi(row).plain for row in rows))
+            if 'this turn keeps its tools' in frames[-1]:
+                noticed.set()
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+    store = SettingsStore(tmp_path / 'config.db')
+    tools: list[list[str]] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_model_request
+    async def capture(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        tools.append(sorted(tool.name for tool in request_context.model_request_parameters.function_tools))
+        return request_context
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='work', json_args='{}')}
+        else:
+            yield 'Finished work'
+
+    agent = Agent(FunctionModel(stream_function=respond), deps_type=type(None))
+
+    @agent.tool_plain
+    async def work() -> str:
+        working.set()
+        await finish.wait()
+        return 'done'
+
+    async def run() -> None:
+        await chat(
+            agent,
+            deps=None,
+            plugins=[hooks],
+            console=Console(file=io.StringIO(), force_terminal=True, width=120, height=24),
+            store=store,
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('start\r')
+            await working.wait()
+            pipe.send_text('\x18\x13')
+            await noticed.wait()
+            assert store.overrides() == {'run.speculative_code_mode': True}
+            assert 'Speculative Execution  0 hits' in frames[-1]
+            assert 'on from the next prompt' in frames[-1]
+            finish.set()
+            pipe.send_text('again\r')
+            await answered.wait()
+            assert 'next prompt' not in frames[-1]
+            pipe.send_text('/exit\r')
+            await done.wait()
+    first, after_tool, next_prompt = tools
+    assert first == after_tool == ['work']
+    assert 'run_code' in next_prompt and 'work' not in next_prompt

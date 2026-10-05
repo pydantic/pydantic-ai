@@ -1020,7 +1020,7 @@ class _Shell(Generic[DepsT, OutputT]):
         # this model's saved settings reach its next request. A menu still open when it ends delays
         # the next prompt.
         ended = TurnEnd(text=start.text, outcome='cancelled')
-        with self.session_settings.turn():
+        with self.session_settings.turn(), self.speculation.turn():
             send, receive = create_memory_object_stream[str](math.inf)
             async with self.loader.turn(), create_task_group() as mid_turn:
                 mid_turn.start_soon(self._serve_mid_turn, receive)
@@ -1149,7 +1149,13 @@ async def _run_prompt(
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
 
+    def context_window(window: int) -> None:
+        # The `compaction` gauge, when loaded, already measured this request, honouring its override.
+        if status.context_window is None:
+            status.context_window = window
+
     session.on_context_usage = context_usage
+    session.on_context_window = context_window
     session.on_stream_event = observe
     status_line = StatusLine(console, status, enabled=screen.editor is None, spinner=spinner)
 
@@ -1191,4 +1197,5 @@ async def _run_prompt(
         status.activity = 'ready'
         status.cost = session_usage(session.messages).total.cost
         session.on_context_usage = None
+        session.on_context_window = None
         await renderer.finish()
