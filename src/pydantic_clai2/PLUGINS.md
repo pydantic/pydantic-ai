@@ -1562,7 +1562,16 @@ What "load" and "unload" mean for your plugin:
 - Unload runs `on_session_end`, then drops everything the plugin declared:
   commands, capabilities, renderers, status segments, spinners, and model
   providers. Nothing else is touched.
-- Both only happen between prompts, never while the agent is running.
+- `/plugins` can load and unload during a turn. The agent run already in
+  progress keeps the capabilities it bound when it started, so a plugin's tools,
+  instructions, and hooks join or leave the agent on the next prompt. Everything
+  else changes at once. A plugin unloaded mid-turn gets `on_session_end` once
+  the turn ends, even if it was cancelled, because the run may still use what it
+  declared. A reload mid-turn can therefore start the new instance before the
+  old one ends, which is one more reason to keep state on the instance.
+- A plugin's code that `/plugins` runs mid-turn (`on_session_start`,
+  `configure`) can use `host.full_screen()`; the command already owns the
+  screen, so the block does not wait for it.
 - Drop-in entry modules load from current source. Installed entry modules use
   `importlib.reload`, which retains globals absent from the new source. Keep
   plugin state on the instance, set up in `__init__`.

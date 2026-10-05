@@ -200,7 +200,9 @@ Each plugin instance gets its own PluginHost: the console, conversation, status,
 full screen, and its saved settings. Keep mutable state on the instance, set up
 in __init__, not in module globals. Loading builds the instance, calls each get_*
 method once, then on_session_start; unloading calls on_session_end and discards
-everything the plugin declared. Changes happen between turns. Failed or cancelled
+everything the plugin declared. /plugins can change plugins during a turn: the
+running agent keeps the capabilities it started with until the next prompt, and
+a plugin unloaded mid-turn gets on_session_end when the turn ends. Failed or cancelled
 loading calls on_session_end with reason=error under cancellation shielding, with
 a five-second cooperative timeout, then discards the plugin. Errors and timeouts
 are reported without replacing the load error. Blocking code and nested shields
@@ -541,7 +543,9 @@ bare command opens at once instead of queueing behind the running turn. While
 run_worker runs, CLAI holds the turn's output and prints it in order afterwards.
 Only opt in when the running turn cannot observe what the menu changes.
 during_turn_subcommands=('add',) does the same for a bare subcommand such as
-/model add.
+/model add. Pass args_during_turn=True when every form of the command is safe
+mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
+as /plugins does.
 
 For named validated fields, reuse FieldSource, FieldMenu and run_flow in
 field_menu.py rather than write another editor. SettingsSource in set_menu.py
