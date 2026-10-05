@@ -82,8 +82,15 @@ class SessionTracing(AbstractCapability[None]):
         return capabilities[-1]
 
     def raised_in_run(self, error: BaseException) -> bool:
-        """Whether `error` left an agent run, so the `Instrumentation` this wraps recorded it on the run's span."""
-        return any(error is raised for raised in self._run_errors)
+        """Whether `error` left an agent run, so the `Instrumentation` this wraps recorded it on the run's span.
+
+        A match is forgotten, so the same exception raised again outside a run is not mistaken for this one.
+        """
+        for index, raised in enumerate(self._run_errors):
+            if raised is error:
+                del self._run_errors[index]
+                return True
+        return False
 
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         with parent_span(self.root()):

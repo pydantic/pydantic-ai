@@ -365,16 +365,18 @@ async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(r
             await agent.run('run the tool', capabilities=plugin.capabilities)
         with pytest.raises(UserError) as before_run:
             resolve_model()
-        for error in (in_run.value, before_run.value):
+        # The same exception instance failing a later turn outside a run, as a plugin reusing one might, is logged.
+        for error in (in_run.value, before_run.value, in_run.value):
             await plugin.dispatch(TurnEnd(text='a private prompt', outcome='failed', error=error))
     finally:
         await close(plugin)
     spans = recorder.spans()
     root = next(span for span in spans if span.name == 'CLAI session')
     run = next(span for span in spans if operation(span) == 'invoke_agent')
-    # The run's own span already holds the error that left it, so only the turn that failed before its run is logged.
+    # The run's own span already holds the error that left it, so only turns that failed outside a run are logged.
     assert [(event.attributes or {}).get('exception.type') for event in run.events] == ['RuntimeError']
-    [failed] = [span for span in spans if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+    failed, reused = [span for span in spans if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+    assert [(event.attributes or {}).get('exception.type') for event in reused.events] == ['RuntimeError']
     assert failed.parent == root.context
     assert failed.status.status_code is trace.StatusCode.ERROR
     assert failed.instrumentation_scope is not None and failed.instrumentation_scope.name == 'clai2'
