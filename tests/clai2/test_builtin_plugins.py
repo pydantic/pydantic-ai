@@ -118,6 +118,8 @@ async def test_coder_keeps_the_plugins_it_includes_off(tmp_path: Path) -> None:
         assert not store.plugins()[0].enabled, 'a refused enable saves nothing'
         with pytest.raises(ValueError, match='compaction is included in coder'):
             await plugins.command(['add', 'compaction', 'pydantic_clai2.builtin_plugins.compaction'])
+        with pytest.raises(ValueError, match='compaction is included in coder; disable coder to use it'):
+            await plugins.configure('compaction')
         assert [plugin.id for plugin in store.plugins()] == ['subagents'], 'a refused add saves nothing'
         restored = await plugins.remove('compaction')
         assert restored.startswith('compaction is built in') and plugins.entries()[1].loaded is None

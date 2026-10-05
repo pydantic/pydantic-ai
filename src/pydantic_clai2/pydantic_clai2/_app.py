@@ -1141,7 +1141,13 @@ async def _run_prompt(
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
 
+    def context_window(window: int) -> None:
+        # The `compaction` gauge, when loaded, already measured this request, honouring its override.
+        if status.context_window is None:
+            status.context_window = window
+
     session.on_context_usage = context_usage
+    session.on_context_window = context_window
     session.on_stream_event = observe
     status_line = StatusLine(console, status, enabled=screen.editor is None, spinner=spinner)
 
@@ -1183,4 +1189,5 @@ async def _run_prompt(
         status.activity = 'ready'
         status.cost = session_usage(session.messages).total.cost
         session.on_context_usage = None
+        session.on_context_window = None
         await renderer.finish()
