@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import overload
+from typing import get_args, overload
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
@@ -157,6 +157,11 @@ class Skills(AbstractCapability[AgentDepsT]):
         """
         if include is not None and exclude is not None:
             raise ValueError('include and exclude cannot be used together.')
+        # Typed as literals, but agent specs and untyped callers reach here with any string.
+        if missing_directories not in get_args(MissingDirectories):
+            raise ValueError(f"missing_directories must be 'error' or 'skip', not {missing_directories!r}.")
+        if duplicate_names not in get_args(DuplicateNames):
+            raise ValueError(f"duplicate_names must be 'error' or 'keep_first', not {duplicate_names!r}.")
 
         self.directories = self._normalize_directories(directories)
         self.include = self._normalize_selection('include', include) if include is not None else None
@@ -204,8 +209,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Serve every combined configuration's libraries through one catalog.
 
         The field-by-field default would keep only the last configuration's directories, dropping the
-        other libraries. A skill name selected by two configurations must name the same `SKILL.md`,
-        unless the later configuration has `duplicate_names='keep_first'`.
+        other libraries. A skill name selected by two configurations must name the same `SKILL.md`, or
+        a byte-identical copy, unless the later configuration has `duplicate_names='keep_first'`.
         """
         first = capabilities[0]
         assert isinstance(first, cls)
@@ -283,9 +288,7 @@ class Skills(AbstractCapability[AgentDepsT]):
                     by_name[skill.name] = (workspace, skill, source.workspace is None)
                     continue
                 previous_workspace, previous_skill, _ = previous
-                if previous_workspace is not workspace or not await same_skill(
-                    workspace, previous_skill.path, skill.path
-                ):
+                if not await same_skill((previous_workspace, previous_skill.path), (workspace, skill.path)):
                     messages.append(duplicate_name(skill.name, previous_skill.path, skill.path, source.duplicate_names))
         return [(skill, from_run_workspace) for _, skill, from_run_workspace in by_name.values()], messages
 

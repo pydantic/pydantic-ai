@@ -563,6 +563,24 @@ class TestSkillLibraryLayering:
 
         assert names == ['review']
 
+    async def test_identical_skill_from_two_own_workspaces_counts_once(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'app' / 'skills', 'review')
+        first: Skills[Any] = Skills('skills', workspace=LocalWorkspaceBackend(tmp_path / 'app'))
+        second: Skills[Any] = Skills('skills', workspace=LocalWorkspaceBackend(tmp_path / 'app'))
+
+        assert await _names(_combined(first, second), tmp_path) == ['review']
+
+    @pytest.mark.parametrize(
+        ('option', 'value', 'allowed'),
+        [
+            ('missing_directories', 'skips', "'error' or 'skip'"),
+            ('duplicate_names', 'keep_frist', "'error' or 'keep_first'"),
+        ],
+    )
+    def test_options_are_validated_for_specs_and_untyped_callers(self, option: str, value: str, allowed: str) -> None:
+        with pytest.raises(ValueError, match=f'{option} must be {allowed}, not {value!r}'):
+            Skills.from_spec('skills', **{option: value})
+
     async def test_symlinked_skill_selected_by_two_configurations_counts_once(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'real', 'review')
         (tmp_path / 'linked').mkdir()

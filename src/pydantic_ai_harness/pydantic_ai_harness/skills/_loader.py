@@ -248,15 +248,19 @@ async def _libraries(
     return libraries
 
 
-async def same_skill(workspace: Workspace, first: str, second: str) -> bool:
-    """Whether two `SKILL.md` paths hold one skill: the same file, such as through a symlink, or a byte-identical copy.
+async def same_skill(first: tuple[Workspace, str], second: tuple[Workspace, str]) -> bool:
+    """Whether two `SKILL.md` files, each in its workspace, hold one skill: the same file, or a byte-identical copy.
 
-    Only `SKILL.md` is compared, not bundled files. Asked only when two skills share a name, so a
-    catalog without clashes costs no extra round trips.
+    The same file is recognized through symlinks within one workspace. Only `SKILL.md` is compared,
+    not bundled files. Asked only when two skills share a name, so a catalog without clashes costs
+    no extra round trips.
     """
-    if await workspace.realpath(first) == await workspace.realpath(second):
+    (first_workspace, first_path), (second_workspace, second_path) = first, second
+    if first_workspace is second_workspace and await first_workspace.realpath(
+        first_path
+    ) == await second_workspace.realpath(second_path):
         return True
-    return await workspace.read_bytes(first) == await workspace.read_bytes(second)
+    return await first_workspace.read_bytes(first_path) == await second_workspace.read_bytes(second_path)
 
 
 def duplicate_name(name: str, kept: str, skipped: str, duplicate_names: DuplicateNames) -> str:
@@ -349,7 +353,7 @@ async def load_skill_libraries(
             continue
         if (previous := by_name.get(skill.name)) is None:
             by_name[skill.name] = skill
-        elif not await same_skill(workspace, previous.path, skill_file):
+        elif not await same_skill((workspace, previous.path), (workspace, skill_file)):
             skipped.append(duplicate_name(skill.name, previous.path, skill_file, duplicate_names))
     return list(by_name.values()), skipped
 
