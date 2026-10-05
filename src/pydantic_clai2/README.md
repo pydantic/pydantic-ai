@@ -50,11 +50,12 @@ launch directory, set **Unrestricted filesystem** to `false` in
 `/plugins configure coder`. Shell commands are not restricted either way.
 
 Tool calls show a single-line summary followed by a blank line by default.
-Tool and argument names are pink; argument values and bullet markers are muted grey. Shell output, exit details and
-log paths, grep results, and file diffs stay out of the terminal; the model still
-receives full tool results. Long summaries are clipped to the terminal width.
-Use `/set display.tool_output true` to show detailed output again, or
-`/set display.tool_output false` to return to summaries. In detailed mode,
+Tool and argument names are pink; argument values and bullet markers are muted grey.
+Successful file writes and edits also show their diffs, including in compact mode.
+Shell output, exit details and log paths, and grep results stay out of the terminal;
+the model still receives full tool results. Long summaries are clipped to the terminal width.
+Use `/set display.tool_output true` to show shell and grep details, or
+`/set display.tool_output false` to hide those details without hiding file diffs. In detailed mode,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
@@ -147,6 +148,28 @@ run is automatically retried. Unanswered tool calls in retained failed or
 interrupted turns are closed out by core on the next prompt, without replaying
 those tools. External application cancellation still propagates, and completed
 tool side effects cannot be undone.
+
+## Rewinding a conversation
+
+Between turns, press Esc twice within half a second to open **Rewind conversation**.
+Use Up/Down to choose an earlier prompt, then Enter to rewind. The newest prompt
+is selected first. Esc or Ctrl-C closes the menu without changing your draft or
+conversation. An empty conversation shows a disabled placeholder.
+
+Rewinding removes the selected prompt and all later messages from the saved
+conversation, then restores that prompt and its image attachments to the editor.
+This replaces any unsent draft and its attachments; cancel the menu to keep them.
+Edit the restored prompt and press Enter when ready. It does **not** undo file changes or other
+tool side effects, replay tools, or erase the terminal scrollback. Only prompts
+still present in the retained history are available. Prompts predating retained
+rewritten context, such as a compaction summary, are disabled even if compaction
+kept a copy of the prompt. That summary can contain later facts, so the original
+rewind boundary no longer exists. Prompts with attachment types the editor
+cannot restore are also disabled.
+
+A press that cancels a running turn, closes completions, or leaves history search
+does not count toward the shortcut. Wait for queued prompts to finish first.
+Typing another key or opening another menu resets the double-Esc sequence.
 
 ## Shell commands with `!`
 
@@ -280,7 +303,7 @@ Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875)
 ## Start chatting
 
 Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
-Run `/login codex` to connect your ChatGPT/Codex subscription.
+Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 
@@ -308,8 +331,9 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 
 - `stable` (default): the newest release on PyPI.
 - `bleeding`: the newest commit on `main` that changes CLAI. It downloads that
-  commit's source over HTTPS and installs CLAI, harness, and core from it, so it
-  needs no release and no `git`. These builds report version `0.0.0+<commit>`.
+  commit's `.tar.gz` archive over HTTPS and uses `--overrides` to install CLAI,
+  harness, and core with their required extras. It needs no release and no `git`.
+  These builds report version `0.0.0+<full-commit-sha>`.
 
 ```text
 /set updates.channel bleeding
@@ -329,8 +353,9 @@ Windows does not let a program replace files it is running from, so there
 again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
-again afterwards. Without uv on `PATH`, `/update` prints the command to run
-yourself, in PowerShell syntax on Windows.
+again afterwards. Without uv on `PATH`, `/update` prints the complete command to
+run yourself, in PowerShell syntax on Windows. For bleeding installs, it also
+writes the overrides file and includes its path in the printed command.
 
 ## Environment variables
 
@@ -450,7 +475,7 @@ no agent telemetry spans.
 The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
-`/login codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
+`/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes.
 
@@ -473,7 +498,7 @@ Installing or selecting a plaintext backend can store the key in plaintext. Core
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
-If Codex cannot refresh your login, CLAI tells you to run `/login codex`
+If Codex cannot refresh your login, CLAI tells you to run `/login openai-codex`
 in an interactive session, then retry your message. This replaces the generic
 connection error that can hide an expired login. Headless runs show the same
 advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
@@ -504,7 +529,7 @@ an awaitable string.
 uv run clai2
 ```
 
-In CLAI, run `/login copilot`, then open `/add_model` and choose
+In CLAI, run `/login github-copilot`, then open `/add_model` and choose
 `github-copilot`. The provider menu also starts login when no credentials exist.
 You do not need to register an OAuth application or configure a client ID.
 CLAI supplies the same [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -531,14 +556,14 @@ Credentials use the existing keyring backend under the `github-copilot` account,
 separate from Codex and API keys. Without a keyring, CLAI reports the plaintext
 `credentials-github-copilot.json` fallback file, created with mode `0600`.
 Tokens and their issuance time stay out of settings, history, and login output.
-Expiring tokens require `/login copilot` again; CLAI does not refresh them.
+Expiring tokens require `/login github-copilot` again; CLAI does not refresh them.
 A failed or cancelled authorization leaves the previous login unchanged.
 
 Without a saved login, CLAI accepts `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, or `COPILOT_GITHUB_TOKEN`, in that order.
 It does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another application's token files.
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
-`/login` without a provider continues to sign in to Codex.
+`/login` without a name asks which sign-in to run.
 
 ## Settings and commands
 
@@ -590,6 +615,13 @@ to browse providers and select a new model without leaving the command. This
 option is available even when no models have been added. Tab completion uses
 only the saved list. `/model NAME` switches directly to an added model.
 The currently configured model is kept in the list when upgrading.
+
+To remove a model you no longer use, highlight it and press **Ctrl+D** or
+**Delete**, then confirm **Delete model**. This removes it from the saved list and
+Tab completion and deletes its per-model settings. Provider credentials are kept.
+The current model and saved default cannot be deleted. Select another model first,
+or use `/set model NAME` to change the saved default. **Keep model** or Esc cancels
+without changing anything.
 
 `/add_model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
@@ -788,13 +820,19 @@ first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
 `plugins` takes the same declarations as `/plugins add`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
+relative `path` is relative to the folder that holds `.clai`, whichever
+subdirectory you launch from. A
 repository cannot switch a plugin on for you: plugins are trusted code running
 as your user, so every project-declared plugin starts off, CLAI lists the ones
 waiting at startup, and `/plugins enable NAME` is your approval. Approval is
 remembered in your user settings together with the declaration you approved,
 so a later change to the repository's declaration does not run until you
 `/plugins remove NAME` (which forgets your approval and restores the project's
-current declaration, off) and enable it again. Project declarations rank just
+current declaration, off) and enable it again. The approval keeps the file's
+absolute path, so another repository cannot put its own file at the same
+relative path and have it run as the one you approved. An approval saved by an
+older CLAI with a relative path does not load; remove it and enable it again
+from its repository. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
 
@@ -942,8 +980,8 @@ worktree directory name for detached HEAD. These labels are read when the browse
 opens, not historical branch names. Missing directories, non-Git workspaces, and
 unavailable Git fall back to directory labels. Separate repositories with the
 same name remain separate and use paths to distinguish them. Transcript previews
-and cross-directory confirmations keep the original saved path; resuming does
-not change directories or migrate saved data.
+keep the original saved path; resuming does not change directories or migrate
+saved data.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -979,9 +1017,9 @@ The browser follows Code Puppy's project/session design:
 - `r` sets a manual title, which the namer will not overwrite. `d` asks for
   confirmation before deletion. The active session cannot be deleted.
 - Esc goes back; Ctrl-C closes. Narrow screens show one focused pane at a time.
-- Selecting a session from another directory asks for confirmation. It does not
-  change directories or move the saved conversation out of its original project
-  group. Direct cross-directory resume asks you to use the browser.
+- Selecting a session from another directory resumes immediately, without
+  confirmation. It does not change directories or move the saved conversation out
+  of its original project group. Direct cross-directory resume asks you to use the browser.
 
 The browser counts loaded summaries, not a separate unbounded catalog. Search
 runs against the full catalog before pagination. It does not index tool output,
@@ -1429,8 +1467,9 @@ repeated completion heading before the diff or output.
 
 ## Tool details
 
-Native capability events drive specialized output: `FileEditedEvent` renders its
-bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
+File diffs are shown regardless of `display.tool_output`. Native capability events
+drive specialized output: `FileEditedEvent` renders its bounded unified diff using
+Termflow `DiffRenderer`, the same renderer Code Puppy
 uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code uses the terminal foreground and ANSI syntax colours on the terminal
@@ -1676,6 +1715,11 @@ capability to CLAI turns for agent, model-request, and tool
 spans, including timing, token usage, and failures. It adds CLAI's own UI spans
 only when `ui_events` is on (see below), and does not instrument HTTP clients or
 unrelated agents globally.
+
+Startup plugin load failures reported in the terminal are also sent through the configured
+Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
+reported after loading finishes, including those that happened before observability
+loaded. Disabling the plugin leaves these failures as terminal messages only.
 
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing

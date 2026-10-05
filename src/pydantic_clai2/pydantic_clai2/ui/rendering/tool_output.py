@@ -199,8 +199,6 @@ class ToolOutput:
         self.console.print()
 
     def _diff(self, diff: str, *, truncated: bool) -> None:
-        if not self.show_output:
-            return
         safe_diff = terminal_text(diff)
         if safe_diff:
             if self.console.is_terminal:
@@ -239,7 +237,7 @@ class ToolOutput:
                 return True
             self._shell_finished(event)
         elif isinstance(event, FileChangeRequestEvent):
-            if self.show_output and event.operation == 'write':
+            if event.operation == 'write':
                 self._writes[event.tool_call_id, event.root_dir, event.path] = event
         elif isinstance(event, FileEditedEvent):
             key = (event.tool_call_id, 'edit_file')
@@ -252,8 +250,6 @@ class ToolOutput:
             if key not in self._headers:
                 self._header('write_file', event.path)
             self._headers.discard(key)
-            if not self.show_output:
-                return True
             request = self._writes.pop((event.tool_call_id, event.root_dir, event.path), None)
             if request is not None and not request.cancelled:
                 self._diff(request.diff, truncated=request.truncated)

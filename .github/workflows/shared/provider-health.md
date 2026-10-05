@@ -1,8 +1,8 @@
 ---
-# Trusted host-side MiniMax health check. Keep MINIMAX_API_KEY in this runner job.
+# Trusted host-side Z.AI health check. Keep ZAI_API_KEY in this runner job.
 jobs:
   provider_health:
-    name: Check MiniMax provider health
+    name: Check Z.AI provider health
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -23,8 +23,7 @@ jobs:
         id: health
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-          MINIMAX_QUOTA_RESOURCE: ${{ vars.MINIMAX_QUOTA_RESOURCE }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
           PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}

@@ -204,7 +204,7 @@ Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, and `COPILOT_GITHUB_TOKEN`, checked in that order when
 no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
 application's token files. Core owns inference and its telemetry; CLAI adds no
-login-specific spans. Bare `/login` continues to sign in to Codex.
+login-specific spans. Bare `/login` asks which sign-in to run.
 
 ## Settings and commands
 
