@@ -887,9 +887,10 @@ same chain unconditionally. Its optional focus is free text, not shell arguments
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
 propagate. `/plugins disable compaction` turns automatic compaction,
-`/compact`, and its context warning off; a declaration under the same name
-changes its settings (`strategy`, `threshold`, `protected_tokens`,
-`context_window`, `summarization_model`; see the README):
+`/compact`, and its context warning off. `/plugins configure compaction` edits its
+settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
+`summarization_model`; see the README) and reloads it for the next turn; it refuses
+while `coder` includes the plugin. A declaration under the same name changes them too:
 
 ```text
 /plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "context_window": 200000}'
