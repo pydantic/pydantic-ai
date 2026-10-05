@@ -654,9 +654,10 @@ class Checker:
 
     def _check_usage(self, messages: list[ModelMessage]) -> None:
         sim = self.sim
-        if sim.receive_ended and sim.close_requested is None:
-            # The session ended on its own (an exceeded usage limit, a lost connection): whatever it read
-            # after that point was never going to be accounted.
+        ended = sim.receive_ended_at
+        if ended is not None and (sim.close_requested is None or ended < sim.close_requested):
+            # The session ended on its own (an exceeded usage limit, a lost connection), before any close: whatever
+            # the connection read after that point, closing included, was never going to be accounted.
             return
         truth = sim.truth
         billed = (
