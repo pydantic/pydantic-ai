@@ -117,8 +117,9 @@ class SessionStart:
 class ConversationChanged:
     """The shell switched to another conversation, or the current one got a new title.
 
-    Fires after `/new`, `/clear`, `/resume`, and `--resume`, when the first prompt titles a new
-    conversation, and when background naming or a rename in `/resume` retitles the current one.
+    Fires after `/new`, `/clear`, and `/resume`, when the first prompt titles a new conversation,
+    and when background naming or a rename in `/resume` retitles the current one. A startup
+    `--resume SESSION-ID` is already in place when `on_session_start` runs, so it fires nothing.
     """
 
     conversation_id: str

@@ -4,7 +4,8 @@ Shell integration for persisted conversations, the browser, and auxiliary naming
 """
 
 import asyncio
-from collections.abc import Awaitable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from contextlib import AbstractAsyncContextManager
 from typing import Generic, TypeVar
 
 from rich.console import Console
@@ -18,7 +19,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.plugins import Plugin, bare_screen
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -40,16 +41,21 @@ class Sessions(Generic[DepsT, OutputT]):
         self.session = session
         self.store = store
         self.context = context
+        self.quiet: Callable[[], AbstractAsyncContextManager[None]] = bare_screen
+        """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
         self.namer = SessionNamer(
             store=store,
             generate=self.generate,
             enabled=lambda: self.context.settings.session_namer,
-            on_named=self.renamed,
+            on_named=self.named,
         )
 
-    async def renamed(self, conversation_id: str, title: str) -> None:
-        """Retitle the current conversation when naming or a manual rename saved a new title for it."""
-        await self.session.renamed(conversation_id=conversation_id, title=title)
+    async def named(self, conversation_id: str, title: str) -> None:
+        """Retitle the current conversation after background naming, once the terminal is free."""
+        if conversation_id != self.session.conversation_id:
+            return
+        async with self.quiet():
+            await self.session.renamed(conversation_id=conversation_id, title=title)
 
     async def generate(self, prompt: str) -> NamingResult | None:
         """Resolve credentials on the owning loop, without loading any coding plugins."""
@@ -131,7 +137,7 @@ class Sessions(Generic[DepsT, OutputT]):
         selected = await run_worker(browse)
         # Plugins hear of a rename once the browser has closed, so none of them draws over it.
         if (title := retitled.get(self.session.conversation_id)) is not None:
-            await self.renamed(self.session.conversation_id, title)
+            await self.session.renamed(conversation_id=self.session.conversation_id, title=title)
         if not selected:
             return ''
         return await self.session.resume(selected, allow_other_workspace=True)

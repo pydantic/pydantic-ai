@@ -4,7 +4,9 @@ from io import StringIO
 from pathlib import Path
 from typing import ClassVar
 
+import anyio
 import pytest
+from inline_snapshot import snapshot
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -14,7 +16,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2._app import create_shell, create_stock_agent
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import PluginSettings, Settings
@@ -25,6 +27,7 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionName
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
+from tests.conftest import IsStr
 
 
 class Recorder(Plugin):
@@ -112,6 +115,8 @@ async def test_naming_and_browser_renames_retitle_the_current_conversation(
     service.namer.generate = generate
     assert await service.namer.name(conversation_id=session.conversation_id)
     assert events == [ConversationChanged(conversation_id=session.conversation_id, title='Renderer fix')]
+    await service.named('another conversation', 'Ignored')
+    assert len(events) == 1
 
     def rename(browser: SessionBrowser) -> str:
         browser.reload()
@@ -142,10 +147,67 @@ async def test_startup_resume_precedes_plugins_and_commands_notify_them(tmp_path
             builtin_plugins=[RECORDER],
             resume=saved.conversation_id,
         )
-    assert Recorder.seen[0] == ('start', saved.conversation_id, 'earlier work')
-    assert Recorder.seen[1][0] == 'changed' and Recorder.seen[1][1] != saved.conversation_id
-    assert Recorder.seen[1][2] is None
-    assert Recorder.seen[2:] == [('changed', saved.conversation_id, 'earlier work')]
+    saved_id = saved.conversation_id
+    assert Recorder.seen == snapshot(
+        [
+            ('start', saved_id, 'earlier work'),
+            ('changed', IsStr(), None),
+            ('changed', saved_id, 'earlier work'),
+        ]
+    )
+    assert Recorder.seen[1][1] != saved_id
+
+
+async def test_startup_browser_opens_once_plugins_have_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    saved = Session(
+        Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db')
+    )
+    await saved.prompt('earlier work')
+
+    def pick(browser: SessionBrowser) -> str:
+        # Plugins have started, so models they offer can name the sessions listed here.
+        assert [event for event, *_ in Recorder.seen] == ['start']
+        return saved.conversation_id
+
+    monkeypatch.setattr(SessionBrowser, 'run', pick)
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('/exit\n')
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            console=Console(file=StringIO()),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            settings=Settings(model=None, session_namer=False),
+            builtin_plugins=[RECORDER],
+            resume='',
+        )
+    assert Recorder.seen[1:] == [('changed', saved.conversation_id, 'earlier work')]
+
+
+async def test_background_names_wait_for_the_terminal(tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'settings.db'),
+        builtin_plugins=[],
+        project=ProjectSettings(),
+        headless=True,
+    )
+    session = shell.session
+    events = recording(session)
+    await session.prompt('fix the renderer')
+    events.clear()
+    async with anyio.create_task_group() as tasks:
+        async with shell.forks.busy():
+            tasks.start_soon(shell.sessions.named, session.conversation_id, 'Renderer fix')
+            await anyio.wait_all_tasks_blocked()
+            assert events == []
+        await anyio.wait_all_tasks_blocked()
+        assert events == [ConversationChanged(conversation_id=session.conversation_id, title='Renderer fix')]
 
 
 async def test_headless_resume_precedes_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

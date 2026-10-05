@@ -1647,9 +1647,11 @@ startup or preventing other handlers from running.
 `on_conversation_changed` receives a `ConversationChanged` event after `/new`, `/clear`,
 and `/resume`, when the first prompt of a new conversation gives it a title, and when
 background naming or a rename in the `/resume` browser retitles the current conversation.
-`title` is `None` until the first prompt is saved. A startup `--resume` is restored before
-plugins load, so `on_session_start` already sees that conversation in `host.conversation`.
-The event fires once per change, never for a background `/fork`.
+`title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID` is restored
+before plugins load, so `on_session_start` already sees that conversation in `host.conversation`;
+a session picked from the `--resume` browser arrives as this event. The event fires once per
+change, never for a background `/fork`, and a name from background naming waits until no turn
+or command is running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running

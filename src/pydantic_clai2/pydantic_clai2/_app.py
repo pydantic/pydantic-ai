@@ -218,14 +218,16 @@ async def chat(
                         workers.start_soon(shell.sessions.namer.run)
                         try:
                             with transcript.capture(console):
-                                # Restore first, so plugins start with the conversation the user asked for.
-                                if resume is not None:
-                                    console.print(
-                                        await shell.sessions.command([resume] if resume else []), markup=False
-                                    )
+                                # Restore a named session first, so plugins start with it. The browser
+                                # waits for plugins, whose models may name the sessions it lists.
+                                if resume:
+                                    console.print(await shell.sessions.command([resume]), markup=False)
                                     resume = None
                                 await shell.loader.load_all(fresh=fresh)
                                 _report_project_plugins(shell.loader, console)
+                                if resume is not None:
+                                    console.print(await shell.sessions.command([]), markup=False)
+                                    resume = None
                             warming = warming or warm_imports.start()
                             reason = await shell.run()
                         finally:
@@ -666,6 +668,7 @@ class _Shell(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             models=self.context.store.models,
         )
+        self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
