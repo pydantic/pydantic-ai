@@ -1,9 +1,12 @@
-"""Query your Logfire data from the agent through the Logfire MCP server.
+"""Logfire: let the agent query your Logfire traces, logs, and metrics through Logfire's MCP server.
 
-The built-in `logfire_mcp` plugin: harness `LogfireMCP`, a settings menu, and keys kept in `/keys`.
+The built-in `logfire_mcp` plugin, shown as Logfire: harness `LogfireMCP`, a settings menu, keys kept in `/keys`, and
+`/logfire login|logout`. Its id stays `logfire_mcp` because older builds store the `observability` plugin's settings
+under `logfire`, so that id cannot be reused; `/logfire_mcp` stays as the command's old name.
 
 Plugin settings are plaintext SQLite, so they hold only the name of a `/keys` entry plus `LogfireMCP`'s
-non-secret options, all edited in the menu that `/plugins configure logfire_mcp` opens.
+non-secret options, all edited in the menu that `/plugins configure logfire_mcp` opens. Which Logfire to connect to
+is picked as in `observability` setup (see `logfire_destination`), starting from the one last set up in either.
 """
 
 import asyncio
@@ -23,7 +26,15 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
+from pydantic_ai_harness.logfire_mcp import LOGFIRE_US_MCP_URL, LogfireMCP
+from pydantic_clai2.builtin_plugins.logfire_destination import (
+    REGIONS,
+    destination_problem,
+    parse_destination,
+    pick_destination,
+    remember,
+    remembered,
+)
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, Announce, DeviceAuth, SignInError, forget, status
@@ -40,6 +51,8 @@ KEY_NAME = 'LOGFIRE_API_KEY'
 SETUP = 'Run /plugins configure logfire_mcp to choose or enter a Logfire API key.'
 RUNNERS: Runners = TERMINAL
 """How the settings menu's widgets are shown; tests swap in scripted ones."""
+URL = 'url'
+"""The row that opens the Logfire picker shared with `observability` setup."""
 
 
 class LogfireMCPSettings(BaseModel):
@@ -47,14 +60,23 @@ class LogfireMCPSettings(BaseModel):
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
     key: KeyReference | None = Field(default=None, description='The saved API key in /keys to connect with.')
-    url: str = Field(default=LOGFIRE_US_MCP_URL, description='Hosted US, hosted EU, or self-hosted MCP endpoint.')
+    url: str = Field(
+        default=LOGFIRE_US_MCP_URL,
+        description='Which Logfire to connect to: a host, the URL you open Logfire at, or its MCP URL; saved as the '
+        'MCP URL.',
+    )
     oauth: bool = Field(default=True, description='Sign in, or sign up, through the browser when there is no API key.')
     read_only: bool = Field(default=True, description='Offer only the tools the server marks read-only.')
     include_instructions: bool = Field(default=True, description="Forward the server's instructions to the agent.")
 
     @field_validator('url')
     @classmethod
-    def _https(cls, url: str) -> str:
+    def _mcp_url(cls, url: str) -> str:
+        try:
+            return parse_destination(url).mcp_url
+        except ValueError:
+            pass
+        # Earlier builds took any https MCP URL, so one saved at another path still loads as it was.
         parts = urlsplit(url)
         # A query or fragment would make the URL differ from the resource Logfire signs in for.
         extras = parts.username or parts.password or parts.query or parts.fragment
@@ -64,12 +86,12 @@ class LogfireMCPSettings(BaseModel):
 
 
 class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
-    """The settings menu and `/logfire_mcp` are there on load; the connection is chosen at session start, off the loop."""
+    """The settings menu and `/logfire` are there on load; the connection is chosen at session start, off the loop."""
 
     def __init__(self, host: PluginHost[None], settings: LogfireMCPSettings) -> None:
         super().__init__(host, settings)
         self.capability: LogfireMCP[None] | None = None
-        """Built by `on_session_start`; runs that start earlier get no Logfire MCP tools."""
+        """Built by `on_session_start`; runs that start earlier get no Logfire tools."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._for_run,)
@@ -80,8 +102,15 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
 
         return (
             Command(
+                name='logfire',
+                description='Sign in to Logfire for its MCP tools through the browser, or forget that sign-in '
+                '(/logfire login|logout).',
+                handler=command,
+                complete=lambda _: ('login', 'logout'),
+            ),
+            Command(
                 name='logfire_mcp',
-                description='Sign in to Logfire through the browser, or forget that sign-in (/logfire_mcp login|logout).',
+                description='The old name of /logfire.',
                 handler=command,
                 complete=lambda _: ('login', 'logout'),
             ),
@@ -98,7 +127,7 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
         if missing is not None:
             # Loading anyway keeps the settings menu available; each run fails closed until the key is saved.
             self.host.console.print(
-                f'Logfire MCP has no credential: {missing} is not in /keys. {SETUP}',
+                f'Logfire has no credential: {missing} is not in /keys. {SETUP}',
                 style=theme.color(theme.WARNING),
                 markup=False,
             )
@@ -151,7 +180,7 @@ def _oauth_client(*, settings: LogfireMCPSettings, announce: Announce) -> Client
 
 
 async def _command(args: list[str], *, settings: LogfireMCPSettings, announce: Announce) -> str:
-    """`/logfire_mcp login` signs in (or up) now; `/logfire_mcp logout` forgets every sign-in."""
+    """`/logfire login` signs in (or up) now; `/logfire logout` forgets every sign-in."""
     if args == ['login']:
         try:
             await DeviceAuth(resource=settings.url, read_only=settings.read_only, announce=announce).sign_in()
@@ -163,33 +192,48 @@ async def _command(args: list[str], *, settings: LogfireMCPSettings, announce: A
             forgotten = await anyio.to_thread.run_sync(forget, abandon_on_cancel=True)
         except (KeyringError, OSError) as exc:
             raise ValueError(
-                f'Could not delete the saved Logfire browser sign-in ({type(exc).__name__}); run /logfire_mcp logout to retry.'
+                f'Could not delete the saved Logfire browser sign-in ({type(exc).__name__}); run /logfire logout to retry.'
             ) from None
         if forgotten:
             return 'Forgot the Logfire browser sign-in. Keys in /keys are kept.'
         return 'There was no Logfire browser sign-in to forget.'
-    raise ValueError('Usage: /logfire_mcp login|logout (settings and keys: /plugins configure logfire_mcp)')
+    raise ValueError('Usage: /logfire login|logout (settings and keys: /plugins configure logfire_mcp)')
 
 
 _KEY = FieldRow(
     key='key',
     label='API key',
-    description=(
-        f'The saved key in /keys that Logfire connects with. Enter picks a saved key or saves a new one as {KEY_NAME}; '
-        f'plugin settings keep only its name. Unset uses {KEY_NAME} from the environment or /keys, then browser '
-        'sign-in. Any plugin naming the same key shares it.'
+    # One short line each: the preview panel cuts long lines off.
+    description='\n'.join(
+        [
+            'The API key Logfire connects with.',
+            'Enter: pick a saved key in /keys, or paste',
+            f'  a new one to save as {KEY_NAME}.',
+            f'R: no chosen key: use {KEY_NAME} from the',
+            '  environment or /keys, then browser sign-in.',
+            'Only the key name is kept here, so any plugin',
+            'naming the same key shares it.',
+        ]
     ),
     default='(none)',
 )
 _ROWS = (
     _KEY,
     FieldRow(
-        key='url',
-        label='Destination',
-        description='The Logfire region your data lives in, or the MCP URL of a self-hosted Logfire.',
+        key=URL,
+        label='Which Logfire',
+        description='\n'.join(
+            [
+                'The Logfire your data lives in.',
+                'Enter: choose Logfire US or EU, or type another',
+                '  (self-hosted or staging) by its host, URL,',
+                '  or MCP URL.',
+                'R: back to Logfire US.',
+                'Observability setup starts from the same one.',
+            ]
+        ),
         default=LOGFIRE_US_MCP_URL,
-        choices=(LOGFIRE_US_MCP_URL, LOGFIRE_EU_MCP_URL),
-        choice_labels={LOGFIRE_US_MCP_URL: 'Logfire US', LOGFIRE_EU_MCP_URL: 'Logfire EU'},
+        choice_labels={region.mcp_url: name for name, region in REGIONS.items()},
     ),
     FieldRow(
         key='read_only',
@@ -214,7 +258,7 @@ _ROWS = (
         label='Browser sign-in',
         description=(
             'Sign in, or sign up, through the browser when no API key is chosen, set, or saved. The first run, or '
-            '/logfire_mcp login, shows a link and a code that also work from another device. Tokens stay in the '
+            '/logfire login, shows a link and a code that also work from another device. Tokens stay in the '
             'OS keyring.'
         ),
         default='true',
@@ -229,7 +273,7 @@ _FLAGS = ('read_only', 'include_instructions', 'oauth')
 class LogfireMCPSource:
     """The settings menu's rows, read from and saved straight to the plugin's settings."""
 
-    title = 'Logfire MCP'
+    title = 'Logfire'
 
     def __init__(self, host: PluginHost[None]) -> None:
         """Every edit goes through `host.save_settings`."""
@@ -329,9 +373,38 @@ async def _configure(source: LogfireMCPSource) -> str:
             return [f'Logfire uses {KEY_NAME} from the environment or /keys, then browser sign-in.']
         return [f'Logfire uses the saved key {key.name}. Manage it in /keys.']
 
-    # Built in the worker: its rows read `/keys` (a cross-process lock) and the keyring.
-    messages = await run_worker(lambda: run_flow(FieldMenu(source), RUNNERS, submenus={'key': pick_key}))
-    return '\n'.join(messages) or 'Logfire MCP settings unchanged.'
+    def pick_url() -> list[str]:
+        settings = source.settings
+        current = parse_destination(settings.url) if destination_problem(settings.url) is None else None
+        destination = pick_destination(RUNNERS, current=current, then=_THEN)
+        if destination is None:
+            return []
+        source.save(settings.model_copy(update={URL: destination.mcp_url}))
+        remember(destination)
+        return [f'Logfire tools connect to {destination.label} at {destination.mcp_url}.']
+
+    def flow() -> list[str]:
+        # Built in the worker: its rows read `/keys` (a cross-process lock) and the keyring, and the seed a file.
+        seeded = _seed(source)
+        return [*seeded, *run_flow(FieldMenu(source), RUNNERS, submenus={'key': pick_key, URL: pick_url})]
+
+    return '\n'.join(await run_worker(flow)) or 'Logfire settings unchanged.'
+
+
+_THEN = "Enter: the agent's Logfire tools connect here,\nwith the API key or browser sign-in set in this menu."
+
+
+def _seed(source: LogfireMCPSource) -> list[str]:
+    """Before these settings are first saved, connect to the Logfire last set up in `observability` or here.
+
+    Saving writes every option, so a Logfire saved by this plugin, even the default, is never replaced.
+    """
+    settings = source.settings
+    last = None if URL in settings.model_fields_set else remembered()
+    if last is None or last.mcp_url == settings.url:
+        return []
+    source.save(settings.model_copy(update={URL: last.mcp_url}))
+    return [f'Logfire tools connect to {last.label}, the Logfire you last set up. Change it under Which Logfire.']
 
 
 class _MaskedPrompt:

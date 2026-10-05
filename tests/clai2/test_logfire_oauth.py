@@ -314,8 +314,8 @@ class TestSignIn:
     @pytest.mark.parametrize(
         ('broken', 'value', 'message'),
         [
-            ('polls', [pending('access_denied')], 'Logfire sign-in was denied. Run /logfire_mcp login to retry.'),
-            ('polls', [pending('invalid_grant')], 'Logfire sign-in failed: invalid grant. Run /logfire_mcp login'),
+            ('polls', [pending('access_denied')], 'Logfire sign-in was denied. Run /logfire login to retry.'),
+            ('polls', [pending('invalid_grant')], 'Logfire sign-in failed: invalid grant. Run /logfire login'),
             ('polls', [(200, {'access_token': ''})], 'Logfire sign-in failed: ValidationError.'),
             ('polls', [granted('access-1', token_type='DPoP')], 'Logfire sign-in failed: ValidationError.'),
             ('polls', [granted('access-1', scope='project:write')], 'Logfire did not grant project:read'),
@@ -354,7 +354,7 @@ class TestSignIn:
                 {**METADATA, 'issuer': 'https://elsewhere.test'},
                 f'{ORIGIN} described itself as https://elsewhere.test; not signing in.',
             ),
-            ('handle', refuse, 'Logfire sign-in failed: ConnectError. Run /logfire_mcp login to retry.'),
+            ('handle', refuse, 'Logfire sign-in failed: ConnectError. Run /logfire login to retry.'),
         ],
         ids=[
             'denied',

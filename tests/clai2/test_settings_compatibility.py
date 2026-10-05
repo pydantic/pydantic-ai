@@ -15,6 +15,7 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEv
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
+from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
 from pydantic_clai2.commands import config_command, plugins_command
 from pydantic_clai2.config import PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
@@ -502,3 +503,31 @@ def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None
     assert store.plugins()[0].enabled
     plugins_command(store, ['remove', 'logfire'])
     assert store.plugins() == []
+
+
+@pytest.mark.parametrize(
+    'url',
+    ['https://logfire-eu.pydantic.dev/mcp', 'https://logfire.example.com/mcp', 'https://logfire.example.com/x/mcp'],
+)
+def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path: Path, url: str) -> None:
+    """The plugin is shown as Logfire, but keeps the `logfire_mcp` id, and every MCP URL older builds saved loads as is.
+
+    `logfire` cannot become its id: it is the `observability` plugin's stored id, which older builds still read.
+    """
+    store = SettingsStore(tmp_path / 'config.db')
+    legacy = (
+        '{"id":"logfire_mcp","factory":"pydantic_clai2.builtin_plugins.logfire_mcp","enabled":true,'
+        f'"settings":{{"key":null,"url":"{url}","oauth":true,"read_only":false,"include_instructions":true}}}}'
+    )
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('logfire_mcp', legacy))
+    [saved] = store.plugins()
+    assert saved == PluginSettings.model_validate_json(legacy)
+    settings = PluginHost[None](name='logfire_mcp', console=Console(), settings=saved.settings).settings(
+        LogfireMCPSettings
+    )
+    assert (settings.url, settings.read_only) == (url, False)
+    # `/plugins ... logfire` still means `observability`, as in older builds.
+    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
+    plugins_command(store, ['disable', 'logfire'])
+    assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}

@@ -493,6 +493,13 @@ importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Plugins are trusted code running as you.
 
+Two built-in plugins connect to [Logfire](https://pydantic.dev/logfire): `observability`
+sends traces of your runs there, and the Logfire plugin (id `logfire_mcp`, command
+`/logfire`) lets the agent query your data through Logfire's MCP server. Both ask
+which Logfire with the same picker: Logfire US, Logfire EU, or another typed as a
+host, the URL you open it at, or its MCP URL. Whichever you pick in one, the other
+starts from.
+
 [PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
 
 ## Telemetry and references
