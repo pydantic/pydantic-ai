@@ -972,14 +972,17 @@ async def test_by_default_an_owned_delegate_does_not_delegate() -> None:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         first = messages[0]
         assert isinstance(first, ModelRequest)
-        prompt = str(first.parts[-1].content)
+        prompt = next(part.content for part in first.parts if isinstance(part, UserPromptPart))
+        assert isinstance(prompt, str)
         offered.setdefault(prompt, [tool.name for tool in info.function_tools])
         if prompt == 'go' and not results(messages, 'delegate_task'):
             return call('delegate_task', agent_name='self', task='subtask')
         return ModelResponse(parts=[TextPart(f'{prompt} done')])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        yield str(respond(messages, info).parts[0].content)
+        (part,) = respond(messages, info).parts
+        assert isinstance(part, TextPart)
+        yield part.content
 
     owner = DelegationTasks()
     async with owner.opened():
