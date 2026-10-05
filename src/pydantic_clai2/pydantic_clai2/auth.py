@@ -12,6 +12,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from pydantic import TypeAdapter, ValidationError
 from rich.console import Console
+from termflow.tui import MenuBuilder, MenuItem
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.openai_codex import OpenAICodexModel
@@ -25,7 +26,10 @@ from pydantic_clai2.config.credential_store import credentials_path, load_codex_
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
 from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
+from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
@@ -39,18 +43,24 @@ async def login_command(
     codex: 'CodexAuth',
     plugins: Mapping[str, PluginLogin] | None = None,
     store: SettingsStore | None = None,
+    runners: Runners = TERMINAL,
 ) -> str:
-    """`/login NAME` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` stays Codex.
+    """`/login NAME` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` asks which.
 
     A plugin sign-in that succeeds saves its `models` to `store`.
     """
     plugins = plugins or {}
     if len(args) > 1:
         raise ValueError(_login_usage(plugins))
-    name = LOGIN_ALIASES.get(args[0], args[0]) if args else 'codex'
-    if name == 'codex':
+    if args:
+        name = LOGIN_ALIASES.get(args[0], args[0])
+    elif (picked := await _pick_login(plugins, runners)) is None:
+        return ''
+    else:
+        name = picked
+    if name == 'openai-codex':
         return await codex.login([])
-    if name == 'copilot':
+    if name == 'github-copilot':
         return await github_copilot.login(console=codex.console)
     if (login := plugins.get(name)) is not None:
         message = await login.handler()
@@ -63,6 +73,22 @@ async def login_command(
 
 def _login_usage(plugins: Mapping[str, PluginLogin]) -> str:
     return f'Usage: /login [{"|".join(login_names(plugins))}]'
+
+
+async def _pick_login(plugins: Mapping[str, PluginLogin], runners: Runners) -> str | None:
+    """Ask which sign-in to run; `None` when cancelled."""
+    menu = (
+        MenuBuilder('Sign in')
+        .style(markdown_style())
+        .items([MenuItem(name, value=name) for name in login_names(plugins)])
+        .footer_hint('Enter sign in - Esc cancel')
+        .key_source(menu_key)
+        .build()
+    )
+    result = await run_worker(lambda: runners.run_list(menu))
+    if result.cancelled or result.item is None or not isinstance(result.item.value, str):
+        return None
+    return result.item.value
 
 
 async def read_line(message: str) -> str:
@@ -80,7 +106,7 @@ def code_from_paste(*, text: str, state: str) -> str:
     if 'code' not in params and 'error' not in params:
         return text
     if params.get('state') != state:
-        raise UserError('That URL belongs to a different login attempt. Run /login codex again.')
+        raise UserError('That URL belongs to a different login attempt. Run /login openai-codex again.')
     if error := params.get('error'):
         raise UserError(f'Authorization failed: {error}')
     return params['code']
@@ -93,11 +119,11 @@ class CodexCredentials(OpenAICodexCredentialSource):
         """Load credentials without falling back to another application's tokens."""
         value = await anyio.to_thread.run_sync(load_codex_credentials, abandon_on_cancel=True)
         if value is None:
-            raise UserError('Codex is not connected. Run /login codex.')
+            raise UserError('Codex is not connected. Run /login openai-codex.')
         try:
             return _CREDENTIALS.validate_json(value)
         except ValidationError:
-            raise UserError('Stored Codex credentials are invalid. Run /login codex.') from None
+            raise UserError('Stored Codex credentials are invalid. Run /login openai-codex.') from None
 
     async def save(self, credentials: OpenAICodexCredentials) -> None:
         """Persist login or refresh results using the configured OS credential backend."""
@@ -119,7 +145,7 @@ class CodexAuth:
     async def login(self, args: list[str]) -> str:
         """Run core's authorization-code + PKCE flow with a five-minute timeout."""
         if args not in ([], ['openai-codex']):
-            raise ValueError('Usage: /login codex')
+            raise ValueError('Usage: /login openai-codex')
         flow = OpenAICodexOAuthFlow()
         self.console.print(
             'Sign in to ChatGPT/Codex in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
@@ -141,7 +167,7 @@ class CodexAuth:
             await self.source.save(credentials)
             self.provider = None
         except TimeoutError:
-            raise UserError('Codex login timed out. Run /login codex to try again.') from None
+            raise UserError('Codex login timed out. Run /login openai-codex to try again.') from None
         finally:
             browser.cancel()
             await asyncio.gather(browser, return_exceptions=True)

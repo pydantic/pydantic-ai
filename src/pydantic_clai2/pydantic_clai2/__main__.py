@@ -7,11 +7,23 @@ import sys
 import warnings
 from pathlib import Path
 
-from pydantic_clai2.ui.rendering.splash import Splash
+from dotenv import find_dotenv, load_dotenv
 
 
 def main() -> None:
-    """Cover heavyweight startup imports with the CLAI splash."""
+    """Load the project environment, then cover heavyweight imports with the splash."""
+    dotenv_path = '.env'
+    try:
+        dotenv_path = find_dotenv(usecwd=True)
+        # Named pipes must not block automatic startup.
+        if Path(dotenv_path).is_file():
+            load_dotenv(dotenv_path)
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f'Ignoring `.env` at {dotenv_path!r}: {exc}', file=sys.stderr)
+
+    # Splash imports configuration, which must see the loaded environment.
+    from pydantic_clai2.ui.rendering.splash import Splash
+
     os.environ['PYDANTIC_AI_NO_BANNER'] = '1'
     enabled = len(sys.argv) == 1 and not os.getenv('CLAI_NO_SPLASH')
     database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
