@@ -70,7 +70,7 @@ async def test_bare_urls_are_highlighted_links(*, content: str, url: str, after:
 
 @pytest.mark.parametrize(
     'content',
-    [f'`curl {URL}`', f'[label]({URL})', f'![image]({URL})', f'x{URL}', f'\ue000{URL}\ue001', f'{URL}/~~a~~b'],
+    [f'`curl {URL}`', f'[label]({URL})', f'![image]({URL})', f'x{URL}', f'\ufdd0{URL}\ufdd1', f'{URL}/~~a~~b'],
 )
 async def test_urls_outside_plain_text_stay_as_they_were(content: str) -> None:
     output = io.StringIO()
@@ -80,6 +80,32 @@ async def test_urls_outside_plain_text_stay_as_they_were(content: str) -> None:
     await renderer.finish()
     text = Text.from_ansi(output.getvalue())
     assert text.get_style_at_offset(console, text.plain.index(URL)).link is None
+
+
+@pytest.mark.parametrize('marker', ['FDD0', 'E000'])
+async def test_entities_cannot_forge_a_link_to_another_scheme(marker: str) -> None:
+    end = f'{int(marker, 16) + 1:X}'
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=0)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(f'&#x{marker};file:///etc/passwd&#x{end};')))
+    await renderer.finish()
+    assert '\x1b]8;;' not in output.getvalue()
+    assert 'file:///etc/passwd' in Text.from_ansi(output.getvalue()).plain
+
+
+async def test_heading_colour_continues_after_a_bare_url() -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, width=120)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(f'### See {URL} today')))
+    await renderer.finish()
+    text = Text.from_ansi(output.getvalue())
+    before = text.get_style_at_offset(console, text.plain.index('See'))
+    after = text.get_style_at_offset(console, text.plain.index('today'))
+    assert text.get_style_at_offset(console, text.plain.index(URL)).link == URL
+    assert before.color is not None and before.color.triplet is not None
+    assert before.color.triplet.hex == theme.PURPLE.lower()
+    assert (after.color, after.bold) == (before.color, True)
 
 
 def test_each_smooth_chunk_closes_its_link() -> None:

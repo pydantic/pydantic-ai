@@ -16,9 +16,11 @@ from termflow.parser.events import (
     CodeBlockEndEvent,
     CodeBlockLineEvent,
     CodeBlockStartEvent,
+    HeadingEvent,
     ParseEvent,
 )
 from termflow.parser.inline import CODE_SPAN_RE, IMAGE_RE, LINK_RE
+from termflow.render.heading import _heading_codes  # pyright: ignore[reportPrivateUsage]
 from termflow.render.style import RenderFeatures, RenderStyle
 from termflow.stream import SmoothWriter
 from termflow.syntax import LANGUAGE_ALIASES
@@ -61,8 +63,12 @@ def markdown_style() -> RenderStyle:
 
 
 _URL_RE = re.compile(r'<(https?://[^\s<>]+)>|(?<![\w/])https?://[^\s<>`]+')
-_URL_START, _URL_END = '\ue000', '\ue001'
-"""Private-use marks around a URL while Termflow formats the line; `terminal_text` escapes any from the model."""
+_URL_START, _URL_END = '\ufdd0', '\ufdd1'
+"""Marks around a URL while Termflow formats the line.
+
+Model text cannot forge them: `terminal_text` escapes these noncharacters, and the
+HTML entity decoding Termflow applies turns `&#xFDD0;` into nothing.
+"""
 _MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
 
 
@@ -77,6 +83,14 @@ def _trim_url(url: str) -> str:
 
 class MarkdownRenderer(Renderer):
     """Termflow's renderer, also highlighting bare `https://` and `<https://...>` URLs as links."""
+
+    _enclosing = ''
+    """Codes that restore the style a link interrupts, for headings Termflow styles around the inline text."""
+
+    def render(self, event: ParseEvent) -> None:
+        """Render one event, remembering a heading's style for links inside it."""
+        self._enclosing = _heading_codes(event.level, self.style)[0] if isinstance(event, HeadingEvent) else ''
+        super().render(event)
 
     def _format_inline(self, text: str) -> str:
         taken = [match.span() for pattern in (CODE_SPAN_RE, IMAGE_RE, LINK_RE) for match in pattern.finditer(text)]
@@ -96,7 +110,8 @@ class MarkdownRenderer(Renderer):
             return url
         # Reset only the foreground so surrounding bold and thinking dim continue after the link.
         label = f'{fg_color(self.style.link)}{url}\x1b[39m'
-        return make_link(url, label) if self.features.hyperlinks else f'{UNDERLINE_ON}{label}{UNDERLINE_OFF}'
+        link = make_link(url, label) if self.features.hyperlinks else f'{UNDERLINE_ON}{label}{UNDERLINE_OFF}'
+        return link + self._enclosing
 
 
 class LinkOutput(io.StringIO):
