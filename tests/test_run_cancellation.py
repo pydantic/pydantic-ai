@@ -1128,6 +1128,43 @@ def test_run_sync_keyboard_interrupt_carries_run_state():
     assert _tool_returns(cancelled) == ['fast done']
 
 
+def test_run_sync_keyboard_interrupt_preserves_nested_cleanup_errors():
+    """Ctrl-C keeps nested event-loop cleanup errors without cycling back to the interrupt."""
+    started = asyncio.Event()
+    cleanup_error = ValueError('event loop cleanup failed')
+    final_error = RuntimeError('cleanup recovery failed')
+    agent = _fast_then_slow_tool_agent(started)
+    loop = get_event_loop()
+    tasks_before = asyncio.all_tasks(loop)
+
+    with _interrupt_sync_run_once(started), pytest.MonkeyPatch.context() as mp:
+        run_until_complete = loop.run_until_complete
+
+        def failing_cleanup(future: Any) -> Any:
+            try:
+                return run_until_complete(future)
+            except asyncio.CancelledError:
+                try:
+                    raise cleanup_error
+                except ValueError:
+                    raise final_error
+
+        mp.setattr(loop, 'run_until_complete', failing_cleanup)
+        with pytest.raises(KeyboardInterrupt) as exc_info:
+            agent.run_sync('go')
+
+    chain = _context_chain(exc_info.value)
+    assert chain[:2] == [final_error, cleanup_error]
+    assert len(chain) == 3
+    assert isinstance(chain[2], asyncio.CancelledError)
+    assert chain[2].__context__ is None
+    assert exc_info.value.__suppress_context__
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert _tool_returns(cancelled) == ['fast done']
+    assert asyncio.all_tasks(loop) == tasks_before
+
+
 def test_run_stream_sync_keyboard_interrupt_before_final_result_carries_run_state():
     """Ctrl-C while `run_stream_sync()` runs tools before finding the final result carries the run state."""
     started = asyncio.Event()
@@ -1959,7 +1996,9 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
 
 
 async def test_first_party_cancel_uncancelled_by_after_run_is_typed():
-    """A first-party request remains terminal after a hook clears the task's cancellation count."""
+    """A first-party request remains terminal after a hook clears the owning task's cancellation count."""
+    task = asyncio.current_task()
+    assert task is not None
 
     class UncancelInAfterRun(AbstractCapability):
         async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
@@ -1967,8 +2006,6 @@ async def test_first_party_cancel_uncancelled_by_after_run_is_typed():
             try:
                 await asyncio.sleep(0)
             except asyncio.CancelledError:
-                task = asyncio.current_task()
-                assert task is not None
                 task.uncancel()
             return result
 
@@ -1980,6 +2017,9 @@ async def test_first_party_cancel_uncancelled_by_after_run_is_typed():
 
 async def test_uncancelled_request_does_not_leak_after_hook_error():
     """A hook error after clearing cancellation leaves the caller task's counter unchanged."""
+    task = asyncio.current_task()
+    assert task is not None
+    baseline = task.cancelling()
 
     class FailAfterUncancel(AbstractCapability):
         async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
@@ -1987,14 +2027,9 @@ async def test_uncancelled_request_does_not_leak_after_hook_error():
             try:
                 await asyncio.sleep(0)
             except asyncio.CancelledError:
-                task = asyncio.current_task()
-                assert task is not None
                 task.uncancel()
             raise ValueError('hook failed')
 
-    task = asyncio.current_task()
-    assert task is not None
-    baseline = task.cancelling()
     agent = Agent(TestModel(), capabilities=[FailAfterUncancel()])
 
     with pytest.raises(ValueError, match='hook failed'):

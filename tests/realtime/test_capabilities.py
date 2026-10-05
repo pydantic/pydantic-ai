@@ -878,7 +878,9 @@ async def test_before_run_can_cancel_realtime_session() -> None:
 
 
 async def test_after_run_uncancel_cannot_complete_realtime_session() -> None:
-    """A first-party cancellation remains terminal after a hook clears the task's cancellation count."""
+    """A first-party cancellation remains terminal after a hook clears the owning task's cancellation count."""
+    task = asyncio.current_task()
+    assert task is not None
 
     class UncancelAfterRun(AbstractCapability[None]):
         async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
@@ -886,8 +888,6 @@ async def test_after_run_uncancel_cannot_complete_realtime_session() -> None:
             try:
                 await asyncio.sleep(0)
             except asyncio.CancelledError:
-                task = asyncio.current_task()
-                assert task is not None
                 task.uncancel()
             return result
 
