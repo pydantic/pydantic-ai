@@ -169,6 +169,7 @@ class GrainPlugin(Plugin[GrainSettings]):
                 description='Configure Grain: token source and settings (/grain), or /grain status | key | logout.',
                 handler=partial(grain_command, connection=self.connection),
                 complete=lambda args: ('key', 'logout', 'status') if len(args) <= 1 else (),
+                during_turn=True,
             ),
         )
 
