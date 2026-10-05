@@ -1250,6 +1250,14 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             ) as run:
                 yield run
 
+    def _check_realtime_signaling(self) -> None:
+        if DBOS.workflow_id is not None and DBOS.step_id is None:
+            raise UserError(
+                '`agent.realtime(...).answer_webrtc_offer()`, `.create_client_secret()` and `.hang_up()` cannot '
+                'be used directly inside a DBOS workflow, as they issue non-deterministic provider requests. '
+                'Call them from inside a DBOS step, or outside the workflow.'
+            )
+
     @asynccontextmanager
     async def _resolve_realtime_session(
         self,
@@ -1276,12 +1284,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         same boundary `run()`/`run_stream()` use — and outside workflows entirely, it delegates to
         the wrapped agent unchanged.
         """
-        if DBOS.workflow_id is not None and DBOS.step_id is None:
-            raise UserError(
-                '`agent.realtime(...).answer_webrtc_offer()` and `.create_client_secret()` cannot be used '
-                'directly inside a DBOS workflow, as they issue non-deterministic provider requests. Call '
-                'them from inside a DBOS step, or outside the workflow.'
-            )
+        self._check_realtime_signaling()
         async with super()._resolve_realtime_session(
             model,
             deps=deps,
