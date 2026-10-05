@@ -698,8 +698,10 @@ Explicit per-model values win; reset restores the family default without saving
 it as an override. Other models keep their existing defaults. Family defaults
 follow the model each request uses and sit beneath the settings of
 capabilities, a plugin's or your agent's, so a capability can change them; an
-agent's own `model_settings` stay beneath the defaults. Your saved values are
-passed to each run on that model, where they win over everything else. Provider-specific
+agent's own `model_settings` stay beneath the defaults. The values you saved for
+the session's model (the one you chose, or CLAI's default) are passed to each run
+and win over everything else on requests to that model; a request on a model a
+capability selected instead gets only that model's family defaults. Provider-specific
 fields are consumed only by APIs that support them; this does not add Responses
 controls to Chat Completions or other protocols.
 
