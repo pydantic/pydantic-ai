@@ -1012,7 +1012,7 @@ class _Shell(Generic[DepsT, OutputT]):
         # this model's saved settings reach its next request. A menu still open when it ends delays
         # the next prompt.
         ended = TurnEnd(text=start.text, outcome='cancelled')
-        with self.session_settings.turn():
+        with self.session_settings.turn(), self.speculation.turn():
             send, receive = create_memory_object_stream[str](math.inf)
             async with self.loader.turn(), create_task_group() as mid_turn:
                 mid_turn.start_soon(self._serve_mid_turn, receive)
