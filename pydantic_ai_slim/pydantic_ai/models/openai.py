@@ -671,7 +671,9 @@ def _cacheable_instruction_count(instruction_parts: Sequence[InstructionPart]) -
     return next((i for i, part in enumerate(instruction_parts) if part.dynamic), len(instruction_parts))
 
 
-def _leading_system_message_count(messages: Sequence[Mapping[str, Any]], system_prompt_role: str) -> int:
+def _leading_system_message_count(
+    messages: Sequence[Mapping[str, Any]], system_prompt_role: OpenAISystemPromptRole
+) -> int:
     """Number of leading messages holding system prompts, which is where instructions belong."""
     return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
 
@@ -1893,10 +1895,18 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             static_count = _cacheable_instruction_count(instruction_parts)
             breakpoint_index = system_prompt_count + static_count - 1
             if breakpoint_index >= 0:
-                target = cast(dict[str, Any], openai_messages[breakpoint_index])
-                content = [ChatCompletionContentPartTextParam(type='text', text=target['content'])]
-                _add_openai_prompt_cache_breakpoint(content)
-                target['content'] = content
+                target = cast(
+                    'chat.ChatCompletionSystemMessageParam | chat.ChatCompletionDeveloperMessageParam',
+                    openai_messages[breakpoint_index],
+                )
+                content = target['content']
+                content_parts = (
+                    [ChatCompletionContentPartTextParam(type='text', text=content)]
+                    if isinstance(content, str)
+                    else list(content)
+                )
+                _add_openai_prompt_cache_breakpoint(content_parts)
+                target['content'] = content_parts
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         # After instructions are inserted and system messages merged: the breakpoint may land on a system
