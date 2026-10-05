@@ -498,31 +498,42 @@ class ModelSettings(TypedDict, total=False):
     """
 
     cache: CacheSetting
-    """Enable or configure prompt caching for the model request.
+    """Enable, configure, or disable library-managed prompt caching for the model request.
 
-    - `True`: Enable prompt caching with the provider's default retention. Uses the provider's
-      automatic caching mode where one exists; elsewhere the library places cache breakpoints
-      at the stable prompt boundaries (end of tool definitions, end of static instructions).
-    - `False`: No library-managed caching (overrides a `cache` value in the model's default
-      settings). Providers that cache implicitly (e.g. OpenAI) still do.
-    - `'5m'`/`'30m'`/`'1h'`: Enable prompt caching with a specific retention, snapped to the
-      nearest tier the provider supports (down where a shorter tier exists).
+    Prompt caching is on by default (`True`) for the models that need the request to opt into it, so
+    long and multi-turn prompts are served from the provider's cache instead of being re-processed.
+    Cache writes cost more than uncached input (1.25x for Anthropic's 5-minute and OpenAI's GPT-5.6
+    caches, 2x for Anthropic's 1-hour cache) while cache reads cost about 0.1x, so caching pays off
+    as soon as a prefix is read back once.
 
-    Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] markers in the message history are
-    unaffected and can be combined with this setting. Provider-specific cache settings
-    (e.g. `anthropic_cache`, `bedrock_cache_instructions`) take precedence: if any is set, this
-    unified field is ignored entirely.
+    - `True` (the default): Cache the stable prompt prefix (tool definitions and static instructions)
+      and the growing conversation, with the provider's default retention. Uses the provider's
+      automatic caching mode where one exists; elsewhere the library places cache breakpoints.
+    - `False`: Disable library-managed caching (overrides a `cache` value in the model's default
+      settings). Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] markers and
+      provider-specific cache settings still apply, and providers that cache implicitly
+      (e.g. OpenAI, Gemini) still do.
+    - `'5m'`/`'30m'`/`'1h'`: Cache with a specific retention, snapped to the nearest tier the
+      provider supports (down where a shorter tier exists).
 
-    Silently ignored by model classes not listed below.
+    Explicit `CachePoint` markers in the message history can be combined with this setting; when
+    a request would exceed the provider's maximum number of cache breakpoints, the oldest message
+    breakpoints are dropped first. Provider-specific cache settings (e.g. `anthropic_cache`,
+    `bedrock_cache_instructions`) take precedence: if any is set, including to `False`, this unified
+    field is ignored entirely for that request.
+
+    Silently ignored by model classes not listed below, and by models that cache implicitly without
+    request-side configuration.
 
     Supported by:
 
-    * Anthropic (as `anthropic_cache`; via breakpoint settings on Bedrock and Vertex clients)
-    * Bedrock (as `bedrock_cache_instructions` + `bedrock_cache_tool_definitions`)
-    * OpenRouter (as `openrouter_cache_instructions` + `openrouter_cache_tool_definitions`)
-    * OpenAI (no request effect: OpenAI caches prompts implicitly)
-    * Google (no request effect: Gemini caches prompts implicitly; warns unless
-      `google_cached_content` is set)
+    * Anthropic (as `anthropic_cache`; as instruction, tool definition and message breakpoints on
+      the Bedrock and Vertex SDK clients)
+    * Bedrock (Anthropic and Amazon Nova models only; as `bedrock_cache_instructions`,
+      `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
+    * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
+      `openrouter_cache_tool_definitions` and `openrouter_cache_messages`)
+    * OpenAI (GPT-5.6 and later on the OpenAI API only; as `openai_prompt_cache_options`)
     """
 
     service_tier: ServiceTier

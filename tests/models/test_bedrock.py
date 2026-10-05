@@ -3721,7 +3721,9 @@ async def test_bedrock_delta_renders_announcement_and_plain_tool_spec(
                         }
                     },
                 }
-            }
+            },
+            # Prompt caching is on by default.
+            {'cachePoint': {'type': 'default'}},
         ],
         'toolChoice': {'auto': {}},
     }
@@ -3767,7 +3769,14 @@ async def test_bedrock_tool_results_lead_multi_reveal_turn(
     await model.request(model.prepare_messages(history, parameters), settings, parameters)
 
     *_, last_message = mock_converse.call_args.kwargs['messages']
-    assert [next(iter(block)) for block in last_message['content']] == ['toolResult', 'toolResult', 'text', 'text']
+    # The trailing cache point is the default history breakpoint.
+    assert [next(iter(block)) for block in last_message['content']] == [
+        'toolResult',
+        'toolResult',
+        'text',
+        'text',
+        'cachePoint',
+    ]
     assert [block['toolResult']['toolUseId'] for block in last_message['content'][:2]] == ['tooluse_1', 'tooluse_2']
 
 
@@ -4412,6 +4421,63 @@ async def test_unified_cache_writes_then_reads_real_api(
         for body in sent_requests
     ] == [{'system': [expected_cache_point], 'tools': [expected_cache_point]}] * 2
     assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
+async def test_cache_on_by_default_reads_history_after_wide_turn_real_api(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """With no cache settings at all, a direct `model.request()` caches the conversation, and the next
+    request reads it back even after a turn with 12 parallel tool calls.
+
+    Bedrock looks back only about 20 content blocks from a cache breakpoint for an earlier cache entry, and the
+    wide turn adds 25, so the end of the previous request gets its own breakpoint
+    (https://github.com/pydantic/pydantic-ai/issues/9404).
+    """
+    # Claude Sonnet 4.5 on Bedrock reads nothing back after this turn without the extra breakpoint.
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
+    )
+    first_request = ModelRequest(
+        parts=[
+            UserPromptPart('Here are some notes about Python, for a wide turn. ' + 'Python favors readability. ' * 1200)
+        ],
+        instructions='You are a concise Python assistant.',
+    )
+    tool_calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    history: list[ModelMessage] = [
+        first_request,
+        ModelResponse(parts=[TextPart('Checking the weather.'), *tool_calls]),
+        ModelRequest(
+            parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in tool_calls]
+        ),
+    ]
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await model.request([first_request], None, params)
+        second = await model.request(history, None, params)
+
+    def cache_point_positions(body: dict[str, Any]) -> list[tuple[int, int]]:
+        return [
+            (message_index, block_index)
+            for message_index, message in enumerate(body['messages'])
+            for block_index, block in enumerate(message['content'])
+            if 'cachePoint' in block
+        ]
+
+    # Instructions, tools, and the end of the conversation; after the wide turn, also the end of the first request.
+    assert [cache_point_positions(body) for body in sent_requests] == snapshot([[(0, 1)], [(0, 1), (2, 12)]])
+    assert [
+        ('cachePoint' in body['system'][-1], 'cachePoint' in body['toolConfig']['tools'][-1]) for body in sent_requests
+    ] == [(True, True)] * 2
+    assert (first.usage, second.usage) == snapshot(
+        (
+            RequestUsage(input_tokens=7749, cache_write_tokens=7746, output_tokens=219),
+            RequestUsage(input_tokens=8337, cache_read_tokens=7746, cache_write_tokens=584, output_tokens=156),
+        )
+    )
+    assert second.usage.cache_read_tokens >= first.usage.cache_write_tokens
 
 
 @pytest.mark.vcr()
@@ -5172,6 +5238,29 @@ async def test_unified_cache_places_stable_boundary_points(
 
     tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
     assert tool_config and tool_config['tools'][-1] == snapshot({'cachePoint': {'type': 'default'}})
+
+
+async def test_bedrock_cache_messages_keeps_existing_previous_request_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """After a wide turn, a previous request that already ends in a `CachePoint` doesn't get a second one."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Check the weather everywhere.', CachePoint()])]),
+        ModelResponse(parts=[TextPart('Checking.'), *calls]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+
+    assert [[next(iter(block)) for block in message['content']][-2:] for message in bedrock_messages] == [
+        ['text', 'cachePoint'],
+        ['toolUse', 'toolUse'],
+        ['toolResult', 'cachePoint'],
+    ]
 
 
 async def test_unified_cache_tool_points_skipped_for_nova(
@@ -7496,7 +7585,8 @@ async def test_bedrock_anthropic_5_drops_sampling_settings(
     `top_p` must not reach `inferenceConfig`, and unified `top_k` must not reach
     `additionalModelRequestFields`.
     """
-    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5)
+    # `cache=False` keeps the request identical to the recording, made before caching was on by default.
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5, cache=False)
     model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
     agent = Agent(model, model_settings=settings)
 
@@ -7516,7 +7606,7 @@ async def test_bedrock_anthropic_5_drops_sampling_settings(
     assert sent['inferenceConfig'] == snapshot({'maxTokens': 16})
     assert 'additionalModelRequestFields' not in sent
     # Filtering happens on a copy, so the caller's own settings dict is left intact.
-    assert settings == snapshot({'max_tokens': 16, 'temperature': 0.2, 'top_p': 0.3, 'top_k': 5})
+    assert settings == snapshot({'max_tokens': 16, 'temperature': 0.2, 'top_p': 0.3, 'top_k': 5, 'cache': False})
 
 
 @pytest.mark.vcr(additional_matchers=['body'])
@@ -7531,7 +7621,8 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     enough to pin it (the same reason `test_anthropic_sampling_settings_reach_the_wire` omits it).
     The body matcher proves the newly generated request still matches this expected wire shape.
     """
-    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_k=5)
+    # `cache=False` keeps the request identical to the recording, made before caching was on by default.
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_k=5, cache=False)
     model = BedrockConverseModel('eu.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     agent = Agent(model, model_settings=settings)
 
@@ -7669,7 +7760,14 @@ def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
 
     prepared, _ = model.prepare_request(BedrockModelSettings(max_tokens=16), ModelRequestParameters())
 
-    assert prepared == snapshot({'max_tokens': 16})
+    assert prepared == snapshot(
+        {
+            'max_tokens': 16,
+            'bedrock_cache_instructions': True,
+            'bedrock_cache_tool_definitions': True,
+            'bedrock_cache_messages': True,
+        }
+    )
     assert not [w for w in recwarn if 'Sampling parameters' in str(w.message)]
 
 

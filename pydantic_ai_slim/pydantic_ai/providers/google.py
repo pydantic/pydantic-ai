@@ -12,7 +12,6 @@ from pydantic_ai._http import (
     warn_if_legacy_httpx_client,
 )
 from pydantic_ai.models import get_user_agent
-from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
@@ -52,11 +51,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        # The unified `cache` setting adds nothing to a Google request: Gemini caches prompts
-        # implicitly, and explicit caching needs a pre-created resource passed via
-        # `google_cached_content`. Claiming support here lets `GoogleModel.prepare_request` warn
-        # when `cache` is set without one, instead of ignoring the setting silently.
-        return merge_profile(google_model_profile(model_name), ModelProfile(supports_cache=True))
+        return google_model_profile(model_name)
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:

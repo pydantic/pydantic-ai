@@ -229,9 +229,13 @@ def test_cache_point_ttl_extends_retention_without_declared_tiers():
 
 def test_declared_tiers_gate_cache_point_ttl():
     history = _cache_point_history(timedelta(minutes=45), '1h')
-    profile = ModelProfile(default_cache_retention=timedelta(minutes=30), supported_cache_retentions=('5m',))
+    profile = ModelProfile(
+        default_cache_retention=timedelta(minutes=30), supports_cache=True, supported_cache_retentions=('5m',)
+    )
     assert prompt_cache_outlook(history, profile=profile, now=NOW) == 'cold'
-    profile = ModelProfile(default_cache_retention=timedelta(minutes=30), supported_cache_retentions=('5m', '1h'))
+    profile = ModelProfile(
+        default_cache_retention=timedelta(minutes=30), supports_cache=True, supported_cache_retentions=('5m', '1h')
+    )
     assert prompt_cache_outlook(history, profile=profile, now=NOW) == 'warm'
 
 

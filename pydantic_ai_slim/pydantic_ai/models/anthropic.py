@@ -5,7 +5,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 
@@ -83,7 +83,7 @@ from ..profiles.anthropic import (
 from ..providers import Provider, infer_provider
 from ..providers._bedrock_model_names import bedrock_claude_cache_retentions
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import CacheRetention, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheRetention, CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
@@ -101,7 +101,7 @@ from . import (
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
-from ._prompt_cache import excess_cache_points
+from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
@@ -1020,16 +1020,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model name."""
         return self._model_name
 
-    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the longest retention requested by active Anthropic cache settings or the unified `cache` setting.
-
-        Mirrors `_translate_cache` precedence: when any explicit `anthropic_cache*` setting is
-        present, the unified value contributes nothing, since it also adds nothing to the request.
-        """
-        settings = merge_model_settings(self.settings, model_settings) or {}
-        if any(key in settings for key in _CACHE_SETTINGS_KEYS):
-            return self._max_cache_retention(*(settings.get(key) for key in _CACHE_SETTINGS_KEYS))
-        return self._max_cache_retention(self._resolved_cache_setting(settings))
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        # Mirrors `prepare_request` precedence: when any explicit `anthropic_cache*` setting is present, the
+        # unified value contributes nothing, since it also adds nothing to the request.
+        if any(key in merged_settings for key in _CACHE_SETTINGS_KEYS):
+            return tuple(cast(dict[str, Any], merged_settings).get(key) for key in _CACHE_SETTINGS_KEYS)
+        return super()._effective_cache_settings(merged_settings)
 
     @property
     def system(self) -> str:
@@ -1221,15 +1217,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
-        if model_request_parameters.cache:
-            if any(key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS):
-                # Explicit `anthropic_cache*` settings take precedence; the unified value adds
-                # nothing to the request, so it must not be reported as resolved either.
-                model_request_parameters = replace(model_request_parameters, cache=None)
-            else:
-                prepared_settings = self._translate_cache(
-                    cast(AnthropicModelSettings, prepared_settings or {}), model_request_parameters.cache
-                )
+        # Explicit `anthropic_cache*` settings take precedence over the unified `cache` setting.
+        if (cache := model_request_parameters.cache) and not any(
+            key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS
+        ):
+            prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
@@ -2857,8 +2849,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         Only called when no explicit `anthropic_cache*` setting is present (those take
         precedence in `prepare_request`). Uses automatic caching where the client supports it;
-        on Bedrock and Vertex the library places breakpoints at the stable prompt boundaries
-        instead.
+        on Bedrock and Vertex the library places breakpoints at the end of the static
+        instructions, the tool definitions and the conversation instead.
         """
         ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
         translated = model_settings.copy()
@@ -2867,6 +2859,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         else:
             translated['anthropic_cache_instructions'] = ttl
             translated['anthropic_cache_tool_definitions'] = ttl
+            translated['anthropic_cache_messages'] = ttl
         return translated
 
     def _build_automatic_cache_control(
@@ -2939,14 +2932,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Apply per-block `cache_control` to the last content block of the last message.
 
         If the last block already has `cache_control` (e.g. from an explicit `CachePoint`),
-        it is left unchanged to preserve the user's chosen TTL.
+        it is left unchanged to preserve the user's chosen TTL. When the previous request's
+        breakpoint is further back than the provider's lookback reaches (a wide fan-out of
+        parallel tool calls on Bedrock), the end of that request gets a breakpoint too.
 
         Assumes `anthropic_messages` is non-empty.
         """
-        last_message = anthropic_messages[-1]
-        content = last_message['content']
+        previous_tail = previous_tail_needing_breakpoint(
+            [message['role'] for message in anthropic_messages],
+            [
+                1 if isinstance(content := message['content'], str) else len(cast(list[BetaContentBlockParam], content))
+                for message in anthropic_messages
+            ],
+        )
+        if previous_tail is not None:
+            self._add_message_cache_control(anthropic_messages[previous_tail], ttl)
+        self._add_message_cache_control(anthropic_messages[-1], ttl)
+
+    def _add_message_cache_control(self, message: BetaMessageParam, ttl: Literal['5m', '1h']) -> None:
+        """Add `cache_control` to the last cacheable content block of `message`, unless it already has one."""
+        content = message['content']
         if isinstance(content, str):  # pragma: no cover
-            last_message['content'] = [
+            message['content'] = [
                 BetaTextBlockParam(
                     type='text',
                     text=content,

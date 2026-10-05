@@ -1,8 +1,8 @@
 """Tests for the unified `cache` prompt-caching setting.
 
-Tests the base `Model.prepare_request()` cache resolution and retention snap-down, the
-per-provider translation onto provider-specific cache settings, the shared cache-point
-budget helper, the retention resolver, and the Google warning path.
+Tests the base `Model.prepare_request()` cache resolution (on by default) and retention snap-down,
+the per-provider translation onto provider-specific cache settings, the shared cache-point
+budget and lookback helpers, the retention resolver, and the `Caching` capability.
 """
 
 # pyright: reportPrivateUsage=false
@@ -15,10 +15,15 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models._prompt_cache import excess_cache_points, snap_cache_retention
+from pydantic_ai.models._prompt_cache import (
+    excess_cache_points,
+    previous_tail_needing_breakpoint,
+    snap_cache_retention,
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -42,7 +47,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 with try_import() as google_imports:
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
 
@@ -61,9 +66,7 @@ def _make_model(
     return FunctionModel(_echo, profile=profile)
 
 
-def _resolve_cache(
-    model: FunctionModel, cache: CacheSetting
-) -> tuple[ModelSettings | None, Literal[True] | CacheRetention | None]:
+def _resolve_cache(model: FunctionModel, cache: CacheSetting) -> tuple[ModelSettings | None, CacheSetting | None]:
     settings, params = model.prepare_request(ModelSettings(cache=cache), ModelRequestParameters())
     return settings, params.cache
 
@@ -126,11 +129,26 @@ class TestPrepareRequestCacheResolution:
         _, cache = _resolve_cache(model, '1h')
         assert cache == '1h'
 
-    def test_cache_false_not_resolved(self):
+    def test_cache_false_resolved_as_false(self):
         model = _make_model(supports_cache=True)
         settings, cache = _resolve_cache(model, False)
-        assert cache is None
+        assert cache is False
         assert settings is None
+
+    def test_cache_on_by_default(self):
+        """With no `cache` setting at all, a model that supports caching configuration gets `True`."""
+        _, params = _make_model(supports_cache=True).prepare_request(None, ModelRequestParameters())
+        assert params.cache is True
+        _, params = _make_model(supports_cache=False).prepare_request(None, ModelRequestParameters())
+        assert params.cache is None
+
+    def test_pre_resolved_cache_kept(self):
+        """Parameters that already carry a resolved value (a caller that prepared them before) keep it."""
+        model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '1h'))
+        _, params = model.prepare_request(None, ModelRequestParameters(cache=False))
+        assert params.cache is False
+        _, params = model.prepare_request(None, ModelRequestParameters(cache='1h'))
+        assert params.cache == '1h'
 
     def test_cache_dropped_without_supports_cache(self):
         model = _make_model(supports_cache=False)
@@ -165,8 +183,23 @@ class TestPrepareRequestCacheResolution:
     def test_run_level_cache_false_overrides_model_default(self):
         model = FunctionModel(_echo, profile=ModelProfile(supports_cache=True), settings=ModelSettings(cache=True))
         settings, params = model.prepare_request(ModelSettings(cache=False), ModelRequestParameters())
-        assert params.cache is None
+        assert params.cache is False
         assert settings is None
+
+
+class TestPreviousTailNeedingBreakpoint:
+    def test_first_request_needs_none(self):
+        assert previous_tail_needing_breakpoint(['user'], [30]) is None
+
+    def test_narrow_turn_needs_none(self):
+        assert previous_tail_needing_breakpoint(['user', 'assistant', 'user'], [1, 4, 3]) is None
+
+    def test_wide_turn_marks_previous_tail(self):
+        # 1 text + 11 tool calls, then 11 tool results: 23 blocks past the previous breakpoint.
+        assert previous_tail_needing_breakpoint(['user', 'assistant', 'user'], [1, 12, 11]) == 0
+
+    def test_assistant_without_preceding_user(self):
+        assert previous_tail_needing_breakpoint(['assistant', 'user'], [20, 20]) is None
 
 
 class TestExcessCachePoints:
@@ -206,19 +239,33 @@ class TestAnthropicCacheTranslation:
         assert settings == {'anthropic_cache': '5m'}
         assert params.cache is True
 
-    def test_bedrock_client_uses_stable_boundary_breakpoints(self):
+    def test_cache_on_by_default(self):
+        settings, params = self._model().prepare_request(None, ModelRequestParameters())
+        assert settings == {'anthropic_cache': '5m'}
+        assert params.cache is True
+
+    def test_cache_false_sends_nothing(self):
+        settings, params = self._model().prepare_request(ModelSettings(cache=False), ModelRequestParameters())
+        assert settings is None
+        assert params.cache is False
+
+    def test_bedrock_client_uses_breakpoints(self):
         client = AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')
         model = self._model(client)
         assert model.profile.get('supports_auto_cache') is False
         settings, _ = model.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
-        assert settings == {'anthropic_cache_instructions': '1h', 'anthropic_cache_tool_definitions': '1h'}
+        assert settings == {
+            'anthropic_cache_instructions': '1h',
+            'anthropic_cache_tool_definitions': '1h',
+            'anthropic_cache_messages': '1h',
+        }
 
     def test_explicit_provider_setting_wins(self):
         settings, params = self._model().prepare_request(
             AnthropicModelSettings(cache=True, anthropic_cache_instructions='1h'), ModelRequestParameters()
         )
         assert settings == {'anthropic_cache_instructions': '1h'}
-        assert params.cache is None
+        assert params.cache is True
 
     def test_falsy_explicit_provider_setting_still_wins(self):
         """Precedence is presence-based: `anthropic_cache_instructions=False` is how a user
@@ -228,7 +275,7 @@ class TestAnthropicCacheTranslation:
             AnthropicModelSettings(cache=True, anthropic_cache_instructions=False), ModelRequestParameters()
         )
         assert settings == {'anthropic_cache_instructions': False}
-        assert params.cache is None
+        assert params.cache is True
         model = self._model()
         assert model.resolve_cache_retention(AnthropicModelSettings(cache='1h', anthropic_cache=False)) is None
 
@@ -242,7 +289,7 @@ class TestAnthropicCacheTranslation:
         )
         settings, params = model.prepare_request(ModelSettings(cache=True), ModelRequestParameters())
         assert settings == {'anthropic_cache_instructions': '1h'}
-        assert params.cache is None
+        assert params.cache is True
 
     def test_explicit_cache_messages_prevents_automatic_caching_conflict(self):
         """`anthropic_cache_messages` cannot be combined with `anthropic_cache`, so the unified
@@ -251,7 +298,7 @@ class TestAnthropicCacheTranslation:
             AnthropicModelSettings(cache=True, anthropic_cache_messages=True), ModelRequestParameters()
         )
         assert settings == {'anthropic_cache_messages': True}
-        assert params.cache is None
+        assert params.cache is True
 
     def test_profile_without_auto_cache_uses_stable_boundaries(self):
         """A profile that disclaims automatic caching gets library-placed breakpoints instead."""
@@ -261,7 +308,11 @@ class TestAnthropicCacheTranslation:
             profile=ModelProfile(supports_auto_cache=False),
         )
         settings, _ = model.prepare_request(ModelSettings(cache=True), ModelRequestParameters())
-        assert settings == {'anthropic_cache_instructions': '5m', 'anthropic_cache_tool_definitions': '5m'}
+        assert settings == {
+            'anthropic_cache_instructions': '5m',
+            'anthropic_cache_tool_definitions': '5m',
+            'anthropic_cache_messages': '5m',
+        }
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
@@ -269,12 +320,14 @@ class TestBedrockCacheTranslation:
     def _model(self, bedrock_provider: BedrockProvider) -> BedrockConverseModel:
         return BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
 
-    def test_cache_true_translates_to_stable_boundaries(self, bedrock_provider: BedrockProvider):
+    def test_cache_true_translates_to_breakpoints(self, bedrock_provider: BedrockProvider):
         """`True` stays `True` in the injected settings so no explicit `ttl` reaches the wire."""
-        settings, params = self._model(bedrock_provider).prepare_request(
-            ModelSettings(cache=True), ModelRequestParameters()
-        )
-        assert settings == {'bedrock_cache_instructions': True, 'bedrock_cache_tool_definitions': True}
+        settings, params = self._model(bedrock_provider).prepare_request(None, ModelRequestParameters())
+        assert settings == {
+            'bedrock_cache_instructions': True,
+            'bedrock_cache_tool_definitions': True,
+            'bedrock_cache_messages': True,
+        }
         assert params.cache is True
 
     def test_cache_retention_snaps_before_translation(self, bedrock_provider: BedrockProvider):
@@ -283,14 +336,22 @@ class TestBedrockCacheTranslation:
         produce a runtime `ValidationException`."""
         model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
         settings, params = model.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
-        assert settings == {'bedrock_cache_instructions': '5m', 'bedrock_cache_tool_definitions': '5m'}
+        assert settings == {
+            'bedrock_cache_instructions': '5m',
+            'bedrock_cache_tool_definitions': '5m',
+            'bedrock_cache_messages': '5m',
+        }
         assert params.cache == '5m'
 
     def test_one_hour_retention_forwarded_on_supporting_model(self, bedrock_provider: BedrockProvider):
         settings, params = self._model(bedrock_provider).prepare_request(
             ModelSettings(cache='1h'), ModelRequestParameters()
         )
-        assert settings == {'bedrock_cache_instructions': '1h', 'bedrock_cache_tool_definitions': '1h'}
+        assert settings == {
+            'bedrock_cache_instructions': '1h',
+            'bedrock_cache_tool_definitions': '1h',
+            'bedrock_cache_messages': '1h',
+        }
         assert params.cache == '1h'
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
@@ -303,14 +364,18 @@ class TestBedrockCacheTranslation:
         assert one_hour.profile.get('supported_cache_retentions') == ('5m', '1h')
         assert five_minutes.profile.get('supported_cache_retentions') == ('5m',)
         settings, _ = five_minutes.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
-        assert settings == {'anthropic_cache_instructions': '5m', 'anthropic_cache_tool_definitions': '5m'}
+        assert settings == {
+            'anthropic_cache_instructions': '5m',
+            'anthropic_cache_tool_definitions': '5m',
+            'anthropic_cache_messages': '5m',
+        }
 
     def test_explicit_provider_setting_wins(self, bedrock_provider: BedrockProvider):
         settings, params = self._model(bedrock_provider).prepare_request(
             BedrockModelSettings(cache=True, bedrock_cache_messages=True), ModelRequestParameters()
         )
         assert settings == {'bedrock_cache_messages': True}
-        assert params.cache is None
+        assert params.cache is True
 
     def test_falsy_explicit_provider_setting_still_wins(self, bedrock_provider: BedrockProvider):
         """Precedence is presence-based: an explicit `False` disables caching entirely rather
@@ -319,7 +384,7 @@ class TestBedrockCacheTranslation:
             BedrockModelSettings(cache=True, bedrock_cache_instructions=False), ModelRequestParameters()
         )
         assert settings == {'bedrock_cache_instructions': False}
-        assert params.cache is None
+        assert params.cache is True
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -330,25 +395,40 @@ class TestOpenRouterCacheTranslation:
     def test_cache_true_translates_to_stable_boundaries(self):
         settings, params = self._model().prepare_request(ModelSettings(cache=True), ModelRequestParameters())
         assert settings == snapshot(
-            {'openrouter_cache_instructions': '5m', 'openrouter_cache_tool_definitions': '5m', 'extra_body': {}}
+            {
+                'openrouter_cache_instructions': '5m',
+                'openrouter_cache_tool_definitions': '5m',
+                'openrouter_cache_messages': '5m',
+                'extra_body': {},
+            }
         )
         assert params.cache is True
 
     def test_cache_retention_forwarded(self):
         settings, params = self._model().prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
         assert settings == snapshot(
-            {'openrouter_cache_instructions': '1h', 'openrouter_cache_tool_definitions': '1h', 'extra_body': {}}
+            {
+                'openrouter_cache_instructions': '1h',
+                'openrouter_cache_tool_definitions': '1h',
+                'openrouter_cache_messages': '1h',
+                'extra_body': {},
+            }
         )
         assert params.cache == '1h'
 
     def test_cache_retention_snapped_on_gemini_downstream(self):
-        """Gemini on OpenRouter supports only the 5-minute tier, so `'1h'` snaps down before translation."""
+        """Gemini on OpenRouter has no TTL to request, so `'1h'` caches at its default retention."""
         model = OpenRouterModel('google/gemini-2.5-flash', provider=OpenRouterProvider(api_key='test'))
         settings, params = model.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
         assert settings == snapshot(
-            {'openrouter_cache_instructions': '5m', 'openrouter_cache_tool_definitions': '5m', 'extra_body': {}}
+            {
+                'openrouter_cache_instructions': '5m',
+                'openrouter_cache_tool_definitions': '5m',
+                'openrouter_cache_messages': '5m',
+                'extra_body': {},
+            }
         )
-        assert params.cache == '5m'
+        assert params.cache is True
 
     def test_explicit_provider_setting_wins(self):
         settings, params = self._model().prepare_request(
@@ -358,7 +438,7 @@ class TestOpenRouterCacheTranslation:
         assert result.get('openrouter_cache_messages') == '1h'
         assert 'openrouter_cache_instructions' not in result
         assert 'openrouter_cache_tool_definitions' not in result
-        assert params.cache is None
+        assert params.cache is True
 
     def test_falsy_explicit_provider_setting_still_wins(self):
         """Precedence is presence-based: an explicit `False` disables caching entirely rather
@@ -369,25 +449,7 @@ class TestOpenRouterCacheTranslation:
         result: dict[str, Any] = dict(settings or {})
         assert result.get('openrouter_cache_instructions') is False
         assert 'openrouter_cache_tool_definitions' not in result
-        assert params.cache is None
-
-
-@pytest.mark.skipif(not google_imports(), reason='google not installed')
-class TestGoogleCacheWarning:
-    def _model(self) -> GoogleModel:
-        return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test'))
-
-    def test_cache_without_cached_content_warns(self):
-        with pytest.warns(UserWarning, match='The unified `cache` setting adds nothing to a Google request'):
-            self._model().prepare_request(ModelSettings(cache=True), ModelRequestParameters())
-
-    def test_cache_with_cached_content_does_not_warn(self):
-        settings = GoogleModelSettings(cache=True, google_cached_content='cachedContents/foo')
-        _, params = self._model().prepare_request(settings, ModelRequestParameters())
-        assert params.cache is None
-
-    def test_no_cache_setting_does_not_warn(self):
-        self._model().prepare_request(ModelSettings(), ModelRequestParameters())
+        assert params.cache is True
 
 
 class TestResolveCacheRetentionUnified:
@@ -396,7 +458,8 @@ class TestResolveCacheRetentionUnified:
         assert model.resolve_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
         assert model.resolve_cache_retention(ModelSettings(cache=True)) == timedelta(minutes=5)
         assert model.resolve_cache_retention(ModelSettings(cache=False)) is None
-        assert model.resolve_cache_retention(None) is None
+        # On by default, at the shortest tier.
+        assert model.resolve_cache_retention(None) == timedelta(minutes=5)
 
     def test_30m_retention_on_supporting_profile(self):
         model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '30m'))
@@ -472,3 +535,46 @@ async def test_fallback_model_snaps_cache_per_wrapped_model():
     # model again for its span attributes); every resolution must agree per model.
     assert set(primary.recorded_cache) == {'1h'}
     assert set(secondary.recorded_cache) == {'5m'}
+
+
+class TestCachingCapability:
+    @pytest.mark.parametrize('retention', [True, False, '1h'])
+    async def test_caching_sets_unified_cache(self, retention: CacheSetting):
+        """`Caching` contributes the unified `cache` setting, which each model resolves against its profile."""
+        model = _RecordingFunctionModel(
+            _echo, profile=ModelProfile(supports_cache=True, supported_cache_retentions=('5m', '1h'))
+        )
+        model.recorded_cache = []
+
+        await Agent(model, capabilities=[Caching(retention)]).run('hi')
+
+        assert set(model.recorded_cache) == {retention}
+
+    def test_caching_defaults(self):
+        caching = Caching()
+        assert caching.retention is True
+        assert caching.id == 'caching'
+        assert caching.get_model_settings() == {'cache': True}
+
+    def test_caching_from_spec(self):
+        agent = Agent.from_spec({'model': 'test', 'capabilities': [{'Caching': {'retention': '1h'}}]})
+        children = agent._root_capability.capabilities
+        assert [child for child in children if isinstance(child, Caching)] == [Caching('1h')]
+
+
+class TestCachingDisabledBySettings:
+    def test_unified_false_is_on_purpose(self):
+        model = _make_model(supports_cache=True)
+        assert not model._caching_disabled_by_settings(ModelSettings(cache=False))
+        assert not model._caching_disabled_by_settings(None)
+
+    def test_unsupported_model_never_disabled(self):
+        assert not _make_model(supports_cache=False)._caching_disabled_by_settings(None)
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    def test_provider_setting_false_disables(self):
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+        settings = AnthropicModelSettings(anthropic_cache_instructions=False)
+        assert model._caching_disabled_by_settings(settings)
+        assert WrapperModel(model)._caching_disabled_by_settings(settings)
+        assert not model._caching_disabled_by_settings(AnthropicModelSettings(anthropic_cache_instructions=True))

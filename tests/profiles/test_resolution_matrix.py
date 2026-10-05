@@ -345,7 +345,7 @@ def test_openai_gpt_5_4():
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
-            'supports_cache': True,
+            'supports_cache': False,
             'supported_cache_retentions': (),
         }
     )
@@ -562,7 +562,7 @@ def test_openai_gpt_4o():
             ),
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
-            'supports_cache': True,
+            'supports_cache': False,
             'supported_cache_retentions': (),
         }
     )
@@ -588,7 +588,7 @@ def test_openai_o3_mini():
             'openai_supports_reasoning': True,
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
-            'supports_cache': True,
+            'supports_cache': False,
             'supported_cache_retentions': (),
         }
     )
@@ -653,7 +653,6 @@ def test_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_strict_tool_definition': True,
-            'supports_cache': True,
             'google_web_search_billed_per_prompt': False,
         }
     )
@@ -671,7 +670,6 @@ def test_google_gemini_2_5_flash():
             'supports_thinking': True,
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
-            'supports_cache': True,
             'google_web_search_billed_per_prompt': True,
         }
     )
@@ -693,7 +691,6 @@ def test_google_gemini_2_5_flash_image():
             'supports_tools': False,
             'supports_thinking': True,
             'google_supports_thinking_level': False,
-            'supports_cache': True,
             'google_web_search_billed_per_prompt': True,
         }
     )
@@ -725,7 +722,6 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_thinking': True,
             'google_web_search_billed_per_prompt': False,
             'supports_tool_return_schema': True,
-            'supports_cache': True,
         }
     )
 
@@ -1202,7 +1198,7 @@ def test_openrouter_openai_gpt_5_4():
             'openai_supports_phase': True,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_cache': False,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -1242,7 +1238,7 @@ def test_openrouter_google_gemini_3_pro():
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_cache': True,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': True,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -1292,7 +1288,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'supports_tool_return_schema': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_cache': True,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
         }
     )
 
@@ -1310,7 +1306,7 @@ def test_openrouter_mistral_large():
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
             'supports_cache': False,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -1336,7 +1332,7 @@ def test_openrouter_xai_grok_4():
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_cache': False,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -1502,7 +1498,7 @@ def test_openrouter_qwen():
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
             'supports_cache': False,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -1525,7 +1521,7 @@ def test_openrouter_deepseek():
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_cache': False,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -1548,7 +1544,7 @@ def test_openrouter_meta_llama():
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
             'supports_cache': False,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -1572,7 +1568,7 @@ def test_openrouter_moonshotai():
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
             'supports_cache': False,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,
@@ -1597,7 +1593,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
             'supports_cache': False,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
             'openrouter_supports_cache_ttl': False,
             'openrouter_supports_tool_cache': False,

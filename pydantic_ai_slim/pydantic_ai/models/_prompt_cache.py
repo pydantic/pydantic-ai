@@ -74,3 +74,38 @@ def excess_cache_points(
             else:
                 excess.append(block)
     return excess
+
+
+LOOKBACK_SAFE_BLOCKS = 18
+"""How many content blocks a moving message breakpoint can safely move past the previous request's.
+
+To read a cached prefix, the provider looks back from each cache breakpoint for an earlier request's cache
+entry, but only so far: about 20 content blocks on Amazon Bedrock and on the Claude API (where the Claude API
+collapses a run of consecutive `tool_use` or `tool_result` blocks into one position, but Bedrock doesn't).
+A turn that adds more blocks than that, such as one with a dozen parallel tool calls and their results, would
+otherwise write the whole conversation again instead of reading it.
+https://github.com/pydantic/pydantic-ai/issues/9404
+"""
+
+
+def previous_tail_needing_breakpoint(
+    roles: Sequence[Literal['user', 'assistant']], block_counts: Sequence[int]
+) -> int | None:
+    """The index of the message that ended the previous request, if the next breakpoint is out of its lookback.
+
+    A library-placed history breakpoint sits at the end of the last message, so the previous request put its
+    breakpoint at the end of the last user-side message before the latest assistant message. When more than
+    `LOOKBACK_SAFE_BLOCKS` content blocks follow it, the caller adds a breakpoint there too, so the earlier cache write is an explicit breakpoint rather than
+    something the lookback has to reach.
+
+    Args:
+        roles: Each wire message's side of the conversation, oldest first. Tool results are on the user side.
+        block_counts: Each wire message's number of content blocks (tool calls included).
+    """
+    last_assistant = next((i for i in range(len(roles) - 1, -1, -1) if roles[i] == 'assistant'), None)
+    if last_assistant is None:
+        return None
+    previous_tail = next((i for i in range(last_assistant - 1, -1, -1) if roles[i] == 'user'), None)
+    if previous_tail is None or sum(block_counts[previous_tail + 1 :]) < LOOKBACK_SAFE_BLOCKS:
+        return None
+    return previous_tail

@@ -748,7 +748,11 @@ async def test_mid_conversation_system_prompt_on_bedrock(
 
     body = single_request_body(vcr)
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']}]
-    assert body['system'] == 'You are a code reviewer.'
+    # Prompt caching is on by default, and the Bedrock client takes it as breakpoints: on the instructions,
+    # and on the end of the conversation, here the mid-conversation system entry.
+    assert body['system'] == snapshot(
+        [{'type': 'text', 'text': 'You are a code reviewer.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+    )
     assert body['messages'] == snapshot(
         [
             {'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}], 'role': 'user'},
@@ -757,7 +761,11 @@ async def test_mid_conversation_system_prompt_on_bedrock(
             {
                 'role': 'system',
                 'content': [
-                    {'text': 'From now on, every suggestion must include explicit type annotations.', 'type': 'text'}
+                    {
+                        'text': 'From now on, every suggestion must include explicit type annotations.',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
                 ],
             },
         ]

@@ -80,10 +80,11 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 default_cache_retention=timedelta(minutes=30)
                 if profile.get('openai_supports_prompt_cache_breakpoints')
                 else None,
-                # OpenAI caches prompts implicitly, so the unified `cache` setting is satisfied without
-                # adding anything to the request. Set here rather than in `openai_model_profile`, which
-                # is shared with OpenAI-compatible endpoints that don't necessarily cache implicitly.
-                supports_cache=True,
+                # Models before GPT-5.6 cache prompts implicitly with no request-side configuration, so the unified
+                # `cache` setting has nothing to turn on there. GPT-5.6 and later take `prompt_cache_options` and
+                # explicit breakpoints, which it maps onto. Set here rather than in `openai_model_profile`, which is
+                # shared with OpenAI-compatible endpoints that don't necessarily accept them.
+                supports_cache=bool(profile.get('openai_supports_prompt_cache_breakpoints')),
                 # OpenAI ignores `CachePoint.ttl`. GPT-5.6 and later accept a request-wide
                 # `prompt_cache_options.ttl`, whose only value is `'30m'`; earlier models have no retention
                 # tier to request (`prompt_cache_retention` is a maximum-retention policy, not a tier).

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -24,10 +24,10 @@ from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheSetting, ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
-from ._prompt_cache import excess_cache_points
+from ._prompt_cache import excess_cache_points, previous_tail_needing_breakpoint
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
@@ -197,6 +197,15 @@ _CACHE_SETTINGS_KEYS = (
     'openrouter_cache_messages',
     'openrouter_cache_tool_definitions',
 )
+
+
+def _chat_message_block_count(message: chat.ChatCompletionMessageParam) -> int:
+    """How many content blocks a mapped chat message becomes downstream: its content parts plus its tool calls."""
+    content = message.get('content')
+    count = len(content) if isinstance(content, list) else int(bool(content))
+    if message['role'] == 'assistant':
+        count += len(list(message.get('tool_calls') or []))
+    return count
 
 
 class OpenRouterProviderConfig(TypedDict, total=False):
@@ -659,16 +668,15 @@ def _openrouter_settings_to_openai_settings(
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
-    # Fall back to unified cache; explicit openrouter_cache_* settings take precedence, in which
-    # case `prepare_request` has already cleared `model_request_parameters.cache`. OpenRouter has
-    # no automatic caching mode, so the library places breakpoints at the stable prompt boundaries
-    # (end of tool definitions, end of static instructions); the downstream-provider profile gates
-    # still apply when these settings are consumed.
-    if model_request_parameters.cache:
-        cache = model_request_parameters.cache
+    # Fall back to unified cache; explicit openrouter_cache_* settings take precedence. OpenRouter has
+    # no automatic caching mode, so the library places breakpoints at the end of the tool definitions,
+    # the static instructions and the conversation; the downstream-provider profile gates still apply
+    # when these settings are consumed.
+    if (cache := model_request_parameters.cache) and not any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
         ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
         model_settings['openrouter_cache_instructions'] = ttl
         model_settings['openrouter_cache_tool_definitions'] = ttl
+        model_settings['openrouter_cache_messages'] = ttl
 
     if reasoning := model_settings.get('openrouter_reasoning'):
         extra_body['reasoning'] = reasoning
@@ -713,25 +721,26 @@ class OpenRouterModel(OpenAIChatModel):
     @override
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest explicit retention accepted by OpenRouter's downstream model."""
-        settings = merge_model_settings(self.settings, model_settings) or {}
         if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
             return None
-        # Mirrors the unified-cache translation precedence: when any explicit `openrouter_cache_*`
-        # setting is present, the unified value contributes nothing, since it also adds nothing to
-        # the request.
-        if any(key in settings for key in _CACHE_SETTINGS_KEYS):
-            return self._max_cache_retention(
-                settings.get('openrouter_cache_instructions')
-                if self._resolved_profile.get('openrouter_supports_cache_control', False)
-                else None,
-                settings.get('openrouter_cache_messages')
-                if self._resolved_profile.get('openrouter_supports_cache_control', False)
-                else None,
+        return super().resolve_cache_retention(model_settings)
+
+    @override
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        # Mirrors the unified-cache translation precedence: when any explicit `openrouter_cache_*` setting is
+        # present, the unified value contributes nothing, since it also adds nothing to the request. Each
+        # setting only takes effect where the downstream provider supports it.
+        if any(key in merged_settings for key in _CACHE_SETTINGS_KEYS):
+            settings = cast(OpenRouterModelSettings, merged_settings)
+            supports_cache_control = self._resolved_profile.get('openrouter_supports_cache_control', False)
+            return (
+                settings.get('openrouter_cache_instructions') if supports_cache_control else None,
+                settings.get('openrouter_cache_messages') if supports_cache_control else None,
                 settings.get('openrouter_cache_tool_definitions')
                 if self._resolved_profile.get('openrouter_supports_tool_cache', False)
                 else None,
             )
-        return self._max_cache_retention(self._resolved_cache_setting(settings))
+        return super()._effective_cache_settings(merged_settings)
 
     def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
         """Build a `cache_control` dict for the downstream provider.
@@ -894,10 +903,6 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if customized_parameters.cache and any(key in (merged_settings or {}) for key in _CACHE_SETTINGS_KEYS):
-            # Explicit `openrouter_cache_*` settings take precedence; the unified value adds
-            # nothing to the request, so it must not be reported as resolved either.
-            customized_parameters = replace(customized_parameters, cache=None)
         new_settings = _openrouter_settings_to_openai_settings(
             cast(OpenRouterModelSettings, merged_settings or {}), customized_parameters
         )
@@ -1022,6 +1027,15 @@ class OpenRouterModel(OpenAIChatModel):
             and (cache_messages := model_settings.get('openrouter_cache_messages'))
             and self._resolved_profile.get('openrouter_supports_cache_control', False)
         ):
+            # OpenRouter may route to Amazon Bedrock, whose lookback for the previous request's cache entry
+            # spans only about 20 content blocks, so after a wide turn the end of the previous request gets a
+            # breakpoint too. On other downstreams it's redundant but harmless.
+            previous_tail = previous_tail_needing_breakpoint(
+                ['assistant' if message['role'] == 'assistant' else 'user' for message in openai_messages],
+                [_chat_message_block_count(message) for message in openai_messages],
+            )
+            if previous_tail is not None:
+                self._add_cache_control_to_message(openai_messages[previous_tail], cache_messages)
             self._add_cache_control_to_message(openai_messages[-1], cache_messages)
 
         if (

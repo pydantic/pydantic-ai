@@ -852,6 +852,35 @@ async def test_anthropic_cache_messages_uses_per_block_cache_control(
     )
 
 
+async def test_anthropic_cache_messages_marks_previous_request_after_wide_turn(allow_model_requests: None):
+    """After a turn with 12 parallel tool calls, the end of the previous request gets a breakpoint too.
+
+    On Amazon Bedrock the cache lookback spans only about 20 content blocks and doesn't collapse runs of
+    tool blocks, so the moving breakpoint alone would miss the previous request's cache entry
+    (https://github.com/pydantic/pydantic-ai/issues/9404). The live miss is recorded in
+    `test_cache_on_by_default_reads_history_after_wide_turn_real_api` in `test_bedrock.py`.
+    """
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Check the weather everywhere.')]),
+        ModelResponse(parts=[TextPart('Checking.'), *calls]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    ]
+
+    await model.request(history, AnthropicModelSettings(anthropic_cache_messages=True), ModelRequestParameters())
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert [
+        (index, block_index)
+        for index, message in enumerate(messages)
+        for block_index, block in enumerate(message['content'])
+        if 'cache_control' in block
+    ] == [(0, 0), (2, 11)]
+
+
 async def test_anthropic_cache_messages_preserves_existing_cache_point(allow_model_requests: None):
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
@@ -13758,17 +13787,52 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
             ),
             id='1h',
         ),
+        pytest.param(
+            None,
+            '5m',
+            snapshot(
+                (
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 5,
+                            'cache_creation_input_tokens': 7836,
+                            'cache_read_input_tokens': 0,
+                        },
+                        output_tokens=5,
+                        cache_write_tokens=7836,
+                        input_tokens=7838,
+                        cost=Decimal('0.019644'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 5,
+                            'cache_creation_input_tokens': 0,
+                            'cache_read_input_tokens': 7836,
+                        },
+                        output_tokens=5,
+                        cache_read_tokens=7836,
+                        input_tokens=7838,
+                        cost=Decimal('0.0016212'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='on-by-default',
+        ),
     ],
 )
 async def test_unified_cache_writes_then_reads_real_api(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
     request_capture: RequestCapture,
-    cache: Literal[True, '1h'],
+    cache: Literal[True, '1h'] | None,
     expected_ttl: str,
     expected_usage: tuple[RunUsage, RunUsage],
 ):
-    """The unified `cache` setting turns on Anthropic's automatic caching, with the requested TTL.
+    """The unified `cache` setting turns on Anthropic's automatic caching, with the requested TTL, and is on by default.
 
     The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
     """
@@ -13778,7 +13842,7 @@ async def test_unified_cache_writes_then_reads_real_api(
         # Distinct per case, so that recording one case doesn't read the cache the other wrote.
         instructions=f'You are a concise Python assistant (cache setting: {cache!r}). '
         + 'Answer questions about Python concisely. ' * 650,
-        model_settings=ModelSettings(cache=cache),
+        model_settings=None if cache is None else ModelSettings(cache=cache),
     )
     prompt = 'Name one Python web framework, in one word.'
 

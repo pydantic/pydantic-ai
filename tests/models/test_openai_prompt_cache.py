@@ -14,6 +14,7 @@ the real APIs.
 
 from __future__ import annotations as _annotations
 
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
@@ -165,7 +166,8 @@ async def test_openai_chat_multiple_cache_points(allow_model_requests: None):
 
     await Agent(model).run(['Product docs.', CachePoint(), 'Session context.', CachePoint(), 'Question.'])
 
-    assert 'prompt_cache_options' not in get_mock_chat_completion_kwargs(mock_client)[0]
+    # Only the default unified `cache` setting configures the cache options.
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
     assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
         [
             {
@@ -520,7 +522,8 @@ async def test_openai_responses_multiple_cache_points(allow_model_requests: None
 
     await Agent(model).run(['Product docs.', CachePoint(), 'Session context.', CachePoint(), 'Question.'])
 
-    assert 'prompt_cache_options' not in get_mock_responses_kwargs(mock_client)[0]
+    # Only the default unified `cache` setting configures the cache options.
+    assert get_mock_responses_kwargs(mock_client)[0]['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
     assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
         [
             {
@@ -2048,7 +2051,8 @@ async def test_openai_responses_prompt_cache_diagnostics_e2e(
     """
     agent = Agent(
         _diagnostics_model('gpt-5.6-sol', openai_api_key, request_capture),
-        model_settings=OpenAIResponsesModelSettings(openai_store=False),
+        # Without the unified `cache` setting's cache options, so the request carries only the diagnostics.
+        model_settings=OpenAIResponsesModelSettings(openai_store=False, cache=False),
     )
 
     first = await agent.run([_STABLE_PREFIX, 'Reply with exactly: OK'])
@@ -2097,7 +2101,7 @@ async def test_openai_responses_prompt_cache_diagnostics_stream(
 
     Earlier status events can report `unavailable` before the comparison has finished.
     """
-    agent = Agent(_diagnostics_model('gpt-5.6-sol', openai_api_key, request_capture))
+    agent = Agent(_diagnostics_model('gpt-5.6-sol', openai_api_key, request_capture), model_settings={'cache': False})
 
     first = await agent.run([_STABLE_PREFIX, 'Reply with exactly: OK'])
     async with agent.run_stream('Reply with exactly: DONE', message_history=first.all_messages()) as streamed:
@@ -2185,6 +2189,161 @@ async def test_openai_responses_prompt_cache_diagnostics_request_field(
     else:
         model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
 
-    await Agent(model, model_settings=settings).run('Reply with exactly: OK', message_history=history)
+    # Without the unified `cache` setting's cache options, so the request carries only the diagnostics.
+    await Agent(model, model_settings={**settings, 'cache': False}).run(
+        'Reply with exactly: OK', message_history=history
+    )
 
     assert get_mock_responses_kwargs(mock_client)[0].get('prompt_cache_options') == expected
+
+
+async def test_openai_chat_unified_cache_on_by_default(allow_model_requests: None):
+    """GPT-5.6 caches with the 30-minute TTL and an instruction breakpoint without any cache setting."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model, instructions='Support policies.').run('Where is order 1234?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    assert kwargs['messages'][0] == snapshot(
+        {
+            'role': 'system',
+            'content': [{'type': 'text', 'text': 'Support policies.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
+        }
+    )
+
+
+@pytest.mark.parametrize('cache', [True, '5m', '1h'])
+async def test_openai_responses_unified_cache_snaps_to_30m(
+    allow_model_requests: None, cache: Literal[True, '5m', '1h']
+):
+    """`'30m'` is the only TTL OpenAI accepts, so every requested retention snaps to it."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model, instructions='Support policies.', model_settings={'cache': cache}).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    assert 'instructions' not in request
+    assert request['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert model.resolve_cache_retention({'cache': cache}) == timedelta(minutes=30)
+
+
+async def test_openai_responses_unified_cache_false_sends_nothing(allow_model_requests: None):
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model, instructions='Support policies.', model_settings={'cache': False}).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'prompt_cache_options' not in request
+    assert request['instructions'] == 'Support policies.'
+    assert model.resolve_cache_retention({'cache': False}) is None
+
+
+async def test_openai_responses_unified_cache_respects_chaining_gate(allow_model_requests: None):
+    """With server-side state, the instructions stay top-level as `openai_cache_instructions` requires."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    assert request['instructions'] == 'Support policies.'
+
+
+@pytest.mark.parametrize(
+    'settings',
+    [
+        OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit'}),
+        OpenAIResponsesModelSettings(openai_cache_instructions=False),
+    ],
+)
+async def test_openai_responses_explicit_cache_settings_win(
+    allow_model_requests: None, settings: OpenAIResponsesModelSettings
+):
+    """Any explicit OpenAI cache setting takes precedence over the unified setting entirely."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Support policies.'
+    assert request.get('prompt_cache_options') == settings.get('openai_prompt_cache_options')
+
+
+def test_openai_effective_cache_settings():
+    """Only `mode='explicit'` without an instruction breakpoint leaves GPT-5.6 caching nothing by itself."""
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
+    assert model._caching_disabled_by_settings(  # pyright: ignore[reportPrivateUsage]
+        OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit'})
+    )
+    assert not model._caching_disabled_by_settings(  # pyright: ignore[reportPrivateUsage]
+        OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit'}, openai_cache_instructions=True)
+    )
+    assert not model._caching_disabled_by_settings(  # pyright: ignore[reportPrivateUsage]
+        OpenAIResponsesModelSettings(openai_cache_instructions=False)
+    )
+    assert model.resolve_cache_retention(OpenAIResponsesModelSettings(openai_cache_instructions=False)) == timedelta(
+        minutes=30
+    )
+    assert model.resolve_cache_retention(OpenAIResponsesModelSettings(openai_prompt_cache_retention='24h')) == (
+        timedelta(hours=24)
+    )
+
+
+async def test_openai_unified_cache_ignored_before_gpt_5_6(allow_model_requests: None):
+    """Earlier models cache implicitly with nothing to configure, so the unified setting sends nothing."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model, instructions='Support policies.', model_settings={'cache': '1h'}).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'prompt_cache_options' not in request
+    assert request['instructions'] == 'Support policies.'
+    assert model.resolve_cache_retention({'cache': '1h'}) is None
+
+
+@pytest.mark.vcr
+async def test_openai_responses_cache_on_by_default_e2e(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """Without any cache setting, GPT-5.6 gets the 30-minute TTL and an instruction breakpoint, and the second
+    request reads the cache the first wrote."""
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=_STABLE_PREFIX + '\n(cache on by default)')
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    for index in (0, 1):
+        body = _request_body(vcr, index)
+        assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert (first.usage, second.usage) == snapshot(
+        (
+            RunUsage(
+                details={'reasoning_tokens': 0},
+                output_tokens=5,
+                output_reasoning_tokens=0,
+                cache_write_tokens=4026,
+                input_tokens=4029,
+                cost=Decimal('0.020242'),
+                requests=1,
+            ),
+            RunUsage(
+                details={'reasoning_tokens': 0},
+                output_tokens=5,
+                cache_read_tokens=4026,
+                output_reasoning_tokens=0,
+                input_tokens=4029,
+                cost=Decimal('0.0017224'),
+                requests=1,
+            ),
+        )
+    )
+    _assert_cache_usage(first.usage, second.usage)

@@ -233,7 +233,7 @@ Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-wit
 
 ### Unified `cache` setting
 
-The provider-agnostic way to enable prompt caching is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting, which works the same across every supporting provider:
+Prompt caching is on by default: the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting, which works the same across every supporting provider, defaults to `True`. On Anthropic it uses automatic caching, exactly like `anthropic_cache='5m'` below; on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, it places cache breakpoints at the end of the tool definitions, the static instructions and the conversation instead. Request a longer retention with `cache='1h'` (or the [`Caching`][pydantic_ai.capabilities.Caching] capability), or turn library-managed caching off with `cache=False`:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -241,11 +241,11 @@ from pydantic_ai import Agent
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     instructions='You are a helpful assistant.',
-    model_settings={'cache': True},
+    model_settings={'cache': False},
 )
 ```
 
-On Anthropic, `cache=True` (or a retention like `cache='1h'`) uses automatic caching, exactly like `anthropic_cache` below; on Bedrock and Vertex clients, which don't support automatic caching, it places cache breakpoints at the end of the tool definitions and static instructions instead. The provider-specific `anthropic_cache*` settings below take precedence when set, and offer finer control.
+Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Prompt Caching](../capabilities/caching.md) for the trade-off. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
 
 ### Automatic Caching
 

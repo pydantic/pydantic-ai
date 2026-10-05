@@ -40,8 +40,9 @@ def test_model_resolve_cache_retention_defaults_to_none() -> None:
 @pytest.mark.parametrize(
     ('setting', 'expected'),
     [
-        (None, None),
-        ('in_memory', None),
+        # GPT-5.6 caches with its 30-minute TTL by default.
+        (None, timedelta(minutes=30)),
+        ('in_memory', timedelta(minutes=30)),
         ('24h', timedelta(hours=24)),
     ],
 )
@@ -58,14 +59,20 @@ def test_openai_resolve_cache_retention(
 
 
 @pytest.mark.parametrize('api', ['chat', 'responses'])
-def test_openai_resolve_cache_retention_ignores_unified_cache(api: Literal['chat', 'responses']) -> None:
-    """The unified `cache` setting adds nothing to an OpenAI request (OpenAI caches implicitly), so it
-    requests no retention either: the profile's `default_cache_retention` keeps applying."""
+def test_openai_resolve_cache_retention_unified_cache(api: Literal['chat', 'responses']) -> None:
+    """On GPT-5.6 the unified `cache` setting requests OpenAI's only TTL, 30 minutes; earlier models cache
+    implicitly with nothing to configure, so it requests no retention there."""
     model_type = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
     model = model_type('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
 
-    assert model.resolve_cache_retention(OpenAIChatModelSettings(cache='1h')) is None
-    assert model.resolve_cache_retention(OpenAIChatModelSettings(cache=True)) is None
+    assert model.resolve_cache_retention(OpenAIChatModelSettings(cache='1h')) == timedelta(minutes=30)
+    assert model.resolve_cache_retention(OpenAIChatModelSettings(cache=False)) is None
+    assert (
+        model_type('gpt-5.2', provider=OpenAIProvider(api_key='test-key')).resolve_cache_retention(
+            OpenAIChatModelSettings(cache='1h')
+        )
+        is None
+    )
     assert model.resolve_cache_retention(
         OpenAIChatModelSettings(cache='5m', openai_prompt_cache_retention='24h')
     ) == timedelta(hours=24)
@@ -100,7 +107,9 @@ def test_anthropic_resolve_cache_retention_biases_high() -> None:
     )
 
     assert model.resolve_cache_retention(settings) == timedelta(hours=1)
-    assert model.resolve_cache_retention(None) is None
+    # The unified `cache` setting is on by default.
+    assert model.resolve_cache_retention(None) == timedelta(minutes=5)
+    assert model.resolve_cache_retention(AnthropicModelSettings(cache=False)) is None
 
 
 @pytest.mark.parametrize(
@@ -131,7 +140,9 @@ def test_anthropic_resolve_cache_retention_biases_high() -> None:
             {'bedrock_supports_tool_caching': False},
             None,
         ),
-        (None, {'bedrock_supports_prompt_caching': True, 'bedrock_supports_tool_caching': True}, None),
+        # The unified `cache` setting is on by default.
+        (None, {'bedrock_supports_prompt_caching': True, 'bedrock_supports_tool_caching': True}, timedelta(minutes=5)),
+        ({'cache': False}, {'bedrock_supports_prompt_caching': True}, None),
     ],
 )
 def test_bedrock_resolve_cache_retention(
@@ -185,7 +196,9 @@ def test_openrouter_resolve_cache_retention() -> None:
     assert model.resolve_cache_retention(OpenRouterModelSettings(openrouter_cache_tool_definitions='1h')) == timedelta(
         hours=1
     )
-    assert model.resolve_cache_retention(None) is None
+    # The unified `cache` setting is on by default.
+    assert model.resolve_cache_retention(None) == timedelta(minutes=5)
+    assert model.resolve_cache_retention(OpenRouterModelSettings(cache=False)) is None
 
 
 def test_openrouter_resolve_cache_retention_biases_high() -> None:
@@ -243,6 +256,10 @@ def _one_hour() -> AnthropicModelSettings:
     return AnthropicModelSettings(anthropic_cache='1h')
 
 
+def _no_cache() -> AnthropicModelSettings:
+    return AnthropicModelSettings(cache=False)
+
+
 def _anthropic(model_type: type[AnthropicModel] | None = None) -> AnthropicModel:
     return (model_type or AnthropicModel)('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
 
@@ -288,7 +305,7 @@ def test_legacy_override_can_extend_its_parent_through_super() -> None:
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
         assert model.resolve_cache_retention(_one_hour()) == timedelta(hours=1)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
-        assert model.resolve_cache_retention(None) == timedelta(hours=2)
+        assert model.resolve_cache_retention(_no_cache()) == timedelta(hours=2)
 
 
 def test_stacked_legacy_overrides_chain_through_super() -> None:
@@ -311,7 +328,7 @@ def test_stacked_legacy_overrides_chain_through_super() -> None:
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
         assert model.resolve_cache_retention(_one_hour()) == timedelta(hours=2)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
-        assert model.resolve_cache_retention(None) == timedelta(hours=4)
+        assert model.resolve_cache_retention(_no_cache()) == timedelta(hours=4)
 
 
 def test_new_override_below_a_legacy_override_chains_through_it() -> None:
@@ -330,7 +347,7 @@ def test_new_override_below_a_legacy_override_chains_through_it() -> None:
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
         assert model.resolve_cache_retention(_one_hour()) == timedelta(hours=1)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
-        assert model.resolve_cache_retention(None) == timedelta(hours=2)
+        assert model.resolve_cache_retention(_no_cache()) == timedelta(hours=2)
 
 
 def test_old_name_reaches_a_new_override() -> None:
@@ -354,7 +371,7 @@ def test_overriding_both_names_keeps_the_new_one() -> None:
             return timedelta(hours=2)
 
     model = _anthropic(BothModel)
-    assert model.resolve_cache_retention(None) == timedelta(hours=3)
+    assert model.resolve_cache_retention(_no_cache()) == timedelta(hours=3)
     assert model.resolve_prompt_cache_retention(None) == timedelta(hours=2)  # pyright: ignore[reportDeprecated]
 
 

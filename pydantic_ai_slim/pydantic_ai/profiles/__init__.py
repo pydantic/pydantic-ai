@@ -138,25 +138,30 @@ class ModelProfile(TypedDict, total=False):
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model. Default: `None`."""
 
     supports_cache: bool
-    """Whether the model supports prompt caching configuration. Default: `False`.
+    """Whether prompt caching on this model needs request-side configuration that Pydantic AI can turn on. Default: `False`.
 
-    When False, the unified `cache` setting in `ModelSettings` is silently ignored.
+    When True, the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting (on by default)
+    translates into the provider's caching configuration. When False, it is silently ignored: the model
+    either doesn't support prompt caching, or caches implicitly without any request-side opt-in (as
+    OpenAI's models before GPT-5.6 and Gemini do), so there is nothing for the setting to turn on.
     Set by providers rather than shared profile functions, since cache behavior is a
     fact about the provider's API, not the model family.
     """
 
     supports_auto_cache: bool
-    """Whether the provider has a server-managed automatic prompt-caching mode. Default: `False`.
+    """Whether the provider has a server-managed automatic prompt-caching mode the request can switch on. Default: `False`.
 
-    When True, `cache=True` uses that mode instead of library-placed cache breakpoints.
+    When True, the unified `cache` setting uses that mode, which places and moves the cache breakpoint
+    itself. Otherwise the library places explicit cache breakpoints at the end of the tool definitions,
+    the static instructions, and the conversation. Only meaningful when `supports_cache` is True.
     """
 
     supported_cache_retentions: tuple[CacheRetention, ...]
-    """The prompt-cache retention tiers the provider supports, shortest first. Default: `('5m',)`.
+    """The prompt-cache retention tiers the request can ask for and the provider honors, shortest first. Default: `()`.
 
     A retention requested via the unified `cache` setting snaps down to the nearest supported tier. Empty when
     the provider has no retention tier to request, in which case a requested retention caches at the provider's
-    default retention.
+    default retention ([`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]).
     [`prompt_cache_outlook`][pydantic_ai.profiles.prompt_cache_outlook] likewise only lets a
     [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] in the history extend the expected retention
     when it's one of these tiers, since a provider that doesn't support a tier doesn't honor it on a
@@ -365,7 +370,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'json_schema_transformer': None,
     'supports_cache': False,
     'supports_auto_cache': False,
-    'supported_cache_retentions': ('5m',),
+    'supported_cache_retentions': (),
     'default_cache_retention': None,
     'supports_thinking': False,
     'thinking_always_enabled': False,
@@ -443,8 +448,9 @@ def prompt_cache_outlook(
     sees, which hasn't been sent yet) never touched the cache, so its timestamp must not reset the idle clock.
 
     Cache points in the history extend whichever boundary applies to their largest TTL that the provider
-    honors: one of the profile's [`supported_cache_retentions`][pydantic_ai.profiles.ModelProfile.supported_cache_retentions].
-    Without a profile, or with one that doesn't declare its tiers, every cache point TTL is assumed to be honored.
+    honors: on a profile with [`supports_cache`][pydantic_ai.profiles.ModelProfile.supports_cache], one of its
+    [`supported_cache_retentions`][pydantic_ai.profiles.ModelProfile.supported_cache_retentions]. Without a profile,
+    or with one that doesn't describe its cache configuration, every cache point TTL is assumed to be honored.
 
     Args:
         messages: The message history the next request would be built on, oldest first.
@@ -489,15 +495,20 @@ def _expected_cache_retention(
     `messages` extend either to their largest TTL the provider honors. Cache points alone never produce a
     boundary: without a known base, whether the provider honored them at all is unknown.
 
-    A TTL is honored when it's one of the profile's `supported_cache_retentions`: OpenAI, for one, ignores
-    `CachePoint.ttl`, so a `'1h'` marker must not stretch GPT-5.6's 30-minute retention, or an expired cache
-    would read as warm (and its collapse as unexpected). With no profile, or a profile that doesn't declare
-    its tiers, every TTL is assumed honored: a false `'warm'` merely defers maintenance, while a false `'cold'`
-    would sacrifice a live cache hit, the same trade-off `default_cache_retention` resolves toward the higher end.
+    On a profile that describes its cache configuration (`supports_cache`), a TTL is honored when it's one of
+    its `supported_cache_retentions`: OpenAI, for one, ignores `CachePoint.ttl`, so a `'1h'` marker must not
+    stretch GPT-5.6's 30-minute retention, or an expired cache would read as warm (and its collapse as
+    unexpected). With no profile, or one that doesn't describe its cache configuration, every TTL is assumed
+    honored: a false `'warm'` merely defers maintenance, while a false `'cold'` would sacrifice a live cache hit,
+    the same trade-off `default_cache_retention` resolves toward the higher end.
     """
     if retention is None and profile is not None:
         retention = profile.get('default_cache_retention')
-    honored = profile.get('supported_cache_retentions') if profile is not None else None
+    honored = (
+        profile.get('supported_cache_retentions', ())
+        if profile is not None and profile.get('supports_cache', False)
+        else None
+    )
     if retention is not None and (cache_point_ttl := _max_cache_point_ttl(messages, honored=honored)) is not None:
         retention = max(retention, cache_point_ttl)
     return retention

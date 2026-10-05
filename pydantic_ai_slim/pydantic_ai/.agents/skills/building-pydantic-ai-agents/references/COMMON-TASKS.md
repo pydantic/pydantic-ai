@@ -34,9 +34,9 @@ Read [Define Agents Declaratively with Specs](./AGENTS-CORE.md#define-agents-dec
 
 Read [Enable Thinking Across Providers](./CAPABILITIES-AND-HOOKS.md#enable-thinking-across-providers).
 
-## Enable Prompt Caching Across Providers
+## Configure Prompt Caching Across Providers
 
-Read [Enable Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#enable-prompt-caching-across-providers).
+Read [Configure Prompt Caching Across Providers](./CAPABILITIES-AND-HOOKS.md#configure-prompt-caching-across-providers).
 
 ## Use MCP Servers
 
