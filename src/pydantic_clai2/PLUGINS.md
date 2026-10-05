@@ -407,7 +407,7 @@ The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the
 of Linear's hosted MCP server through harness
 [`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
 it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
-and `/plugins configure linear` (or C in `/plugins`) opens it again later:
+and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 
 ```text
  Linear settings
