@@ -72,7 +72,7 @@ def state_directory() -> Path:
     return state / 'pydantic-clai2' / 'aoe'
 
 
-def run(*argv: str) -> subprocess.CompletedProcess[str] | None:
+def run_command(*argv: str) -> subprocess.CompletedProcess[str] | None:
     """Run a short command; `None` when it cannot start or times out."""
     try:
         return subprocess.run(argv, capture_output=True, text=True, timeout=_COMMAND_TIMEOUT, check=False)
@@ -82,7 +82,7 @@ def run(*argv: str) -> subprocess.CompletedProcess[str] | None:
 
 
 def _output(*argv: str) -> str | None:
-    result = run(*argv)
+    result = run_command(*argv)
     return result.stdout if result is not None and result.returncode == 0 else None
 
 
@@ -280,7 +280,7 @@ def linked_worktree(directory: Path) -> bool:
 def rename(aoe: str, profile: str, instance_id: str, title: str) -> bool | None:
     """Set the AoE session title: `False` when AoE refuses, `None` when `aoe` did not run to completion."""
     # `--title=` keeps a title that starts with `-` from reading as an option.
-    result = run(aoe, '-p', profile, 'session', 'rename', instance_id, f'--title={title}')
+    result = run_command(aoe, '-p', profile, 'session', 'rename', instance_id, f'--title={title}')
     if result is None:
         return None
     if result.returncode != 0:

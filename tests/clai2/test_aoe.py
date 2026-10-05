@@ -132,7 +132,7 @@ def missing(name: str) -> None:
 @pytest.fixture
 async def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Fixture:
     system = System(aoe_calls=asyncio.Queue(), loop=asyncio.get_running_loop())
-    monkeypatch.setattr(aoe, 'run', system)
+    monkeypatch.setattr(aoe, 'run_command', system)
     monkeypatch.setattr(aoe, 'hooks_base', lambda: tmp_path / 'hooks')
     monkeypatch.setattr(aoe, '_LOOKUP_INTERVAL', 0)
     monkeypatch.setattr('shutil.which', found)
@@ -279,7 +279,7 @@ async def test_not_nested(env: Fixture, monkeypatch: pytest.MonkeyPatch, tmp_pat
         def no_ps(*argv: str) -> subprocess.CompletedProcess[str] | None:
             return None if argv[0] == 'ps' else system(*argv)
 
-        monkeypatch.setattr(aoe, 'run', no_ps)
+        monkeypatch.setattr(aoe, 'run_command', no_ps)
     loaded = await load(make_session(tmp_path))
     await env.status('idle')
     assert reporting(loaded)
@@ -520,7 +520,7 @@ async def test_title_push_failures_are_benign(
             result = system(*argv)
             return None if 'rename' in argv else result
 
-        monkeypatch.setattr(aoe, 'run', timing_out)
+        monkeypatch.setattr(aoe, 'run_command', timing_out)
     elif failure == 'other profile':
         env.system.current = '{"session": "x", "profile": "work", "id": "someone-else"}'
     elif failure == 'unreadable':
@@ -588,10 +588,10 @@ async def test_stop_tolerates_a_removed_directory(
 
 
 def test_commands_that_cannot_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert aoe.run('/nonexistent/aoe-binary') is None
+    assert aoe.run_command('/nonexistent/aoe-binary') is None
     monkeypatch.setattr(aoe, '_COMMAND_TIMEOUT', 0.01)
-    assert aoe.run('sleep', '1') is None
-    result = aoe.run('true')
+    assert aoe.run_command('sleep', '1') is None
+    result = aoe.run_command('true')
     assert result is not None and result.returncode == 0
 
 
