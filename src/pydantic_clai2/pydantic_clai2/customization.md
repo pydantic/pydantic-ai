@@ -540,6 +540,8 @@ Pass during_turn=True to Command when the menu is safe to open mid-turn, so the
 bare command opens at once instead of queueing behind the running turn. While
 run_worker runs, CLAI holds the turn's output and prints it in order afterwards.
 Only opt in when the running turn cannot observe what the menu changes.
+during_turn_subcommands=('add',) does the same for a bare subcommand such as
+/model add.
 
 For named validated fields, reuse FieldSource, FieldMenu and run_flow in
 field_menu.py rather than write another editor. SettingsSource in set_menu.py

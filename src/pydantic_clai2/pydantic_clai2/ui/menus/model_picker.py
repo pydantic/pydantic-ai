@@ -28,7 +28,7 @@ class DeleteModel:
 
 
 _SUBCOMMANDS = ('add', 'settings')
-"""`/model` subcommands; model names are provider-qualified (`PROVIDER:NAME`), so they never collide."""
+"""`/model` subcommands; real model names start with a provider (`PROVIDER:NAME`), so none is called either."""
 
 _USAGE = 'Usage: /model [NAME] | /model add [NAME] | /model settings [NAME]'
 

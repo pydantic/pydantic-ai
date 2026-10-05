@@ -576,8 +576,9 @@ anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`.
 
-While a turn is running, `/set`, `/model`, `/theme`, and `/spinner` typed
-without arguments open their menu right away instead of queueing.
+While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
+`/theme`, and `/spinner` typed without further arguments open their menu right
+away instead of queueing.
 The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
@@ -597,8 +598,8 @@ option is available even when no models have been added.
 `/model PROVIDER:NAME` switches directly to any model. A model not yet in your
 list is added and selected; CLAI does not check that it exists, so a mistyped
 name fails on the next prompt with the provider's error. Tab completes the saved
-list and the `add` and `settings` subcommands. Model names are provider-qualified
-(`openai:gpt-5`), so they never collide with a subcommand.
+list and the `add` and `settings` subcommands. Model names start with a provider
+(`openai:gpt-5`), so no real model is called `add` or `settings`.
 The currently configured model is kept in the list when upgrading.
 
 | Command | What it does |

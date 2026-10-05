@@ -587,7 +587,9 @@ async def test_shell_registers_model_subcommands_and_deprecated_aliases(tmp_path
     assert completions('/model ') == ['add', 'settings', 'test']
     assert completions('/model settings ') == completions('/model_settings ') == ['test']
     assert 'openai-codex:' in completions('/model add ') and completions('/model add ') == completions('/add_model ')
-    assert all(commands.runs_during_turn(text) for text in ('/model', '/add_model', '/model_settings'))
+    mid_turn = ('/model', '/model add', '/model settings', '/add_model', '/model_settings')
+    assert all(commands.runs_during_turn(text) for text in mid_turn)
+    assert not commands.runs_during_turn('/model add test')
     assert await commands.execute_async('/model unsaved:one') == 'Saved model. Applied.'
     assert await commands.execute_async('/add_model unsaved:two') == 'Saved model. Applied.'
     assert store.models() == ['test', 'unsaved:one', 'unsaved:two'] and store.load().model == 'unsaved:two'

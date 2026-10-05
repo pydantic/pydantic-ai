@@ -70,6 +70,8 @@ class Command:
     take effect on the next turn. The run's output is held while the menu owns the screen.
     With arguments the command still queues, keeping its order among queued follow-ups.
     """
+    during_turn_subcommands: tuple[str, ...] = ()
+    """Subcommands, like `add` in `/model add`, whose bare form also opens its menu mid-turn."""
 
 
 class Commands(Completer):
@@ -119,12 +121,14 @@ class Commands(Completer):
         return command.handler(shlex.split(rest))
 
     def runs_during_turn(self, text: str) -> bool:
-        """Whether `text` is a bare command that opted into opening its menu mid-turn."""
+        """Whether `text` is a bare command or subcommand that opted into opening its menu mid-turn."""
         words = text.split()
-        if len(words) != 1 or not is_command_input(text):
+        if len(words) not in (1, 2) or not is_command_input(text):
             return False
         command = self._commands.get(words[0][1:])
-        return command is not None and command.available() and command.during_turn
+        if command is None or not command.available():
+            return False
+        return command.during_turn if len(words) == 1 else words[1] in command.during_turn_subcommands
 
     async def execute_async(self, text: str) -> str:
         """Await asynchronous plugin commands without blocking the event loop.

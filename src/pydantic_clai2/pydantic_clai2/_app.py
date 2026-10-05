@@ -441,6 +441,7 @@ def create_shell(
             handler=lambda args: model_command(context, args),
             complete=lambda args: model_completions(context, args),
             during_turn=True,
+            during_turn_subcommands=('add', 'settings'),
         )
     )
     # Deprecated spellings of `/model add` and `/model settings`, kept working for existing habits.

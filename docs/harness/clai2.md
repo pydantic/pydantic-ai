@@ -211,8 +211,9 @@ anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`.
 
-While a turn is running, `/set`, `/model`, `/theme`, and `/spinner` typed
-without arguments open their menu right away instead of queueing.
+While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
+`/theme`, and `/spinner` typed without further arguments open their menu right
+away instead of queueing.
 The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
@@ -223,8 +224,8 @@ running turn ends. With arguments, these commands queue like any other.
 `/model` selects from models you have already added. Choose **Add a model...**
 to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
 not yet in your list is added and selected; CLAI does not check that it exists, so a
-mistyped name fails on the next prompt with the provider's error. Model names are
-provider-qualified (`openai:gpt-5`), so they never collide with a subcommand.
+mistyped name fails on the next prompt with the provider's error. Model names start
+with a provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
 
 | Command | What it does |
 | --- | --- |
@@ -528,10 +529,10 @@ See `THIRD_PARTY_NOTICES.md` for attribution.
 
 ## vllm connection
 
-Open `/model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
 ## openrouter connection
 
-Open `/model`, choose `openrouter`, then paste an API key from https://openrouter.ai/keys in the masked prompt, then select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. This flow uses API-key authentication, not browser OAuth.
+Open `/model add`, choose `openrouter`, then paste an API key from https://openrouter.ai/keys in the masked prompt, then select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. This flow uses API-key authentication, not browser OAuth.
 
 The connection is saved in the configured Python keyring backend after selection; backend security depends on your keyring configuration. Tokens are not stored in SQLite or command history. The selected model persists across restarts. Select the provider again to browse its live models or reconfigure the saved connection. Discovery is explicit and has a 20-second network timeout; redirects are not followed. Agent inference uses Pydantic AI core.
