@@ -490,10 +490,7 @@ def _continued_after_calling(sim: Simulation, responses: Iterable[TruthResponse]
 
 
 def _reply_continued_across_a_round(sim: Simulation, violation: InvariantViolation) -> bool:
-    """For a response recorded in pieces, any response that continued; for one recorded mixed with or into another,
-    one the violation names."""
-    if violation.code == 'response.duplicated':
-        return _continued_after_calling(sim)
+    """A response the violation names continued after its first tool call."""
     return _continued_after_calling(sim, _context_responses(sim, violation) or [])
 
 
