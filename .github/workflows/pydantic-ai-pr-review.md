@@ -385,7 +385,8 @@ jobs:
           FAILED: ${{ needs.safe_outputs.result != 'success' || needs.agent.outputs.output_types == '' }}
         run: |
           # Runs for different heads overlap, so only the run for the current head owns the label.
-          [ "$(gh api "$PR" -q .head.sha)" = "$SHA" ] || exit 0
+          head=$(gh api "$PR" -q .head.sha)
+          [ "$head" = "$SHA" ] || exit 0
           if [ "$FAILED" = true ]; then
             gh api "$LABELS" -f 'labels[]=ci-review-failed' --silent
           else
