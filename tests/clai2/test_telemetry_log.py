@@ -118,6 +118,25 @@ async def test_handlers_the_application_configured_still_get_their_records(
     assert text.endswith(_NOTICE.format(log))
 
 
+async def test_handlers_the_application_configured_on_a_descendant_still_get_their_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A record an application handles on a more specific logger is not also written to the file."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    monkeypatch.setattr(logging.getLogger(_METRICS), 'handlers', [handler])
+
+    with unconfigured_logging():
+        text = await _chat(tmp_path, monkeypatch, ['/fail'])
+
+    assert stream.getvalue() == 'Failed to export metrics batch code: None, reason: timed out\n'
+    log = tmp_path / 'telemetry.log'
+    assert [line.split(' ', 2)[2] for line in log.read_text().splitlines()] == [
+        'WARNING logfire: Currently retrying 1 failed export(s) (955 bytes)',
+    ]
+    assert text.endswith(_NOTICE.format(log))
+
+
 async def test_a_session_without_problems_creates_no_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with unconfigured_logging():
         text = await _chat(tmp_path, monkeypatch, [])

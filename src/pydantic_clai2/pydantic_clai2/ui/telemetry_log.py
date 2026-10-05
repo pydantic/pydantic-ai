@@ -43,17 +43,28 @@ class _LogFile(RotatingFileHandler):
         self._failed = True
 
 
+def _unhandled_below(record: logging.LogRecord) -> bool:
+    """Whether no logger between the record's own and the top-level one it propagated to has a handler."""
+    parts = record.name.split('.')
+    loggers = logging.root.manager.loggerDict
+    return not any(
+        isinstance(logger := loggers.get('.'.join(parts[:depth])), logging.Logger) and logger.handlers
+        for depth in range(2, len(parts) + 1)
+    )
+
+
 @contextmanager
 def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if written.
 
-    A logger that already reaches a handler, one the embedding application configured, is left alone: only
-    records that would otherwise fall through to `logging.lastResort` are redirected.
+    A logger that already reaches a handler, one the embedding application configured on it, an ancestor, or a
+    descendant, is left alone: only records that would otherwise fall through to `logging.lastResort` are redirected.
     """
     # `delay` opens the file on the first record, so a session without problems creates nothing.
     handler = _LogFile(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
     handler.setLevel(logging.WARNING)
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+    handler.addFilter(_unhandled_below)
     loggers = [logger for name in _LOGGERS if not (logger := logging.getLogger(name)).hasHandlers()]
     propagate = [logger.propagate for logger in loggers]
     for logger in loggers:
