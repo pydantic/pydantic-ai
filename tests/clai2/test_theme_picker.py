@@ -76,18 +76,22 @@ async def test_cancel_keeps_preference(tmp_path: Path, result: MenuResult) -> No
     assert applied == [] and context.store.overrides() == {}
 
 
-@pytest.mark.parametrize('key', ['escape', 'ctrl-c', 'enter'])
+@pytest.mark.parametrize('pressed', [['escape', 'escape'], ['ctrl-c'], ['enter']])
 @pytest.mark.parametrize('width', [80, 120])
-def test_picker_keyboard_and_preview(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, width: int) -> None:
+def test_picker_keyboard_and_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pressed: list[str], width: int
+) -> None:
+    """`/` starts a search; Enter picks a match, the first Esc only leaves the search."""
     context, _ = make_context(tmp_path)
     output = io.StringIO()
     monkeypatch.setattr('sys.stdout', output)
     monkeypatch.setenv('COLUMNS', str(width))
     monkeypatch.setenv('LINES', '30')
-    keys = iter([*'github', key])
+    keys = iter(['/', *'github', *pressed])
     monkeypatch.setattr('pydantic_clai2.ui.menus.theme_picker.menu_key', lambda: next(keys))
     result = build_theme_picker(context).run()
-    if key == 'enter':
+    assert next(keys, None) is None, 'every key is read: the first Esc must not close'
+    if pressed == ['enter']:
         assert result.item == MenuItem('github_light', value='github_light')
     else:
         assert result.cancelled

@@ -33,8 +33,16 @@ def test_only_bare_opted_in_commands_run_during_a_turn() -> None:
     commands = Commands()
     commands.register(Command(name='menu', description='', handler=lambda _: '', during_turn=True))
     commands.register(Command(name='plain', description='', handler=lambda _: ''))
+    commands.register(
+        Command(name='sub', description='', handler=lambda _: '', during_turn_subcommands=('add',)),
+    )
     assert commands.runs_during_turn('/menu')
     assert not commands.runs_during_turn('/menu value')
+    assert not commands.runs_during_turn('/sub')
+    assert commands.runs_during_turn('/sub add')
+    assert not commands.runs_during_turn('/sub other')
+    assert not commands.runs_during_turn('/sub add value')
+    assert not commands.runs_during_turn('/unknown add')
     assert not commands.runs_during_turn('/plain')
     assert not commands.runs_during_turn('/unknown')
     assert not commands.runs_during_turn('/tmp/menu')

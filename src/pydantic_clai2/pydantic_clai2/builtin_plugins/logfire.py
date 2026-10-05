@@ -5,7 +5,7 @@ The default-enabled `observability` plugin: Logfire instrumentation owned by the
 With `ui_events` on, the same instance also records CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 
-`configure` opens the settings menu (turning the plugin on, `C` in `/plugins`, or `/plugins configure
+`configure` opens the settings menu (turning the plugin on, `c` in `/plugins`, or `/plugins configure
 observability`). Each edit is saved at once, and the loader loads the plugin again when the menu closes, so the
 next run uses it. Its first row runs the project setup in `logfire_setup`.
 """
@@ -25,7 +25,7 @@ from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
-from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd, SessionStart, TurnEnd
+from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
 from pydantic_clai2.ui.rendering import theme
@@ -112,6 +112,11 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         if self.settings.ui_events:
             model = event.settings.model or 'agent default'
             self.instance.log('info', 'session started', attributes={'model': model}, tags=[telemetry.TAG])
+
+    async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
+        self.instance.log(
+            'error', 'Plugin {plugin!r} failed to load', attributes={'plugin': event.plugin}, exc_info=event.error
+        )
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         if self.settings.ui_events:

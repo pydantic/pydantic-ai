@@ -187,6 +187,8 @@ class PromptKeys:
                     self.feed(name, sequence)
             return
         if key.key == Keys.Escape:
+            if self._escape:
+                self.feed('escape', '')
             self._escape = True
             return
         if self._escape and key.data == '[':

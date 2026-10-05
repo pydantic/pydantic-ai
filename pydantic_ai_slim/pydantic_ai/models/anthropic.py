@@ -99,6 +99,7 @@ from . import (
     get_user_agent,
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
+from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
@@ -181,6 +182,7 @@ try:
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
+        BetaDiagnosticsParam,
         BetaDirectCaller,
         BetaFileDocumentSourceParam,
         BetaFileImageSourceParam,
@@ -330,6 +332,14 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # excluded Bedrock and Vertex on the strength of a Bedrock test that used `claude-sonnet-5`, a model
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
+# Cache diagnostics are documented as Claude API only. Verified live: the Bedrock InvokeModel and Messages APIs
+# both reject the `diagnostics` field with a 400 ("Extra inputs are not permitted").
+_CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
 _ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
@@ -547,6 +557,24 @@ class AnthropicModelSettings(ModelSettings, total=False):
     1 of Anthropic's 4 cache point slots; we automatically trim excess explicit breakpoints.
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching
     for more information.
+    """
+
+    anthropic_cache_diagnostics: bool
+    """Request [cache diagnostics](https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics) on every request.
+
+    When enabled, each request carries a `diagnostics` object naming the most recent Anthropic response in the
+    message history as `previous_message_id` (or `null` when there is none, which opts the request in so the next
+    one can be compared against it). Anthropic compares the two requests and reports where the prompt prefix
+    first diverged. The result is available in
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under the
+    `'cache_diagnostics'` key, as Anthropic's `diagnostics` object: `{'cache_miss_reason': {'type': ...,
+    'cache_missed_input_tokens': ...}}`, or `{'cache_miss_reason': None}` when the comparison was still running.
+    The key is absent when Anthropic found no divergence.
+
+    Diagnostics are free and don't affect caching, but Anthropic retains a short-lived fingerprint (hashes and
+    token counts, never prompt content) for each request that carries them, and HIPAA-enabled organizations have
+    requests using them rejected. They are only available on the Claude API, so the setting is ignored on Amazon
+    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`.
     """
 
     anthropic_effort: AnthropicEffort | None
@@ -1320,6 +1348,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     container=container_param or OMIT,
                     service_tier=_resolve_anthropic_service_tier(model_settings),
                     speed=self._effective_speed(model_settings, anthropic_profile),
+                    diagnostics=self._cache_diagnostics(messages, model_settings),
                     extra_headers=extra_headers,
                     extra_body=_build_extra_body(model_settings, thinking_override),
                 )
@@ -1350,12 +1379,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             try:
                 return cast(BetaMessage, await send(False))
             except ValueError as e:
-                if 'Streaming is required' not in str(e):  # pragma: no cover
+                if 'Streaming is required' not in str(e):
                     raise
                 return await open_stream()
 
         retry_container = container
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await create(container, initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
@@ -1534,6 +1563,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self.client, _FAST_MODE_UNSUPPORTED_CLIENTS
         )
 
+    def _cache_diagnostics(
+        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+    ) -> BetaDiagnosticsParam | Omit:
+        """Build the `diagnostics` request field when `anthropic_cache_diagnostics` is enabled.
+
+        The comparison baseline is the most recent response from this provider. Anthropic rejects an id that
+        doesn't start with `msg_` with a 400, so a response from an Anthropic-compatible endpoint that issues other
+        ids (OpenRouter's `gen-...`, for example) opts in without a baseline instead.
+        """
+        if not model_settings.get('anthropic_cache_diagnostics') or isinstance(
+            self.client, _CACHE_DIAGNOSTICS_UNSUPPORTED_CLIENTS
+        ):
+            return OMIT
+        previous_message_id: str | None = None
+        for message in reversed(messages):
+            if isinstance(message, ModelResponse) and message.provider_name == self.system:
+                if (response_id := message.provider_response_id) and response_id.startswith('msg_'):
+                    previous_message_id = response_id
+                break
+        return BetaDiagnosticsParam(previous_message_id=previous_message_id)
+
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
     ) -> tuple[BetaContainerParams | str | None, bool]:
@@ -1702,7 +1752,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 extra_body=extra_body,
             )
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await count(initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
@@ -1813,6 +1863,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.input_transformations:
             provider_details = provider_details or {}
             provider_details['input_transformations'] = _report_input_transformations(response.input_transformations)
+        if response.diagnostics is not None:
+            provider_details = provider_details or {}
+            provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
 
         return ModelResponse(
             parts=items,
@@ -3372,7 +3425,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             ignored_server_tool_use_indices: set[int] = set()
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
-            async for event in self._response:
+            async for event in MapStreamDecodeErrors(self._response, self._model_name):
                 if isinstance(event, BetaRawMessageStartEvent):
                     if event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
                         # See `_map_usage`: Bedrock emits type-less chunks the SDK constructs
@@ -3392,6 +3445,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details['input_transformations'] = _report_input_transformations(
                             event.message.input_transformations
                         )
+                    # Diagnostics are only reported on the opening message.
+                    if event.message.diagnostics is not None:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['cache_diagnostics'] = event.message.diagnostics.model_dump(mode='json')
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
