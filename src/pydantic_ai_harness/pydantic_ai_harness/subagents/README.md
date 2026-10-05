@@ -67,7 +67,7 @@ agent = Agent(
 ```
 
 - **Only what is bound to the `Agent` carries over.** Capabilities, toolsets, instructions, and model settings passed to the parent's `run()` are not part of the agent, so the delegate does not get them. Passing `SubAgents(include_self=True)` itself to `run()` raises a `UserError` when the run starts, since the delegate would come up without it.
-- **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
+- **Delegation depth is capped.** The delegate is the same agent, so it carries `SubAgents` too, and `max_depth` (default `2`, counting the top-level run) bounds the tree. By default only the top-level run delegates: a run at the limit gets neither `delegate_task` nor the sub-agent listing, so a delegate does the work itself. Pass `max_depth=3` to let delegates delegate once more, as earlier releases did by default. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()`.
 - The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
 
@@ -323,7 +323,7 @@ SubAgents(
     contain_errors=False,  # default for SubAgent.contain_errors: contain an unexpected crash as a bounded retry
     workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
     include_self=False,    # also list the running agent itself as the delegate `self`
-    max_depth=3,           # delegation levels, counting the top-level run
+    max_depth=2,           # delegation levels, counting the top-level run (2: only the top-level run delegates)
 )
 ```
 
@@ -395,9 +395,10 @@ async def converse():
 
 `opened()` drains workers on exit. Keep workspace and plugin resources alive outside
 that scope. Detached execution is refused for run-owned non-local workspaces;
-foreground delegation still works. `max_depth=4` counts the main run and allows
-three child layers. An explicitly configured non-default `SubAgents.max_depth`
-still takes precedence. Ordinary `SubAgents` retains its original depth default.
+foreground delegation still works. The owner's `max_depth` (default `2`) counts the
+main run, so by default only the main run delegates; pass `max_depth=4` to allow three
+child layers. A `SubAgents.max_depth` set to a value other than its default takes
+precedence over the owner's.
 
 `background(task_id)` releases a foreground waiter without restarting the child.
 `await cancel(task_id)` stops and drains that child and its descendants. A user stop

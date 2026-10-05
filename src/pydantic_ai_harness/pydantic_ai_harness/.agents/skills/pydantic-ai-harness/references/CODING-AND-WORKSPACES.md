@@ -90,7 +90,7 @@ Keyword-only options: `instructions=None` (appended to the default guidance),
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
-  capabilities such as approval gates), up to 3 levels deep.
+  capabilities such as approval gates); by default a delegate does not delegate again.
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox
   before any tool call. `Coder(repo_context=False)` defers it (the instructions then stop naming the
   working directory). Also use it when you bind your own `RepoContext`, or files load twice.

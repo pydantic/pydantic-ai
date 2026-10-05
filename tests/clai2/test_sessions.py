@@ -488,11 +488,14 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
         observed.append(info)
         assert 'Follow the plugin guardrail.' in (info.instructions or '')
         assert (info.instructions or '').count('Dynamic plugin instructions.') == 1
-        assert {'delegate_task', 'plugin_tool', 'read_file'} <= {tool.name for tool in info.function_tools}
+        names = {tool.name for tool in info.function_tools}
+        assert {'plugin_tool', 'read_file'} <= names
         first = messages[0]
         assert isinstance(first, ModelRequest)
         [prompt] = first.parts
         assert isinstance(prompt, UserPromptPart)
+        # Only the top-level run delegates by default.
+        assert ('delegate_task' in names) == (prompt.content == 'parent task')
         if len(messages) == 1:
             if prompt.content == 'parent task':
                 return ModelResponse(

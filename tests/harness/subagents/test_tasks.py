@@ -267,7 +267,7 @@ async def test_nested_background_joins_and_routes_to_direct_parent() -> None:
         name='worker',
         capabilities=[SubAgents(agents=[SubAgent(leaf)], agent_folders=None)],
     )
-    owner = DelegationTasks()
+    owner = DelegationTasks(max_depth=3)
     with anyio.fail_after(WAIT):
         async with owner.opened():
             with owner.bind():
@@ -964,3 +964,31 @@ async def test_task_controls_need_an_owner() -> None:
     agent = Agent(FunctionModel(respond), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
     await agent.run('go')
     assert offered == ['delegate_task']
+
+
+async def test_by_default_an_owned_delegate_does_not_delegate() -> None:
+    offered: dict[str, list[str]] = {}
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        first = messages[0]
+        assert isinstance(first, ModelRequest)
+        prompt = str(first.parts[-1].content)
+        offered.setdefault(prompt, [tool.name for tool in info.function_tools])
+        if prompt == 'go' and not results(messages, 'delegate_task'):
+            return call('delegate_task', agent_name='self', task='subtask')
+        return ModelResponse(parts=[TextPart(f'{prompt} done')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield str(respond(messages, info).parts[0].content)
+
+    owner = DelegationTasks()
+    async with owner.opened():
+        with owner.bind():
+            agent = Agent(
+                FunctionModel(function=respond, stream_function=stream),
+                capabilities=[SubAgents(include_self=True, agent_folders=None)],
+            )
+            await agent.run('go', conversation_id='root')
+    (record,) = owner.records.values()
+    assert record.output == 'subtask done'
+    assert offered == {'go': ['delegate_task', 'stop_task', 'list_tasks'], 'subtask': []}

@@ -97,7 +97,7 @@ class DelegationTasks:
         agents: Mapping[str, SubAgent[object]] | None = None,
         aliases: Mapping[str, str] | None = None,
         one_shot: frozenset[str] = frozenset(),
-        max_depth: int = 4,
+        max_depth: int = 2,
         instructions: str = '',
         step_store: StepStore | None = None,
     ) -> None:

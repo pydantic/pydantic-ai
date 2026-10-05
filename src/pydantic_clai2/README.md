@@ -1262,7 +1262,7 @@ all agent-bound tools, instructions, and guardrails. `Explore` and `Plan` use
 only filesystem readers and a `ReadOnlyWorkspace`: neither shell commands nor
 `run_code` are available. They inherit the current model and are one-shot.
 Custom delegates and general-purpose children can resume with the same task ID.
-There are three child layers below the main agent by default.
+Only the main agent delegates: its children do not get `delegate_task`.
 
 Use foreground delegation when the answer is needed immediately, and background
 delegation for independent work. Give each child a self-contained task with

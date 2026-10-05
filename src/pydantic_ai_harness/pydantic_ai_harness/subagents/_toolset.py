@@ -55,8 +55,8 @@ logger = logging.getLogger(__name__)
 SELF_AGENT_NAME = 'self'
 """The name a delegate to the running agent itself is listed and called by (`SubAgents.include_self`)."""
 
-DEFAULT_MAX_DEPTH = 3
-"""Default `SubAgents.max_depth`: the top-level run, its delegates, and theirs."""
+DEFAULT_MAX_DEPTH = 2
+"""Default `SubAgents.max_depth`: the top-level run delegates, and its delegates do not."""
 
 _depth: ContextVar[int] = ContextVar('pydantic_ai_harness.subagents.depth', default=1)
 """How deep in a delegation tree the current run is, counting the top-level run as 1.

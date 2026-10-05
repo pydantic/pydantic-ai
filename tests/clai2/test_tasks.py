@@ -114,7 +114,9 @@ async def test_stock_managed_specialists_and_general_purpose(tmp_path: Path, nam
                 assert names == {'read_file', 'list_directory', 'search_files', 'find_files', 'file_info'}
                 assert not {'shell', 'run_code', 'write_file', 'edit_file', 'delegate_task'} & names
             else:
-                assert {'shell', 'write_file', 'delegate_task'} <= names
+                # A general-purpose child has the agent's tools, but by default does not delegate further.
+                assert {'shell', 'write_file'} <= names
+                assert not {'delegate_task', 'stop_task', 'list_tasks'} & names
         return ModelResponse(parts=[TextPart('evidence')])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:

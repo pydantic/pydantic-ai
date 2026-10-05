@@ -931,7 +931,7 @@ class TestIncludeSelf:
         result = await agent.run('go', model=FunctionModel(model_fn))
         assert result.output == 'go done'
         assert _delegate_returns(result) == ['subtask done']
-        assert offered == {'go': ['parent_tool', 'delegate_task'], 'subtask': ['parent_tool', 'delegate_task']}
+        assert offered == {'go': ['parent_tool', 'delegate_task'], 'subtask': ['parent_tool']}
 
     async def test_depth_is_capped(self) -> None:
         """A run at `max_depth` gets neither the delegate tool nor the listing, so it does the work itself."""
@@ -956,6 +956,21 @@ class TestIncludeSelf:
         assert result.output == 'level 1 done'
         assert _delegate_returns(result) == ['level 2 done']
         assert seen == {'level 1': (['delegate_task'], True), 'level 2': ([], False)}
+
+    async def test_by_default_only_the_top_level_run_delegates(self) -> None:
+        offered: dict[str, list[str]] = {}
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prompt = _prompt(messages)
+            offered.setdefault(prompt, [tool.name for tool in info.function_tools])
+            if prompt == 'go' and len(messages) == 1:
+                return _delegate_to_self('subtask')
+            return ModelResponse(parts=[TextPart(f'{prompt} done')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[SubAgents(include_self=True, agent_folders=None)])
+        result = await agent.run('go')
+        assert _delegate_returns(result) == ['subtask done']
+        assert offered == {'go': ['delegate_task'], 'subtask': []}
 
     async def test_directly_registered_toolset_hides_the_tool_at_max_depth(self) -> None:
         offered: list[list[str]] = []
@@ -1010,7 +1025,7 @@ class TestIncludeSelf:
         """A run-level `SubAgents` overrides the agent's, so the agent's is not what the delegate would get."""
         agent = Agent(TestModel(call_tools=[]), capabilities=[SubAgents(include_self=True, agent_folders=None)])
         with pytest.raises(UserError, match='only carries what is bound to the `Agent`'):
-            await agent.run('go', capabilities=[SubAgents(include_self=True, agent_folders=None, max_depth=2)])
+            await agent.run('go', capabilities=[SubAgents(include_self=True, agent_folders=None, max_depth=3)])
 
     async def test_an_explicit_delegate_that_is_the_running_agent_keeps_its_own_model(self) -> None:
         """Only the reserved `self` entry runs on the parent run's model; listing the agent by hand does not."""
