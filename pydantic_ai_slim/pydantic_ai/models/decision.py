@@ -415,9 +415,9 @@ class DecisionModel(Model[InterfaceClient]):
     The answers arrive in one piece, so a streamed run gets the whole answer as one event.
 
     To support a backend, subclass this, implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide]
-    along with `model_name`, `system` and `base_url`, and set `max_choice_options` and `max_score_levels` to the
-    backend's limits, or have its provider set them per model in a
-    [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile]. See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for the full rules
+    along with `model_name`, `system` and `base_url`, set `max_choice_options` and `max_score_levels` to the
+    backend's limits, and `requires_instructions` if it refuses a question without `instructions`, or have its
+    provider set these per model in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile]. See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for the full rules
     and an example.
     """
 
