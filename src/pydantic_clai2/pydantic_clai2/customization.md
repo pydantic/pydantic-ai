@@ -33,7 +33,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   If its models need a sign-in, return PluginLogin(name=..., handler=...,
   models=...) values from get_logins to add /login NAME and save those models
   once it succeeds. ModelProvider(settings_from='anthropic') gives its models
-  Anthropic's /model_settings controls.
+  Anthropic's /model settings controls.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -175,11 +175,12 @@ Other options are service_name (default pydantic-clai2), send_to_logfire
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
 then receives the telemetry), and ui_events (default false: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
-submissions, by name and never by content). /plugins configure observability opens
-a settings menu that edits these options. Its Logfire project row sets token and
-base_url for you, and turns sending on: pick Logfire US, EU, or
-a self-hosted URL, sign in in the browser, and pick a project; its new write
-token is saved in /keys. This explicit option overrides
+submissions, by name; while include_content is on, a submitted prompt also
+carries its text, but ! lines and slash-command arguments never do).
+/plugins configure observability opens a settings menu that edits these options.
+Its Logfire project row sets token and base_url for you, and turns sending on:
+pick Logfire US, EU, or a self-hosted URL, sign in in the browser, and pick a
+project; its new write token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
 $XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
 Both SDK configuration and credentials are read from that user directory, not
@@ -200,7 +201,9 @@ Each plugin instance gets its own PluginHost: the console, conversation, status,
 full screen, and its saved settings. Keep mutable state on the instance, set up
 in __init__, not in module globals. Loading builds the instance, calls each get_*
 method once, then on_session_start; unloading calls on_session_end and discards
-everything the plugin declared. Changes happen between turns. Failed or cancelled
+everything the plugin declared. /plugins can change plugins during a turn: the
+running agent keeps the capabilities it started with until the next prompt, and
+a plugin unloaded mid-turn gets on_session_end when the turn ends. Failed or cancelled
 loading calls on_session_end with reason=error under cancellation shielding, with
 a five-second cooperative timeout, then discards the plugin. Errors and timeouts
 are reported without replacing the load error. Blocking code and nested shields
@@ -540,6 +543,10 @@ Pass during_turn=True to Command when the menu is safe to open mid-turn, so the
 bare command opens at once instead of queueing behind the running turn. While
 run_worker runs, CLAI holds the turn's output and prints it in order afterwards.
 Only opt in when the running turn cannot observe what the menu changes.
+during_turn_subcommands=('add',) does the same for a bare subcommand such as
+/model add. Pass args_during_turn=True when every form of the command is safe
+mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
+as /plugins does.
 
 For named validated fields, reuse FieldSource, FieldMenu and run_flow in
 field_menu.py rather than write another editor. SettingsSource in set_menu.py
@@ -551,8 +558,11 @@ not currently receive CommandContext through PluginHost; do not invent host.cont
 ## Custom models and providers
 
 A model identifier accepted by an existing core provider can be selected with
-/add_model PROVIDER:NAME or /set model PROVIDER:NAME even if it is absent from the
-catalog. `/model` and its Tab suggestions select only previously added models.
+/model PROVIDER:NAME (or /model add PROVIDER:NAME, /set model PROVIDER:NAME) even
+if it is absent from the catalog. A name not yet saved is added and selected
+without checking that it exists; a wrong name fails on the next prompt with the
+provider's error. Bare `/model` picks from previously added models, and its Tab
+suggestions are the `add` and `settings` subcommands plus saved models.
 In `/model`, Ctrl+D or Delete removes a saved model and its per-model settings
 after confirmation. The current model and saved default are protected; select
 another model or change the default with `/set model NAME` first. Provider
@@ -634,8 +644,8 @@ class MyService(Plugin):
         return (ModelProvider(prefix='my-service', resolve=resolve, models=('fast', 'smart')),)
 ```
 
-`/add_model` then lists my-service:fast and my-service:smart, and any
-my-service:NAME works with /add_model or /set model. resolve receives NAME
+`/model add` then lists my-service:fast and my-service:smart, and any
+my-service:NAME works with /model add or /set model. resolve receives NAME
 without the prefix and runs in a worker thread before every run with that
 model, so it may read the keyring; raise UserError with setup instructions
 when it cannot build the model. The prefix starts with a lowercase letter,
@@ -643,7 +653,7 @@ followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
 CLAI already runs, aliases like openai-chat included, is rejected with
 ValueError.
 
-For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
+For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to
 turn it off. [Codex fast mode](https://developers.openai.com/codex/speed)
@@ -657,15 +667,15 @@ While using an `openai-codex:` model, `/fast` toggles priority processing;
 `/fast on` and `/fast off` select explicitly. The service tier is saved for that
 model's next prompts and sessions. Reasoning effort is unchanged. Other models
 neither expose nor accept `/fast`. Remove a custom `service_tier` parameter with
-`/model_settings` before using `/fast`.
+`/model settings` before using `/fast`.
 
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings
 are declared in ModelSettingsForm in model_settings.py; extend that form, not a
 second editor. Credentials belong in provider-supported storage, not model
-settings. /login signs in to subscriptions: /login codex (the default),
-/login copilot, and any sign-in a plugin returns from get_logins.
+settings. /login signs in to subscriptions: /login openai-codex,
+/login github-copilot, and any sign-in a plugin returns from get_logins.
 
 ## Test and verify
 
