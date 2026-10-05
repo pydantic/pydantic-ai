@@ -3,9 +3,9 @@
 import asyncio
 import math
 import sys
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -21,7 +21,7 @@ from rich.console import Console
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
@@ -138,6 +138,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
 Other harness capabilities are not listed here: a user adds one on purpose with `/plugins add` or a plugin module.
 
 `coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
+`compaction` stays off while `coder` is on, which includes context management; see `plugins.compatibility`.
 """
 
 STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
@@ -193,14 +194,8 @@ async def chat(
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
-        console.print()
-        print_banner(console)
-        console.print(
-            '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
-            style=theme.color(theme.MUTED),
-        )
         project = project or ProjectSettings()
-        _report_project(project, console)
+        _print_welcome(project, console)
         use_defaults = builtin_plugins is DEFAULT_PLUGINS
         use_stock_defaults = builtin_plugins is STOCK_PLUGINS
         shell = create_shell(
@@ -373,6 +368,7 @@ def create_shell(
     """Build shared session services, without attaching terminal input in headless mode."""
     settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
     store = store or SettingsStore()
+    transcript = transcript if transcript is not None else TranscriptBuffer()
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
     session = Session(
         agent,
@@ -495,13 +491,26 @@ def create_shell(
         Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
     )
 
-    async def new(args: list[str]) -> str:
-        await session.clear()
-        return 'New session started. Previous session remains saved.'
+    new_session = 'New session started. Previous session remains saved.'
 
-    new_command = Command(name='new', description='Start a new session; preserve the previous session', handler=new)
-    commands.register(new_command)
-    commands.register(replace(new_command, name='clear', description='Alias of /new'))
+    async def new(_: list[str]) -> str:
+        await session.clear()
+        return new_session
+
+    async def clear(_: list[str]) -> str:
+        await session.clear()
+        console.clear()
+        # Forget the old conversation too, or the next resize would replay it.
+        transcript.clear()
+        _print_welcome(project, console)
+        return ''
+
+    commands.register(
+        Command(name='new', description='Start a new session; preserve the previous session', handler=new)
+    )
+    commands.register(
+        Command(name='clear', description='Like /new, and also clear the screen back to the banner', handler=clear),
+    )
     commands.register(
         Command(
             name='usage',
@@ -547,17 +556,7 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
-    shown = session.conversation_id
-
-    async def conversation_changed(event: ConversationChanged) -> None:
-        nonlocal shown
-        # The footer belongs to one conversation: any switch, by command or plugin, starts it afresh.
-        if event.conversation_id != shown:
-            shown = event.conversation_id
-            status.clear_conversation()
-        await loader.fire(event)
-
-    session.on_change = conversation_changed
+    session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -613,7 +612,7 @@ def create_shell(
         status=status,
         prompt=prompt,
         history=history,
-        transcript=transcript if transcript is not None else TranscriptBuffer(),
+        transcript=transcript,
         images=images,
         interrupts=Interrupts(),
         screen=screen,
@@ -647,6 +646,22 @@ def create_shell(
     )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
     return shell
+
+
+@dataclass(kw_only=True)
+class _ConversationFooter:
+    """Tells plugins about a conversation change, starting the footer afresh when the ID changed."""
+
+    status: Status
+    fire: Callable[[ConversationChanged], Awaitable[None]]
+    shown: str
+
+    async def changed(self, event: ConversationChanged) -> None:
+        # The footer belongs to one conversation: any switch, by command or plugin, starts it afresh.
+        if event.conversation_id != self.shown:
+            self.shown = event.conversation_id
+            self.status.clear_conversation()
+        await self.fire(event)
 
 
 @dataclass(kw_only=True)
@@ -911,7 +926,10 @@ class _Shell(Generic[DepsT, OutputT]):
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
-                await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                context = await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                await self.session.commit_messages(
+                    [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
+                )
             return self.interrupts.exit_requested
         if is_command_input(text):
             return await self._command(text)
@@ -1042,6 +1060,17 @@ async def _launch(
 ) -> None:
     if notice := await shell.sessions.start(resume=resume, session_id=session_id, fork=fork):
         console.print(notice, markup=False)
+
+
+def _print_welcome(project: ProjectSettings, console: Console) -> None:
+    """The banner and hints a fresh launch shows, which `/clear` returns to."""
+    console.print()
+    print_banner(console)
+    console.print(
+        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
+        style=theme.color(theme.MUTED),
+    )
+    _report_project(project, console)
 
 
 def _report_project(project: ProjectSettings, console: Console) -> None:

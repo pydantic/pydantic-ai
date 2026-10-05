@@ -8,8 +8,10 @@ see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-Context management is the built-in `compaction` plugin,
-[described below](#compacting-the-conversation).
+`coder` includes its own context management: it clears old tool results as the
+context fills. The fuller built-in `compaction` plugin,
+[described below](#compacting-the-conversation), stays greyed out in `/plugins`
+while `coder` is on, since the two overlap, and takes over when you disable `coder`.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
@@ -179,25 +181,36 @@ system shell instead of starting an agent turn:
 ```text
 > !git status
 $ git status
-Shell passthrough, not sent to the agent
+Shell command and output saved for the next prompt
 ...
 Done (0.1s)
 ```
 
 The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
-available. It runs in CLAI's working directory, with the terminal's input and output, so interactive programs and pagers work. CLAI
-reports `Done` or the exit code with the elapsed time. Ctrl-C interrupts the
+available. It runs in CLAI's working directory with the terminal's input. Stdout
+and stderr are captured separately and displayed as they arrive. Because output
+is piped, programs that require a terminal for their output, such as full-screen
+editors, may not work. CLAI reports `Done` or the exit code with the elapsed time.
+Ctrl-C interrupts the
 command and returns to the prompt. On POSIX the command runs in its own session,
 so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
-on purpose with `setsid()`, as daemons do, outlives the command. Without a
-controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
+on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
+should redirect stdout and stderr: CLAI stops collecting their output after the
+shell exits. Without a controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
 or `ssh` password prompts, cannot read your input. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
-CLAI. Neither the command nor its output is added to the conversation, and a
-bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
+CLAI. The command, stdout, stderr, and completion status are saved in the
+conversation for the model's next turn, including partial output from interrupted
+commands. Each stream retains up to 100,000 characters, with a truncation notice
+when it exceeds that limit; all output continues streaming to the terminal.
+Running a command does not request a model reply. This context survives
+`/resume` without re-running the command; `/new` starts without it. Do not use `!`
+for output you do not want saved or shared with the model.
+
+A bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
 order with other queued input. `/help` lists the syntax.
 
 ## Prompt area
@@ -291,7 +304,7 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
 `/new` starts a new saved conversation, without deleting the previous one or
-input recall. `/clear`, or bare `clear`, is an alias of `/new`. Model responses and tool results are not saved to this file.
+input recall. `/clear`, or bare `clear`, does the same and also clears the screen back to the startup banner. Model responses and tool results are not saved to this file.
 
 ## CI coverage
 
@@ -312,7 +325,9 @@ Without installing, run `uvx pydantic-clai2`. The package also installs a
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
-For API-key providers, set the provider's API key environment variable before starting.
+For API-key providers, export the provider's API key before starting, or put it in
+a `.env` in the launch directory. See [Environment variables](#environment-variables)
+for discovery, precedence, and trust requirements.
 Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
 can read and modify files and execute commands with your user permissions. Run it
 in a workspace you trust. CLAI does not add a sandbox or approval layer.
@@ -354,6 +369,24 @@ The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
 again afterwards. Without uv on `PATH`, `/update` prints the complete command to
 run yourself, in PowerShell syntax on Windows. For bleeding installs, it also
 writes the overrides file and includes its path in the printed command.
+
+## Environment variables
+
+CLAI trusts the launch directory and its parents for automatic dotenv loading.
+A `.env` can change provider endpoints while reusing your exported API keys, and
+alter how tool subprocesses execute. Set `PYTHON_DOTENV_DISABLED=1` in your
+environment before launching CLAI in an untrusted directory.
+
+CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
+settings or importing agents and plugins. It searches the launch directory first,
+then its parents, and loads only the first file found. The search is not limited
+to Git repository boundaries. With `--worktree`, loading happens before switching
+directories. Missing files and named pipes are ignored. Unreadable or non-UTF-8
+files are skipped with a diagnostic on stderr.
+
+Use `.env` for provider API keys and settings such as `CLAI_MODEL` or
+`CLAI_NO_SPLASH`. Existing environment variables take precedence, including empty
+values. Keep `.env` files containing credentials out of version control.
 
 ## Your own agent
 
@@ -801,13 +834,19 @@ first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
 `plugins` takes the same declarations as `/plugins add`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
+relative `path` is relative to the folder that holds `.clai`, whichever
+subdirectory you launch from. A
 repository cannot switch a plugin on for you: plugins are trusted code running
 as your user, so every project-declared plugin starts off, CLAI lists the ones
 waiting at startup, and `/plugins enable NAME` is your approval. Approval is
 remembered in your user settings together with the declaration you approved,
 so a later change to the repository's declaration does not run until you
 `/plugins remove NAME` (which forgets your approval and restores the project's
-current declaration, off) and enable it again. Project declarations rank just
+current declaration, off) and enable it again. The approval keeps the file's
+absolute path, so another repository cannot put its own file at the same
+relative path and have it run as the one you approved. An approval saved by an
+older CLAI with a relative path does not load; remove it and enable it again
+from its repository. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
 
@@ -1089,7 +1128,8 @@ for that.
 
 ## Compacting the conversation
 
-The built-in `compaction` plugin uses harness's `FallbackCompaction` with
+The built-in `compaction` plugin runs while `coder` is off (`/plugins disable coder`).
+It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
 It protects the most recent 50,000 tokens. `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall
@@ -1293,8 +1333,9 @@ Theme selection and cancellation are silent.
 `/theme` opens a searchable picker. Its preview shows a sample conversation with
 Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
 input/status area. Each bundled palette paints the sample's foreground and
-background. Browsing does not apply a palette or save a setting. Enter confirms;
-Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
+background. Browsing does not apply a palette or save a setting. Press `/` to
+search the names. Enter confirms; Esc or Ctrl-C keeps your current choice (while
+searching, Esc first leaves the search). Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
 status, and diff highlighting. Starting and exiting with this choice leaves your
@@ -1343,9 +1384,11 @@ and `aesthetic`.
 
 `/spinner` opens a searchable picker with an animated preview. `-`/`+` (or
 Left/Right) make the highlighted spinner slower or faster in steps of 0.02 seconds;
-Enter applies it, Esc keeps your current choice. `/spinner NAME [SECONDS]` applies
-by name, ignoring case, and Tab completes the names. The choice is saved as
-`display.spinner` and shows on the next frame, with no restart.
+Enter applies it, Esc keeps your current choice. Press `/` to search the names;
+while searching, `-` and `+` filter, Enter keeps the matches, and Esc clears the
+search. `/spinner NAME [SECONDS]` applies by name, ignoring case, and Tab
+completes the names. The choice is saved as `display.spinner` and shows on the
+next frame, with no restart.
 
 A changed speed, from the picker or `SECONDS`, is saved as that spinner's
 `interval` in `spinners.json` next to CLAI's settings
@@ -1427,8 +1470,9 @@ The model still receives the original tool result.
 Shell output is rendered one completed line at a time. Carriage-return progress
 updates replace the buffered line rather than printing control-code text; the last
 update appears at newline or tool completion. CRLF works across chunk boundaries.
-Long display lines are ellipsized to terminal width. Multiline commands show their
-first line and the number of additional command lines rather than dumping scripts.
+Long display lines are ellipsized to terminal width. The command itself wraps
+under a hanging indent, keeping its own line breaks, up to 10 terminal rows; a
+count summarizes any rows beyond that.
 Full output remains in the log; display formatting does not alter model results.
 
 ## Shell preview limit
@@ -1636,7 +1680,10 @@ class Search(Plugin):
 Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
 importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove. Closing the menu returns to the prompt without printing the
+reload, and remove: Space toggles the highlighted plugin, and `c`, `r`, and `d`
+configure, reload, and remove it. Press `/` to search plugin names; while you
+search, every key you type filters, Enter keeps the matches so the keys act on
+them, and Esc clears the search. Esc or `q` closes the menu without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has every method, event, and rule.
@@ -1738,7 +1785,7 @@ credentials. Keep tokens out of plugin settings, which are saved as plaintext.
 /plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
-`/plugins configure observability`, or `C` on `observability` in `/plugins`, opens
+`/plugins configure observability`, or `c` on `observability` in `/plugins`, opens
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
@@ -1762,7 +1809,7 @@ values, or secrets.
 ### Setting up where traces go
 
 Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
-`C` on `observability` in `/plugins`):
+`c` on `observability` in `/plugins`):
 
 1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
 2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
@@ -1826,8 +1873,9 @@ The connection is saved in the configured Python keyring backend after selection
 ## Saved API keys
 
 Open `/keys` to browse and manage saved API keys in a full-screen menu.
-Use A to add, Enter to replace a value, R to rename, and D to delete with
-confirmation. Values are masked and are not shown in previews. Changes save
+Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
+confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
+clears the search. Values are masked and are not shown in previews. Changes save
 immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
