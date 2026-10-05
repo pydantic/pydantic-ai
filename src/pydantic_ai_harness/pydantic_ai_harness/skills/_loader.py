@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import posixpath
+import re
 import unicodedata
 from collections.abc import Collection, Hashable, Sequence
 from dataclasses import dataclass
@@ -69,7 +70,8 @@ MissingDirectories: TypeAlias = Literal['error', 'skip']
 DuplicateNames: TypeAlias = Literal['error', 'keep_first']
 """What `Skills` does when two valid skills with different `SKILL.md` files share a name: fail the run, or keep the first with a warning."""
 
-_ARGUMENTS_PLACEHOLDER = '$ARGUMENTS'
+_ARGUMENTS_PLACEHOLDER = re.compile(r'\$ARGUMENTS(?![\[\w])')
+"""`$ARGUMENTS` itself, not Claude Code's indexed `$ARGUMENTS[0]` or a longer name such as `$ARGUMENTS_LIST`."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -107,15 +109,16 @@ class SkillDefinition:
 
         Pass `arguments` when a user invokes the skill with a command such as `/code-review src/app.py`:
         every `$ARGUMENTS` in the body becomes `arguments`, and a body without `$ARGUMENTS` gets
-        `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude Code's indexed `$0`, are
-        left unchanged. Without `arguments`, the result is the instructions the model gets when it loads the skill.
+        `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude Code's indexed `$0` and
+        `$ARGUMENTS[0]`, are left unchanged. Without `arguments`, the result is the instructions the model gets when it loads the skill.
 
         The directory line is left out unless `in_run_workspace`.
         """
         body = self.body
         if arguments is not None:
-            if _ARGUMENTS_PLACEHOLDER in body:
-                body = body.replace(_ARGUMENTS_PLACEHOLDER, arguments)
+            if _ARGUMENTS_PLACEHOLDER.search(body):
+                # A function, so backslashes in the arguments are not read as group references.
+                body = _ARGUMENTS_PLACEHOLDER.sub(lambda _: arguments, body)
             elif arguments:
                 body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
         heading = f'# Skill: {self.name}'
@@ -126,7 +129,11 @@ class SkillDefinition:
 
 @dataclass(frozen=True, kw_only=True)
 class SkillCatalog:
-    """The skills `Skills.load` read, and what it skipped or ignored on the way."""
+    """The skills `Skills.load` read, and a message for each `SKILL.md` it left out.
+
+    Run-time advice, such as frontmatter fields whose behavior is not implemented, is not included:
+    a run emits it as a `UserWarning`, and each skill's `ignored_behavioral_fields` lists its own.
+    """
 
     skills: tuple[SkillDefinition, ...]
     """The selected, valid skills, in catalog order."""

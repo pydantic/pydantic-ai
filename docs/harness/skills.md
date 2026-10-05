@@ -282,7 +282,8 @@ the skill's `name`, `description`, `body`, `path`, `directory`, and
 `render(arguments)` returns what loading the skill returns, with every
 `$ARGUMENTS` in the body replaced by `arguments`. A body without `$ARGUMENTS`
 gets `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude
-Code's indexed `$0` or `$ARGUMENTS[0]`, are left unchanged. `render()` without
+Code's indexed `$0` or `$ARGUMENTS[0]`, are left unchanged, and do not count as
+`$ARGUMENTS`. `render()` without
 arguments returns the instructions the model gets when it loads the skill,
 including leaving the directory out for a skill read from `workspace=`
 (`in_run_workspace` is `False`).

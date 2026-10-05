@@ -723,8 +723,25 @@ class TestSkillsLoad:
             ('Review the change.', '', 'Review the change.'),
             ('', 'app.py', 'ARGUMENTS: app.py'),
             ('Review $ARGUMENTS.', None, 'Review $ARGUMENTS.'),
+            (
+                'Compare $ARGUMENTS[0] with $0 and $ARGUMENTS_LIST, then $ARGUMENTS.',
+                'a.py b.py',
+                'Compare $ARGUMENTS[0] with $0 and $ARGUMENTS_LIST, then a.py b.py.',
+            ),
+            ('Compare $ARGUMENTS[0].', 'a.py', 'Compare $ARGUMENTS[0].\n\nARGUMENTS: a.py'),
+            ('Open $ARGUMENTS.', r'C:\1\g<0>', r'Open C:\1\g<0>.'),
         ],
-        ids=['substituted', 'empty-substituted', 'appended', 'none-given', 'empty-body', 'model-loaded'],
+        ids=[
+            'substituted',
+            'empty-substituted',
+            'appended',
+            'none-given',
+            'empty-body',
+            'model-loaded',
+            'indexed-forms-unchanged',
+            'only-indexed-forms-appends',
+            'backslashes-literal',
+        ],
     )
     async def test_render_substitutes_arguments_like_claude_code(
         self, tmp_path: Path, body: str, arguments: str | None, rendered: str
