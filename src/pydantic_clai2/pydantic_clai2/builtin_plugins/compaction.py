@@ -10,7 +10,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+)
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
@@ -26,6 +34,8 @@ from pydantic_ai_harness.compaction import (
 )
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
+from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering.status import Status
 
 
@@ -55,6 +65,80 @@ class CompactionSettings(BaseModel):
     summarization_model: str | None = Field(
         default=None, description='Model that writes the summary. Unset uses the model running the conversation.'
     )
+
+    @model_serializer(mode='wrap')
+    def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
+        """Save only the settings someone chose, so menu edits never pin the other defaults."""
+        dumped: dict[str, JsonValue] = handler(self)
+        return {key: value for key, value in dumped.items() if key in self.model_fields_set}
+
+
+_TEXT_FIELDS = frozenset({'strategy', 'summarization_model'})
+"""Settings typed as plain text; the others are typed as JSON numbers."""
+
+
+class CompactionSource:
+    """The compaction settings, one row each, saved through the validated model; empty input resets."""
+
+    title = 'Compaction settings'
+
+    def __init__(self, host: PluginHost[None]) -> None:
+        self.host = host
+
+    def rows(self) -> tuple[FieldRow, ...]:
+        fields = CompactionSettings.model_fields
+
+        def row(key: str, label: str, choices: tuple[str, ...] = ()) -> FieldRow:
+            default: JsonValue = fields[key].default
+            return FieldRow(
+                key=key,
+                label=label,
+                description=fields[key].description or '',
+                default=shown(default),
+                choices=choices,
+                allow_custom=not choices,
+            )
+
+        return (
+            row('strategy', 'Strategy', ('summarization', 'truncation')),
+            row('threshold', 'Threshold'),
+            row('protected_tokens', 'Protected tokens'),
+            row('context_window', 'Context window'),
+            row('summarization_model', 'Summarization model'),
+        )
+
+    def current(self, row: FieldRow) -> str:
+        settings = self.host.settings(CompactionSettings)
+        values: dict[str, JsonValue] = {
+            'strategy': settings.strategy,
+            'threshold': settings.threshold,
+            'protected_tokens': settings.protected_tokens,
+            'context_window': settings.context_window,
+            'summarization_model': settings.summarization_model,
+        }
+        return shown(values[row.key])
+
+    def _updated(self, row: FieldRow, raw: str) -> CompactionSettings:
+        data: dict[str, JsonValue] = self.host.settings(CompactionSettings).model_dump(mode='json')
+        data[row.key] = raw if row.key in _TEXT_FIELDS else TypeAdapter(JsonValue).validate_json(raw)
+        return CompactionSettings.model_validate(data)
+
+    def problem(self, row: FieldRow, text: str) -> str | None:
+        try:
+            self._updated(row, text)
+        except ValueError as exc:
+            return first_error(exc)
+        return None
+
+    def apply(self, row: FieldRow, raw: str) -> str:
+        self.host.save_settings(self._updated(row, raw))
+        return f'Saved {row.label}.'
+
+    def reset(self, row: FieldRow) -> str:
+        data: dict[str, JsonValue] = self.host.settings(CompactionSettings).model_dump(mode='json')
+        data.pop(row.key, None)
+        self.host.save_settings(CompactionSettings.model_validate(data))
+        return f'Reset {row.label}.'
 
 
 def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
@@ -118,6 +202,12 @@ class CompactionPlugin(Plugin[CompactionSettings]):
                 raw=True,
             ),
         )
+
+    async def configure(self) -> str:
+        if not self.host.console.is_terminal:
+            return 'Configure compaction from a terminal: /plugins configure compaction'
+        messages = await run_worker(lambda: run_flow(FieldMenu(CompactionSource(self.host))))
+        return '\n'.join(messages) or 'No compaction settings changed.'
 
     async def on_session_end(self, event: SessionEnd) -> None:
         self.host.status.context_window = None

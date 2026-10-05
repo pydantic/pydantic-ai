@@ -232,8 +232,15 @@ class Session(Generic[DepsT, OutputT]):
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
         self.on_context_usage: Callable[[int], None] | None = None
+        self.on_context_window: Callable[[int], None] | None = None
+        """Told the context window of each streamed request's model, when its profile knows one."""
         self.on_setup_error: Callable[[CapabilitySetupError], None] | None = None
         """Told when a guarded plugin capability rejected its configuration, before the failed turn's error propagates."""
+
+    @property
+    def running(self) -> bool:
+        """Whether a run, resume, or history replacement holds the conversation now."""
+        return self._running
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -454,6 +461,8 @@ class Session(Generic[DepsT, OutputT]):
         for content in self._pending_steering:
             ctx.enqueue(*content, priority='asap')
         self._pending_steering.clear()
+        if self.on_context_window is not None and (window := ctx.model.context_window):
+            self.on_context_window(window)
 
         async def observed() -> AsyncIterable[AgentStreamEvent]:
             async for event in events:
