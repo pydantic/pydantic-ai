@@ -45,6 +45,9 @@ from pydantic_clai2.ui import telemetry
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
+FamilyDefaults = Callable[[str], ModelSettings | None]
+"""CLAI's family default settings for a model, given its name."""
+
 
 def _supports_local_workspace() -> bool:
     return sys.platform != 'win32'
@@ -130,7 +133,7 @@ class _ModelDefaults(AbstractCapability[DepsT]):
     passed them to the run. Resolved per request, so the defaults follow a model a capability selects.
     """
 
-    defaults: Callable[[str], ModelSettings | None]
+    defaults: FamilyDefaults
     """The defaults for a model, given its name: the run's model name when the run selected it by name."""
 
     def get_ordering(self) -> CapabilityOrdering:
@@ -257,7 +260,7 @@ class Session(Generic[DepsT, OutputT]):
         self.model_settings: ModelSettings | None = None
         """Settings the user chose for this session's model, passed to each run, where they take precedence
         over all others. A request on another model, which a capability selected, does not get them."""
-        self.model_defaults: Callable[[str], ModelSettings | None] | None = None
+        self.model_defaults: FamilyDefaults | None = None
         """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
         self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name

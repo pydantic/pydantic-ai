@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import JsonValue, TypeAdapter
 
@@ -12,6 +12,9 @@ from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui import telemetry
+
+if TYPE_CHECKING:
+    from pydantic_clai2.runtime._session import FamilyDefaults
 
 
 @runtime_checkable
@@ -92,7 +95,7 @@ class CommandContext:
 
         return model_settings_from_json(self.store.model_settings(model)).to_model_settings()
 
-    def model_defaults(self, model: str) -> Callable[[str], ModelSettings | None]:
+    def model_defaults(self, model: str) -> 'FamilyDefaults':
         """Family defaults for a model name; for `model`, only those its saved overrides leave unset.
 
         Merged beneath `model_overrides(model)`, they make `model_settings(model)`. The overrides are
