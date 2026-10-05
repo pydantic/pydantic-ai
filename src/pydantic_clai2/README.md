@@ -1186,8 +1186,12 @@ sends nothing.
 The window comes from genai-prices, the same catalog the `/model add` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
 assumed to have 200,000 tokens, the harness default. To change any of this,
-redeclare the plugin with your own settings; `/plugins disable compaction`
-turns it off, `/compact` included:
+run `/plugins configure compaction` (or press `c` on its `/plugins` row): each
+edit is validated and saved as you make it, and the plugin reloads so the next
+turn uses the new settings. A turn already running keeps the old ones. While `coder`
+is on, `compaction` is greyed out and cannot be configured, since its settings would
+have no effect. You can also redeclare the plugin with your own settings;
+`/plugins disable compaction` turns it off, `/compact` included:
 
 ```text
 /plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
@@ -1202,8 +1206,10 @@ turns it off, `/compact` included:
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
-The maximum comes from the request's model or the `context_window` override;
-it stays `?` until the plugin reports a known window. An unknown model's fallback
+The maximum comes from the request's model or the `context_window` override.
+It stays `?` until the first request of the session or after a model change, and for
+a model with no known window. With `compaction` off, for example while `coder` is on,
+the shell reads the window from the request's model itself. An unknown model's fallback
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 
@@ -1646,8 +1652,9 @@ context tokens, and streamed output estimate, including text, thinking, and
 string tool-argument deltas. The estimate is characters divided by four, not a
 provider tokenizer count. On completion it is replaced by reported run output
 usage. Context is the most recent response's reported input plus output tokens,
-not cumulative conversation billing or a context-window percentage; `?` means
-unavailable. As each request goes out, the `compaction` plugin replaces it with
+not cumulative conversation billing or a context-window percentage, over the
+request model's context window (`128k/1m`); `?` means unavailable, such as the
+window before the first request or for a model with no known window. As each request goes out, the `compaction` plugin replaces it with
 that request's estimated size and paints it yellow while the history is
 [over its threshold](#compacting-the-conversation); the response's reported
 usage takes over when it lands. The retained-history cost (`$0.0123`) follows the
