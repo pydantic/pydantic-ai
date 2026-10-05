@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
+from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
 
 from ._google_geometry import resolve_google_geometry
@@ -218,11 +219,12 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         contents = await self._map_contents(prompt, images)
 
         try:
-            response = await self._client.aio.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=resolved.config,
-            )
+            with map_decode_errors(self.model_name, errors.UnknownApiResponseError):
+                response = await self._client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=resolved.config,
+                )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]

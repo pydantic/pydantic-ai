@@ -31,7 +31,7 @@ needs. `get_capabilities` for tools, instructions, and agent-run hooks (a `Hooks
 capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, and `on_turn_end` for CLAI's own moments. The
+`on_session_end`, `on_turn_start`, `on_turn_end`, and `on_plugin_load_failed` for CLAI's own moments. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
 (console, conversation, status, full screen, saved settings); it registers
@@ -62,9 +62,12 @@ same PR.
 - **No `getattr`/`hasattr` on a plugin** to discover what it supports. It
   returned the thing from a `get_*` method or it did not; `has_configure` and
   `has_render` compare against the base-class default.
-- **Only four CLAI moments.** `on_session_start`, `on_session_end`,
-  `on_turn_start`, `on_turn_end`. Adding a fifth needs a use case that core
-  cannot serve; say which core hook you checked and why it does not fit.
+- **Only shell-owned moments.** `on_session_start`, `on_session_end`,
+  `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`. Startup load failures
+  happen before an agent run, so core's `before_run` cannot observe them. The
+  loader reports them after trying every enabled plugin so observability can
+  receive failures that preceded its own load. Additional moments need the same
+  justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
 
@@ -198,8 +201,8 @@ Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences and theme previews. Default diff colours stay unchanged, while
-bundled palettes use Termflow defaults.
+streamed fences and theme previews. Default diff colours stay unchanged; bundled
+palettes get diff lines from `theme.diff_renderer()`, tinted from the palette.
 
 ## Source layout
 
@@ -235,6 +238,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker |
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
+| `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
@@ -246,7 +250,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
 | `ui/menus/model_menu.py` | `/add_model`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
-| `ui/menus/model_picker.py` | `/model`: selection and completion of saved models |
+| `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models; protects the current model and saved default |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
@@ -258,7 +262,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `commands.py` | `Command`, the registry, completion |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
-| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue and menu handoff |
+| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue, timed double-Esc gesture, and menu handoff |
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
@@ -267,7 +271,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/prompt_keys.py` | keyboard decoder attachment only; no prompt-toolkit Application or renderer |
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
-| `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
+| `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models and removal of their overrides |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
 | `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
 | `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |

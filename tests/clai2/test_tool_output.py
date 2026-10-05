@@ -35,6 +35,15 @@ async def test_shell_header_includes_argument_once() -> None:
     assert output.getvalue() == '● shell ls /tmp\n\n'
 
 
+async def test_shell_header_without_a_command_shows_only_the_tool_name() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None, show_tool_output=True)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': ''}, tool_call_id='empty-shell'))
+    )
+    assert output.getvalue() == '● shell\n\n'
+
+
 async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(
