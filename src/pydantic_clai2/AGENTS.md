@@ -88,11 +88,11 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a CLAI list.
 - **Registration is idempotent per name.** "Active for the next prompt" is the
   natural unit. Stock agents are rebuilt when the capability snapshot or CLAI's
-  unchosen default model changes, with plugins and that model bound at
-  construction so self-delegation carries their tools, instructions, and
-  guardrails, and a capability can replace the default model. Supplied agents
-  still receive plugins per run (`agent.run(capabilities=...)`) and are never
-  rebuilt.
+  unchosen default model changes. Plugins are bound at construction so
+  self-delegation carries their tools, instructions, and guardrails, and the
+  default model is bound as the agent's own so a capability can replace it.
+  Supplied agents still receive plugins per run (`agent.run(capabilities=...)`)
+  and are never rebuilt.
 - **Shipped plugins register first, in declared order.** The menu's alphabetical
   order is for scanning only. Registration order is the order instructions,
   renderers, and status segments are consulted in, so `coder`'s guidance leads

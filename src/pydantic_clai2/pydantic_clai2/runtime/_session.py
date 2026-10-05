@@ -227,8 +227,8 @@ class StockAgent(Agent[DepsT, OutputT]):
 class Session(Generic[DepsT, OutputT]):
     """Run prompts to completion, retaining successful and interrupted turns in memory.
 
-    Stock agents are rebuilt when the plugin snapshot changes, so delegates carry
-    the same capabilities. Supplied agents keep their existing run-level plugins.
+    Stock agents are rebuilt when the plugin snapshot or CLAI's unchosen default model changes,
+    so delegates carry the same capabilities. Supplied agents keep their existing run-level plugins.
     """
 
     def __init__(
