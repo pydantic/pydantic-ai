@@ -3,7 +3,8 @@
 The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
 
 The same instance records failures CLAI reports and recovers from: startup plugin load failures, failed turns,
-failed slash commands other than usage errors, and failing plugin handlers. With `ui_events` on, it also records
+failed slash commands other than usage errors, and failing plugin handlers; with `include_content` off, the last
+three keep only the exception's type. With `ui_events` on, it also records
 CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 
@@ -141,7 +142,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
         self._unsubscribe = telemetry.subscribe(
-            self._clai2, root=self._session_tracing.root, ui=self.settings.ui_events
+            self._clai2,
+            root=self._session_tracing.root,
+            ui=self.settings.ui_events,
+            content=self.settings.include_content,
         )
         if self.settings.ui_events:
             model = event.settings.model or 'agent default'
@@ -159,7 +163,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             # An error that left the agent run is already on the run's span; this records the rest, such as a
             # model that could not be resolved or a failing `on_turn_start`, which fail the turn before the run.
             if event.error is not None and not self._session_tracing.raised_in_run(event.error):
-                self._clai2.log('error', 'Turn failed', exc_info=event.error)
+                telemetry.log_error(self._clai2, 'Turn failed', event.error, content=self.settings.include_content)
             if self.settings.ui_events:
                 self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 

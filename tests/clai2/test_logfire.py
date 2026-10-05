@@ -348,8 +348,11 @@ async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, 
         assert any(span.status.status_code is trace.StatusCode.ERROR for span in spans)
 
 
-async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(recorder: Recorder) -> None:
-    plugin = load_logfire(make_host())
+@pytest.mark.parametrize('content', [True, False])
+async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(
+    recorder: Recorder, content: bool
+) -> None:
+    plugin = load_logfire(make_host(include_content=content))
     agent = Agent(TestModel(), deps_type=type(None), name='failure_test')
 
     @agent.tool_plain
@@ -376,10 +379,18 @@ async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(r
     # The run's own span already holds the error that left it, so only turns that failed outside a run are logged.
     assert [(event.attributes or {}).get('exception.type') for event in run.events] == ['RuntimeError']
     failed, reused = [span for span in spans if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
-    assert [(event.attributes or {}).get('exception.type') for event in reused.events] == ['RuntimeError']
     assert failed.parent == root.context
     assert failed.status.status_code is trace.StatusCode.ERROR
     assert failed.instrumentation_scope is not None and failed.instrumentation_scope.name == 'clai2'
+    if not content:
+        # Like core's agent spans, only the type is kept: the message and traceback can quote the prompt.
+        assert [(span.attributes or {})['exception.type'] for span in (failed, reused)] == [
+            'pydantic_ai.exceptions.UserError',
+            'RuntimeError',
+        ]
+        assert all(not span.events for span in (failed, reused))
+        return
+    assert [(event.attributes or {}).get('exception.type') for event in reused.events] == ['RuntimeError']
     [exception] = failed.events
     attributes = exception.attributes or {}
     assert exception.name == 'exception'

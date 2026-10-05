@@ -328,7 +328,8 @@ async def test_rejected_plugin_settings_are_usage_errors(
     assert 's3cr3t' not in json.dumps(events)
 
 
-def test_handled_errors_do_not_need_ui_events(exporter: InMemorySpanExporter, tmp_path: Path) -> None:
+@pytest.mark.parametrize('content', [True, False])
+def test_handled_errors_do_not_need_ui_events(exporter: InMemorySpanExporter, tmp_path: Path, content: bool) -> None:
     other = InMemorySpanExporter()
     propagator = propagate.get_global_textmap()
     errors_only = logfire.configure(
@@ -342,7 +343,9 @@ def test_handled_errors_do_not_need_ui_events(exporter: InMemorySpanExporter, tm
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(logfire.Logfire(config=errors_only.config, otel_scope=telemetry.SCOPE), ui=False)
+    unsubscribe = telemetry.subscribe(
+        logfire.Logfire(config=errors_only.config, otel_scope=telemetry.SCOPE), ui=False, content=content
+    )
     try:
         telemetry.record('a UI event')
         telemetry.handled_error('plugin {plugin} failed', RuntimeError('handler failed'), plugin='alpha')
@@ -351,9 +354,14 @@ def test_handled_errors_do_not_need_ui_events(exporter: InMemorySpanExporter, tm
         errors_only.shutdown(timeout_millis=3000)
     # UI records skip a subscriber without `ui`, which still gets the newest handled errors.
     assert recorded(exporter) == [('a UI event', {})]
-    assert recorded(other) == [('plugin alpha failed', {'plugin': 'alpha'})]
     [error] = other.get_finished_spans()
     assert error.status.status_code is StatusCode.ERROR
+    if not content:
+        # Without content only the type is kept: a handler's message can quote the prompt.
+        assert recorded(other) == [('plugin alpha failed', {'plugin': 'alpha', 'exception.type': 'RuntimeError'})]
+        assert not error.events
+        return
+    assert recorded(other) == [('plugin alpha failed', {'plugin': 'alpha'})]
     assert [(event.attributes or {}).get('exception.message') for event in error.events] == ['handler failed']
 
 

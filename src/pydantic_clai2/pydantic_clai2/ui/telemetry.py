@@ -11,7 +11,7 @@ Attributes name what was chosen (a command, a menu, a setting, a plugin, a key's
 prompt text, secrets, and free-text values stay out.
 """
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -33,6 +33,7 @@ class _Sink:
     instance: logfire.Logfire
     root: Callable[[], Span | None]
     ui: bool
+    content: bool
 
 
 _sinks: list[_Sink] = []
@@ -42,15 +43,19 @@ _emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
 
 
 def subscribe(
-    sink: logfire.Logfire, *, root: Callable[[], Span | None] = lambda: None, ui: bool = True
+    sink: logfire.Logfire,
+    *,
+    root: Callable[[], Span | None] = lambda: None,
+    ui: bool = True,
+    content: bool = True,
 ) -> Callable[[], None]:
     """Send telemetry to `sink` until the returned function is called; calling it again does nothing.
 
     The caller supplies an instance in `SCOPE`. Handled errors go to the most recently subscribed instance, and UI
     telemetry to the most recent one with `ui`, so each destination gets whole, correctly nested traces; when it
-    unsubscribes, the previous one takes over.
+    unsubscribes, the previous one takes over. Without `content`, handled errors keep only the exception's type.
     """
-    subscribed = _Sink(instance=sink, root=root, ui=ui)
+    subscribed = _Sink(instance=sink, root=root, ui=ui, content=content)
     _sinks.append(subscribed)
 
     def unsubscribe() -> None:
@@ -91,16 +96,39 @@ def record(msg_template: str, /, **attributes: Attribute) -> None:
 
 
 def handled_error(msg_template: str, error: BaseException, /, **attributes: Attribute) -> None:
-    """Log a failure CLAI showed the user and recovered from, with its exception and traceback, at `error` level.
+    """Log a failure CLAI showed the user and recovered from, at `error` level; see `log_error`.
 
     It nests under the current span when that belongs to the session, such as a command's UI span, and under the
-    session root otherwise. Unlike UI records it does not need `ui_events`. The exception's message and traceback
-    get Logfire's normal scrubbing; only the `NAMES` attributes are exempt, as for UI records.
+    session root otherwise. Unlike UI records it does not need `ui_events`. Only the `NAMES` attributes are exempt
+    from scrubbing, as for UI records.
     """
     if _sinks:
         sink = _sinks[-1]
         with parent_span(sink.root()), _exempt():
-            sink.instance.log('error', msg_template, attributes=dict(attributes), exc_info=error)
+            log_error(sink.instance, msg_template, error, content=sink.content, attributes=attributes)
+
+
+def log_error(
+    instance: logfire.Logfire,
+    msg_template: str,
+    error: BaseException,
+    *,
+    content: bool,
+    attributes: Mapping[str, Attribute] | None = None,
+) -> None:
+    """Log `error` at `error` level: with `content`, as an exception event with its message and traceback.
+
+    Both can quote a prompt or a pasted secret, so without `content` only the exception's type is kept, as
+    the `exception.type` attribute, as core `Instrumentation` does on agent spans with `include_content=False`.
+    """
+    if content:
+        instance.log('error', msg_template, attributes=dict(attributes or {}), exc_info=error)
+        return
+    error_type = type(error)
+    name = error_type.__qualname__
+    if error_type.__module__ != 'builtins':
+        name = f'{error_type.__module__}.{name}'
+    instance.log('error', msg_template, attributes={**(attributes or {}), 'exception.type': name})
 
 
 class UiSpan:
