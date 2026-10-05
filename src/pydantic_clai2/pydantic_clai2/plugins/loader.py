@@ -165,6 +165,7 @@ class PluginLoader(Generic[DepsT]):
         builtin: Sequence[PluginSettings] = (),
         project: Sequence[PluginSettings] = (),
         conversation: Conversation | None = None,
+        session_id: Callable[[], str | None] = lambda: None,
         status: Status | None = None,
         full_screen: FullScreen = bare_screen,
         enabled: bool = True,
@@ -182,6 +183,7 @@ class PluginLoader(Generic[DepsT]):
         self._session_start = session_start
         self._full_screen = full_screen
         self._conversation = conversation
+        self._session_id = session_id
         self._status = status
         self._builtin = canonical_plugin_declarations(builtin)
         self._project = canonical_plugin_declarations(project)
@@ -369,7 +371,7 @@ class PluginLoader(Generic[DepsT]):
         return [name for provider in self.model_providers().values() for name in provider.names]
 
     def settings_model(self, model: str) -> str:
-        """The model whose `/model_settings` controls `model` takes: `PREFIX:NAME` as `settings_from:NAME`."""
+        """The model whose `/model settings` controls `model` takes: `PREFIX:NAME` as `settings_from:NAME`."""
         prefix, separator, name = model.partition(':')
         provider = self.model_providers().get(prefix) if separator else None
         if provider is None or provider.settings_from is None:
@@ -424,6 +426,7 @@ class PluginLoader(Generic[DepsT]):
             settings=declaration.settings,
             full_screen=self._full_screen,
             conversation=self._conversation,
+            session_id=self._session_id,
             status=self._status,
             save_settings=save,
             requirements=CAPABILITY_REQUIREMENTS.get(declaration.factory),

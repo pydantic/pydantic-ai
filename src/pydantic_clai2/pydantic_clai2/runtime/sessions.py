@@ -92,7 +92,11 @@ class Sessions(Generic[DepsT, OutputT]):
         Raises `ValueError` for options Claude Code would refuse, before changing anything.
         """
         session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork)
-        notice = await self.command([resume] if resume else []) if resume is not None else ''
+        if resume:
+            # Before plugins load: the caller records the resume once observability has subscribed.
+            notice = await self.session.resume(resume, record=False)
+        else:
+            notice = await self.command([]) if resume is not None else ''
         if fork and notice:
             # Keep the resume notice: it warns about an interrupted session, which the copy no longer records.
             notice = f'{notice}\n{await self.session.fork(session_id)}'
