@@ -152,3 +152,39 @@ async def test_queued_work_disabled_before_execution(tmp_path: Path) -> None:
             group.start_soon(namer.run)
             await checked.wait()
             group.cancel_scope.cancel()
+
+
+async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None:
+    """The shell may hold the notice until a long turn ends; the saved name still reaches it."""
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    summary = await store.save(
+        summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])]
+    )
+    release, done = anyio.Event(), anyio.Event()
+    notified: list[tuple[str, str]] = []
+
+    async def generate(prompt: str) -> NamingResult:
+        return NamingResult(name=SessionName(title='Fix renderer'))
+
+    async def on_named(conversation_id: str, title: str) -> None:
+        await release.wait()
+        notified.append((conversation_id, title))
+        done.set()
+
+    named_by_user = await store.save(
+        summary=ConversationSummary(workspace='/a', title_source='user'),
+        messages=[ModelRequest(parts=[UserPromptPart('keep my title')])],
+    )
+    namer = SessionNamer(store=store, generate=generate, timeout=0.01, on_named=on_named)
+    # A conversation that needs no name saves nothing, so the shell hears nothing about it.
+    assert namer.submit(named_by_user.id)
+    assert namer.submit(summary.id)
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(namer.run)
+            # Hold the notice past the naming timeout.
+            await anyio.sleep(0.05)
+            release.set()
+            await done.wait()
+            group.cancel_scope.cancel()
+    assert notified == [(summary.id, 'Fix renderer')]
