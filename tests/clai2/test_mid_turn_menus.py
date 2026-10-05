@@ -15,9 +15,10 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session, chat
 from pydantic_clai2._app import create_shell
 from pydantic_clai2.cli.command_context import CommandContext
@@ -27,7 +28,9 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins.loader import TURN_NOTICE
 from pydantic_clai2.runtime.session_settings import SessionSettings
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.screen import Screen
 from tests.clai2.test_tasks import task
@@ -118,6 +121,76 @@ def test_session_changes_saved_during_a_turn_wait_for_it_to_end() -> None:
     assert (session.model, session.tool_retries) == ('test:third', 7)
     applied('run.request_limit', Settings(request_limit=12))
     assert session.usage_limits is not None and session.usage_limits.request_limit == 12
+
+
+async def test_model_settings_saved_mid_turn_reach_the_running_models_next_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An edit saved from a menu worker thread while a tool runs applies to the same turn's next request."""
+    working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
+    written: list[str] = []
+
+    class Surface(PromptSurface):
+        def write(self, text: str) -> int:
+            written.append(text)
+            if 'Finished work' in ''.join(written):
+                streamed.set()
+            return super().write(text)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_model_settings('test', {'seed': 1})
+    seen: list[ModelSettings | None] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.before_model_request
+    async def capture(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        seen.append(request_context.model_settings)
+        return request_context
+
+    def edit() -> str:
+        source = ModelSettingsSource(store, 'test')
+        row = FieldMenu(source).row_for('max_tokens')
+        assert row is not None
+        return source.apply(row, '42')
+
+    async def model_settings(args: list[str]) -> str:
+        saved = await run_worker(edit)
+        finish.set()
+        return saved
+
+    agent = Agent(TestModel(call_tools=['work'], custom_output_text='Finished work'), deps_type=type(None))
+
+    @agent.tool_plain
+    async def work() -> str:
+        working.set()
+        await finish.wait()
+        return 'done'
+
+    output = io.StringIO()
+    menu = Command(name='edit_settings', description='Edit', handler=model_settings, during_turn=True)
+
+    async def run() -> None:
+        await chat(
+            agent,
+            deps=None,
+            plugins=[hooks, _MenuCommand(menu)],
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=store,
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('start\r')
+            await working.wait()
+            pipe.send_text('/edit_settings\r')
+            await streamed.wait()
+            pipe.send_text('/exit\r')
+            await done.wait()
+    assert seen == [{'seed': 1}, {'seed': 1, 'max_tokens': 42}]
+    assert 'Saved max_tokens for test.' in output.getvalue()
 
 
 class _MenuCommand(AbstractCapability[None]):
@@ -305,14 +378,14 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
-            pipe.send_text('start\n')
+            pipe.send_text('start\r')
             await working.wait()
-            pipe.send_text('/plugins disable alpha\n')
+            pipe.send_text('/plugins disable alpha\r')
             await applied.wait()
             assert 'alpha ended' not in ''.join(written)
             assert [plugin.enabled for plugin in store.plugins()] == ([] if delegating else [False])
             finish.set()
-            pipe.send_text('/exit\n')
+            pipe.send_text('/exit\r')
             await done.wait()
     # The queued `/exit` echoes once the turn is over and its plugin hooks have run.
     text = output.getvalue()
