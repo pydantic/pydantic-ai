@@ -160,13 +160,14 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
     summary = await store.save(
         summary=ConversationSummary(workspace='/a'), messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])]
     )
-    release, done = anyio.Event(), anyio.Event()
+    entered, release, done = anyio.Event(), anyio.Event(), anyio.Event()
     notified: list[tuple[str, str]] = []
 
     async def generate(prompt: str) -> NamingResult:
         return NamingResult(name=SessionName(title='Fix renderer'))
 
     async def on_named(conversation_id: str, title: str) -> None:
+        entered.set()
         await release.wait()
         notified.append((conversation_id, title))
         done.set()
@@ -182,7 +183,8 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
     with anyio.fail_after(10):
         async with anyio.create_task_group() as group:
             group.start_soon(namer.run)
-            # Hold the notice past the naming timeout.
+            # Hold the notice, once it is waiting, past the naming timeout.
+            await entered.wait()
             await anyio.sleep(0.05)
             release.set()
             await done.wait()
