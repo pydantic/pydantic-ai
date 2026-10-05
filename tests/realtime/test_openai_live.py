@@ -13,7 +13,7 @@ import base64
 import json
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import timezone
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -1450,7 +1450,7 @@ def test_a_backend_web_search_is_recorded_as_native_tool_parts() -> None:
         tool_name='web_search',
         content={'status': 'completed'},
         tool_call_id='ws_1',
-        timestamp=IsNow(tz=timezone.utc),
+        timestamp=IsNow(tz=UTC),
         provider_name='openai',
     )
     assert first == [

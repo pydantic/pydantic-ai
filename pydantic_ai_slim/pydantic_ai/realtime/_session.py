@@ -14,13 +14,13 @@ from itertools import takewhile
 from pprint import pformat
 from time import time_ns
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, Never, TypeAlias, TypeVar, assert_never, cast, overload
 
 import anyio
 from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
-from typing_extensions import Never, TypeAliasType, assert_never
+from typing_extensions import TypeAliasType
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue

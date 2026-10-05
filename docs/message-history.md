@@ -1080,7 +1080,7 @@ History-mutating maintenance (summarizing, pruning, repair) has two costs: the w
 Providers publish retention windows for their prompt caches. Pydantic AI records the documented default at the provider layer as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]: 5 minutes for Anthropic, 30 minutes for OpenAI's GPT-5.6 and later. Where a provider's retention depends on account configuration rather than the model — as OpenAI's does for earlier models, where the default hinges on whether the organization has zero data retention enabled — the default is left unset, and the outlook is `'unknown'` unless you pass `retention=` yourself. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
 
 ```python {title="cache_cold_maintenance.py"}
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -1088,7 +1088,7 @@ from pydantic_ai.profiles import prompt_cache_outlook
 
 profile = AnthropicModel('claude-sonnet-4-6').profile
 
-now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 history = [
     ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=now - timedelta(minutes=30)),
     ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now - timedelta(minutes=30)),

@@ -85,9 +85,7 @@ def in_temporal_workflow() -> bool:
 # `None` and every helper is a plain `await`.
 
 
-async def call_monty(
-    portal: BlockingPortal | None, fn: Callable[[Unpack[_Args]], Awaitable[_T]], *args: Unpack[_Args]
-) -> _T:
+async def call_monty(portal: BlockingPortal | None, fn: Callable[[Unpack[_Args]], Awaitable[_T]], *args: *_Args) -> _T:
     """Await one call into Monty's async bindings, `fn(*args)`, through `portal` when there is one."""
     if portal is None:
         return await fn(*args)

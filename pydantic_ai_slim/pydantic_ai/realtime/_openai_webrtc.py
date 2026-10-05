@@ -15,7 +15,7 @@ by both [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]
 
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
@@ -104,7 +104,7 @@ async def mint_client_secret(
         raise UnexpectedModelBehavior('Realtime client-secret response did not include a numeric `expires_at`.') from e
     provider_details = data.model_dump(exclude={'value'})
     try:
-        expires_at = datetime.fromtimestamp(data.expires_at, tz=timezone.utc)
+        expires_at = datetime.fromtimestamp(data.expires_at, tz=UTC)
     except (OverflowError, OSError, ValueError) as e:
         # A numeric-but-unrepresentable `expires_at` (e.g. `10**100`) passes validation but overflows the
         # platform's timestamp range; surface it as unexpected output rather than a raw OverflowError/OSError.

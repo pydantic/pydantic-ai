@@ -25,7 +25,7 @@ import sys
 import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator
 from contextlib import contextmanager
-from datetime import timezone
+from datetime import UTC
 from typing import Any
 
 import anyio
@@ -74,14 +74,10 @@ requires_task_cancelling = pytest.mark.skipif(
 
 
 def _task_cancelling(task: asyncio.Task[Any]) -> int:
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return 0
     return task.cancelling()
 
 
 def _task_uncancel(task: asyncio.Task[Any]) -> None:
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return
     task.uncancel()
 
 
@@ -420,8 +416,8 @@ async def test_tool_cancels_run_and_history_is_resumable():
     assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -432,7 +428,7 @@ async def test_tool_cancels_run_and_history_is_resumable():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:model_func:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -442,10 +438,10 @@ async def test_tool_cancels_run_and_history_is_resumable():
                         tool_name='fast_tool',
                         content='fast result',
                         tool_call_id='call_fast',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -466,19 +462,19 @@ async def test_tool_cancels_run_and_history_is_resumable():
                     tool_name='fast_tool',
                     content='fast result',
                     tool_call_id='call_fast',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                 ),
                 ToolReturnPart(
                     tool_name='cancelling_tool',
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_slow',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 ),
-                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=UTC)),
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
         )
     )
 
@@ -531,8 +527,8 @@ async def test_cancel_during_only_tool_call_is_resumable():
     assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -540,13 +536,13 @@ async def test_cancel_during_only_tool_call_is_resumable():
                 parts=[ToolCallPart(tool_name='in_flight_tool', args={}, tool_call_id='call_only')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:model_func:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -564,12 +560,12 @@ async def test_cancel_during_only_tool_call_is_resumable():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_only',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 ),
-                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=UTC)),
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
         )
     )
 
@@ -596,11 +592,11 @@ async def test_cancel_during_only_tool_call_is_resumable_without_a_new_prompt():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_only',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 )
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             run_id=IsStr(),
             conversation_id=IsStr(),
         )
@@ -975,8 +971,8 @@ async def test_task_cancel_of_run_carries_run_cancelled():
     assert cancelled.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -984,14 +980,14 @@ async def test_task_cancel_of_run_carries_run_cancelled():
                 parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='pyd_ai_tool_call_id__slow_tool')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1182,8 +1178,8 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
     assert cancelled.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1191,7 +1187,7 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
                 parts=[ToolCallPart(tool_name='fast_tool', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=50),
                 model_name='function::stream_text_after_tool',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1201,10 +1197,10 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
                         tool_name='fast_tool',
                         content='fast done',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1212,7 +1208,7 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
                 parts=[TextPart(content='partial ')],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function::stream_text_after_tool',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
