@@ -267,7 +267,11 @@ _AGENTS: dict[str, Agent[None, str]] = {
     'memory': _agent(
         'memory_agent',
         Memory[None](store=InMemoryStore()),
-        ('write_memory', {'content': 'The user prefers tabs.'}),
+        ('write_memory', {'content': 'The user prefers tabs.', 'file': 'style.md'}),
+        # A missing file asks the model to retry, which the operation records as data.
+        ('read_memory', {'file': 'missing.md'}),
+        ('search_memory', {'query': 'tabs'}),
+        ('delete_memory', {'file': 'missing.md'}),
     ),
     'planning': _agent(
         'planning_agent',
@@ -346,7 +350,7 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
         'capability_creation.list_all',
         'capability_creation.disable',
     ],
-    'memory': ['memory.write_memory'],
+    'memory': ['memory.write_memory', 'memory.read_memory', 'memory.search_memory', 'memory.delete_memory'],
     'planning': ['planning.set_items', 'planning.add_item'],
 }
 
