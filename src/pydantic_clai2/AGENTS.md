@@ -411,6 +411,10 @@ with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source
 for width/theme repaint; tool output keeps styled lines. On exit, `restore`
 prints retained output into native scrollback once, skipping startup output
 already printed there. Transcript memory is bounded, including Markdown parts.
+Reload rebinds the retained transcript and its nested classes in place after a
+successful shell rebuild, including migration from the pre-live Text-line buffer.
+The suspended `chat` coroutine still holds that transcript; do not only replace
+it on the new shell or mutate it before a rebuild that can fail.
 
 The `ask_user` picker borrows the released `PromptSurface` while the editor is
 suspended. Keep its numbered choices and Enter toggles; do not switch screens
