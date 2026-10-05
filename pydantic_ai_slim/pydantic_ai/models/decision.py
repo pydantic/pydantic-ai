@@ -238,6 +238,10 @@ _ASKS_NOTHING = (
     'A `system_prompt` will not do: a decision model is told what was said, not what to ask.'
 )
 
+# What a pick-one, a rubric, or a yes/no with described answers asks when nothing else does, on a backend that
+# `requires_instructions`: its options say the rest, worded like the route question's `Which of these ...`.
+_DEFAULT_QUESTION = 'Which of these applies?'
+
 
 class DecisionModelSettings(ModelSettings, total=False):
     """Settings used for a decision model request."""
@@ -368,11 +372,13 @@ class _Limits:
     Read once per request from the profile's `decision_max_choice_options` and `decision_max_score_levels`, or the
     model's `max_choice_options` and `max_score_levels` where the profile leaves them out, so that turning fields into
     questions can refuse a pick-one the backend would reject before anything is sent, and ask whole numbers with
-    more levels than a rubric can have as a pick-one instead.
+    more levels than a rubric can have as a pick-one instead. Also whether the backend needs `instructions` on every
+    question, from the model's `requires_instructions`.
     """
 
     choice_options: int | None
     score_levels: int | None
+    requires_instructions: bool
 
 
 @dataclass(init=False)
@@ -427,6 +433,15 @@ class DecisionModel(Model[InterfaceClient]):
 
     The profile's `decision_max_score_levels` takes precedence where it is set. Whole numbers from 0 with more levels than this are not a rubric, so a field of them is asked as a pick-one
     instead, and counts against `max_choice_options`.
+    """
+
+    requires_instructions: ClassVar[bool] = False
+    """Whether the backend refuses a question without `instructions`.
+
+    A pick-one, a rubric, or a yes/no with described answers can say what it asks through its options alone, so with
+    no field description, output type docstring or agent `instructions` to send, such a question goes without
+    `instructions`. A backend that requires them is sent a generic question instead, which leaves the options to
+    carry the meaning, as they do without it.
     """
 
     @cached_property
@@ -560,6 +575,7 @@ class DecisionModel(Model[InterfaceClient]):
         limits = _Limits(
             choice_options=profile.get('decision_max_choice_options', self.max_choice_options),
             score_levels=profile.get('decision_max_score_levels', self.max_score_levels),
+            requires_instructions=self.requires_instructions,
         )
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
@@ -1827,6 +1843,10 @@ def _questions(
         # A single value needs no label, so it is sent bare; the object form earns its keys only once there is
         # more than one thing in it.
         asked: JsonValue | None = next(iter(ask.values())) if len(ask) == 1 else (ask or None)
+        if asked is None and limits.requires_instructions:
+            # Only a question whose options say what it asks gets this far without anything to ask: a plain yes/no
+            # is refused below, and a field that fans out asks about each option by name.
+            asked = _DEFAULT_QUESTION
 
         if prop.get('type') == 'array':
             # Several options at once is one yes/no per option, all in the same request: does this option apply,
