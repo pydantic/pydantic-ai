@@ -224,8 +224,8 @@ running turn ends. With arguments, these commands queue like any other.
 `/model` selects from models you have already added. Choose **Add a model...**
 to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
 not yet in your list is added and selected; CLAI does not check that it exists, so a
-mistyped name fails on the next prompt with the provider's error. Model names start
-with a provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
+mistyped name fails on the next prompt with the provider's error. Model names normally
+start with a provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
 
 | Command | What it does |
 | --- | --- |

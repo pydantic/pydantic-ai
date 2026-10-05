@@ -68,7 +68,8 @@ class Command:
 
     Only for menus whose changes the running turn cannot observe, such as settings that
     take effect on the next turn. The run's output is held while the menu owns the screen.
-    With arguments the command still queues, keeping its order among queued follow-ups.
+    With arguments the command still queues, keeping its order among queued follow-ups,
+    unless the only argument is one of `during_turn_subcommands`.
     """
     during_turn_subcommands: tuple[str, ...] = ()
     """Subcommands, like `add` in `/model add`, whose bare form also opens its menu mid-turn."""
