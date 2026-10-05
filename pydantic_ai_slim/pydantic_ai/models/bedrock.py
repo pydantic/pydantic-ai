@@ -443,6 +443,42 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 }
 
 
+_NOVA_CODE_INTERPRETER_CONTENT_FORMAT = 'content_format'
+"""`provider_details` key recording how a `nova_code_interpreter_result` content list was mapped."""
+
+
+def _map_nova_code_interpreter_result_content(content: Sequence[Mapping[str, Any]]) -> tuple[Any, bool]:
+    """Map a `nova_code_interpreter_result` `toolResult` content list for a `NativeToolReturnPart`.
+
+    Returns the `content` value and whether it holds the provider's raw content blocks.
+
+    A lone `{'json': ...}` block -- what Nova returns for a run whose only output is structured -- is
+    unwrapped to the object itself, which is the ergonomic shape users already depend on. Every other
+    documented shape (a text-only error payload, several blocks, or a leading image/document/video block)
+    is kept verbatim as the provider's block list, so no block is dropped.
+    """
+    if not content:
+        return None, False
+    if len(content) == 1 and 'json' in content[0]:
+        return content[0]['json'], False
+    return [dict(block) for block in content], True
+
+
+def _map_nova_code_interpreter_result_blocks(
+    content: Any, provider_details: dict[str, Any] | None
+) -> list[ToolResultContentBlockOutputTypeDef]:
+    """Rebuild Bedrock `toolResult` content blocks from a `NativeToolReturnPart`.
+
+    The inverse of [`_map_nova_code_interpreter_result_content`][pydantic_ai.models.bedrock._map_nova_code_interpreter_result_content].
+    Only a part our own parser marked as carrying raw content blocks is sent back as a block list; the
+    shape alone can't be trusted, because a `json` payload may itself be a list of single-key objects.
+    Everything else -- including a hand-built part and `None` -- rides in a `json` block as it always has.
+    """
+    if (provider_details or {}).get(_NOVA_CODE_INTERPRETER_CONTENT_FORMAT) == 'blocks' and isinstance(content, list):
+        return cast('list[ToolResultContentBlockOutputTypeDef]', list(cast('list[Any]', content)))
+    return [{'json': cast('dict[str, Any]', content)}]
+
+
 def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
     """Parse an S3 URL into a Bedrock DocumentSourceTypeDef."""
     parsed = urlparse(url)
@@ -980,13 +1016,19 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                 elif tool_result := item.get('toolResult'):
                     if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                        result_content, is_blocks = _map_nova_code_interpreter_result_content(tool_result['content'])
+                        result_provider_details: dict[str, Any] = (
+                            {'status': tool_result['status']} if 'status' in tool_result else {}
+                        )
+                        if is_blocks:
+                            result_provider_details[_NOVA_CODE_INTERPRETER_CONTENT_FORMAT] = 'blocks'
                         items.append(
                             NativeToolReturnPart(
                                 provider_name=self.system,
                                 tool_name=CodeExecutionTool.kind,
-                                content=tool_result['content'][0].get('json') if tool_result['content'] else None,
+                                content=result_content,
                                 tool_call_id=tool_result.get('toolUseId'),
-                                provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
+                                provider_details=result_provider_details,
                             )
                         )
 
@@ -1429,9 +1471,9 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif isinstance(item, NativeToolReturnPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
-                                result_content: list[ToolResultContentBlockOutputTypeDef] = [
-                                    {'json': cast(dict[str, Any], item.content)}
-                                ]
+                                result_content: list[ToolResultContentBlockOutputTypeDef] = (
+                                    _map_nova_code_interpreter_result_blocks(item.content, item.provider_details)
+                                )
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
                                     'content': result_content,
@@ -1927,9 +1969,15 @@ class BedrockStreamedResponse(StreamedResponse):
                                 # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
 
                                 if tr_content := delta['toolResult']:  # pragma: no branch
-                                    # Goal here is to convert to object form.
-                                    # This assumes the first item is the relevant one.
-                                    return_part.content = tr_content[0].get('json')
+                                    # Same mapping as the non-streaming parser, so both paths agree.
+                                    return_part.content, is_blocks = _map_nova_code_interpreter_result_content(
+                                        tr_content
+                                    )
+                                    if is_blocks:
+                                        return_part.provider_details = {
+                                            **(return_part.provider_details or {}),
+                                            _NOVA_CODE_INTERPRETER_CONTENT_FORMAT: 'blocks',
+                                        }
 
                                 # Don't yield anything yet - we wait for content block end
 

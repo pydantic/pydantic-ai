@@ -96,6 +96,7 @@ with try_import() as imports_successful:
         BedrockConverseModel,
         BedrockModelName,
         BedrockModelSettings,
+        BedrockStreamedResponse,
         _support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -7584,3 +7585,219 @@ async def test_non_json_response_body_raises_model_api_error(
     assert exc_info.value.message.startswith(message)
     if call == 'stream':
         assert isinstance(exc_info.value.__cause__, EventStreamParserError)
+
+
+def _nova_code_interpreter_result_block(content: list[Any], status: str | None = None) -> dict[str, Any]:
+    tool_result: dict[str, Any] = {
+        'toolUseId': 'call_1',
+        'content': content,
+        'type': 'nova_code_interpreter_result',
+    }
+    if status is not None:
+        tool_result['status'] = status
+    return {'toolResult': tool_result}
+
+
+async def _nova_code_interpreter_return_part(
+    model: BedrockConverseModel, content: list[Any], status: str | None = None
+) -> NativeToolReturnPart:
+    """Drive the non-streaming parser with a synthetic Converse response and return the mapped part."""
+    response = cast(
+        Any,
+        {
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [_nova_code_interpreter_result_block(content, status)],
+                }
+            },
+            'usage': {'inputTokens': 1, 'outputTokens': 2, 'totalTokens': 3},
+            'stopReason': 'end_turn',
+        },
+    )
+    model_response = await model._process_response(response)  # type: ignore[reportPrivateUsage]
+    part = model_response.parts[0]
+    assert isinstance(part, NativeToolReturnPart)
+    return part
+
+
+async def _nova_code_interpreter_result_content(
+    model: BedrockConverseModel, content: list[Any], status: str | None = None
+) -> Any:
+    return (await _nova_code_interpreter_return_part(model, content, status)).content
+
+
+async def _nova_code_interpreter_result_content_streamed(
+    model: BedrockConverseModel, content: list[Any], status: str | None = None
+) -> Any:
+    """Drive the streaming parser with the same payload so both paths can be compared."""
+    tool_result_start: dict[str, Any] = {'toolUseId': 'call_1', 'type': 'nova_code_interpreter_result'}
+    if status is not None:
+        tool_result_start['status'] = status
+    events: list[Any] = [
+        {'messageStart': {'role': 'assistant'}},
+        {'contentBlockStart': {'contentBlockIndex': 0, 'start': {'toolResult': tool_result_start}}},
+        {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'toolResult': content}}},
+        {'contentBlockStop': {'contentBlockIndex': 0}},
+        {'messageStop': {'stopReason': 'end_turn'}},
+    ]
+    streamed = BedrockStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name=model.model_name,
+        _model_profile=cast(Any, model.profile),
+        _event_stream=cast(Any, events),
+        _provider_name='bedrock',
+        _model_id_namespace='bedrock',
+        _provider_url=model.base_url,
+    )
+    async for _ in streamed:
+        pass
+    part = streamed.get().parts[0]
+    assert isinstance(part, NativeToolReturnPart)
+    return part.content
+
+
+async def test_bedrock_nova_code_interpreter_result_single_json_content_is_unwrapped(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The common success shape — a lone `{'json': ...}` block — keeps being unwrapped to the object."""
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    payload = {'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False}
+
+    assert await _nova_code_interpreter_result_content(model, [{'json': payload}]) == snapshot(
+        {'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False}
+    )
+    assert await _nova_code_interpreter_result_content_streamed(model, [{'json': payload}]) == snapshot(
+        {'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False}
+    )
+
+
+async def test_bedrock_nova_code_interpreter_result_empty_content_is_none(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+
+    assert await _nova_code_interpreter_result_content(model, []) is None
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param([{'text': 'ZeroDivisionError: division by zero'}], id='text-only'),
+        pytest.param(
+            [{'json': {'stdOut': '', 'exitCode': 1}}, {'text': 'WARN: deprecated function call'}],
+            id='multi-item',
+        ),
+        pytest.param(
+            [
+                {'image': {'format': 'png', 'source': {'bytes': b'chart-bytes'}}},
+                {'json': {'description': 'revenue by quarter'}},
+            ],
+            id='image-first',
+        ),
+    ],
+)
+async def test_bedrock_nova_code_interpreter_result_keeps_every_content_item(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, content: list[Any]
+):
+    """Text-only, multi-item and media-first payloads must survive both parsers intact."""
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+
+    assert await _nova_code_interpreter_result_content(model, content) == content
+    assert await _nova_code_interpreter_result_content_streamed(model, content) == content
+
+
+async def test_bedrock_nova_code_interpreter_result_content_round_trips(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Content preserved as provider blocks must be sent back to Bedrock unchanged."""
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    content = [{'json': {'stdOut': '', 'exitCode': 1}}, {'text': 'ZeroDivisionError: division by zero'}]
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    args={'snippet': '1 / 0'},
+                    tool_call_id='call_1',
+                ),
+                await _nova_code_interpreter_return_part(model, content, 'error'),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages[-1]['content'][-1] == snapshot(
+        {
+            'toolResult': {
+                'toolUseId': 'call_1',
+                'content': [
+                    {'json': {'stdOut': '', 'exitCode': 1}},
+                    {'text': 'ZeroDivisionError: division by zero'},
+                ],
+                'type': 'nova_code_interpreter_result',
+                'status': 'error',
+            }
+        }
+    )
+
+
+async def test_bedrock_nova_code_interpreter_result_block_list_is_marked_in_provider_details(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Preserved blocks are flagged, so the request builder never has to guess from the shape."""
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+
+    unwrapped = await _nova_code_interpreter_return_part(model, [{'json': {'stdOut': '50'}}], 'success')
+    assert unwrapped.provider_details == snapshot({'status': 'success'})
+
+    blocks = await _nova_code_interpreter_return_part(model, [{'text': 'ZeroDivisionError'}], 'error')
+    assert blocks.provider_details == snapshot({'status': 'error', 'content_format': 'blocks'})
+
+    streamed = await _nova_code_interpreter_result_content_streamed(model, [{'text': 'ZeroDivisionError'}], 'error')
+    assert streamed == snapshot([{'text': 'ZeroDivisionError'}])
+
+
+async def test_bedrock_hand_built_code_execution_list_content_still_rides_in_a_json_block(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A JSON payload that merely looks like a block list must not be re-read as provider blocks.
+
+    Without the `content_format` marker the shape alone is ambiguous: `[{'text': 'literal data'}]` is a
+    perfectly ordinary JSON value, and sending it as a Bedrock text block would silently change both the
+    type and the value of the tool result.
+    """
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    args={'snippet': 'print("hi")'},
+                    tool_call_id='call_1',
+                ),
+                NativeToolReturnPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    content=[{'text': 'literal data'}],
+                    tool_call_id='call_1',
+                    provider_details={},
+                ),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages[-1]['content'][-1] == snapshot(
+        {
+            'toolResult': {
+                'toolUseId': 'call_1',
+                'content': [{'json': [{'text': 'literal data'}]}],
+                'type': 'nova_code_interpreter_result',
+            }
+        }
+    )
