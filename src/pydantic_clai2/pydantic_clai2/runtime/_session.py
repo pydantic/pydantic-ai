@@ -18,13 +18,15 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
+    CapabilityOrdering,
     CombinedCapability,
     DynamicCapability,
     LocalWorkspace,
+    ResolveModelId,
     WrapperCapability,
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelResolutionContext, infer_model
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -113,6 +115,26 @@ class _LocalFallback(LocalWorkspace[DepsT]):
         return None if other is not None else super().get_workspace(ctx, ref=ref)
 
 
+@dataclass
+class _ModelDefaults(AbstractCapability[DepsT]):
+    """CLAI's default settings for the model each request uses, beneath other capabilities' settings.
+
+    Merged first among capabilities, so another capability's settings and the run's own take
+    precedence. An agent's own `model_settings` merge before any capability's, so these defaults
+    still override them, as they did when CLAI passed them to the run. Resolved per request, so
+    the defaults follow a model a capability selects.
+    """
+
+    defaults: Callable[[str], ModelSettings | None]
+    """The defaults for a model, given its name: the run's model name when the run selected it by name."""
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost')
+
+    def get_model_settings(self) -> Callable[[RunContext[DepsT]], ModelSettings]:
+        return lambda ctx: self.defaults(ctx.model_id or ctx.model.model_name) or ModelSettings()
+
+
 def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
     """The capabilities the agent was built with, so a sandbox configured on it counts too.
 
@@ -158,17 +180,30 @@ class StockAgent(Agent[DepsT, OutputT]):
         deps_type: type[DepsT],
         output_type: OutputSpec[OutputT],
         capabilities: Sequence[AgentCapability[DepsT]],
+        defer_model_check: bool = False,
     ) -> None:
-        super().__init__(model, deps_type=deps_type, output_type=output_type, capabilities=capabilities)
+        super().__init__(
+            model,
+            deps_type=deps_type,
+            output_type=output_type,
+            capabilities=capabilities,
+            defer_model_check=defer_model_check,
+        )
         self._stock_deps_type = deps_type
 
-    def with_plugins(self, plugins: Sequence[AgentCapability[DepsT]]) -> 'StockAgent[DepsT, OutputT]':
-        """Bind a snapshot without mutating the agent used by another conversation."""
+    def with_plugins(
+        self, plugins: Sequence[AgentCapability[DepsT]], *, model: str | None = None
+    ) -> 'StockAgent[DepsT, OutputT]':
+        """Bind a snapshot without mutating the agent used by another conversation.
+
+        `model` replaces the agent's own model with a name each run resolves, through the session.
+        """
         return StockAgent(
-            self.model,
+            self.model if model is None else model,
             deps_type=self._stock_deps_type,
             output_type=self.output_type,
             capabilities=[self.root_capability, *plugins],
+            defer_model_check=model is not None,
         )
 
 
@@ -199,12 +234,19 @@ class Session(Generic[DepsT, OutputT]):
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
         self.model: str | None = None
+        self.model_chosen = True
+        """Whether the user chose `model`. A stock agent takes CLAI's default as its own model instead,
+        so a capability that selects a model takes precedence over it; a chosen model is passed to each run."""
         self.model_settings: ModelSettings | None = None
+        """Settings the user chose, passed to each run, where they take precedence over all others."""
+        self.model_defaults: Callable[[str], ModelSettings | None] | None = None
+        """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
         self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name
         self.agent = agent
         self._base_agent = agent
         self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
+        self._bound_model: str | None = None
         self.deps = deps
         self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
         self.usage_limits = usage_limits
@@ -306,6 +348,37 @@ class Session(Generic[DepsT, OutputT]):
         model = self.resolve_model(self.model)
         return await model if isinstance(model, Awaitable) else model
 
+    def _bind(self) -> tuple[str | None, list[AgentCapability[DepsT]]]:
+        """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first."""
+        run_model = self.model
+        capabilities = list(self.plugins)
+        if isinstance(self._base_agent, StockAgent):
+            # CLAI's default is the agent's own model, so a capability that selects one wins.
+            agent_model = None if self.model_chosen else self.model
+            if agent_model is not None:
+                run_model = None
+            if (
+                agent_model != self._bound_model
+                or len(self.plugins) != len(self._bound_plugins)
+                or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
+            ):
+                self.agent = self._base_agent.with_plugins(self.plugins, model=agent_model)
+                self._bound_plugins = tuple(self.plugins)
+                self._bound_model = agent_model
+            # Already bound to the stock agent, including delegation and guardrails.
+            capabilities = []
+        if self.model is not None:
+            capabilities.append(ResolveModelId[DepsT](self._resolve_model_id))
+        if self.model_defaults is not None:
+            capabilities.append(_ModelDefaults[DepsT](self.model_defaults))
+        return run_model, capabilities
+
+    async def _resolve_model_id(self, ctx: ModelResolutionContext[DepsT], model_id: str) -> Model:
+        model = self.resolve_model(model_id)
+        if isinstance(model, Awaitable):
+            model = await model
+        return infer_model(model) if isinstance(model, str) else model
+
     def steer(self, text: str, *, images: Sequence[BinaryContent] = ()) -> bool:
         """Deliver input to the active run, or decline when no run is accepting input."""
         if not self._accepting_steering:
@@ -345,16 +418,7 @@ class Session(Generic[DepsT, OutputT]):
                 self.delegations.bind() if self.delegations is not None else nullcontext(),
             ):
                 try:
-                    model = await self.resolved_model()
-                    capabilities = list(self.plugins)
-                    if isinstance(self._base_agent, StockAgent):
-                        if len(self.plugins) != len(self._bound_plugins) or any(
-                            new is not old for new, old in zip(self.plugins, self._bound_plugins)
-                        ):
-                            self.agent = self._base_agent.with_plugins(self.plugins)
-                            self._bound_plugins = tuple(self.plugins)
-                        # Already bound to the stock agent, including delegation and guardrails.
-                        capabilities = []
+                    run_model, capabilities = self._bind()
                     if self.delegations is not None:
                         capabilities.append(
                             DelegationReports(
@@ -378,7 +442,7 @@ class Session(Generic[DepsT, OutputT]):
                     result = await self.agent.run(
                         content,
                         deps=self.deps,
-                        model=model,
+                        model=run_model,
                         model_settings=self.model_settings,
                         retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
                         message_history=previous,

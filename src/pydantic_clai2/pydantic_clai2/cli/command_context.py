@@ -70,7 +70,8 @@ class CommandContext:
             if key in STRING_SETTINGS or (key == 'sessions.naming_model' and raw != 'null')
             else adapter.validate_json(raw)
         )
-        updated = self.settings.model_dump()
+        # Unset fields stay unset, so a field the user never chose keeps reading as CLAI's default.
+        updated = self.settings.model_dump(exclude_unset=True)
         updated[SETTING_FIELDS[key]] = value
         settings = Settings.model_validate(updated)
         if key == 'model' and settings.model:
@@ -80,17 +81,33 @@ class CommandContext:
         return value, settings
 
     def model_settings(self, model: str) -> ModelSettings | None:
-        """Family defaults plus saved overrides, ready for `agent.run`."""
+        """Family defaults plus saved overrides: what CLAI applies to a run with `model`."""
         from pydantic_clai2.models.model_settings import model_settings_from_json
 
         return model_settings_from_json(self.store.model_settings(model), model=model).to_model_settings()
 
+    def model_overrides(self, model: str) -> ModelSettings | None:
+        """The saved overrides alone, for `agent.run(model_settings=...)`, where they beat every other setting."""
+        from pydantic_clai2.models.model_settings import model_settings_from_json
+
+        return model_settings_from_json(self.store.model_settings(model)).to_model_settings()
+
+    def model_defaults(self, model: str) -> Callable[[str], ModelSettings | None]:
+        """Family defaults for a model name; for `model`, only those its saved overrides leave unset.
+
+        Merged beneath `model_overrides(model)`, they make `model_settings(model)`. The overrides are
+        read now, so a run does not read the store per request.
+        """
+        from pydantic_clai2.models.model_settings import default_model_settings
+
+        saved = self.store.model_settings(model)
+        return lambda name: default_model_settings(model=name, saved=saved if name == model else {})
+
     def reset_setting(self, key: str) -> str:
         """Forget the saved override and apply the default now."""
         self.store.reset(key)
-        updated = self.settings.model_dump()
-        field = SETTING_FIELDS[key]
-        updated[field] = Settings().model_dump()[field]
+        updated = self.settings.model_dump(exclude_unset=True)
+        updated.pop(SETTING_FIELDS[key], None)
         self._apply(key, Settings.model_validate(updated))
         return f'Reset {key}. ' + self._when(key)
 

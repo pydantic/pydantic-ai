@@ -352,7 +352,11 @@ def create_shell(
     load_plugins: bool = True,
 ) -> '_Shell[DepsT, OutputT]':
     """Build shared session services, without attaching terminal input in headless mode."""
-    settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
+    settings = (
+        Settings.model_validate(settings.model_dump(exclude_unset=True))
+        if settings is not None
+        else Settings(model=None)
+    )
     store = store or SettingsStore()
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
     session = Session(
@@ -366,6 +370,7 @@ def create_shell(
     if summary is not None:
         session.summary = summary
     session.model = settings.model
+    session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
     models = _ModelResolver(console=console, store=store)
     session.resolve_model = models.resolve
@@ -697,9 +702,11 @@ class _Shell(Generic[DepsT, OutputT]):
             workspace=Path(self.session.workspace),
         )
         child.model = model or self.session.model
+        child.model_chosen = model is not None or self.session.model_chosen
         child.tool_retries = self.session.tool_retries
         child.resolve_model = self.session.resolve_model
-        child.model_settings = self.context.model_settings(child.model or _model_label(self.agent))
+        child.model_settings = self.context.model_overrides(child.model or _model_label(self.agent))
+        child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
         return child
 
@@ -964,7 +971,8 @@ class _Shell(Generic[DepsT, OutputT]):
         self.session.plugins = self.run_plugins()
         model = self.session.model or _model_label(self.agent)
         try:
-            self.session.model_settings = self.context.model_settings(model)
+            self.session.model_settings = self.context.model_overrides(model)
+            self.session.model_defaults = self.context.model_defaults(model)
         except ValidationError as exc:
             self.console.print(
                 f'Invalid saved model settings for {model}. Fix or reset them with /model_settings {model}.',

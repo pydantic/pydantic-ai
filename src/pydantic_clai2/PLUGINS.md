@@ -2514,7 +2514,10 @@ GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
 default to `thinking=true`, `service_tier=default`, reasoning effort `medium`,
 context `all_turns`, mode `standard`, summary `detailed`, and verbosity `low`.
 Explicit per-model values win; reset restores the family default without saving
-it as an override. Other models keep their existing defaults. Provider-specific
+it as an override. Other models keep their existing defaults. Family defaults
+follow the model each request uses and sit beneath plugin capability
+settings, so a capability can change them; only your saved values are passed to
+each run, where they win over everything else. Provider-specific
 fields are consumed only by APIs that support them; this does not add Responses
 controls to Chat Completions or other protocols.
 
