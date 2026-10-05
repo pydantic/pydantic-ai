@@ -191,7 +191,35 @@ result = agent.run_sync([
 
 A `CachePoint` that opens a user message marks the end of the previous message instead, such as the tool result before it, the same as on Anthropic and Bedrock. On the Responses API, assistant output can't carry a breakpoint, so it goes on the closest earlier input instead. One with no earlier content in the conversation raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
-Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value. For GPT-5.6 and later models, set a stable [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to use OpenAI's more reliable matching for both implicit and explicit caching. Requests without a key may still receive automatic cache hits, but do not use the improved matching. Use different keys to partition unrelated workloads.
+To cache the instructions, set [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+settings = OpenAIResponsesModelSettings(
+    openai_prompt_cache_key='support-app:kb-v1',
+    openai_cache_instructions=True,
+)
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    instructions='Long-lived support policies...',
+    model_settings=settings,
+)
+
+result = agent.run_sync('Where is order 1234?')
+```
+
+The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix and don't invalidate it when they change. With no static instructions, it goes on the last [system prompt](../agent.md#system-prompts) instead, which is just as stable. Leave `openai_prompt_cache_options` on its default `mode='implicit'` so OpenAI also keeps caching the growing conversation.
+
+On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the instructions are sent as leading input messages instead. Because a stored response keeps its input and replays it to the request that continues it, this has some limits:
+
+- It only happens on requests that don't continue server-side state. When [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set, or the history has been [compacted](../capabilities/compaction.md), the setting leaves the instructions where they would otherwise go (normally the top-level field) and adds no breakpoint.
+- With `openai_previous_response_id='auto'`, that includes the first request, which has no response to continue yet. Otherwise its relocated instructions would be replayed next to every later request's own [instructions](../agent.md#instructions), which may belong to a different agent.
+- Don't continue a response created with `openai_cache_instructions` through `openai_previous_response_id` later on, since its stored input includes the instructions it was created with.
+- Requests that continue server-side state still get OpenAI's implicit breakpoint with the default `mode='implicit'`. What they give up is a breakpoint at the end of the instructions, which lets separate conversations share the cached instructions. Agent runs send the full message history by default, so this only affects runs that opt into server-side state.
+
+Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. If a request sets more breakpoints than that, OpenAI writes only the last four, and the instruction breakpoint is the earliest one in a request, so it is the first to be dropped. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value. For GPT-5.6 and later models, set a stable [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to use OpenAI's more reliable matching for both implicit and explicit caching. Requests without a key may still receive automatic cache hits, but do not use the improved matching. Use different keys to partition unrelated workloads.
 
 When OpenAI reports prompt cache writes, Pydantic AI exposes them as [`result.usage.cache_write_tokens`][pydantic_ai.usage.RunUsage.cache_write_tokens]. Cache reads are available as [`result.usage.cache_read_tokens`][pydantic_ai.usage.RunUsage.cache_read_tokens]. For GPT-5.6 and later model families, OpenAI bills cache writes at 1.25 times the uncached input token rate.
 
