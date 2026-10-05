@@ -803,8 +803,8 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             )
         else:
             cause = (
-                '`LOGFIRE_API_KEY` is set, but its Logfire instance has not been configured, and only a configured instance '
-                'reads it. Use the instance `logfire.configure()` returned.'
+                '`LOGFIRE_API_KEY` is set, but its Logfire instance has not been configured, and only a '
+                'configured instance reads it. Use the instance `logfire.configure()` returned.'
             )
         if on_default_instance and isinstance(self.name, Variable):
             cause += (
