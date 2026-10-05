@@ -28,6 +28,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
 from pydantic_ai_harness.localstack import LocalStack
+from pydantic_ai_harness.memory import InMemoryStore, Memory
 from pydantic_ai_harness.planning import Planning, SqlitePlanStore
 from tests.conftest import detach_dbos_logging
 
@@ -263,6 +264,11 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('list_authored_capabilities', {}),
         ('disable_authored_capability', {'name': 'marker'}),
     ),
+    'memory': _agent(
+        'memory_agent',
+        Memory[None](store=InMemoryStore()),
+        ('write_memory', {'content': 'The user prefers tabs.'}),
+    ),
     'planning': _agent(
         'planning_agent',
         Planning[None](store=SqlitePlanStore(database=str(_PLAN_DATABASE))),
@@ -299,6 +305,15 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
 
         monkeypatch.setattr(CapabilityStore, method, counted)
 
+    # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
+    original_memory_write = InMemoryStore.write
+
+    async def counted_memory_write(self: InMemoryStore, *args: Any, **kwargs: Any) -> Any:
+        _requests['memory.write'] += 1
+        return await original_memory_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(InMemoryStore, 'write', counted_memory_write)
+
     # The plan tools read the store many times; a write is what recovery must not repeat.
     for method in ('set_items', 'add_item'):
         original = getattr(SqlitePlanStore, method)
@@ -331,6 +346,7 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
         'capability_creation.list_all',
         'capability_creation.disable',
     ],
+    'memory': ['memory.write_memory'],
     'planning': ['planning.set_items', 'planning.add_item'],
 }
 
