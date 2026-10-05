@@ -181,25 +181,36 @@ system shell instead of starting an agent turn:
 ```text
 > !git status
 $ git status
-Shell passthrough, not sent to the agent
+Shell command and output saved for the next prompt
 ...
 Done (0.1s)
 ```
 
 The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
-available. It runs in CLAI's working directory, with the terminal's input and output, so interactive programs and pagers work. CLAI
-reports `Done` or the exit code with the elapsed time. Ctrl-C interrupts the
+available. It runs in CLAI's working directory with the terminal's input. Stdout
+and stderr are captured separately and displayed as they arrive. Because output
+is piped, programs that require a terminal for their output, such as full-screen
+editors, may not work. CLAI reports `Done` or the exit code with the elapsed time.
+Ctrl-C interrupts the
 command and returns to the prompt. On POSIX the command runs in its own session,
 so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
-on purpose with `setsid()`, as daemons do, outlives the command. Without a
-controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
+on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
+should redirect stdout and stderr: CLAI stops collecting their output after the
+shell exits. Without a controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
 or `ssh` password prompts, cannot read your input. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
-CLAI. Neither the command nor its output is added to the conversation, and a
-bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
+CLAI. The command, stdout, stderr, and completion status are saved in the
+conversation for the model's next turn, including partial output from interrupted
+commands. Each stream retains up to 100,000 characters, with a truncation notice
+when it exceeds that limit; all output continues streaming to the terminal.
+Running a command does not request a model reply. This context survives
+`/resume` without re-running the command; `/new` starts without it. Do not use `!`
+for output you do not want saved or shared with the model.
+
+A bare `!` is sent to the agent as an ordinary prompt. Queued `!` lines run in
 order with other queued input. `/help` lists the syntax.
 
 ## Prompt area

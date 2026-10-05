@@ -21,7 +21,7 @@ from rich.console import Console
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
@@ -892,7 +892,10 @@ class _Shell(Generic[DepsT, OutputT]):
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
-                await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                context = await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                await self.session.commit_messages(
+                    [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
+                )
             return self.interrupts.exit_requested
         if is_command_input(text):
             return await self._command(text)
