@@ -173,7 +173,7 @@ default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
 Other options are service_name (default pydantic-clai2), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
-then receives the telemetry), and ui_events (default false: also record UI
+then receives the telemetry), and ui_events (default true; set false to opt out: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
 submissions, by name; while include_content is on, a submitted prompt also
 carries its text, but ! lines and slash-command arguments never do).
