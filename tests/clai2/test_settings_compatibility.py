@@ -14,10 +14,16 @@ from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
+from pydantic_clai2.builtin_plugins.logfire import (
+    LogfireAccount,
+    LogfireReadAccess,
+    LogfireSettings,
+    LogfireSource,
+    read_access,
+)
 from pydantic_clai2.commands import config_command, plugins_command
 from pydantic_clai2.config import PluginSettings, Settings, features
-from pydantic_clai2.config.api_keys import KeyReference
+from pydantic_clai2.config.api_keys import KeyReference, save_key
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.model_settings import model_settings_from_json
@@ -64,12 +70,16 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         )
         assert saved.settings['account'] is None
         requirements = store.plugin_requirements('observability')
-        assert requirements == {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        assert requirements == {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'read_access': ['logfire-read-access'],
+        }
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account')
+            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account', 'read_access')
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -123,6 +133,47 @@ async def test_an_older_build_changing_the_token_retires_the_sign_in_email(
         await loader.close('exit')
     tags = [(span.attributes or {})['logfire.tags'] for span in recorder.spans() if span.name == 'CLAI session']
     assert tags == [(), ('mike@example.com',), (), ()]
+
+
+async def test_an_older_build_setting_up_another_project_retires_the_read_token(
+    tmp_path: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    loader, store = observability_loader(tmp_path)
+    team, other = KeyReference(name='LOGFIRE_TOKEN_TEAM'), KeyReference(name='LOGFIRE_TOKEN_OTHER')
+    access = LogfireReadAccess(token=KeyReference(name='LOGFIRE_READ_TOKEN_TEAM'), write_token=team)
+    save_key(name='LOGFIRE_READ_TOKEN_TEAM', value='pylf_v1_us_read')
+    supported = features.SUPPORTED_FEATURES
+    store.save_plugin(
+        PluginSettings(
+            id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'send_to_logfire': False}
+        )
+    )
+    try:
+        await loader.load_all()
+        # This build's project setup saves the write token with the read token minted beside it.
+        host = _observability_host(loader)
+        update = {'token': team, 'base_url': 'https://logfire-us.pydantic.dev', 'read_access': access}
+        host.save_settings(host.settings(LogfireSettings).model_copy(update=update))
+        requirements = store.plugin_requirements('observability')
+        assert isinstance(requirements, dict)
+        assert requirements['read_access'] == ['logfire-read-access']
+        # A build that knows user tags but not read access ignores it, then sets up another project.
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset({'logfire-user-tag'}))
+        await loader.reload('observability')
+        host = _observability_host(loader)
+        assert host.settings(LogfireSettings).read_access is None
+        host.save_settings(host.settings(LogfireSettings).model_copy(update={'token': other}))
+        [saved] = store.plugins()
+        assert saved.settings['read_access'] == access.model_dump(mode='json')  # Written back, as unknown settings are.
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', supported)
+        await loader.reload('observability')
+        settings = _observability_host(loader).settings(LogfireSettings)
+        assert settings.read_access == access
+        # The read token belongs to the old project, so this build refuses to read with it.
+        with pytest.raises(ValueError, match='needs a read token for the Logfire project traces go to'):
+            await read_access(settings)
+    finally:
+        await loader.close('exit')
 
 
 @pytest.mark.parametrize(('version', 'has_model_settings'), [(0, False), (1, False), (1, True)])

@@ -379,13 +379,34 @@ be recorded. Logfire's usual scrubbing is enabled.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
 `LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
-sets `token`, `base_url`, `account`, and `send_to_logfire` for you (`R` on it
-clears `token`, `base_url`, and `account` again): it asks where traces go, runs
+sets `token`, `base_url`, `account`, `read_access`, and `send_to_logfire` for you (`R` on it
+clears `token`, `base_url`, `account`, and `read_access` again): it asks where traces go, runs
 Logfire's own device sign-in there (the one behind `logfire auth`, not
 `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server accepts), reads your
 account's email, lists the projects you can write to, and saves a new write
 token for the one you pick in `/keys`. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+
+Setup also tries to mint a read token for the same project and saves it in
+`/keys` as `LOGFIRE_READ_TOKEN_<ORG>_<PROJECT>`. `read_access` stores only its key
+name and the write-token key saved beside it. Builds without the
+`logfire-read-access` feature ignore this setting. A failed read-token request
+leaves tracing available; setup must run again to enable reading.
+
+The plugin contributes `/logfire optimize [agents | preview AGENT | propose
+AGENT [focus]]`. It refuses before any network request unless `read_access`
+was saved by project setup and still names the write-token key in use. An
+environment write token, SDK credentials, or a `logfire_mcp` login does not
+qualify. Disabling the plugin removes the command.
+
+The command reads up to twelve recent Pydantic AI agent runs over seven days
+through Logfire's public query API, prioritizing failures. `preview` shows the
+sample; `propose` sends its recorded messages and system prompt to the session's
+model for an advisory review, with citations and a prompt diff. It makes no
+code changes, schedules nothing, and creates no Logfire proposal. The private
+platform optimizer is not called. With no recorded system prompt it gives
+recommendations only. Agent names must not contain spaces.
+See [API and implementation notes](docs/logfire-optimization.md).
 
 Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
