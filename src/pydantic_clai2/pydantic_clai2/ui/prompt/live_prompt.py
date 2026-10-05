@@ -575,4 +575,4 @@ def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]
         return {'kind': 'command', 'command': name if name in commands else 'unknown', 'chars': len(text)}
     if shell_command(text) is not None:
         return {'kind': 'shell', 'chars': len(text)}
-    return {'kind': 'prompt', 'chars': len(text), **telemetry.content(prompt=text)}
+    return {'kind': 'prompt', 'chars': len(text), **telemetry.prompt_text(text)}

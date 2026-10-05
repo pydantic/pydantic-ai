@@ -478,7 +478,7 @@ async def test_ui_events_carry_typed_text_only_with_message_content(recorder: Re
     plugin = load_logfire(make_host(ui_events=True, include_content=content))
     try:
         await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
-        telemetry.record('prompt submitted', kind='prompt', **telemetry.content(prompt='fix the session bug'))
+        telemetry.record('prompt submitted', kind='prompt', **telemetry.prompt_text('fix the session bug'))
     finally:
         await close(plugin)
     submitted = next(span for span in recorder.spans() if span.name == 'prompt submitted')

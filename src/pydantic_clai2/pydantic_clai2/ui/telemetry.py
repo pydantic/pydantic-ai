@@ -8,7 +8,7 @@ Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `Fiel
 `/keys`, the prompt editor) rather than individual menus, so a new menu is covered without extra code.
 Attributes name what was chosen (a command, a menu, a setting, a plugin, a key's name), not what was typed:
 secrets and free-text values stay out. The one exception is a submitted prompt's text, added through
-`content` only when the subscriber records message content, as agent spans do.
+`prompt_text` only when the subscriber records message content, as agent spans do.
 """
 
 from collections.abc import Callable, Generator
@@ -52,7 +52,7 @@ def subscribe(
 
     The caller supplies an instance in `SCOPE`. Telemetry goes to the most recently subscribed instance,
     so each destination gets whole, correctly nested traces; when it unsubscribes, the previous one takes over.
-    `include_content` lets `content` add what the user typed, like `InstrumentationSettings.include_content`.
+    `include_content` lets `prompt_text` add what the user typed, like `InstrumentationSettings.include_content`.
     """
     subscribed = _Sink(instance=sink, root=root, include_content=include_content)
     _sinks.append(subscribed)
@@ -83,11 +83,11 @@ def _exempt() -> Generator[None]:
         _emitting.reset(token)
 
 
-def content(**attributes: str) -> dict[str, Attribute]:
-    """Typed text for a record, if the subscriber records content, each value cut to `MAX_CONTENT_CHARS`."""
+def prompt_text(text: str) -> dict[str, Attribute]:
+    """A submitted prompt as the `PROMPT` attribute, cut to `MAX_CONTENT_CHARS`, if the subscriber records content."""
     if not _sinks or not _sinks[-1].include_content:
         return {}
-    return {key: value[:MAX_CONTENT_CHARS] for key, value in attributes.items()}
+    return {PROMPT: text[:MAX_CONTENT_CHARS]}
 
 
 def record(msg_template: str, /, **attributes: Attribute) -> None:
