@@ -27,12 +27,13 @@ dependencies = [
     # Speculative execution runs CodeMode's Monty sandbox. Pinned directly rather than via
     # `pydantic-ai-harness[code-mode]`, which also pulls a web-search client CLAI does not use.
     "pydantic-monty>=1.0.0,<2",
-    # Built-in MCP client: https://github.com/pydantic/pydantic-ai-harness/issues/966.
+    # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     "genai-prices>=0.1.7",
     "termflow-md>=0.11.0,<0.12",
     "pyfiglet>=1.0.4",
     "prompt-toolkit>=3.0.52",
+    "python-dotenv>=1.2.2",
     "rich>=14",
     "keyring>=25.6",
     # Encrypts saved credentials with the one key kept in keyring, so a session prompts for keychain access once.

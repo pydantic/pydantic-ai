@@ -621,7 +621,7 @@ PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
 
 def _speech_cleared_after_barge_in(sim: Simulation, violation: InvariantViolation) -> bool:
     started = sim.truth.speech_started
-    return any(key not in {input_.key for input_ in sim.truth.inputs} for key in started) and any(
+    return any(key not in sim.truth.speech_committed for key in started) and any(
         operation.name == 'clear_audio' for operation in sim.operations
     )
 
@@ -758,8 +758,62 @@ NON_AUDIO_SEND_DURING_RECONNECT = Finding(
 )
 
 
+FRAME_CUT_OFF_BY_CLOSE = Finding(
+    id='SIM-23',
+    title=(
+        'closing the session while the connection is handling a `response.done` that sends a deferred '
+        "`response.create` cancels it mid-frame: the whole frame is dropped, so that response's usage and "
+        'terminal never reach the session, though it was billed'
+    ),
+    tracked_by='an ordered outbox, so the receive loop never awaits a send; found by exploration on the refactor branch',
+    evidence='simulated',
+    codes=frozenset({'usage.total', 'usage.attribution', 'response.missing', 'response.truncated', 'usage.requests'}),
+    providers=OPENAI_PROTOCOL,
+    matches=lambda sim, violation: sim.close_requested is not None and getattr(sim, 'requests_cut_off', 0) > 0,
+)
+
+
+def _provider_reply_before_any_echo(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A response the provider started on its own was read after the input went out, before any of ours was."""
+    key = violation.context.get('input')
+    if not isinstance(key, str) or (input_ := sim.truth.input(key)) is None:
+        return False
+    issued = min((operation.issued for operation in sim.operations if operation.key == key), default=input_.seq)
+    responses = sim.truth.responses.values()
+    first_echo = min(
+        (r.started_read for r in responses if r.trigger == 'create' and r.started_read is not None), default=None
+    )
+    return any(
+        response.trigger != 'create'
+        and response.started_read is not None
+        and response.started_read > issued
+        and (first_echo is None or response.started_read < first_echo)
+        for response in responses
+    )
+
+
+PROVIDER_REPLY_BEFORE_ANY_ECHO = Finding(
+    id='SIM-24',
+    title=(
+        'until the server has echoed the metadata of one of our `response.create`s, the connection takes a response '
+        'it started on its own (server VAD) for the one we asked for, if ours is outstanding: it answers our input, '
+        "so the input is recorded before it and a wait for the input's reply ends with it"
+    ),
+    tracked_by=(
+        "the OpenAI-protocol lifecycle tracker's documented inference: whether a server echoes request metadata is "
+        'learned from its first echo, not assumed per provider'
+    ),
+    evidence='simulated',
+    codes=frozenset({'history.order', 'wait.early'}),
+    providers=OPENAI_PROTOCOL,
+    matches=_provider_reply_before_any_echo,
+    accepted=True,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
+        FRAME_CUT_OFF_BY_CLOSE,
         NON_AUDIO_SEND_DURING_RECONNECT,
         LOST_REFUSAL,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
@@ -779,6 +833,7 @@ KNOWN_FINDINGS.extend(
         CUT_OFF_TURN_COMPLETE,
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,
+        PROVIDER_REPLY_BEFORE_ANY_ECHO,
     ]
 )
 

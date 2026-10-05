@@ -9,6 +9,8 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from termflow.tui import MenuItem
+from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
@@ -16,6 +18,8 @@ from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, lo
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.credential_store import load_codex_credentials
+from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.ui.menus.field_menu import Runners
 
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
@@ -65,7 +69,7 @@ async def test_credentials_round_trip() -> None:
     assert await source.load() == credentials
 
 
-@pytest.mark.parametrize('command', ['/login', '/login openai-codex'])
+@pytest.mark.parametrize('command', ['/login codex', '/login openai-codex'])
 async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     async def exchange(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         assert self.redirect_uri == 'http://localhost:1455/auth/callback'
@@ -83,6 +87,52 @@ async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: st
     assert 'fake-refresh' not in output.getvalue()
     assert 'code_challenge=' in output.getvalue().replace('\n', '')
     assert 'over SSH' in output.getvalue()
+
+
+async def test_login_dispatches_copilot_by_short_and_provider_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def copilot(*, console: Console) -> str:
+        return 'Copilot connected.'
+
+    monkeypatch.setattr('pydantic_clai2.models.github_copilot.login', copilot)
+    auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
+    assert await login_command(['copilot'], codex=auth) == 'Copilot connected.'
+    assert await login_command(['github-copilot'], codex=auth) == 'Copilot connected.'
+
+
+async def test_login_runs_a_plugin_sign_in_and_lists_it_in_usage() -> None:
+    async def claude() -> str:
+        return 'Signed in to Claude Code.'
+
+    auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
+    plugins = {'claude': PluginLogin(name='claude', handler=claude)}
+    assert await login_command(['claude'], codex=auth, plugins=plugins) == 'Signed in to Claude Code.'
+    with pytest.raises(ValueError, match=r'^Usage: /login \[openai-codex\|github-copilot\|claude\]$'):
+        await login_command(['grok'], codex=auth, plugins=plugins)
+    with pytest.raises(ValueError, match=r'^Usage: /login \[openai-codex\|github-copilot\]$'):
+        await login_command(['codex', 'extra'], codex=auth)
+
+
+async def test_bare_login_asks_which_sign_in() -> None:
+    async def claude() -> str:
+        return 'Signed in to Claude Code.'
+
+    offered: list[object] = []
+
+    def pick(value: object) -> Runners:
+        def run_list(menu: Menu) -> MenuResult:
+            assert menu.highlighted is not None
+            offered.append(menu.highlighted.value)
+            return MenuResult(cancelled=True) if value is None else MenuResult(item=MenuItem('picked', value=value))
+
+        return Runners(run_list=run_list)
+
+    auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
+    plugins = {'claude-code': PluginLogin(name='claude-code', handler=claude)}
+    picked = await login_command([], codex=auth, plugins=plugins, runners=pick('claude-code'))
+    assert picked == 'Signed in to Claude Code.'
+    assert offered == ['openai-codex']
+    assert await login_command([], codex=auth, plugins=plugins, runners=pick(None)) == ''
+    assert await login_command([], codex=auth, plugins=plugins, runners=pick(42)) == ''
 
 
 async def test_failed_login_does_not_save(monkeypatch: pytest.MonkeyPatch) -> None:

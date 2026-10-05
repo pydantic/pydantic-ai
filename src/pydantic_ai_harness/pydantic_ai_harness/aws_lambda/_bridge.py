@@ -173,7 +173,7 @@ class _AgentLoop:
 
                 # Let callbacks queued by the run's finalizers create any follow-up cleanup tasks
                 # before taking the snapshot that will be drained.
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
                 current = asyncio.current_task()
                 pending = [pending for pending in asyncio.all_tasks(loop) if pending is not current]
                 if task is None:

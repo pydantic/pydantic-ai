@@ -1,4 +1,4 @@
-"""The `/add_model` menu: pick the model for the next prompt, or edit one model's settings."""
+"""The `/model add` menu: pick the model for the next prompt, or edit one model's settings."""
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -34,10 +34,11 @@ class _EditSettings:
 class ModelSettingsSource:
     """One model's overrides, from `ModelSettingsForm`, saved in the store."""
 
-    def __init__(self, store: SettingsStore, model: str) -> None:
-        """Edits are saved under `model` and validated as a whole form each time."""
+    def __init__(self, store: SettingsStore, model: str, *, settings_as: str | None = None) -> None:
+        """Edits are saved under `model`, offering and validating the controls of `settings_as` (default `model`)."""
         self._store = store
         self.model = model
+        self._settings_as = settings_as or model
 
     @property
     def title(self) -> str:
@@ -47,7 +48,7 @@ class ModelSettingsSource:
     def rows(self) -> list[FieldRow]:
         """Every form field with its description and any fixed choices."""
         rows: list[FieldRow] = []
-        options = model_options(model=self.model)
+        options = model_options(model=self._settings_as)
         saved = self._store.model_settings(self.model)
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
@@ -126,7 +127,7 @@ class ModelSettingsSource:
             if key in ModelSettingsForm.model_fields
         }
         form = ModelSettingsForm.model_validate({**saved, row.key: value})
-        validate_model_options(model=self.model, form=form)
+        validate_model_options(model=self._settings_as, form=form)
         return form
 
 
@@ -265,7 +266,9 @@ class ModelMenu:
 
     def edit_settings(self, *, name: str, runners: Runners) -> list[str]:
         """Run the same settings flow as the direct slash command."""
-        return run_model_settings(store=self._context.store, model=name, runners=runners)
+        return run_model_settings(
+            store=self._context.store, model=name, runners=runners, settings_as=self._context.settings_model(name)
+        )
 
 
 def _tokens(count: int | None) -> str:
@@ -343,22 +346,28 @@ class _ConnectProvider(Exception):
 async def model_settings_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
     """Pick a saved model to edit, or open a named one, without switching models."""
     if len(args) > 1:
-        raise ValueError('Usage: /model_settings [NAME]')
+        raise ValueError('Usage: /model settings [NAME]')
     if not args:
         messages = await run_worker(lambda: run_model_settings_picker(context=context, runners=runners))
         return '\n'.join(messages) or 'No changes.'
     name = args[0]
     if name not in context.store.models():
-        raise ValueError(f'Model not added: {name}. Use /add_model {name} first.')
-    messages = await run_worker(lambda: run_model_settings(store=context.store, model=name, runners=runners))
+        raise ValueError(f'Model not added: {name}. Use /model add {name} first.')
+    messages = await run_worker(
+        lambda: run_model_settings(
+            store=context.store, model=name, runners=runners, settings_as=context.settings_model(name)
+        )
+    )
     return '\n'.join(messages) or 'No changes.'
 
 
-def run_model_settings(*, store: SettingsStore, model: str, runners: Runners) -> list[str]:
+def run_model_settings(
+    *, store: SettingsStore, model: str, runners: Runners, settings_as: str | None = None
+) -> list[str]:
     """Both entry points use the same field editor and custom-params submenu."""
     custom = CustomParamsMenu(store=store, model=model)
     return run_flow(
-        FieldMenu(ModelSettingsSource(store, model), searchable=False),
+        FieldMenu(ModelSettingsSource(store, model, settings_as=settings_as), searchable=False),
         runners,
         submenus={'custom_params': lambda: custom.run(runners=runners)},
     )
@@ -373,7 +382,7 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
         .style(markdown_style())
         .items(
             [MenuItem(name, value=name) for name in names]
-            or [MenuItem('No models added. Use /add_model first.', disabled=True)]
+            or [MenuItem('No models added. Use /model add first.', disabled=True)]
         )
         .searchable()
         .list_width(40)
@@ -404,4 +413,8 @@ def run_model_settings_picker(*, context: CommandContext, runners: Runners) -> l
         current = result.item.value
         if current not in context.store.models():
             return messages
-        messages.extend(run_model_settings(store=context.store, model=current, runners=runners))
+        messages.extend(
+            run_model_settings(
+                store=context.store, model=current, runners=runners, settings_as=context.settings_model(current)
+            )
+        )

@@ -140,6 +140,7 @@ When generating or reviewing code anywhere in this repo, always read [agent_docs
 Additionally, always read the directory-specific instructions when working in those directories:
 
 - [docs/AGENTS.md](docs/AGENTS.md)
+- [docs/harness/AGENTS.md](docs/harness/AGENTS.md)
 - [docs/realtime/AGENTS.md](docs/realtime/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md](pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)
@@ -151,4 +152,6 @@ Additionally, always read the directory-specific instructions when working in th
 - [pydantic_ai_slim/pydantic_ai/realtime/AGENTS.md](pydantic_ai_slim/pydantic_ai/realtime/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/toolsets/AGENTS.md](pydantic_ai_slim/pydantic_ai/toolsets/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/ui/AGENTS.md](pydantic_ai_slim/pydantic_ai/ui/AGENTS.md)
+- [src/pydantic_ai_harness/AGENTS.md](src/pydantic_ai_harness/AGENTS.md)
 - [tests/AGENTS.md](tests/AGENTS.md)
+- [tests/harness/AGENTS.md](tests/harness/AGENTS.md)

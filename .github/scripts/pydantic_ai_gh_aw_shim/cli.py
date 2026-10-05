@@ -15,9 +15,9 @@ enforces gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
 `stream-json` so gh-aw's log parser and token accounting keep working.
 
 Like Claude Code itself, the shim only talks to Anthropic-shape APIs
-(`ANTHROPIC_BASE_URL` → real Anthropic, MiniMax's Anthropic-compatible
-endpoint, etc.). No OpenAI path — the workflow's `engine.id: claude`
-contract is Anthropic-shape end to end.
+(`ANTHROPIC_BASE_URL` → Anthropic or another Anthropic-compatible endpoint).
+No OpenAI path — the workflow's `engine.id: claude` contract is
+Anthropic-shape end to end.
 
 Credentials note: under gh-aw the real API key is *excluded* from the
 agent container (`awf --exclude-env ANTHROPIC_API_KEY`). The AWF
@@ -43,6 +43,7 @@ import sys
 import time
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, TypeAlias, cast
 
@@ -50,11 +51,13 @@ import httpx2
 import logfire
 from anthropic import AsyncAnthropic
 from mcp.shared.exceptions import McpError
-from pydantic import ValidationError
-from tenacity import RetryCallState, retry_if_result, stop_after_delay, wait_random_exponential
+from pydantic import TypeAdapter, ValidationError
+from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
+from tenacity.asyncio.retry import retry_if_result
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -108,11 +111,9 @@ PROXY_BEARER_PLACEHOLDER = 'gh-aw-proxy-injected'
 def _anthropic_native_capabilities() -> list[NativeTool]:
     """`NativeTool(WebFetchTool())` for real Anthropic only.
 
-    Anthropic-compatible endpoints (MiniMax, etc.) reject the
-    `web_fetch_20250910` server-side tool with `invalid_request_error
-    (2013)` because they don't implement Anthropic's server-side tool
-    types. Detect via `ANTHROPIC_BASE_URL` — empty/unset means the
-    Anthropic SDK default (real Anthropic).
+    Anthropic-compatible endpoints may not implement Anthropic's
+    `web_fetch_20250910` server-side tool. Detect via `ANTHROPIC_BASE_URL` —
+    empty/unset means the Anthropic SDK default (real Anthropic).
     """
     base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
     if not base_url or 'api.anthropic.com' in base_url:
@@ -163,9 +164,9 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
 
 # pydantic-ai's built-in request_limit default of 50 is too low for the
 # deep multi-step workflows here; gh-aw's api-proxy still caps the run.
-REQUEST_LIMIT = 200
-ATTENTION_REQUEST_LIMIT = 25
-SUBAGENT_REQUEST_LIMIT = 75
+REQUEST_LIMIT = 400
+ATTENTION_REQUEST_LIMIT = 50
+SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 
 
@@ -197,11 +198,11 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
     return REQUEST_BUDGET_NOTICE
 
 
-# `output_type=str` ends the run on any text-only response, and MiniMax regularly
-# ends a turn narrating its next step ("Now let me analyze…") with no tool call.
-# gh-aw then reports the run as "produced no safe outputs". The safe-outputs MCP
-# server appends every safe output to `GH_AW_SAFE_OUTPUTS`, so an absent or empty
-# file means the task is not done. The retry budget is cumulative over the run.
+# `output_type=str` ends the run on any text-only response, even when the model
+# narrates its next step without calling a tool. gh-aw then reports the run as
+# "produced no safe outputs". The safe-outputs MCP server appends every safe
+# output to `GH_AW_SAFE_OUTPUTS`, so an absent or empty file means the task is
+# not done. The retry budget is cumulative over the run.
 NO_SAFE_OUTPUT_RETRIES = 3
 
 
@@ -226,20 +227,16 @@ def require_safe_output(output: str) -> str:
     )
 
 
-# Per-request HTTP timeout for every LLM call. The read timeout is the
-# critical one: MiniMax's proxy can hold a streaming connection open without
-# sending data. Two minutes is generous enough for large generations but
-# prevents indefinite hangs. SDK-level retries cover transient 429/5xx before
-# raising.
+# Per-request HTTP timeout for every LLM call. The read timeout prevents a
+# streaming connection that stops sending data from hanging indefinitely. Two
+# minutes is generous enough for large generations. SDK-level retries cover
+# transient 429/5xx before raising.
 _LLM_TIMEOUT = httpx2.Timeout(timeout=120.0, connect=10.0)
 _LLM_MAX_RETRIES = 4
 
-# MiniMax answers bursts with 429 `rate_limit_error` (2062) and no `Retry-After`.
-# In CI Review logs those bursts cleared within 25s of the first 429, while the
-# SDK's own backoff (0.5s doubling, 4 retries) gives up after about 8s — which
-# killed runs mid-review. Below the SDK, a 429 is therefore retried with jittered
-# exponential backoff for up to this long. Parallel sub-agents hit the limit
-# together, so the jitter keeps them from retrying in lockstep.
+# Transient rate limits can outlast the SDK's retry window. Retry 429 responses
+# below the SDK with jittered exponential backoff for up to this long. Jitter
+# spreads retries when parallel sub-agents hit the limit together.
 RATE_LIMIT_RETRY_SECS = 60
 
 
@@ -264,14 +261,35 @@ async def _close_rate_limited_response(state: RetryCallState) -> None:
 
 
 def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None) -> AsyncHTTPX2TenacityTransport:
-    """Transport that retries 429 responses, then hands the last one to the SDK as-is.
+    """Transport that retries retryable 429 responses and preserves the final response for the SDK.
 
     Handing back the response rather than raising keeps the SDK's `RateLimitError`,
-    with MiniMax's error body, as what a run that stays rate-limited fails with.
+    with the provider's error body, as what a run that stays rate-limited fails with.
     """
+    # Z.ai account and plan-quota errors cannot recover inside this retry window.
+    # Keep these codes aligned with https://docs.z.ai/api-reference/api-code.
+    non_retryable_codes: set[str] = {'1308', '1309', '1310', '1316', '1317', '1318', '1319', '1320', '1321'}
+    error_body_adapter = TypeAdapter(dict[str, object])
+
+    async def should_retry(response: httpx2.Response) -> bool:
+        if response.status_code != 429:
+            return False
+        try:
+            # `aread()` buffers the body, so the SDK can still consume the
+            # original response when this 429 is returned without retrying.
+            body = error_body_adapter.validate_json(await response.aread())
+            error = error_body_adapter.validate_python(body.get('error'))
+        except ValidationError:
+            return True
+        code = error.get('code')
+        if isinstance(code, (str, int)) and not isinstance(code, bool) and str(code) in non_retryable_codes:
+            response.headers['x-should-retry'] = 'false'
+            return False
+        return True
+
     return AsyncHTTPX2TenacityTransport(
         RetryConfig(
-            retry=retry_if_result(lambda response: response.status_code == 429),
+            retry=retry_if_result(should_retry),
             wait=wait_random_exponential(multiplier=1, max=16),
             stop=stop_after_delay(RATE_LIMIT_RETRY_SECS),
             before_sleep=_close_rate_limited_response,
@@ -700,9 +718,11 @@ def build_model(args: Args) -> tuple[Model, str]:
     container env (`awf --exclude-env ANTHROPIC_API_KEY` — a security
     measure so the real key never reaches the agent). `pydantic-ai`'s
     auto-config requires that env var to be present, so it errors out
-    under gh-aw. The explicit `AsyncAnthropic(auth_token=...)` path
-    sends a placeholder bearer that the AWF api-proxy swaps for the
-    real key on the wire — the same dance the Claude Code CLI does.
+    under gh-aw. The explicit `AsyncAnthropic(auth_token=...)` path lets
+    the SDK construct a request with a bearer `Authorization` header
+    (the non-secret placeholder under AWF). The api-proxy sidecar strips
+    client-supplied `Authorization` and `x-api-key` headers, then injects
+    the real `x-api-key` from its isolated `ANTHROPIC_API_KEY`.
     This is a gh-aw constraint, not a pydantic-ai one; upstream gh-aw
     could lift it by allowing the agent to read the key directly, but
     that would break the credential-isolation guarantee.
@@ -854,8 +874,9 @@ def emit_result(
     usage: RunUsage | None,
     session_id: str,
     is_error: bool = False,
-    num_turns: int = 1,
+    num_turns: int = 0,
     duration_ms: int = 0,
+    error: BaseException | None = None,
 ) -> None:
     """Emit the Claude Code stream-json `result` line gh-aw parses for success + token totals."""
     if usage is None:
@@ -872,19 +893,58 @@ def emit_result(
             'cache_creation_input_tokens': usage.cache_write_tokens,
             'cache_read_input_tokens': usage.cache_read_tokens,
         }
-    emit(
-        {
-            'type': 'result',
-            'subtype': 'error' if is_error else 'success',
-            'is_error': is_error,
-            'result': text,
-            'session_id': session_id,
-            'num_turns': num_turns,
-            'duration_ms': duration_ms,
-            'total_cost_usd': 0,
-            'usage': token_usage,
-        }
-    )
+    run_attempt: int | None = None
+    raw_run_attempt = os.environ.get('PYDANTIC_AI_RUN_ATTEMPT')
+    if raw_run_attempt is not None:
+        try:
+            parsed_run_attempt = int(raw_run_attempt)
+        except ValueError:
+            pass
+        else:
+            if parsed_run_attempt > 0:
+                run_attempt = parsed_run_attempt
+
+    provider_health: dict[str, object] = {
+        'workflow': os.environ.get('GITHUB_WORKFLOW'),
+        'task_key': os.environ.get('PYDANTIC_AI_TASK_KEY'),
+        'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
+        'run_attempt': run_attempt,
+    }
+    if is_error:
+        provider_health['failure'] = _failure_details(error)
+    result: dict[str, object] = {
+        'type': 'result',
+        'subtype': 'error' if is_error else 'success',
+        'is_error': is_error,
+        'result': text,
+        'session_id': session_id,
+        'num_turns': num_turns,
+        'duration_ms': duration_ms,
+        'total_cost_usd': 0,
+        'usage': token_usage,
+        'provider_health': provider_health,
+    }
+    emit(result)
+
+
+def _failure_details(error: BaseException | None) -> dict[str, object]:
+    """Return a safe, machine-readable classification while preserving the original error text."""
+    kind = 'other'
+    http_status: int | None = None
+    if isinstance(error, UsageLimitExceeded):
+        kind = 'request_limit'
+    elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+        kind = 'timeout'
+    elif isinstance(error, ModelHTTPError):
+        http_status = error.status_code
+        if error.status_code in (401, 403):
+            kind = 'authentication'
+        elif error.status_code == 429:
+            kind = 'rate_limit'
+    failure: dict[str, object] = {'kind': kind}
+    if http_status is not None:
+        failure['http_status'] = http_status
+    return failure
 
 
 # Live tool-call / tool-result streaming for gh-aw's log parser. Result
@@ -1049,18 +1109,35 @@ async def _run_with_timeout(
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
     budget = _run_timeout_secs()
+    usage = RunUsage()
     try:
-        return await asyncio.wait_for(
-            run(prompt, model, label, claude_code_toolset, mcp_servers, session_id),
-            timeout=budget,
-        )
+        async with AsyncExitStack() as stack:
+            if isinstance(model, AnthropicModel):
+                await stack.enter_async_context(model.client)
+            return await asyncio.wait_for(
+                run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
+                timeout=budget,
+            )
     except asyncio.TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
             f'run timed out after {budget // 60}min',
-            usage=None,
+            usage=usage,
             session_id=session_id,
             is_error=True,
+            num_turns=usage.requests,
+            error=TimeoutError(),
+        )
+        return 1
+    except Exception as exc:
+        logger.exception('runner failed outside agent execution')
+        emit_result(
+            f'agent run failed: {exc}',
+            usage=usage,
+            session_id=session_id,
+            is_error=True,
+            num_turns=usage.requests,
+            error=exc,
         )
         return 1
 
@@ -1072,9 +1149,11 @@ async def run(
     claude_code_toolset: AbstractToolset[object],
     mcp_servers: list[AbstractToolset[object]],
     session_id: str,
+    usage: RunUsage | None = None,
 ) -> int:
     """Run one agent turn and emit Claude-shape stream-json. Always emits a `result` line."""
     reset_context_state()
+    run_usage = usage or RunUsage()
     agent: Agent[object, str] = Agent(
         model,
         instructions=[INSTRUCTIONS, prompt, request_budget_notice],
@@ -1096,7 +1175,7 @@ async def run(
     started = time.perf_counter()
     try:
         async with agent:
-            result = await agent.run(RUN_TRIGGER, usage_limits=limits)
+            result = await agent.run(RUN_TRIGGER, usage_limits=limits, usage=run_usage)
     except Exception as exc:
         # The limit is checked before a request, so a safe-output tool called on the
         # last one has already run: the task is done, only the closing turn is lost.
@@ -1104,8 +1183,9 @@ async def run(
             logger.warning('request limit reached after the safe output was emitted: %s', exc)
             emit_result(
                 'request limit reached after the safe output was emitted',
-                usage=None,
+                usage=run_usage,
                 session_id=session_id,
+                num_turns=run_usage.requests,
                 duration_ms=round((time.perf_counter() - started) * 1000),
             )
             log_safe_outputs_state()
@@ -1120,10 +1200,12 @@ async def run(
         logger.exception('agent run failed')
         emit_result(
             f'agent run failed: {exc}',
-            usage=None,
+            usage=run_usage,
             session_id=session_id,
             is_error=True,
+            num_turns=run_usage.requests,
             duration_ms=round((time.perf_counter() - started) * 1000),
+            error=exc,
         )
         return 1
 
@@ -1136,7 +1218,7 @@ async def run(
     text = str(result.output or '')
     emit({'type': 'assistant', 'message': {'role': 'assistant', 'content': text}})
 
-    emit_result(text, result.usage, session_id, num_turns=num_turns, duration_ms=duration_ms)
+    emit_result(text, run_usage, session_id, num_turns=num_turns, duration_ms=duration_ms)
     log_safe_outputs_state()
     return 0
 
@@ -1175,11 +1257,11 @@ def main() -> int:
         # rejection — an expected, clean exit, so a traceback would be noise.
         # gh-aw still needs a structured result line.
         logger.error('FATAL startup error: %r', exc)
-        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
+        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True, error=exc)
         return 1
     except Exception as exc:
         # A real crash before the agent run (model build, MCP load, …) — dump the
         # full stack so a blind FATAL doesn't cost another long investigation.
         logger.exception('FATAL startup error')
-        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
+        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True, error=exc)
         return 1

@@ -20,6 +20,7 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
 | Get human approval for a whole tool | core `requires_approval=True` (core skill) |
 | Detect indirect prompt injection in emails/web pages returned by tools | `PromptInjectionDefender` |
+| Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -238,6 +239,49 @@ Gotchas: `defense` plus `block_high_risk` or `semantic_detection` raises `UserEr
 diagnostics in `ToolReturn.metadata['prompt_injection']` (not sent to the model). With a custom ML
 `defense`, call `defense.warmup_tier2()` at startup.
 
+## ToolCallJudge
+
+Asks a second model one yes/no risk question after a selected tool call's arguments validate and
+before its function runs. `yes` blocks the call, `no` allows it, and `unsure` follows the configured
+uncertainty policy.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ToolCallJudge
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[
+        ToolCallJudge(
+            'anthropic:claude-haiku-4-5',
+            question='Would this call destroy data, spend money, or expose secrets?',
+            tools=['delete_file', 'run_shell'],
+        )
+    ],
+)
+```
+
+Parameters: the judge `model` is positional; `question` is required; `tools='all'` accepts the
+standard `ToolSelector` forms; `include_conversation=False`; `conversation_window=4_000`;
+`on_uncertain='block' | 'allow' | 'ask'`; `denial_message`; `on_verdict` receives a
+`ToolCallVerdict`. The verdict type is in `pydantic_ai_harness.tool_call_judge`.
+
+Gotchas:
+
+- The default sends only the tool name and validated arguments. `include_conversation=True` adds a
+  recent transcript but widens the judge's prompt-injection surface.
+- Selected calls and their arguments leave the process for the judge provider, including calls the
+  judge blocks. Do not select tools whose arguments the provider must not receive.
+- `on_uncertain='ask'` needs `DeferredToolRequests` in the outer agent's output type. A tool with
+  `requires_approval=True` reaches the judge only after a person approves it; both gates must allow.
+- Judge usage counts against the outer run's `usage` and `usage_limits`. Each selected call adds a
+  model request, so scope `tools` to calls where the verdict can change what happens.
+- Provider-native tools execute remotely and do not pass through this hook. This is a model-based
+  filter, not a replacement for authorization, validation, least privilege, or recovery controls.
+- Judgements are durable operations under Temporal, DBOS, and Prefect. Give every judge on a
+  durable-capable agent a distinct explicit `id`; ordinary runs do not require one.
+
 ## SpendLimits
 
 Prices each model response via `ModelResponse.cost()` (genai-prices), adds it to every configured
@@ -310,8 +354,8 @@ Gotchas:
   Sequence[SpendEntry]) -> Mapping[str, Spent]` (new totals; skip an entry whose `token` was already
   applied to its `key`, honour `ttl`), both async. `SpendStore` (`get`/`add`) is deprecated. Pass the
   same store object to two `SpendLimits` to share counters. `defer_loading=True` is refused.
-- List `SpendLimits` after other innermost capabilities such as `InputGuardrail`, or a billed
-  response they reject is not counted (`SpendCompositionWarning` flags this).
+- `SpendLimits` counts every billed response, including one a nested hook rejects, whatever the
+  capability order; cached and `SkipModelRequest` responses aren't charged.
 - Spec-loadable except callables (`store`, `price`, `scope`, `clock`).
 
 ## AskUser
@@ -454,6 +498,7 @@ not get the built-in judge instructions, so its `instructions` must describe the
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
 - https://pydantic.dev/docs/ai/harness/guardrails/
 - https://pydantic.dev/docs/ai/harness/prompt-injection-defender/
+- https://pydantic.dev/docs/ai/harness/tool-call-judge/
 - https://pydantic.dev/docs/ai/harness/spend/
 - https://pydantic.dev/docs/ai/harness/ask-user/
 - https://pydantic.dev/docs/ai/harness/system-reminders/

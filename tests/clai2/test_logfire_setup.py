@@ -1,4 +1,4 @@
-"""The `logfire` plugin's setup menu: destination, Logfire's device sign-in, project, and a saved write token."""
+"""The `observability` plugin's setup menu: destination, Logfire's device sign-in, project, and a saved write token."""
 
 import io
 import json
@@ -15,11 +15,12 @@ from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_clai2.builtin_plugins import logfire as logfire_plugin, logfire_setup
-from pydantic_clai2.builtin_plugins.logfire import LogfireSettings
+from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError, https_origin
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, save_key
-from pydantic_clai2.plugins import PluginHost, SessionEnd
+from pydantic_clai2.plugins import PluginHost, SessionEnd, load_plugin
 from pydantic_clai2.ui.menus.field_menu import Runners
+from tests.clai2.menu_script import Script, pick
 from tests.clai2.test_logfire import Recorder
 
 US = 'https://logfire-us.pydantic.dev'
@@ -42,6 +43,9 @@ class FakeLogfire:
             200, json={'device_code': 'dev-123', 'frontend_auth_url': 'https://logfire-us.pydantic.dev/auth/dev-123'}
         )
     )
+    account: Answer = field(
+        default_factory=lambda: httpx.Response(200, json={'id': 'u-1', 'name': 'Mike', 'email': 'mike@example.com'})
+    )
     projects: Answer = field(default_factory=lambda: httpx.Response(200, json=PROJECTS))
     write_token: Answer = field(default_factory=lambda: httpx.Response(200, json={'token': 'pylf_v1_us_write'}))
     requests: list[httpx.Request] = field(default_factory=list[httpx.Request])
@@ -53,6 +57,8 @@ class FakeLogfire:
             answer = self.device
         elif path == '/v1/device-auth/wait/dev-123':
             answer = self.polls.pop(0)
+        elif path == '/v1/account/me':
+            answer = self.account
         elif path == '/v1/writable-projects/':
             answer = self.projects
         else:
@@ -116,7 +122,9 @@ class Harness:
 
 
 def make_host(**settings: object) -> PluginHost[None]:
-    return PluginHost(name='logfire', console=Console(file=io.StringIO()), settings=json.loads(json.dumps(settings)))
+    return PluginHost(
+        name='observability', console=Console(file=io.StringIO()), settings=json.loads(json.dumps(settings))
+    )
 
 
 Configure = Callable[[PluginHost[None], Setup], Awaitable[str]]
@@ -134,7 +142,7 @@ def recorder() -> Generator[Recorder]:
 
 @pytest.fixture
 def configure(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> Configure:
-    """Open the plugin's real setup menu, as `/plugins configure logfire` does, with `setup` in place."""
+    """Open the plugin's real setup menu, as `/plugins configure observability` does, with `setup` in place."""
 
     # The recorder keeps the SDK local: a saved token would otherwise make it check the token over the network.
     monkeypatch.setattr(logfire_plugin.logfire, 'configure', recorder.configure)
@@ -144,13 +152,15 @@ def configure(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> Configure:
             return setup
 
         monkeypatch.setattr(logfire_plugin, 'SETUP', scripted_setup)
-        logfire_plugin.activate(host)
+        # The settings menu: Enter on the project row runs setup, then Esc closes the menu.
+        menu = Script(lists=[pick(logfire_plugin.PROJECT), MenuResult(cancelled=True)], choices=[], texts=[])
+        monkeypatch.setattr(logfire_plugin, 'RUNNERS', menu.runners)
+        plugin = load_plugin(logfire_plugin.LogfirePlugin, host)
         try:
-            assert host.configurer is not None
-            return await host.configurer()
+            assert plugin.plugin.has_configure
+            return await plugin.plugin.configure()
         finally:
-            for handler in host.handlers:
-                await handler(SessionEnd(reason='exit'))
+            await plugin.dispatch(SessionEnd(reason='exit'))
 
     return run
 
@@ -161,7 +171,7 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     message = await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
     assert message == (
         'Logfire traces now go to pydantic/clai2. Its write token is saved in /keys as '
-        'LOGFIRE_TOKEN_PYDANTIC_CLAI2; plugin settings keep only that name.'
+        'LOGFIRE_TOKEN_PYDANTIC_CLAI2; plugin settings keep only that name and the email you signed in with.'
     )
     assert load_keys()['LOGFIRE_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v1_us_write'
     saved = host.settings(LogfireSettings)
@@ -170,13 +180,18 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     assert saved.base_url == US
     assert (saved.service_name, saved.ui_events) == ('mine', True)  # Other settings are kept.
     assert saved.send_to_logfire == 'if-token-present'  # Setting up a project turns sending on.
+    assert saved.account == LogfireAccount(
+        email='mike@example.com', token=KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
+    )
     assert harness.lines == [
         'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123'
     ]
     assert harness.opened == ['https://logfire-us.pydantic.dev/auth/dev-123']
-    new, *_, listed, minted = harness.server.requests
+    new, *_, me, listed, minted = harness.server.requests
     assert new.url.params['machine_name']
-    assert listed.headers['Authorization'] == minted.headers['Authorization'] == 'user-token'
+    assert me.url.path == '/v1/account/me'
+    assert me.headers['Authorization'] == listed.headers['Authorization'] == minted.headers['Authorization']
+    assert minted.headers['Authorization'] == 'user-token'
     assert str(minted.url).startswith(US)
 
 
@@ -252,6 +267,19 @@ async def test_failures_say_what_went_wrong_and_save_nothing(
     assert load_keys() == {}
 
 
+@pytest.mark.parametrize(
+    'account', [refuse, httpx.Response(401), httpx.Response(200, json={'id': 'u-1', 'name': 'Mike'})]
+)
+async def test_an_unknown_account_email_still_sets_up_the_project(account: Answer, configure: Configure) -> None:
+    host = make_host()
+    harness = Harness(server=FakeLogfire(account=account))
+    message = await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
+    saved = host.settings(LogfireSettings)
+    assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
+    assert saved.account is None
+    assert message.endswith('plugin settings keep only that name; Logfire did not share your email.')
+
+
 async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatch, configure: Configure) -> None:
     blips = FakeLogfire(
         polls=[refuse, httpx.Response(502), httpx.Response(200), httpx.Response(200, json={'token': 't'})]
@@ -259,7 +287,7 @@ async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatc
     await configure(make_host(), Harness(server=blips).setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
     assert not blips.polls
     monkeypatch.setattr(logfire_setup, 'SIGN_IN_TIMEOUT', 0)
-    with pytest.raises(SetupError, match='sign-in link expired'):
+    with pytest.raises(SetupError, match='Run /plugins configure observability to retry'):
         await configure(make_host(), Harness().setup(scripted([US])))
 
 

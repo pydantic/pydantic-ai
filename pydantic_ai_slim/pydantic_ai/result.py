@@ -71,7 +71,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
 
     def __post_init__(self):
+        self._refresh_initial_run_ctx_usage()
+
+    def _refresh_initial_run_ctx_usage(self) -> None:
+        """Snapshot the run's usage so far, which `usage` adds this response's usage on top of."""
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
+        # The step being streamed is counted in the run's usage once its response is committed, after
+        # the stream; count it here already so the stream's usage includes it.
+        self._initial_run_ctx_usage.requests += 1  # usage-attribution: a deepcopy, for the live usage view
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
@@ -300,13 +307,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
             elif text_processor := self._output_schema.text_processor:
                 text = ''
+                text_before_native_tool_call = ''
                 for part in message.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
+                        text_before_native_tool_call = text or text_before_native_tool_call
                         text = ''
+                # Unless no text or function tool call follows the last native tool call (see `CallToolsNode`).
+                if not message.tool_calls:
+                    text = text or text_before_native_tool_call
 
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
                 return await run_output_with_hooks(

@@ -3,6 +3,7 @@
 import io
 import json
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -24,7 +25,7 @@ from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin, PluginHost, load_plugin
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.spinner_picker import SpinnerPicker, spinner_command, spinner_completions
 from pydantic_clai2.ui.prompt.image_input import ImageInput
@@ -114,10 +115,8 @@ class TestCatalogue:
 
     @pytest.mark.parametrize('interval', [float('nan'), float('inf'), float('-inf')])
     def test_non_finite_interval_is_rejected_before_it_reaches_a_painter(self, interval: float) -> None:
-        host = PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={})
         with pytest.raises(ValueError, match='finite number of seconds'):
-            host.spinner('broken', ['a'], interval=interval)
-        assert host.spinners == []
+            make_spinner('broken', ['a'], interval=interval)
 
     def test_layers_and_lookup(self, tmp_path: Path) -> None:
         plugin = make_spinner('dots', ['o', 'O'], source='plugin')
@@ -290,7 +289,8 @@ class TestCommand:
         context, _ = make_context(tmp_path)
         spinners = spinners_for(context, tmp_path)
         monkeypatch.setattr('sys.stdout', io.StringIO())
-        keys = iter([*'bone', '+', '+', '=', 'right', '-', 'left', '+', 'enter'])
+        # While searching, `-` and `+` would filter; arrows still change the speed.
+        keys = iter(['/', *'bone', 'right', 'enter', '+', '+', '=', '-', 'left', '+', 'enter'])
         monkeypatch.setattr('pydantic_clai2.ui.menus.spinner_picker.menu_key', lambda: next(keys))
         message = await spinner_command(context, spinners, [], runners=Runners(run_list=lambda menu: menu.run()))
         assert message.startswith('Spinner set to bone (8 frames at 0.14s). Speed saved')
@@ -335,22 +335,26 @@ class TestPicker:
 
 
 PLUGIN = """
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin
+from pydantic_clai2.ui.rendering.spinners import make_spinner
 
 
-def activate(host: PluginHost) -> None:
-    host.spinner('wave', ['~ ', ' ~'], interval=0.05, description='from a plugin')
+class Wave(Plugin):
+    def get_spinners(self):
+        return [make_spinner('wave', ['~ ', ' ~'], interval=0.05, description='from a plugin')]
 """
 
 
 class TestRegistration:
-    def test_host_registers_a_normalized_spinner(self) -> None:
-        host = PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={})
-        spinner = host.spinner('wave', ['~', '~~'], interval=0.001, description='d')
-        assert host.spinners == [spinner]
-        assert spinner == Spinner(name='wave', frames=('~ ', '~~'), interval=0.02, description='d', source='plugin')
-        with pytest.raises(ValueError, match='non-empty frame'):
-            host.spinner('nothing', [])
+    def test_plugin_spinners_are_normalized_and_marked_as_plugin(self) -> None:
+        class Waves(Plugin):
+            def get_spinners(self) -> Sequence[Spinner]:
+                return (make_spinner('wave', ['~', '~~'], interval=0.001, description='d'),)
+
+        loaded = load_plugin(Waves, PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={}))
+        assert loaded.spinners == (
+            Spinner(name='wave', frames=('~ ', '~~'), interval=0.02, description='d', source='plugin'),
+        )
 
     async def test_shell_offers_plugin_spinners_and_persists_the_choice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -410,13 +414,17 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
         plain = Text.from_ansi(title).plain
         if width == 80:
             frame = BUILTIN_SPINNERS['binary'].frames[0]
-            # An empty queue has nothing to steer, so the title carries no queue hints.
+            # An empty queue and draft have nothing to steer, so the title carries no queue hints.
             assert plain.rstrip('─') == f' Working {frame} '
             assert f'{accent}{frame}' in title
+            hint = f' Working {frame} | Enter: queue | Alt+Enter: steer '
+            live.buffer.replace('typed')
+            assert Text.from_ansi(live.frame()[0]).plain.startswith(hint)
+            live.buffer.replace('')
             live.submit('follow up')
             follow_up, plain = (Text.from_ansi(row).plain for row in live.frame()[:2])
             assert follow_up == 'Follow-up: follow up'
-            assert plain.startswith(f' Working {frame} | Enter: queue | Alt+Enter: steer queued ')
+            assert plain.startswith(hint)
         else:
             # Too narrow to show the whole frame: nothing is highlighted rather than half a frame.
             assert plain.startswith(' Working') and accent not in title

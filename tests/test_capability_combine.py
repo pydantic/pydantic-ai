@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
+from types import MethodType
 from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
 
 import pytest
@@ -49,6 +50,8 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
+from pydantic_ai.common_tools.web_fetch import WebFetchLocalTool
+from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestContext
@@ -59,6 +62,7 @@ from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool,
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 
 @dataclass
@@ -443,11 +447,14 @@ def test_merged_local_fallback_carries_the_merged_configuration() -> None:
         [WebFetch(local=True, allowed_domains=['a.com']), WebFetch(local=True, allowed_domains=['b.com'])]
     )
     assert isinstance(merged, WebFetch)
-    local = merged.local
-    assert isinstance(local, Tool)
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
     # The fallback is a bound method of the fetcher, which carries its own copy of the domain lists.
-    fetcher = cast('Any', local).function.__self__
-    assert fetcher.allowed_domains == ['a.com', 'b.com']
+    fetch = toolset.wrapped.tools['web_fetch'].function
+    assert isinstance(fetch, MethodType)
+    assert isinstance(fetch.__self__, WebFetchLocalTool)
+    assert fetch.__self__.allowed_domains == ['a.com', 'b.com']
 
 
 async def test_a_later_layer_wins_even_when_it_sorts_first() -> None:
@@ -854,10 +861,14 @@ def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
 
     assert isinstance(merged, XSearch)
     assert merged.fallback_subagent_model == 'xai:grok-4.3', 'the later value, like any scalar'
-    local = merged.local
-    assert isinstance(local, Tool)
-    # The subagent tool is rebuilt from the merged field, so it carries its own copy of the model.
-    assert cast('Any', local).function.__self__.model == 'xai:grok-4.3'
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
+    # The subagent tool is derived from the merged field, so it carries its own copy of the model.
+    subagent_tool = toolset.wrapped.tools['x_search'].function
+    assert isinstance(subagent_tool, MethodType)
+    assert isinstance(subagent_tool.__self__, XSearchSubagentTool)
+    assert subagent_tool.__self__.model == 'xai:grok-4.3'
 
 
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:

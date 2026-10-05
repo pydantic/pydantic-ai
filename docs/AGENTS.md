@@ -33,4 +33,4 @@ The docs index and repository README tell the same story on two surfaces. Keep t
 - `README.md` uses absolute documentation links, `###` sections instead of tabs, and plain one-line `#` comments instead of annotations.
 - Mirrored code examples remain code-identical; only comments, annotations, link forms, and fence attributes may differ.
 - README snippets that cannot run in the documentation test environment are excluded by `tests/test_examples.py`, not by fence attributes, so README fences remain compatible with GitHub rendering.
-- When the shared tagline or Harness framing changes, check the Harness repository's `docs/index.md` and `README.md` too.
+- When the shared tagline or Harness framing changes, check `docs/harness/index.md` and `src/pydantic_ai_harness/README.md` too.
