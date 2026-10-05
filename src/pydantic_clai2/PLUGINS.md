@@ -2367,6 +2367,14 @@ lowercase letters, digits, hyphens, or underscores, and never `default`, so you 
 keep the default account under that name. CLAI checks it before calling you. Without these fields, a model or sign-in naming a profile fails with a
 message saying the plugin has one account.
 
+Each successful `/login NAME` or `/login NAME@PROFILE` puts the account in
+`/accounts`, under your first model's prefix (`claude-code`, not `claude`), so
+users can add, order, and pick your accounts without typing a profile, and
+`PREFIX@*:MODEL` tries them in that order. CLAI cannot see your tokens, so it
+lists an account from the time it signed in until the user removes it there;
+removing one does not sign it out of your plugin, and the menu says so. Offer your
+own logout for that.
+
 ## Rules that keep plugins predictable
 
 - Handlers are `async`. There is no sync variant of anything.

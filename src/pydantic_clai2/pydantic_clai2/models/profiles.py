@@ -10,6 +10,9 @@ from dataclasses import dataclass
 
 _NAME = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
 
+ALL = '*'
+"""The profile meaning every signed-in account of the provider, tried in `/accounts` order: `openai-codex@*:gpt-6`."""
+
 
 def check_name(value: str, *, kind: str) -> str:
     """Profile and chain names share one short, file-name-safe format."""
@@ -49,6 +52,8 @@ def split_profile(name: str) -> tuple[str, str | None]:
     provider, at, profile = name.partition('@')
     if not at:
         return provider, None
+    if profile == ALL:
+        return provider, ALL
     if profile == 'default':
         # Plugins such as Claude Code keep the account without a profile under this name.
         raise ValueError(f'Profile name default is reserved for the account without a profile. Use {provider}.')

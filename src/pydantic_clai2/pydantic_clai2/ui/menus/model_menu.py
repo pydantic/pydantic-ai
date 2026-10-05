@@ -183,6 +183,11 @@ class ModelMenu:
         """The model `/set model` holds right now."""
         return self._context.settings.model
 
+    @property
+    def store(self) -> SettingsStore:
+        """Where models, their settings, and accounts are saved."""
+        return self._context.store
+
     def items(self) -> list[MenuItem]:
         """One row per model, marking the current one."""
         return [
@@ -300,7 +305,12 @@ def _run_provider(menu: ModelMenu, runners: Runners, messages: list[str]) -> boo
             messages += menu.edit_settings(name=value.model, runners=runners)
             continue
         if isinstance(value, str):
-            messages.append(menu.choose(value))
+            from pydantic_clai2.ui.menus.accounts_menu import choose_account
+
+            name = choose_account(menu.store, value, runners)
+            if name is None:
+                continue
+            messages.append(menu.choose(name))
         return True
 
 

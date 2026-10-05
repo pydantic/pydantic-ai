@@ -22,10 +22,16 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexOAuthFlow,
     OpenAICodexProvider,
 )
-from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.credential_store import (
+    credentials_path,
+    has_credentials,
+    load_codex_credentials,
+    save_codex_credentials,
+)
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
-from pydantic_clai2.models.profiles import account, parse_model, split_profile, with_profile
+from pydantic_clai2.models.accounts import remember
+from pydantic_clai2.models.profiles import ALL, account, parse_model, split_profile, with_profile
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -63,6 +69,24 @@ async def login_command(
         return ''
     else:
         name, profile = picked, None
+    if profile == ALL:
+        raise ValueError(f'{name}@* means every {name} account, so it cannot be signed in to. Run /login {name}@NAME.')
+    plugin = plugins.get(name)
+    message = await _sign_in(name, profile=profile, codex=codex, plugins=plugins, store=store)
+    # A plugin keeps its own tokens; for the rest, a saved login is what tells success from a cancelled prompt.
+    if store is not None and (plugin is not None or has_credentials(account=account(name, profile))):
+        remember(store, login=name, profile=profile, plugin=plugin)
+    return message
+
+
+async def _sign_in(
+    name: str,
+    *,
+    profile: str | None,
+    codex: 'CodexAuth',
+    plugins: Mapping[str, PluginLogin],
+    store: SettingsStore | None,
+) -> str:
     if name == CODEX:
         return await codex.login([] if profile is None else [account(name, profile)])
     if name == 'github-copilot':
@@ -255,6 +279,10 @@ class CodexAuth:
         except (KeyboardInterrupt, EOFError):
             raise UserError('Codex login cancelled.') from None
         return await flow.exchange_code(code_from_paste(text=text, state=flow.state))
+
+    def forget(self, account: str) -> None:
+        """Drop an account's cached provider after it signs out, so the next request asks to sign in."""
+        self._providers.pop(account, None)
 
     def model(self, name: str) -> OpenAICodexModel:
         """Reuse each profile's core provider so it owns refresh and credential persistence."""

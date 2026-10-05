@@ -42,6 +42,12 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
     return root / f'credentials-{account.replace("/", _SLASH)}.json'
 
 
+def has_credentials(*, account: str) -> bool:
+    """Whether a login is saved for `account`, from its file alone; nothing is decrypted or read from the keyring."""
+    encrypted, plaintext = _files(account=account, fallback=None)
+    return encrypted.is_file() or plaintext.is_file()
+
+
 def profile_accounts() -> list[str]:
     """Saved `PROVIDER@PROFILE` accounts, read from file names alone; nothing is decrypted."""
     paths = credentials_path(account='').parent.glob('credentials-*@*')

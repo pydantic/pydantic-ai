@@ -48,7 +48,7 @@ from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import chain_command, chain_completions, settings_model as chain_settings_model
-from pydantic_clai2.models.profiles import provider_of
+from pydantic_clai2.models.profiles import ALL, provider_of
 from pydantic_clai2.plugins import (
     ModelProvider,
     PluginLogin,
@@ -325,6 +325,8 @@ class _ModelResolver:
             ref = parse_model(name)
         except ValueError as exc:
             raise UserError(f'{name}: {exc}') from None
+        if ref.profile == ALL:
+            return await self._all_accounts(ref.provider, ref.name)
         if ref.provider in ('openrouter', 'vllm', 'github-copilot'):
             from pydantic_clai2.models import github_copilot, openrouter, vllm
 
@@ -354,6 +356,30 @@ class _ModelResolver:
             raise UserError(f'No chain named {chain}. Save one with /chain {chain} MODEL MODEL...')
         first, *rest = [await self.resolve(model) for model in models]
         return FallbackModel(first, *rest)
+
+    async def _all_accounts(self, provider: str, name: str) -> Model | str:
+        """`PROVIDER@*:NAME`: the model on every signed-in account, in `/accounts` order, falling back in turn."""
+        from pydantic_ai.models.fallback import FallbackModel
+        from pydantic_clai2.models.accounts import pool
+
+        store = self.store
+        members = await to_thread.run_sync(lambda: pool(store, provider), abandon_on_cancel=True) if store else []
+        if not members:
+            raise UserError(f'No {provider} account is signed in. Add one with /accounts.')
+        first, *rest = [await self.resolve(member.model(name)) for member in members]
+        return FallbackModel(first, *rest) if rest else first
+
+    async def accounts(self, args: list[str]) -> str:
+        """`/accounts`: list, add, rename, reorder, and sign out of accounts."""
+        from pydantic_clai2.ui.menus.accounts_menu import open_accounts_menu
+
+        if args:
+            raise ValueError('Usage: /accounts (opens the menu)')
+        if self.store is None:  # pragma: no cover -- the shell always has a store.
+            raise ValueError('Accounts need a settings database.')
+        return await open_accounts_menu(
+            self.store, login=self.login, plugins=self.logins, forget=self.codex_auth().forget
+        )
 
 
 def create_shell(
@@ -450,6 +476,13 @@ def create_shell(
             handler=lambda args: chain_command(store, args),
             complete=lambda args: chain_completions(store, args),
             during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='accounts',
+            description='Add, rename, reorder, and sign out of accounts; MODEL@* tries them all in order',
+            handler=models.accounts,
         )
     )
     commands.register(

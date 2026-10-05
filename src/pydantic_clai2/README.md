@@ -580,8 +580,27 @@ Core owns inference and its telemetry; CLAI adds no login-specific spans.
 
 ### Several accounts and fallback chains
 
-Sign in to more than one account per provider with a profile. Write
-`/login PROVIDER@PROFILE`, then use `PROVIDER@PROFILE:MODEL` as the model:
+`/accounts` lists every account you are signed in to, grouped by provider.
+Logins you already had show up on their own.
+
+- **a** adds an account: pick a provider and CLAI fills in a free name, such as
+  `account-2`. Press Enter to keep it, then sign in as usual (browser, device code,
+  connection, or API key).
+- **Enter** on an account signs in to it again, for example after it expired.
+- **r** gives an account a name to show, such as your email.
+- **d** signs out, after asking. For a plugin's account, it only leaves the list;
+  the plugin keeps its own sign-in.
+- **[** and **]** reorder accounts. The order is the order `@*` tries them in.
+
+When you pick a model in `/model add` and its provider has more than one account,
+CLAI asks which account runs it, or **all accounts**. All accounts saves the model
+as `PROVIDER@*:MODEL`: it runs on the first signed-in account and moves to the next
+when a request fails with a model API error, such as a rate or usage limit. Signing
+in to another account adds it to the rotation, with nothing else to change. If
+every account fails, CLAI lists why each one did.
+
+Under the menus, an account other than the default is a profile, written
+`PROVIDER@PROFILE`. You can type it instead:
 
 ```text
 /login openai-codex@work         # a second ChatGPT/Codex account
@@ -590,6 +609,7 @@ Sign in to more than one account per provider with a profile. Write
 /login vllm@lab                  # another vLLM server
 /login openai@work               # any provider that takes an API key: a /keys entry or a typed key
 /model openai-codex@work:gpt-6-astra
+/model openai-codex@*:gpt-6-astra  # every signed-in Codex account, in /accounts order
 ```
 
 A model without `@PROFILE` uses the default account, exactly as before. For
@@ -603,23 +623,23 @@ to 32 lowercase letters, digits, hyphens, or underscores; `default` is reserved
 for the account without a profile. Each profile's
 credentials are stored separately, the same way as the default login.
 
-A fallback chain tries its models in order, moving on when a request fails with
-a model API error, such as a rate or usage limit. Pool accounts with one:
+A fallback chain does the same across different models or providers, such as Codex
+first and Claude after it. It tries its models in order:
 
 ```text
-/chain codex openai-codex:gpt-6-astra openai-codex@work:gpt-6-astra
-/model chain:codex
+/chain best openai-codex@*:gpt-6-astra anthropic:claude-sonnet-4-5
+/model chain:best
 /chain                    # list chains
-/chain codex              # show one
-/chain remove codex
+/chain best               # show one
+/chain remove best
 ```
 
 Saving a chain adds `chain:NAME` to `/model`. A chain uses its first model's
 `/model settings` controls and defaults, and saves overrides under
-`chain:NAME`, so `/fast` works for a chain of Codex accounts. A chain cannot
-contain another chain. A model whose profile is not signed in fails the turn
+`chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
+`openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
 instead of falling back, so a missing login is not hidden. Older CLAI builds keep
-the rest of your settings, but cannot run a profile or chain model.
+the rest of your settings, but cannot run a profile, `@*`, or chain model.
 
 ## Settings and commands
 
