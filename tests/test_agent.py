@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
+import anyio
 import pytest
 from dirty_equals import IsJson
 from pydantic import BaseModel, TypeAdapter, field_validator
@@ -41,6 +42,8 @@ from pydantic_ai import (
     ModelResponsePart,
     ModelRetry,
     ModelSelectionContext,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
@@ -82,7 +85,7 @@ from pydantic_ai.durable_exec._base import construction_toolsets
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
@@ -9144,7 +9147,10 @@ async def test_provider_reentry_after_close():
 @requires_openai
 async def test_gateway_provider_reentry_after_close():
     """Gateway provider restores event_hooks on re-entry."""
-    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.gateway import (
+        _GatewayRequestHook,  # pyright: ignore[reportPrivateUsage]
+        gateway_provider,
+    )
 
     provider = gateway_provider('openai', api_key='test-key', base_url='https://gateway.example.com/proxy')
 
@@ -9152,7 +9158,7 @@ async def test_gateway_provider_reentry_after_close():
         first_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
         assert first_client is not None
         assert not first_client.is_closed
-        assert len(first_client.event_hooks.get('request', [])) == 1
+        assert sum(isinstance(hook, _GatewayRequestHook) for hook in first_client.event_hooks['request']) == 1
     assert first_client.is_closed
 
     async with provider:
@@ -9160,7 +9166,7 @@ async def test_gateway_provider_reentry_after_close():
         assert second_client is not None
         assert not second_client.is_closed
         assert second_client is not first_client
-        assert len(second_client.event_hooks.get('request', [])) == 1
+        assert sum(isinstance(hook, _GatewayRequestHook) for hook in second_client.event_hooks['request']) == 1
     assert second_client.is_closed
 
 
@@ -11341,6 +11347,107 @@ async def test_deferred_tool_results_reject_duplicate_tool_call_ids_in_history()
         )
 
 
+@pytest.mark.parametrize('tool_call_id', ['DUP', ''])
+async def test_duplicate_tool_call_id_raises_before_any_tool_executes(tool_call_id: str):
+    executed: list[tuple[str, int]] = []
+
+    def alpha(n: int) -> str:  # pragma: no cover
+        executed.append(('alpha', n))
+        return f'A{n}'
+
+    def beta(n: int) -> str:  # pragma: no cover
+        executed.append(('beta', n))
+        return f'B{n}'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='alpha', args={'n': 1}, tool_call_id=tool_call_id),
+                ToolCallPart(tool_name='beta', args={'n': 2}, tool_call_id=tool_call_id),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function))
+    agent.tool_plain(alpha)
+    agent.tool_plain(beta)
+
+    with pytest.raises(UnexpectedModelBehavior, match='duplicate `tool_call_id`s'):
+        await agent.run('go')
+
+    assert executed == []
+
+
+async def test_distinct_tool_call_ids_still_bind_correctly():
+    executed: list[tuple[str, int]] = []
+
+    def alpha(n: int) -> str:
+        executed.append(('alpha', n))
+        return f'A{n}'
+
+    def beta(n: int) -> str:
+        executed.append(('beta', n))
+        return f'B{n}'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(parts=[TextPart('finished')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='alpha', args={'n': 1}, tool_call_id='DUP1'),
+                ToolCallPart(tool_name='beta', args={'n': 2}, tool_call_id='DUP2'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function))
+    agent.tool_plain(alpha)
+    agent.tool_plain(beta)
+
+    result = await agent.run('go')
+    assert result.output == 'finished'
+
+    assert sorted(executed) == [('alpha', 1), ('beta', 2)]
+    tool_returns = {p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)}
+    assert [(p.tool_call_id, p.content) for p in tool_returns.values()] == [('DUP1', 'A1'), ('DUP2', 'B2')]
+
+
+async def test_duplicate_tool_call_id_across_graceful_batches_binds_each_call():
+    """`'graceful'` splits function calls into batches at an output call; each batch binds its own calls."""
+    executed: list[tuple[str, int]] = []
+
+    def alpha(n: int) -> str:
+        executed.append(('alpha', n))
+        return f'A{n}'
+
+    def beta(n: int) -> str:
+        executed.append(('beta', n))
+        return f'B{n}'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='alpha', args={'n': 1}, tool_call_id='DUP'),
+                ToolCallPart(tool_name='final_result', args={'response': 42}, tool_call_id='OUT'),
+                ToolCallPart(tool_name='beta', args={'n': 2}, tool_call_id='DUP'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function), output_type=int, end_strategy='graceful')
+    agent.tool_plain(alpha)
+    agent.tool_plain(beta)
+
+    result = await agent.run('go')
+    assert result.output == 42
+
+    assert executed == [('alpha', 1), ('beta', 2)]
+    function_returns = [
+        (p.tool_name, p.tool_call_id, p.content)
+        for m in result.all_messages()
+        for p in m.parts
+        if isinstance(p, ToolReturnPart) and p.tool_name != 'final_result'
+    ]
+    assert function_returns == [('alpha', 'DUP', 'A1'), ('beta', 'DUP', 'B2')]
+
+
 async def test_user_prompt_with_deferred_tool_results():
     """Test that user_prompt can be provided alongside deferred_tool_results."""
     from pydantic_ai.exceptions import ApprovalRequired
@@ -11937,6 +12044,103 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
     )
 
     assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)
+
+
+def _native_web_search_parts() -> tuple[NativeToolCallPart, NativeToolReturnPart]:
+    return (
+        NativeToolCallPart('web_search', {'queries': ['weather']}, tool_call_id='search', provider_name='function'),
+        NativeToolReturnPart('web_search', [{'uri': 'https://example.com'}], tool_call_id='search'),
+    )
+
+
+def test_text_before_trailing_native_tool_call_is_output():
+    """Text before a native tool call that no text follows is the output, rather than an empty response to retry.
+
+    Gemini reports the searches that grounded its text in metadata after that text, so the call comes last.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('It is sunny.'), *_native_web_search_parts()])
+
+    result = Agent(FunctionModel(respond)).run_sync('What is the weather?')
+
+    assert result.output == 'It is sunny.'
+    assert len(result.all_messages()) == 2
+
+
+def test_text_before_native_tool_call_followed_by_text_is_not_output():
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Let me search.'), *_native_web_search_parts(), TextPart('It is sunny.')])
+
+    result = Agent(FunctionModel(respond)).run_sync('What is the weather?')
+
+    assert result.output == 'It is sunny.'
+
+
+def test_text_before_native_tool_call_with_function_tool_call_is_not_early_output():
+    """With function tool calls, text before a native tool call stays commentary, so `end_strategy='early'` runs them."""
+
+    class Weather(BaseModel):
+        summary: str
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[TextPart('{"summary": "unknown"}'), *_native_web_search_parts(), ToolCallPart('get_city', {})]
+            )
+        return ModelResponse(parts=[TextPart('{"summary": "sunny in Amsterdam"}')])
+
+    agent = Agent(FunctionModel(respond), output_type=PromptedOutput(Weather), end_strategy='early')
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Amsterdam'
+
+    result = agent.run_sync('What is the weather?')
+
+    assert result.output == Weather(summary='sunny in Amsterdam')
+
+
+async def test_streamed_text_before_native_tool_call_with_function_tool_call_is_not_output():
+    class Weather(BaseModel):
+        summary: str
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | BuiltinToolCallsReturns]:
+        yield '{"summary": "unknown"}'
+        call, tool_return = _native_web_search_parts()
+        native_parts: list[BuiltinToolCallsReturns] = [{1: call}, {2: tool_return}]
+        for native_part in native_parts:
+            yield native_part
+        yield {3: DeltaToolCall(name='get_city', json_args='{}', tool_call_id='city')}
+
+    agent = Agent(FunctionModel(stream_function=stream), output_type=PromptedOutput(Weather), end_strategy='early')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Output validation failed during streaming'):
+        async with agent.run_stream('What is the weather?') as result:
+            await result.get_output()
+
+
+async def test_streamed_text_before_trailing_native_tool_call_is_output():
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | BuiltinToolCallsReturns]:
+        yield 'It is '
+        yield 'sunny.'
+        call, tool_return = _native_web_search_parts()
+        native_parts: list[BuiltinToolCallsReturns] = [{1: call}, {2: tool_return}]
+        for native_part in native_parts:
+            yield native_part
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    async def handle_events(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    result = await agent.run('What is the weather?', event_stream_handler=handle_events)
+    assert result.output == 'It is sunny.'
+    async with agent.run_stream('What is the weather?') as stream_result:
+        assert await stream_result.get_output() == 'It is sunny.'
 
 
 def test_agent_native_tools_runtime_vs_agent_level():
@@ -14583,6 +14787,26 @@ async def test_continuation_chain_error_converted_to_model_retry_preserves_parti
     assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['c1']
 
 
+async def test_continuation_error_recovery_returning_partial_copy_does_not_double_count_usage() -> None:
+    """Returning a copy of the accounted partial response from an error hook is idempotent."""
+    partial = scripted_response(
+        texts=['usable partial'], state='suspended', provider_response_id='c1', input_tokens=3, output_tokens=2
+    )
+    model = ScriptedContinuationModel(responses=[partial, RuntimeError('segment two failed')])
+
+    class ReturnPartial(AbstractCapability):
+        async def on_model_request_error(
+            self, ctx: RunContext, *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            return replace(partial, state='complete')
+
+    result = await Agent(model, capabilities=[ReturnPartial()]).run('go')
+
+    assert result.output == 'usable partial'
+    assert result.usage.input_tokens == 3
+    assert result.usage.output_tokens == 2
+
+
 def test_check_continuation_usage_without_limits() -> None:
     """`_check_continuation_usage` is a no-op on a `RunContext` with no `usage_limits`.
 
@@ -14600,8 +14824,9 @@ class _DelayFunctionModel(FunctionModel):
         return delay if isinstance(delay, float) else None
 
 
-def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When no custom sleep is registered, the continuation loop uses asyncio.sleep."""
+@pytest.mark.parametrize('delay', [0.01, -0.01])
+def test_agent_graph_sleep_default_uses_anyio(monkeypatch: pytest.MonkeyPatch, delay: float) -> None:
+    """When no custom sleep is registered, the continuation loop uses anyio.sleep."""
     call_count = 0
     slept_delays: list[float] = []
 
@@ -14610,26 +14835,26 @@ def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch)
         call_count += 1
         if call_count == 1:
             return ModelResponse(
-                parts=[TextPart('paused')], state='suspended', provider_details={'continuation_delay': 0.01}
+                parts=[TextPart('paused')], state='suspended', provider_details={'continuation_delay': delay}
             )
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(_DelayFunctionModel(model_fn))
 
-    original_sleep = asyncio.sleep
+    original_sleep = anyio.sleep
 
     async def tracking_sleep(delay: float) -> None:
         slept_delays.append(delay)
         await original_sleep(delay)
 
-    monkeypatch.setattr(asyncio, 'sleep', tracking_sleep)
+    monkeypatch.setattr(anyio, 'sleep', tracking_sleep)
     result = agent.run_sync('test')
     assert 'done' in result.output
-    assert 0.01 in slept_delays
+    assert max(delay, 0) in slept_delays
 
 
 def test_agent_graph_sleep_custom_function() -> None:
-    """A custom sleep function registered via `Agent.using_sleep` is used instead of `asyncio.sleep`."""
+    """A custom sleep function registered via `Agent.using_sleep` is used instead of `anyio.sleep`."""
     call_count = 0
     custom_delays: list[float] = []
 

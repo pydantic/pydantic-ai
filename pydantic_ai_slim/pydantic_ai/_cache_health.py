@@ -14,12 +14,12 @@ from __future__ import annotations
 import threading
 from collections import OrderedDict
 from collections.abc import Set as AbstractSet
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, ClassVar, Literal, TypeAlias
 
 from . import _utils
-from .messages import CompactionPart, ModelResponse
+from .messages import CompactionPart, ModelResponse, NativeToolCallPart
 from .profiles import ModelProfile, _expected_cache_retention  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
@@ -169,6 +169,24 @@ def _count_compactions(request_context: ModelRequestContext, response: ModelResp
     return sum(isinstance(part, CompactionPart) for message in [*responses, response] for part in message.parts)
 
 
+def _sums_cache_usage(response: ModelResponse) -> bool:
+    """Whether the response's cache usage may be summed over several internal model calls.
+
+    A native tool such as web search runs the model several times inside one request, and some
+    providers report the cache reads of every pass, so the total can be several times the prefix the
+    next request will read back. A reported pass count settles it: Anthropic's `message_iterations`
+    (compaction passes count too). Without one, a native tool call is treated as summed usage unless
+    the provider counts tool-use prompt tokens separately from cache reads, as Google does.
+    """
+    details = response.usage.details
+    passes = details.get('message_iterations')
+    if passes is not None:
+        return passes + details.get('compaction_iterations', 0) > 1
+    return 'tool_use_prompt_tokens' not in details and any(
+        isinstance(part, NativeToolCallPart) for part in response.parts
+    )
+
+
 def _cache_retention(request_context: ModelRequestContext) -> timedelta | None:
     """How long the provider is expected to keep this request's cached prefix, or `None` when unknown.
 
@@ -215,9 +233,21 @@ class CacheHealthDetector:
     def __post_init__(self) -> None:
         self.marks = self.store.get(self.conversation_id)
 
-    def observe(self, request_context: ModelRequestContext, response: ModelResponse) -> CacheHealth | None:
-        """Judge `response` against its cache key's mark and update the mark; `None` when caching isn't in play."""
-        usage = response.usage
+    def observe(
+        self,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+        *,
+        final_segment: ModelResponse | None = None,
+    ) -> CacheHealth | None:
+        """Judge `response` against its cache key's mark and update the mark; `None` when caching isn't in play.
+
+        When `response` merges a continuation chain (Anthropic `pause_turn`, ...), its usage sums every
+        segment's request, which no single later request can read back. Pass the chain's `final_segment`
+        to judge its cache usage instead: its prompt carries the whole prefix, earlier segments included.
+        """
+        measured = final_segment or response
+        usage = measured.usage
         read = usage.cache_read_tokens
         write = usage.cache_write_tokens
         # Keyed on the response: `FallbackModel` resolves the model inside `request()`, so only the
@@ -245,7 +275,16 @@ class CacheHealthDetector:
             collapse = self._classify(request_context, mark, read, now, unreported=unreported, compactions=compactions)
 
         updated_established = established
-        if not unreported:
+        if not unreported and _sums_cache_usage(measured):
+            # A summed read can still prove a collapse (every pass read at least what the first did), but
+            # a high one proves nothing: it neither raises the mark nor re-arms the alert, and the mark
+            # keeps the run that established it. Only the retention clock restarts, since the provider
+            # did read the cache.
+            if mark is not None:
+                alerted = mark.alerted or (collapse is not None and collapse.alert)
+                self.marks[key] = replace(mark, last_seen=now, alerted=alerted)
+                self.marks = self.store.update(self.conversation_id, self.marks, now)
+        elif not unreported:
             if collapse is None:
                 # A healthy read-back re-stabilizes the cache, re-arming the alert.
                 updated_established, alerted = max(established, read + write), False

@@ -35,10 +35,9 @@ from pydantic import (
 )
 
 from pydantic_ai.exceptions import UserError
-
-from .credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from .mcp import http_client
-from .tool_output import terminal_text
+from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.mcp import http_client
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 ACCOUNT = 'logfire-oauth'
 """The credential account holding Logfire sign-ins, one per MCP URL."""
@@ -250,7 +249,7 @@ async def _register(http: httpx.AsyncClient, server: _Server, scope: str) -> str
         server.registration_endpoint,
         json={
             'client_name': 'CLAI',
-            'client_uri': 'https://github.com/pydantic/pydantic-ai-harness',
+            'client_uri': 'https://github.com/pydantic/pydantic-ai',
             'grant_types': [DEVICE_GRANT, 'refresh_token'],
             'token_endpoint_auth_method': 'none',
             'application_type': 'native',

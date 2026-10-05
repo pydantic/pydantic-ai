@@ -111,6 +111,7 @@ CONVERSATION_ITEM_CREATE_EVENT = 'conversation.item.create'
 INPUT_AUDIO_BUFFER_APPEND_EVENT = 'input_audio_buffer.append'
 INPUT_AUDIO_BUFFER_COMMIT_EVENT = 'input_audio_buffer.commit'
 INPUT_AUDIO_BUFFER_CLEAR_EVENT = 'input_audio_buffer.clear'
+INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT = 'input_audio_buffer.timeout_triggered'
 RESPONSE_CREATE_EVENT = 'response.create'
 RESPONSE_CANCEL_EVENT = 'response.cancel'
 CONVERSATION_ITEM_TRUNCATE_EVENT = 'conversation.item.truncate'
@@ -245,7 +246,11 @@ class ServerVAD(TypedDict, total=False):
     """Whether to interrupt an in-progress response when the user starts speaking. Defaults to `True`."""
     idle_timeout_ms: int
     """If set, auto-trigger a response after this much idle time with no detected speech.
-    Defaults to the provider default."""
+    Defaults to the provider default.
+
+    The response follows up on the conversation so far: the silence that triggered it isn't recorded
+    as a user turn in the session's history.
+    """
 
 
 class SemanticVAD(TypedDict, total=False):
@@ -312,15 +317,29 @@ class _ProtocolAudioTranscriptDoneEvent(BaseModel):
     type: Literal['response.output_audio_transcript.done', 'response.audio_transcript.done']
 
 
+class ProtocolResponseStatus(BaseModel):
+    """SDK `RealtimeResponseStatus` with open `type` and `reason` strings.
+
+    The SDK closes both to the values documented today, so a value the server adds later would fail
+    validation of the whole `response.done`, losing the only terminal (and usage) the response gets.
+    """
+
+    model_config = ConfigDict(extra='allow')
+
+    error: RealtimeResponseStatusError | None = None
+    reason: str | None = None
+    type: str | None = None
+
+
 class ProtocolRealtimeResponse(BaseModel):
-    """SDK response with cassette-proven xAI extensions kept typed."""
+    """SDK response with cassette-proven xAI extensions kept typed, and its closed enums left open."""
 
     model_config = ConfigDict(extra='allow')
 
     id: str | None = None
     output: list[ConversationItem | _ProtocolResponseOutputItem] | None = None
-    status: Literal['completed', 'cancelled', 'failed', 'incomplete', 'in_progress'] | None = None
-    status_details: RealtimeResponseStatus | str | None = None
+    status: str | None = None
+    status_details: ProtocolResponseStatus | str | None = None
     usage: RealtimeResponseUsage | None = None
     metadata: dict[str, Any] | None = None
 
@@ -745,7 +764,9 @@ def _is_function_call_only(output: Sequence[ConversationItem | _ProtocolResponse
 def _response_status_reason(response: ProtocolResponse) -> str | None:
     """Return the raw terminal `status_details.reason`, when present."""
     status_details = response.status_details
-    return status_details.reason if isinstance(status_details, RealtimeResponseStatus) else None
+    return (
+        status_details.reason if isinstance(status_details, RealtimeResponseStatus | ProtocolResponseStatus) else None
+    )
 
 
 def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
@@ -773,7 +794,7 @@ def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
 def _response_status_error(response: ProtocolResponse) -> RealtimeResponseStatusError | None:
     """Return the `status_details.error` of a failed response, when present."""
     status_details = response.status_details
-    return status_details.error if isinstance(status_details, RealtimeResponseStatus) else None
+    return status_details.error if isinstance(status_details, RealtimeResponseStatus | ProtocolResponseStatus) else None
 
 
 def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEvent | None:

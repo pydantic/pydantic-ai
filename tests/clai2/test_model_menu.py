@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuItem
-from termflow.tui.menu import MenuResult
+from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
@@ -14,15 +14,21 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_catalog import catalog, genai_prices_models, runnable_providers
-from pydantic_clai2.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
-from pydantic_clai2.model_picker import ModelPickerAction, build_model_picker, model_command, model_completions
-from pydantic_clai2.model_settings import ModelSettingsForm, model_settings_from_json
-from pydantic_clai2.set_menu import SettingsSource
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_catalog import catalog, genai_prices_models, runnable_providers
+from pydantic_clai2.models.model_settings import ModelSettingsForm, model_settings_from_json
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
+from pydantic_clai2.ui.menus.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
+from pydantic_clai2.ui.menus.model_picker import (
+    DeleteModel,
+    ModelPickerAction,
+    build_model_picker,
+    model_command,
+    model_completions,
+)
+from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
@@ -130,7 +136,7 @@ def test_settings_shortcut_does_not_consume_search(tmp_path: Path, monkeypatch: 
     context, _ = make_context(tmp_path)
     menu = ModelMenu(context)
     keys = iter(['s', 'ctrl-s'])
-    monkeypatch.setattr('pydantic_clai2.model_menu.menu_key', lambda: next(keys))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.menu_key', lambda: next(keys))
     widget = menu.build()
     result = widget.run()
     assert widget.highlighted is not None
@@ -282,6 +288,189 @@ async def test_cancel_adding_from_picker(tmp_path: Path) -> None:
     assert await model_command(context, [], runners=script.runners) == 'No changes.'
     assert context.settings.model == original
     assert applied == []
+
+
+@pytest.mark.parametrize('saved_default', [None, 'test', 'unused:model'])
+def test_remove_model_persists_without_changing_other_preferences(tmp_path: Path, saved_default: str | None) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    if saved_default is not None:
+        store.set('model', saved_default)
+    store.set('display.thinking', False)
+    settings: dict[str, JsonValue] = {'max_tokens': 5, 'custom_params': {'extra_body.key': 'value'}}
+    for name in ['test', 'unused:model']:
+        store.add_model(name=name)
+        store.save_model_settings(name, settings)
+
+    removable = saved_default != 'unused:model'
+    assert store.remove_model(name='unused:model') is removable
+    assert store.remove_model(name='unused:model') is removable
+    reopened = SettingsStore(store.path)
+    assert reopened.models() == (['test'] if removable else ['test', 'unused:model'])
+    assert reopened.model_settings('unused:model') == ({} if removable else settings)
+    assert reopened.model_settings('test') == settings
+    expected: dict[str, JsonValue] = {'display.thinking': False}
+    if saved_default is not None:
+        expected['model'] = saved_default
+    assert reopened.overrides() == expected
+    reopened.add_model(name='unused:model')
+    assert reopened.model_settings('unused:model') == ({} if removable else settings)
+
+
+@pytest.mark.parametrize('delete_key', ['ctrl-d', 'delete'])
+async def test_delete_model_through_picker_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], delete_key: str
+) -> None:
+    context, applied = make_context(tmp_path)
+    original = context.settings.model
+    assert original is not None
+    context.store.set('model', original)
+    context.store.add_model(name='unused:model')
+    context.store.save_model_settings('unused:model', {'max_tokens': 5})
+    pressed = iter([*'unused:', delete_key, 'down', 'enter', 'escape'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
+
+    assert await model_command(context, []) == 'Deleted unused:model.'
+    assert context.settings.model == context.store.load().model == original
+    assert applied == []
+    assert SettingsStore(context.store.path).models() == [original]
+    assert context.store.model_settings('unused:model') == {}
+    assert model_completions(context, []) == [original]
+    assert 'Deleted unused:model.' in capsys.readouterr().out
+    with pytest.raises(ValueError, match='Model not added: unused:model'):
+        await model_command(context, ['unused:model'])
+
+
+def test_model_picker_search_still_accepts_d(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    context, _ = make_context(tmp_path)
+    context.store.add_model(name='unused:model')
+    pressed = iter([*'unused:', 'enter'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
+    result = build_model_picker(context).run()
+    assert result.item is not None and result.item.value == 'unused:model'
+
+
+@pytest.mark.parametrize('delete_key', ['ctrl-d', 'delete'])
+def test_cannot_delete_picker_status_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delete_key: str) -> None:
+    context, _ = make_context(tmp_path)
+    pressed = iter(['end', delete_key, 'escape'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
+    assert build_model_picker(context, message='Deleted unused:model.').run().cancelled
+
+
+@pytest.mark.parametrize('confirmation', [MenuResult(cancelled=True), MenuResult(), pick(False)])
+async def test_cancel_deleting_model(tmp_path: Path, confirmation: MenuResult) -> None:
+    context, applied = make_context(tmp_path)
+    context.store.add_model(name='unused:model')
+    context.store.save_model_settings('unused:model', {'max_tokens': 5})
+    script = Script(
+        lists=[pick(DeleteModel(name='unused:model')), MenuResult(cancelled=True)], choices=[confirmation], texts=[]
+    )
+    assert await model_command(context, [], runners=script.runners) == 'No changes.'
+    assert 'unused:model' in context.store.models()
+    assert context.store.model_settings('unused:model') == {'max_tokens': 5}
+    assert applied == []
+    assert script.opened == ['list', 'choice', 'list']
+
+
+async def test_cannot_delete_current_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    context, applied = make_context(tmp_path)
+    original = context.settings.model
+    assert original is not None
+    context.store.save_model_settings(original, {'max_tokens': 5})
+    pressed = iter(['ctrl-d', 'escape'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
+    assert await model_command(context, []) == 'No changes.'
+    assert context.store.models() == [original]
+    assert context.store.model_settings(original) == {'max_tokens': 5}
+    assert context.settings.model == original and applied == []
+    assert 'Select another model' in capsys.readouterr().out
+
+
+async def test_saved_default_changed_during_delete_confirmation(tmp_path: Path) -> None:
+    context, applied = make_context(tmp_path)
+    context.store.add_model(name='unused:model')
+    context.store.save_model_settings('unused:model', {'max_tokens': 5})
+    script = Script(lists=[pick(DeleteModel(name='unused:model')), MenuResult(cancelled=True)], choices=[], texts=[])
+
+    def confirm_after_default_changes(menu: Menu) -> MenuResult:
+        SettingsStore(context.store.path).set('model', 'unused:model')
+        return pick(True)
+
+    runners = Runners(run_list=script.run_list, run_choice=confirm_after_default_changes, run_text=script.run_text)
+    assert await model_command(context, [], runners=runners) == 'No changes.'
+    assert 'unused:model' in context.store.models()
+    assert context.store.model_settings('unused:model') == {'max_tokens': 5}
+    assert context.store.load().model == 'unused:model' and applied == []
+
+
+@pytest.mark.parametrize('current', [None, 'test'])
+async def test_cannot_delete_saved_default_model(
+    tmp_path: Path, current: str | None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('model', 'saved:default')
+    store.save_model_settings('saved:default', {'max_tokens': 5})
+    context = CommandContext(
+        settings=Settings(model=current),
+        store=store,
+        clear_history=lambda: None,
+        apply_setting=lambda key, settings: None,
+    )
+    pressed = iter(['home', 'ctrl-d', 'escape'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
+    assert await model_command(context, []) == 'No changes.'
+    output = capsys.readouterr().out
+    assert 'saved:default (saved default)' in output
+    assert 'This is your saved default model.' in output
+    assert '/set model' in output
+    assert 'Delete saved:default?' not in output
+    assert 'saved:default' in store.models()
+    assert store.model_settings('saved:default') == {'max_tokens': 5}
+    assert store.load().model == 'saved:default'
+    assert context.settings.model == current
+
+
+@pytest.mark.parametrize('keys', [['enter'], ['escape'], ['ctrl-c']])
+async def test_delete_confirmation_keeps_model_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keys: list[str]
+) -> None:
+    context, applied = make_context(tmp_path)
+    context.store.add_model(name='unused:model')
+    pressed = iter(['end', 'up', 'ctrl-d', *keys, 'escape'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
+    assert await model_command(context, []) == 'No changes.'
+    assert 'unused:model' in context.store.models() and applied == []
+
+
+@pytest.mark.parametrize('ending', [MenuResult(cancelled=True), MenuResult(), pick(0), pick('test')])
+async def test_delete_then_leave_or_select_model(tmp_path: Path, ending: MenuResult) -> None:
+    context, applied = make_context(tmp_path)
+    context.store.add_model(name='unused:model')
+    context.store.add_model(name='test')
+    script = Script(lists=[pick(DeleteModel(name='unused:model')), ending], choices=[pick(True)], texts=[])
+    selected = ending.item is not None and ending.item.value == 'test'
+    expected = 'Deleted unused:model.' + ('\nSaved model. Applied.' if selected else '')
+    assert await model_command(context, [], runners=script.runners) == expected
+    assert 'unused:model' not in context.store.models()
+    assert applied == (['model'] if selected else [])
+
+
+async def test_delete_last_model_then_add_from_picker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    context, applied = make_context(tmp_path)
+    context.settings = Settings(model=None)
+    for name in context.store.models():
+        context.store.remove_model(name=name)
+    context.store.add_model(name='unused:model')
+    pressed = iter(['ctrl-d', 'down', 'enter', 'ctrl-d', 'escape'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
+    assert await model_command(context, []) == 'Deleted unused:model.'
+    assert context.store.models() == [] and applied == []
+    assert build_model_picker(context).highlighted == MenuItem('Add a model...', value=ModelPickerAction.ADD)
+    script = Script(lists=[pick(ModelPickerAction.ADD), pick('test'), pick('test')], choices=[], texts=[])
+    assert await model_command(context, [], runners=script.runners) == 'Saved model. Applied.'
+    assert context.store.models() == ['test'] and applied == ['model']
 
 
 async def test_select_model_whose_provider_extra_is_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

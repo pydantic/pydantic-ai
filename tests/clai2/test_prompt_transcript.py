@@ -9,8 +9,8 @@ from rich.style import Style
 from rich.text import Text
 from termflow.ansi.utils import visible_length
 
-from pydantic_clai2 import theme
-from pydantic_clai2.prompt_transcript import TranscriptBuffer, render_ansi, style_prefix
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer, render_ansi, style_prefix
+from pydantic_clai2.ui.rendering import theme
 
 
 def plain(buffer: TranscriptBuffer, *, width: int = 80, height: int = 24) -> list[str]:
@@ -45,6 +45,17 @@ def test_tabs_carriage_returns_crlf_and_non_sgr_controls() -> None:
     buffer.write('before\rafter\r\n\tindented\n\x1b[2Jliteral')
     assert plain(buffer) == ['after', '        indented', 'literal']
     assert '\x1b[2J' not in ''.join(buffer.frame(width=80, height=24).rows)
+
+
+def test_clear_forgets_lines_partial_tail_and_style() -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('\x1b[1mold\npartial')
+    buffer.clear()
+    assert plain(buffer) == ['']
+    buffer.write('new\n')
+    snapshot = buffer.frame(width=80, height=24)
+    assert [Text.from_ansi(row).plain for row in snapshot.rows] == ['new', '']
+    assert snapshot.continuation_style == ''
 
 
 @pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])

@@ -13,7 +13,7 @@ Warn when a conversation's prompt cache hit collapses between model requests, wi
 
 Prompt caching pays off only while the cacheable prefix (tools, then system instructions, then message history) stays byte-stable across a run's consecutive requests. When something moves that prefix -- reordered tools, a timestamp injected into instructions, a serialization-level block hop -- the provider re-charges tokens it could have served from cache.
 
-This is the **observe** signal: it reads the provider's own verdict rather than guessing from the structured request. On each response it reads `usage.cache_read_tokens` and tracks the largest cacheable prefix the conversation has established (`cache_read_tokens + cache_write_tokens`, a high-water mark), keyed by the response's `(provider_name, provider_url, model_name)`. Because message history is append-only, a stable prefix means each request for that model reads back at least what the previous one cached, so any real shortfall is the observable signature of a collapse -- including a partial one, where a change deep in the history moves only the tail of the prefix.
+This is the **observe** signal: it reads the provider's own verdict rather than guessing from the structured request. On each response it reads `usage.cache_read_tokens` and tracks the cacheable prefix the conversation has established (`cache_read_tokens + cache_write_tokens`; it grows with the prefix and re-baselines after a collapse), keyed by the response's `(provider_name, provider_url, model_name)`. Because message history is append-only, a stable prefix means each request for that model reads back at least what the previous one cached, so any real shortfall is the observable signature of a collapse -- including a partial one, where a change deep in the history moves only the tail of the prefix.
 
 When a request falls short of the established prefix by more than `min_missed_ratio` of it (5%) and by at least `min_missed_tokens` (2,000), the thresholds Claude Code uses for a prompt-cache miss, the monitor classifies the collapse against the provider's cache retention window (see below) and emits a `CacheBustWarning` unless the window explains it. The mark then re-baselines to what the collapsing request established, so an intentional bust is judged once rather than against a stale high-water mark, and the monitor stays quiet about the collapse until a healthy read-back re-stabilizes the cache. A prefix that moves on every request, so the provider keeps writing a cache nothing reads back, therefore warns once, not on every request.
 
@@ -48,6 +48,10 @@ This is the detector Pydantic AI's instrumentation uses for its [prompt-cache he
 ## Model switches
 
 Keying per provider, endpoint, and model means a mid-run model switch does not warn: a `FallbackModel` failover or a per-step model change uses a different cache key, so the monitor starts a fresh mark for it instead of comparing against the previous model's. Marks are kept per key rather than reset, so switching back to an earlier model still compares against that model's prefix, and its retention window is timed from its own previous request, not whatever ran in between.
+
+## Native tool calls
+
+A response that ran a native tool, such as web search or code execution, may report cache reads summed over the provider's internal model calls, so the total can be several times the prefix the next request reads back. Such a response is still judged, so a low total can warn, but it doesn't raise the established prefix or confirm that a collapsed cache recovered; the monitor keeps the earlier prefix and waits for an ordinary request. A response that reports a single call to the main model and no compaction, or Gemini's separate tool-use prompt count, is ordinary cache accounting and updates the prefix as usual. Instrumentation's prompt-cache health attributes treat these responses the same way.
 
 ## Conversations
 

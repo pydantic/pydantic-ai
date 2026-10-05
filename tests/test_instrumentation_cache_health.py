@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
@@ -14,10 +15,16 @@ from pydantic_ai import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelResponse,
+    ModelResponsePart,
+    ModelRetry,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    RunContext,
     TextPart,
     ToolCallPart,
 )
 from pydantic_ai._cache_health import CacheHealthDetector, CacheMark, ConversationCacheMarkStore
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
@@ -75,6 +82,11 @@ class CacheUsage:
     provider_url: str | None = None
     compacts: bool = False
     """Whether the response carries a `CompactionPart`, as when the provider compacted the history."""
+    suspends: bool = False
+    """Whether the response pauses the turn (Anthropic `pause_turn`), so the next usage continues the same request."""
+    native_tool: bool = False
+    """Whether the response ran a native tool (web search), whose cache usage may be summed over several passes."""
+    details: Mapping[str, int] = field(default_factory=dict[str, int])
 
 
 class ResponseNameFunctionModel(FunctionModel):
@@ -89,6 +101,7 @@ def cache_spans(
     prompt: str | list[str | CachePoint] = 'prompt',
     sampler: Sampler | None = None,
     use_fallback: bool = False,
+    capabilities: Sequence[AbstractCapability[Any]] = (),
 ) -> tuple[list[ReadableSpan], InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     tracer_provider = TracerProvider(sampler=sampler) if sampler is not None else TracerProvider()
@@ -101,19 +114,30 @@ def cache_spans(
         usage = usages[call_index]
         call_index += 1
         model.set_response_model_name(usage.model_name)
-        parts = (
-            [TextPart('done')]
-            if call_index == len(usages)
-            else [ToolCallPart('continue_run', {}, tool_call_id=f'call-{call_index}')]
-        )
+        if usage.suspends:
+            parts: list[ModelResponsePart] = [TextPart('working')]
+        elif call_index == len(usages):
+            parts = [TextPart('done')]
+        else:
+            parts = [ToolCallPart('continue_run', {}, tool_call_id=f'call-{call_index}')]
+        if usage.native_tool:
+            parts = [
+                NativeToolCallPart(
+                    'web_search', {'query': 'x'}, tool_call_id=f'srv-{call_index}', provider_name='test'
+                ),
+                NativeToolReturnPart('web_search', 'results', tool_call_id=f'srv-{call_index}', provider_name='test'),
+                *parts,
+            ]
         return ModelResponse(
             parts=parts,
             usage=RequestUsage(
                 input_tokens=usage.input_tokens,
                 cache_read_tokens=usage.read,
                 cache_write_tokens=usage.write,
+                details=dict(usage.details),
             ),
             provider_name=usage.provider_name,
+            state='suspended' if usage.suspends else 'complete',
         )
 
     profile = ModelProfile(default_cache_retention=retention) if retention is not None else None
@@ -121,7 +145,8 @@ def cache_spans(
     agent = Agent(
         FallbackModel(model) if use_fallback else model,
         capabilities=[
-            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False))
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=False)),
+            *capabilities,
         ],
     )
 
@@ -151,6 +176,149 @@ def test_stable_cache_health() -> None:
         {'pydantic_ai.cache.hit_ratio': 0.8, 'pydantic_ai.cache.established_tokens': 16000},
     ]
     assert all(not span.events for span in spans)
+
+
+def test_continued_request_is_judged_by_its_final_segment() -> None:
+    """A `pause_turn` continuation merges into one response whose usage sums both segments' requests.
+
+    Each segment re-reads the ~14k prefix, so the merged response reports ~29k cached tokens. The mark
+    comes from the final segment instead, whose prompt carries the whole prefix, so the next request
+    reading back that prefix is healthy rather than a ~14k-token collapse.
+    """
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=14000),
+            CacheUsage(read=14000, write=500, suspends=True),
+            CacheUsage(read=14500, write=200),
+            CacheUsage(read=14700),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 14000},
+        {'pydantic_ai.cache.hit_ratio': 0.725, 'pydantic_ai.cache.established_tokens': 14700},
+        {'pydantic_ai.cache.hit_ratio': 0.735, 'pydantic_ai.cache.established_tokens': 14700},
+    ]
+    assert all(not span.events for span in spans)
+
+
+def test_native_tool_response_does_not_raise_the_mark() -> None:
+    """A native tool's cache reads may be summed over its passes, so they're judged but don't set the mark.
+
+    Four passes over the ~8k prefix report ~33k cached tokens; raising the mark to that would make the
+    next, healthy request look like a collapse.
+    """
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=8000),
+            CacheUsage(read=32800, write=600, input_tokens=40000, native_tool=True),
+            CacheUsage(read=8400),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 8000},
+        {'pydantic_ai.cache.hit_ratio': 0.82, 'pydantic_ai.cache.established_tokens': 8000},
+        {'pydantic_ai.cache.hit_ratio': 0.42, 'pydantic_ai.cache.established_tokens': 8400},
+    ]
+    assert all(not span.events for span in spans)
+
+
+def test_native_tool_response_with_compaction_pass_does_not_raise_the_mark() -> None:
+    """A reported single main-model pass plus a compaction pass is still summed usage."""
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=8000),
+            CacheUsage(read=20000, native_tool=True, details={'message_iterations': 1, 'compaction_iterations': 1}),
+            CacheUsage(read=8000),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert [cache_attributes(span)['pydantic_ai.cache.established_tokens'] for span in spans] == [8000, 8000, 8000]
+    assert all('pydantic_ai.cache.collapsed' not in cache_attributes(span) for span in spans)
+
+
+def test_native_tool_response_with_separate_tool_use_prompt_count_sets_the_mark() -> None:
+    """Gemini counts tool-use prompt tokens apart from cache reads, so its cache reads are an ordinary prefix."""
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=8000),
+            CacheUsage(read=12000, native_tool=True, details={'tool_use_prompt_tokens': 24000}),
+            CacheUsage(read=5000),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert cache_attributes(spans[1])['pydantic_ai.cache.established_tokens'] == 12000
+    assert cache_attributes(spans[2]) == {
+        'pydantic_ai.cache.hit_ratio': 0.25,
+        'pydantic_ai.cache.established_tokens': 5000,
+        'pydantic_ai.cache.collapsed': True,
+        'pydantic_ai.cache.missed_tokens': 7000,
+        'pydantic_ai.cache.collapse_reason': 'unexpected',
+    }
+
+
+def test_response_rejected_by_a_later_hook_still_counts() -> None:
+    """A response an `after_model_request` hook rejects with `ModelRetry` was still served, so it sets the mark."""
+
+    @dataclass
+    class RejectFirstResponse(AbstractCapability[None]):
+        rejected: bool = False
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if not self.rejected:
+                self.rejected = True
+                raise ModelRetry('Try again.')
+            return response
+
+    spans, _ = cache_spans(
+        [CacheUsage(write=15000), CacheUsage(read=15000)],
+        retention=timedelta(hours=1),
+        capabilities=[RejectFirstResponse()],
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 15000},
+        {'pydantic_ai.cache.hit_ratio': 0.75, 'pydantic_ai.cache.established_tokens': 15000},
+    ]
+
+
+def test_nested_agent_request_is_not_taken_for_a_continuation_segment() -> None:
+    """A request made by a nested agent inside an instrumented request is its own, not one of that request's segments."""
+
+    def nested_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('nested')],
+            usage=RequestUsage(input_tokens=20000, cache_read_tokens=100),
+            provider_name='test',
+        )
+
+    nested_agent = Agent(FunctionModel(nested_model_function, model_name='cache-model'))
+
+    @dataclass
+    class RunNestedAgent(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            await nested_agent.run('nested')
+            return response
+
+    spans, _ = cache_spans(
+        [CacheUsage(write=15000), CacheUsage(read=15000)],
+        retention=timedelta(hours=1),
+        capabilities=[RunNestedAgent()],
+    )
+
+    assert [cache_attributes(span) for span in spans] == [
+        {'pydantic_ai.cache.hit_ratio': 0.0, 'pydantic_ai.cache.established_tokens': 15000},
+        {'pydantic_ai.cache.hit_ratio': 0.75, 'pydantic_ai.cache.established_tokens': 15000},
+    ]
 
 
 @pytest.mark.parametrize(
