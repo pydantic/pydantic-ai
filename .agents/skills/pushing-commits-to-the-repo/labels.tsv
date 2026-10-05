@@ -22,6 +22,7 @@ breaking change
 bug	Report that something isn't working, or PR implementing a fix
 caching	Prompt caching, cache retention, cached-token usage, and cache-bust detection.
 cancellation/interruption
+capability-internals	Shared capability APIs and mechanics: lifecycle, loading, state, composition, ordering, and tracing.
 capability-solveable	Addressable as a userland capability or via hooks — no core change required
 cerebras	Cerebras provider
 chore
@@ -33,9 +34,11 @@ cohere
 community contribution
 community snippets
 community-backed	Real users are asking for this
+compaction	Message-history reduction: summarization, retention rules, token budgets, and compaction strategies.
 compatibility impact	Version-policy-permitted change that may require existing code to migrate
 cp-plugin-selftest
 cross-model-provider-mapping	x-model/provider translation: when using a message history from one model with another one
+crusoe	Crusoe provider integration, configuration, and model support.
 deepseek
 deferred-tools
 dependencies	Pull requests that update a dependency file
@@ -55,6 +58,7 @@ feedback wanted
 fix
 gateway
 genai-prices
+github-copilot	GitHub Copilot provider integration, authentication, and model support.
 github_actions	Pull requests that update GitHub Actions code
 google-cloud
 google-gemini
@@ -87,7 +91,10 @@ needs-confirmation
 needs-discussion
 needs-maintainer-action	The next meaningful action must come from a maintainer
 new models	Support for new model(s)
+new-capability	Requests and PRs adding a first-party capability or a new provider-backed implementation.
+ollama	Ollama provider integration, configuration, and model support.
 openai
+openai-codex	OpenAI Codex subscription provider: OAuth, requests, responses, and model support.
 openrouter
 output
 p:1-highest	Signal 9-10: needs maintainer attention today.
@@ -138,23 +145,27 @@ pydanty:unclear	Unclear classification managed by pydanty.
 python:uv	Pull requests that update python:uv code
 question	Further information is requested
 qwen
+realtime	Realtime voice/audio sessions, session events, reconnection, and realtime model integrations.
 refactor	change to code structure
 regression
 replay-history	labels items that have to do with replaying stored message histories
 review phase: API
 roundtrip-sweep
 run_stream
+sandbox	Isolated execution: sandbox lifecycle, resource limits, containment, and sandbox providers.
 serialization
 size: L	Large PR (501-1500 weighted lines)
 size: M	Medium PR (101-500 weighted lines)
 size: S	Small PR (≤100 weighted lines)
 size: XL	Extra large PR (>1500 weighted lines)
+snowflake	Snowflake Cortex provider integration, authentication, and model support.
 solved
 spam
 stale-issues
 state-loss
 streaming
 system prompts
+system-one	System One API provider integration, configuration, and model support.
 temporal
 test-suite	Changes or improvements to the test suite
 thinking
@@ -163,6 +174,7 @@ tracking	waiting for something that needs to happen to take the next step
 triage:legitimate
 trigger:ci-duration-report	Trigger a CI duration report comment.
 trigger:docs	Trigger a documentation preview.
+typesafe	TypeSafe/Jev provider integration, configuration, and model support.
 unplanned	This will not be worked on
 usage
 v2
@@ -174,5 +186,6 @@ vercel-ai
 waiting-on-reporter
 we-owe-you-a-followup	use this label when the pydantic ai team promised to follow up on this
 web-ui
+workspaces	Command and file APIs: paths, mounts, working directories, and local or remote workspace access.
 xai
 z.ai/glm

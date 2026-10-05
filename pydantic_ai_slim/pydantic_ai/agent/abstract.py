@@ -1948,6 +1948,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
         provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
@@ -2365,6 +2366,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         handle_barge_in: bool = False,
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
         provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
@@ -2394,6 +2396,13 @@ class AgentRealtime(Generic[AgentDepsT]):
             retain_images_max: Bound on how many images stay in message history; once exceeded, the
                 oldest retained image is evicted. Defaults to `100` so a long-running frame stream
                 can't grow memory without limit; `0` retains no images, `None` removes the bound.
+            retain_audio_max_seconds: Bound on how many seconds of audio retained by `audio_retention` stay
+                in memory, across both speakers and including the turns still being spoken; once exceeded,
+                the oldest retained audio is evicted, keeping its transcript. Defaults to `1800`
+                (30 minutes) so a long-running session can't grow memory without limit; `0` retains no
+                audio, `None` removes the bound. Audio in a seeded `message_history` is kept as given, and
+                an event not yet delivered to your app (a queued `PartEndEvent`, say) keeps its part's audio
+                until it is consumed.
             provider_session: A [`RealtimeProviderSession`][pydantic_ai.realtime.RealtimeProviderSession] to attach a **sideband**
                 control session to, from
                 [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer]. When set,
@@ -2419,6 +2428,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             handle_barge_in=handle_barge_in,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
+            retain_audio_max_seconds=retain_audio_max_seconds,
             provider_session=provider_session,
         ) as session:
             yield session
