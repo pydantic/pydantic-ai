@@ -1,5 +1,6 @@
 """`/update`: release lookup, install commands, the footer notice, and the shell exit after an install."""
 
+import argparse
 import base64
 import json
 import os
@@ -7,21 +8,26 @@ import shlex
 import sys
 import threading
 from collections.abc import Callable, Sequence
+from importlib import metadata
 from io import StringIO
 from pathlib import Path
 
 import httpx
 import pytest
+from packaging.requirements import Requirement
 from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import _app, chat
-from pydantic_clai2.cli import self_update
+from pydantic_clai2.cli import _cli, self_update
+from pydantic_clai2.cli._cli import relaunch_argv
 from pydantic_clai2.cli.self_update import (
     COMMITS_URL,
     PYPI_URL,
     Installed,
+    Relaunch,
     Update,
     Updates,
     _in_thread,  # pyright: ignore[reportPrivateUsage]
@@ -33,6 +39,7 @@ from pydantic_clai2.cli.self_update import (
     installed,
     latest,
     powershell,
+    tool_executable,
 )
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
@@ -163,14 +170,29 @@ def test_install_commands(tmp_path: Path) -> None:
         '--force',
         '--overrides',
         str(overrides),
-        f'pydantic-clai2 @ {archive}src/pydantic_clai2',
+        'pydantic-clai2',
     ]
     assert bleeding.overrides() == (
-        f'pydantic-ai-harness @ {archive}src/pydantic_ai_harness\n'
-        f'pydantic-ai-slim @ {archive}pydantic_ai_slim\n'
+        f'pydantic-clai2 @ {archive}src/pydantic_clai2\n'
+        f'pydantic-ai-harness[coder] @ {archive}src/pydantic_ai_harness\n'
+        f'pydantic-ai-slim[anthropic,mcp,openai] @ {archive}pydantic_ai_slim\n'
         f'pydantic-graph @ {archive}pydantic_graph\n'
     )
-    assert bleeding.environment() == {'UV_DYNAMIC_VERSIONING_BYPASS': '0.0.0+9e08a34ee'}
+    assert bleeding.environment() == {'UV_DYNAMIC_VERSIONING_BYPASS': f'0.0.0+{NEWER}'}
+
+
+def test_archive_overrides_preserve_declared_extras() -> None:
+    overrides = {
+        requirement.name: requirement.extras
+        for requirement in map(Requirement, Update(channel='bleeding', target=NEWER).overrides().splitlines())
+    }
+    # Graph is a transitive dependency, so read each overridden package's requirements.
+    declared_extras: dict[str, set[str]] = {}
+    for name in overrides:
+        for requirement in map(Requirement, metadata.requires(name) or []):
+            if requirement.name in overrides and (requirement.marker is None or requirement.marker.evaluate()):
+                declared_extras.setdefault(requirement.name, set()).update(requirement.extras)
+    assert declared_extras == {name: extras for name, extras in overrides.items() if name != 'pydantic-clai2'}
 
 
 def _updates(
@@ -180,17 +202,25 @@ def _updates(
     fetch: Callable[[UpdateChannel], str] = lambda channel: NEWER if channel == 'bleeding' else '0.53.0',
     codes: list[int] | None = None,
     uv: str | None = '/bin/uv',
+    executable: str | None = '/tools/clai2',
 ) -> tuple[Updates, list[Sequence[str]]]:
     ran: list[Sequence[str]] = []
 
     async def run(command: Sequence[str], environment: dict[str, str]) -> int:
         ran.append(command)
         if '--overrides' in command:
-            # The overrides file exists while uv runs and names the other packages.
+            # The overrides file exists while uv runs and preserves the packages' required extras.
             text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
-            assert 'pydantic-ai-harness @ ' in text
-            assert environment == {'UV_DYNAMIC_VERSIONING_BYPASS': '0.0.0+9e08a34ee'}
+            assert 'pydantic-ai-harness[coder] @ ' in text
+            assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
+            assert environment == {'UV_DYNAMIC_VERSIONING_BYPASS': f'0.0.0+{NEWER}'}
+        else:
+            assert environment == {}
         return (codes or [0]).pop(0)
+
+    async def locate(uv: str) -> str | None:
+        assert uv == '/bin/uv'
+        return executable
 
     updates = Updates(
         channel=lambda: channel[0],
@@ -201,6 +231,7 @@ def _updates(
         find_uv=lambda: uv,
         windows=False,
         hand_off=lambda script: pytest.fail('only Windows hands the install off'),
+        locate=locate,
     )
     return updates, ran
 
@@ -242,10 +273,11 @@ def test_segment_ignores_a_result_for_another_channel() -> None:
     assert updates.segment() == ''
 
 
-async def test_command_installs_and_requires_restart() -> None:
+async def test_command_installs_and_restarts() -> None:
     updates, ran = _updates(['bleeding'])
-    assert await updates.command([]) == 'Updated CLAI to 9e08a34ee (bleeding). Exiting; start clai2 again to use it.'
+    assert await updates.command([]) == 'Updated CLAI to 9e08a34ee (bleeding). Restarting...'
     assert updates.restart_required
+    assert updates.relaunch == '/tools/clai2'
     [command] = ran
     overrides = Path(command[5])
     assert command == Update(channel='bleeding', target=NEWER).command(uv='/bin/uv', overrides=overrides)
@@ -260,11 +292,18 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert not failed.restart_required
     no_uv, _ = _updates(['stable'], uv=None)
     assert (await no_uv.command([])).endswith('To update by hand, run:\nuv tool install --force pydantic-clai2==0.53.0')
-    source, _ = _updates(['stable'], current=Installed(version='0.52.0'))
-    assert 'only when installed with `uv tool install`' in await source.command([])
+    # A source checkout installs too, as a `uv tool` CLAI.
+    source, installs = _updates(['bleeding'], current=Installed(version='0.52.0'))
+    assert await source.command([]) == 'Updated CLAI to 9e08a34ee (bleeding). Restarting...'
+    assert len(installs) == 1
+    lost, _ = _updates(['stable'], executable=None)
+    assert await lost.command([]) == 'Updated CLAI to 0.53.0 (stable). Exiting; start clai2 again to use it.'
+    assert lost.restart_required
+    assert lost.relaunch is None
     manual, _ = _updates(['bleeding'], uv=None)
     printed = (await manual.command([])).splitlines()[-1]
-    assert printed.startswith('UV_DYNAMIC_VERSIONING_BYPASS=0.0.0+9e08a34ee uv tool install --force --overrides ')
+    assert printed.startswith(f'UV_DYNAMIC_VERSIONING_BYPASS=0.0.0+{NEWER} uv tool install --force --overrides ')
+    assert printed.endswith(' pydantic-clai2')
     # The printed command still needs its overrides file.
     overrides = Path(shlex.split(printed)[6])
     assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
@@ -360,18 +399,29 @@ async def test_windows_hands_the_install_off_and_exits() -> None:
     assert ran == []
     [script] = scripts
     assert f'Wait-Process -Id {os.getpid()} ' in script
-    assert "$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+9e08a34ee'; & '/bin/uv' 'tool' 'install'" in script
+    assert f"$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+{NEWER}'; & '/bin/uv' 'tool' 'install'" in script
     # The overrides file outlives CLAI; the script removes it after uv reads it.
     overrides = Path(script.split("Remove-Item -LiteralPath '")[1].split("'")[0])
-    assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
+    assert overrides.read_text(encoding='utf-8') == Update(channel='bleeding', target=NEWER).overrides()
+    assert script.splitlines()[2].endswith(" 'pydantic-clai2'")
     overrides.unlink()
 
 
-async def test_windows_manual_command_is_powershell() -> None:
-    updates, _ = _updates(['stable'], uv=None)
+@pytest.mark.parametrize('channel', ['stable', 'bleeding'])
+async def test_windows_manual_command_is_powershell(channel: UpdateChannel) -> None:
+    updates, _ = _updates([channel], uv=None)
     updates.windows = True
     printed = (await updates.command([])).splitlines()[-1]
-    assert printed == "& 'uv' 'tool' 'install' '--force' 'pydantic-clai2==0.53.0'"
+    if channel == 'stable':
+        assert printed == "& 'uv' 'tool' 'install' '--force' 'pydantic-clai2==0.53.0'"
+    else:
+        assert printed.startswith(
+            f"$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+{NEWER}'; & 'uv' 'tool' 'install' '--force' '--overrides' "
+        )
+        assert printed.endswith(" 'pydantic-clai2'")
+        overrides = Path(printed.split("'--overrides' '")[1].split("'")[0])
+        assert overrides.read_text(encoding='utf-8') == Update(channel='bleeding', target=NEWER).overrides()
+        overrides.unlink()
 
 
 def test_in_thread_runs_the_work() -> None:
@@ -380,8 +430,87 @@ def test_in_thread_runs_the_work() -> None:
     assert done.wait(5)
 
 
+async def test_tool_executable_asks_uv_for_its_bin_directory(tmp_path: Path) -> None:
+    uv = tmp_path / 'uv'
+    uv.write_text(f'#!/bin/sh\n[ "$*" = "tool dir --bin" ] && echo {tmp_path}\n')
+    uv.chmod(0o755)
+    assert await tool_executable(str(uv)) is None
+    (tmp_path / 'clai2').write_text('')
+    assert await tool_executable(str(uv)) == str(tmp_path / 'clai2')
+    uv.write_text('#!/bin/sh\nexit 2\n')
+    assert await tool_executable(str(uv)) is None
+
+
+async def _relaunch_after(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prompts: list[str]) -> Relaunch:
+    updates, _ = _updates(['bleeding'])
+
+    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+        return updates
+
+    monkeypatch.setattr(_app, 'Updates', build)
+    inputs(monkeypatch, [*prompts, '/update', '/exit'])
+    with pytest.raises(Relaunch) as raised:
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            settings=Settings(model='test', update_channel='bleeding'),
+            console=Console(file=StringIO(), width=200),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+    assert raised.value.code == 0
+    assert raised.value.executable == '/tools/clai2'
+    return raised.value
+
+
+async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert (await _relaunch_after(monkeypatch, tmp_path, [])).session_id is None
+    resumed = await _relaunch_after(monkeypatch, tmp_path, ['hello'])
+    assert resumed.session_id is not None
+    saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)
+    assert saved.messages
+
+
+def test_relaunch_argv(tmp_path: Path) -> None:
+    bare = argparse.Namespace(agent=None, model=None, request_limit=None, database=None)
+    assert relaunch_argv(bare, executable='/b/clai2', session_id=None) == ['/b/clai2']
+    full = argparse.Namespace(agent='m:a', model='test', request_limit=5, database=tmp_path / 'c.db')
+    assert relaunch_argv(full, executable='/b/clai2', session_id='abc') == [
+        '/b/clai2',
+        '--agent',
+        'm:a',
+        '--model',
+        'test',
+        '--request-limit',
+        '5',
+        '--database',
+        str(tmp_path / 'c.db'),
+        '--resume',
+        'abc',
+    ]
+
+
+def test_cli_execs_the_new_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr('sys.argv', ['clai2', '--database', 'config.db', '--resume', 'old', '-m', 'test'])
+
+    async def chat(*args: object, **kwargs: object) -> None:
+        raise Relaunch(executable='/b/clai2', session_id='new')
+
+    execs: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(_app, 'chat', chat)
+
+    def execv(path: str, argv: list[str]) -> None:
+        execs.append((path, argv))
+
+    monkeypatch.setattr(os, 'execv', execv)
+    _cli.run()
+    assert execs == [
+        ('/b/clai2', ['/b/clai2', '--model', 'test', '--database', str(tmp_path / 'config.db'), '--resume', 'new'])
+    ]
+
+
 async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    updates, ran = _updates(['stable'])
+    updates, ran = _updates(['stable'], executable=None)
     channels: list[UpdateChannel] = []
 
     def build(*, channel: Callable[[], UpdateChannel]) -> Updates:

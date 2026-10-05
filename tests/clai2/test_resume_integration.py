@@ -14,6 +14,7 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from termflow.tui.keys import Key
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
@@ -39,7 +40,7 @@ async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr('pydantic_clai2._app.reload_clai', rebuild)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('first\n/reload\nsecond\n/exit\n')
+        pipe.send_text('first\r/reload\rsecond\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='answer')),
             deps=None,
@@ -109,13 +110,47 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     assert context.settings.session_namer_model is None
 
 
+async def test_browser_resumes_other_directory_without_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    previous_workspace = tmp_path / 'previous'
+    previous_workspace.mkdir()
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    agent = Agent(TestModel(call_tools=[], custom_output_text='saved answer'))
+    prior = Session(agent, deps=None, conversations=store, workspace=previous_workspace)
+    await prior.prompt('saved turn')
+    session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        clear_history=session.clear,
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+
+    def select(browser: SessionBrowser) -> str:
+        keys = iter([Key.ENTER, '', Key.ENTER, '', 'ctrl-c'])
+        browser.key_source = lambda: next(keys)
+        browser.output = StringIO()
+        return browser.loop()
+
+    monkeypatch.setattr(SessionBrowser, 'run', select)
+    assert 'Resumed' in await service.command([])
+    assert session.summary.id == prior.summary.id
+    assert session.messages == prior.messages
+    assert session.workspace == str(tmp_path)
+    assert Path.cwd() == tmp_path
+    assert (await store.get(conversation_id=prior.summary.id)).summary.workspace == str(previous_workspace)
+
+
 async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     prior = Session(Agent(TestModel()), deps=None, conversations=store)
     await prior.prompt('earlier turn')
     output = StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('followup\n/new\nother session\n/exit\n')
+        pipe.send_text('followup\r/new\rother session\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='answer')),
             deps=None,
@@ -135,7 +170,7 @@ async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> 
 async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(SessionBrowser, 'run', cancel_browser)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/exit\n')
+        pipe.send_text('/exit\r')
         await chat(
             Agent(TestModel()),
             deps=None,

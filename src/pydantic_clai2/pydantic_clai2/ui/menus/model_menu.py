@@ -1,4 +1,4 @@
-"""The `/add_model` menu: pick the model for the next prompt, or edit one model's settings."""
+"""The `/model add` menu: pick the model for the next prompt, or edit one model's settings."""
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -346,13 +346,13 @@ class _ConnectProvider(Exception):
 async def model_settings_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
     """Pick a saved model to edit, or open a named one, without switching models."""
     if len(args) > 1:
-        raise ValueError('Usage: /model_settings [NAME]')
+        raise ValueError('Usage: /model settings [NAME]')
     if not args:
         messages = await run_worker(lambda: run_model_settings_picker(context=context, runners=runners))
         return '\n'.join(messages) or 'No changes.'
     name = args[0]
     if name not in context.store.models():
-        raise ValueError(f'Model not added: {name}. Use /add_model {name} first.')
+        raise ValueError(f'Model not added: {name}. Use /model add {name} first.')
     messages = await run_worker(
         lambda: run_model_settings(
             store=context.store, model=name, runners=runners, settings_as=context.settings_model(name)
@@ -382,7 +382,7 @@ def build_model_settings_picker(*, context: CommandContext, current: str | None)
         .style(markdown_style())
         .items(
             [MenuItem(name, value=name) for name in names]
-            or [MenuItem('No models added. Use /add_model first.', disabled=True)]
+            or [MenuItem('No models added. Use /model add first.', disabled=True)]
         )
         .searchable()
         .list_width(40)

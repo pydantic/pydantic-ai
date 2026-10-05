@@ -12,6 +12,7 @@ from pydantic_clai2.config.theme_names import names as theme_names
 
 if TYPE_CHECKING:
     from rich.syntax import SyntaxTheme
+    from termflow.diff import DiffRenderer, DiffTheme
     from termflow.themes import TerminalPalette
 
 _ACTIVE: ContextVar[Callable[[], str]] = ContextVar('clai_theme', default=lambda: 'default')
@@ -55,6 +56,42 @@ def syntax_theme() -> SyntaxTheme:
                 assert color.number is not None
                 styles[token] = style + Style(color=palette.ansi[color.number])
     return ANSISyntaxTheme(styles)
+
+
+_DIFF_TINT = 0.28
+"""How far a palette's diff backgrounds move from its background towards its green and red."""
+
+
+def diff_theme() -> DiffTheme:
+    """Diff line colours: CLAI's own by default, else the palette's green and red over its background."""
+    from termflow.diff import DiffTheme
+    from termflow.themes.palette import blend_hex
+
+    palette = current()
+    if palette is None:
+        return DiffTheme(addition=DIFF_ADDITION, deletion=DIFF_DELETION, marker_brighten=2.0)
+    return DiffTheme(
+        addition=blend_hex(palette.bg, palette.ansi[2], _DIFF_TINT),
+        deletion=blend_hex(palette.bg, palette.ansi[1], _DIFF_TINT),
+        # Markers stand out from their line: brighter on a dark background, darker on a light one.
+        marker_brighten=-0.5 if _is_light(palette) else 2.0,
+    )
+
+
+def diff_renderer() -> DiffRenderer:
+    """Render diffs in `diff_theme()` colours, with code that stays readable on light palettes."""
+    from termflow.diff import DiffRenderer
+    from termflow.syntax import Highlighter
+
+    palette = current()
+    # Monokai's near-white text vanishes on a light line; `default` leaves names in the palette's foreground.
+    highlighter = Highlighter(style='default') if palette is not None and _is_light(palette) else None
+    return DiffRenderer(highlighter=highlighter, theme=diff_theme())
+
+
+def _is_light(palette: TerminalPalette) -> bool:
+    red, green, blue = (int(palette.bg[index : index + 2], 16) for index in (1, 3, 5))
+    return 0.299 * red + 0.587 * green + 0.114 * blue > 128
 
 
 def apply(name: str, *, output: IO[str]) -> None:
@@ -108,8 +145,9 @@ THINKING = PURPLE
 # The logo keeps Pydantic's brand colours under every palette; do not pass these through `color()`.
 LOGO = f'bold {LITHIUM}'
 BANNER = (LITHIUM, PURPLE, AI_CYAN)
-DIFF_ADDITION = '#465258'
-DIFF_DELETION = '#682B36'
+# Claude Code's dark-theme diff backgrounds: a green and a red at the same depth, so additions read as additions.
+DIFF_ADDITION = '#225C2B'
+DIFF_DELETION = '#7A2936'
 
 _SLOTS = {
     LITHIUM: 12,

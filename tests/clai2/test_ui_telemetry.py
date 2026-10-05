@@ -61,7 +61,7 @@ def exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(instance)
+    unsubscribe = telemetry.subscribe(logfire.Logfire(config=instance.config, otel_scope=telemetry.SCOPE))
     try:
         yield spans
     finally:
@@ -148,7 +148,11 @@ async def test_a_command_its_menu_and_the_fields_it_changes_nest(exporter: InMem
     assert all(span.parent is not None for span in (color, note, opened))
     assert color.parent == note.parent == opened.context
     assert opened.parent == command.context
-    assert attributes(command)['logfire.tags'] == (telemetry.TAG,)
+    assert all(
+        span.instrumentation_scope and span.instrumentation_scope.name == 'clai2'
+        for span in exporter.get_finished_spans()
+    )
+    assert all('logfire.tags' not in attributes(span) for span in exporter.get_finished_spans())
     assert 'my private note' not in json.dumps([_own(span) for span in exporter.get_finished_spans()])
 
 
@@ -224,7 +228,7 @@ def test_only_the_newest_subscriber_records(exporter: InMemorySpanExporter, tmp_
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(newer)
+    unsubscribe = telemetry.subscribe(logfire.Logfire(config=newer.config, otel_scope=telemetry.SCOPE))
     try:
         with telemetry.span('command /{command}', command='session'):
             telemetry.record('inner')
@@ -350,7 +354,9 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
             live.buffer.replace('steer this')
             live.feed('enter')
             live.feed('alt-enter')
-    assert steered == ['steer this']
+            live.buffer.replace('steer that')
+            live.feed('alt-enter')
+    assert steered == ['steer this', 'steer that']
     assert recorded(exporter) == [
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 16}),
         (
@@ -365,5 +371,6 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
         ('prompt submitted', {'route': 'submitted', 'recalled': True, 'kind': 'shell', 'chars': 3}),
         ('prompt interrupt', {'key': 'ctrl-c', 'cancelled_turn': False}),
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 10}),
-        ('prompt steer', {'steered': True}),
+        ('prompt steer', {'steered': True, 'source': 'queue'}),
+        ('prompt steer', {'steered': True, 'source': 'draft'}),
     ]

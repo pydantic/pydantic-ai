@@ -18,7 +18,7 @@ network:
   allowed:
     - defaults
     - python
-    - api.minimax.io
+    - api.z.ai
 tools:
   bash: []
   cli-proxy: false
@@ -141,7 +141,7 @@ imports:
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
   - shared/provider-health.md
   - shared/pre-steps.md
 ---
