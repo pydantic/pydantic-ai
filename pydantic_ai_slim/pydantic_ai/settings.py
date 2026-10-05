@@ -481,6 +481,19 @@ class ModelSettings(TypedDict, total=False):
       `gpt-oss-safeguard` models, which take no thinking parameter)
     """
 
+    include_citations: bool
+    """Whether to ask for citations from providers that only return them when asked.
+
+    Citations are put on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations]. To also keep the provider's
+    raw annotations, use the provider's own setting, such as `openai_include_raw_annotations`.
+
+    Supported by:
+
+    * Anthropic (documents, and Web Fetch)
+
+    Providers that always return citations ignore this setting.
+    """
+
     service_tier: ServiceTier
     """The cross-provider service tier to use for the model request.
 

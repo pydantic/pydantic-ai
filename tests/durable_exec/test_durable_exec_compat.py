@@ -508,6 +508,7 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
+                        'citations': None,
                         'part_kind': 'text',
                     }
                 ],

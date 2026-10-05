@@ -1153,6 +1153,10 @@ async def main():
 asyncio.run(main())
 ```
 
+## Citations
+
+See [Citations](citations.md) for provider support and how to consume normalized web and document citations.
+
 ## API Reference
 
 For complete API documentation, see the [API Reference](api/native_tools.md).
