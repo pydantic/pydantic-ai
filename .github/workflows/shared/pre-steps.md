@@ -1,7 +1,7 @@
 ---
 # Shared pre-steps for the Pydantic AI gh-aw shim.
 #
-# Setting engine.command (in engine-minimax.md) makes gh-aw skip ALL engine
+# Setting engine.command (in engine-zai.md) makes gh-aw skip ALL engine
 # installation steps, which also drops the bundled AWF firewall binary install.
 # This step re-runs gh-aw's own installer so the firewall binary is present.
 #

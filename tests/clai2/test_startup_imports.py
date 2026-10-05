@@ -56,7 +56,7 @@ def hold_warming(modules=warm_imports.FIRST_USE_MODULES):
 warm_imports.start = hold_warming
 async def read(self, *args, **kwargs):
     completions = self.completer.get_completions(Document('/login ', 7), CompleteEvent())
-    assert {item.text for item in completions} == {'codex', 'copilot'}
+    assert {item.text for item in completions} == {'openai-codex', 'github-copilot'}
     warmed = ('openai', 'anthropic', *warm_imports.FIRST_USE_MODULES)
     for name in (*warmed, 'pydantic_clai2.cli.headless'):
         assert name not in sys.modules, name
