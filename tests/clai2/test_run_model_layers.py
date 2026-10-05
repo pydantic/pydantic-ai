@@ -442,12 +442,14 @@ async def test_names_clai_does_not_handle_are_left_to_other_resolvers(tmp_path: 
 
 async def test_selected_name_clai_translates(tmp_path: Path) -> None:
     """A `resolve_model` that translates the selected name to another one runs the translated model."""
-    recorder, _ = await run_turn(
+    recorder, session = await run_turn(
         tmp_path,
         settings=resolve_settings({'model': 'fast'}),
         resolve=lambda name: 'test' if name == 'fast' else name,
     )
     assert recorder.calls == []
+    response = session.messages[-1]
+    assert isinstance(response, ModelResponse) and response.model_name == 'test'
 
 
 @pytest.mark.parametrize('source', ['saved', 'cli'])
