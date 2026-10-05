@@ -219,6 +219,17 @@ class TestSkillCatalog:
         assert [type(capability) for capability in loaded.capabilities] == [Coder]
         assert output.getvalue().startswith('Skills are off: [Errno 13] Permission denied')
 
+    async def test_skills_are_off_where_clai_has_no_local_workspace(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_skill(project / '.agents' / 'skills', 'review')
+        monkeypatch.setattr('pydantic_clai2.runtime._session.sys.platform', 'win32')
+
+        loaded, output = await load_coder()
+
+        assert [type(capability) for capability in loaded.capabilities] == [Coder]
+        assert (list(loaded.commands), output.getvalue()) == ([], '')
+
     async def test_a_misconfigured_folder_turns_skills_off_with_a_notice(self, project: Path) -> None:
         write_skill(project / 'skills', 'review')
         loaded, output = await load_coder({'skill_folders': ['skills/review']})

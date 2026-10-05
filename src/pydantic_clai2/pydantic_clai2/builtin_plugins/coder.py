@@ -30,6 +30,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.skills import SkillDefinition, Skills
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.runtime._session import _supports_local_workspace  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -205,7 +206,8 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         its command arrives when the plugin loads again.
         """
         libraries = self.settings.skill_libraries(home=Path(await anyio.Path.home()))
-        if not libraries:
+        # Without a local workspace (Windows), the folders cannot be read here or by the run.
+        if not libraries or not _supports_local_workspace():
             return
         skills = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
         try:

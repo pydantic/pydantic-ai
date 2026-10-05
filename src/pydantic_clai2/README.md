@@ -1255,7 +1255,8 @@ The `coder` plugin loads [Agent Skills](https://agentskills.io/specification)
 1. `.agents/skills` and `.claude/skills` in the project
 2. `~/.agents/skills` and `~/.claude/skills` in your home directory
 
-Folders that do not exist are skipped. The model sees each skill's name and
+Folders that do not exist are skipped. Skills need a local workspace, so they
+are off on Windows. The model sees each skill's name and
 description and loads the instructions it needs, which tell it the skill's
 directory so it can follow references to `scripts/` or `references/`. Without
 any skills, nothing is added to the prompt and the model gets no extra tool.
