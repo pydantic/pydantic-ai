@@ -2,7 +2,8 @@
 
 import asyncio
 import io
-from collections.abc import AsyncGenerator, Callable, Generator
+import json
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from threading import Event
 
@@ -16,7 +17,7 @@ from rich.text import Text
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, PartStartEvent, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.ask_user import (
     DECLINED,
     AskUser,
@@ -27,6 +28,7 @@ from pydantic_ai_harness.ask_user import (
     Question,
     QuestionOption,
 )
+from pydantic_ai_harness.subagents import DelegationTasks, SubAgent, SubAgents
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.ask_user_menu import (
     AskUserPlugin,
@@ -247,6 +249,45 @@ async def test_declining_reaches_the_model_through_the_plugin() -> None:
     assert len(returns) == 1 and returns[0].content == DECLINED
 
 
+async def test_a_delegated_task_names_itself_before_asking() -> None:
+    """The user did not prompt a child task, so its question first says which task is asking."""
+    answers = iter([('Patch',)])
+    output = io.StringIO()
+    capabilities: list[AbstractCapability[object]] = [
+        AskUser(
+            answerer=TerminalAnswerer(
+                full_screen=ScreenLog(), console=Console(file=output), runner=lambda menu: next(answers)
+            )
+        )
+    ]
+
+    async def child(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            questions = json.dumps({'questions': [APPROACH.model_dump(mode='json')]})
+            yield {0: DeltaToolCall(name='ask_user_question', json_args=questions)}
+        else:
+            yield 'child done'
+
+    def parent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'asker', 'task': 'ask'})])
+        return ModelResponse(parts=[TextPart('parent done')])
+
+    asker = Agent(FunctionModel(stream_function=child), deps_type=object, name='asker', capabilities=capabilities)
+    agent = Agent(
+        FunctionModel(parent),
+        deps_type=object,
+        capabilities=[SubAgents(agents=[SubAgent(asker)], agent_folders=None)],
+    )
+    owner = DelegationTasks()
+    async with owner.opened():
+        with owner.bind():
+            assert (await agent.run('go', deps=None)).output == 'parent done'
+    (record,) = owner.records.values()
+    assert record.output == 'child done'
+    assert output.getvalue() == f'Task [{record.id[:8]}] requests your input\n'
+
+
 async def test_default_runner_reuses_editor_surface(question_pipe: PipeInput) -> None:
     output = io.StringIO()
     surface = PromptSurface(output=output, size=lambda: (80, 24))
@@ -420,8 +461,9 @@ def test_custom_inline_lifecycle(keys: list[str], expected: tuple[str, ...] | st
     assert '\x1b[?25h' in output.getvalue()
 
 
-async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: PipeInput) -> None:
-    question_pipe.send_text('3Use another approach\n')
+@pytest.mark.parametrize('enter', ['\r', '\n'])
+async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: PipeInput, enter: str) -> None:
+    question_pipe.send_text(f'3Use another approach{enter}')
     screen = ScreenLog()
     output = io.StringIO()
     answerer = TerminalAnswerer(full_screen=screen, console=Console(file=output))
@@ -431,7 +473,8 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
             return ModelResponse(parts=[ToolCallPart('ask_user_question', {'questions': [APPROACH.model_dump()]})])
         return ModelResponse(parts=[TextPart('done')])
 
-    result = await Agent(FunctionModel(respond), capabilities=[AskUser(answerer=answerer)]).run('go')
+    with anyio.fail_after(5):
+        result = await Agent(FunctionModel(respond), capabilities=[AskUser(answerer=answerer)]).run('go')
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'Approach': ['Use another approach']}
     assert screen.events == ['taken', 'released']

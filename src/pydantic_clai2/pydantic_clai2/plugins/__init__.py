@@ -130,7 +130,7 @@ class TurnEnd:
 
 
 SettingsProvider = Literal['anthropic', 'google', 'openai', 'openai-chat']
-"""Providers whose `/model_settings` controls a plugin's models can take."""
+"""Providers whose `/model settings` controls a plugin's models can take."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -144,16 +144,16 @@ class ModelProvider:
     a model under it then fails as an unknown provider until the plugin is enabled again.
 
     When `resolve` returns that provider's model class, such as an `AnthropicModel` subclass, set
-    `settings_from` so `/model_settings` offers its controls (thinking, effort) for these models.
+    `settings_from` so `/model settings` offers its controls (thinking, effort) for these models.
     """
 
     prefix: str
     resolve: Callable[[str], Model]
     """Build the model for a name given without its prefix."""
     models: tuple[str, ...] = ()
-    """Names without the prefix, offered by `/add_model` and `/set model`."""
+    """Names without the prefix, offered by `/model add` and `/set model`."""
     settings_from: SettingsProvider | None = None
-    """The provider whose `/model_settings` controls these models take; `None` offers the generic ones."""
+    """The provider whose `/model settings` controls these models take; `None` offers the generic ones."""
 
     def __post_init__(self) -> None:
         """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
@@ -177,10 +177,11 @@ class PluginLogin:
 
     For sign-ins that store credentials, such as the subscription behind a `ModelProvider`. Keep
     secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
-    NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
+    Name it after the model prefix it unlocks, as CLAI's own `openai-codex` and `github-copilot` are.
+    NAME cannot be a sign-in CLAI ships (including the earlier `codex` and `copilot`); when two
     plugins add one name, the later one wins. Unloading the plugin removes it. Once the sign-in
     succeeds, `models` (as `PREFIX:NAME`, such as a `ModelProvider`'s `names`) are added to the saved
-    model list, so `/model` and `/model_settings` offer them without `/add_model`.
+    model list, so `/model` and `/model settings` offer them without `/model add`.
     """
 
     name: str
@@ -431,7 +432,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return ()
 
     def get_model_providers(self) -> Sequence[ModelProvider]:
-        """Model prefixes this plugin runs, offered in `/add_model` and `/set model`."""
+        """Model prefixes this plugin runs, offered in `/model add` and `/set model`."""
         return ()
 
     def get_logins(self) -> Sequence[PluginLogin]:
@@ -443,7 +444,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return None
 
     async def configure(self) -> str:
-        """A settings menu, opened by `/plugins configure NAME`, `C` in `/plugins`, and on enable or add.
+        """A settings menu, opened by `/plugins configure NAME`, `c` in `/plugins`, and on enable or add.
 
         Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
         change with `host.save_settings` as the user makes it and return a line to show. When the

@@ -1083,6 +1083,19 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+## Weather in San Francisco is Mild and Partly Cloudy
+
+**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+
+According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+
+As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
+
+Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.\
+"""
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in San Francisco today']},
@@ -1111,19 +1124,6 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google',
-                    ),
-                    TextPart(
-                        content="""\
-## Weather in San Francisco is Mild and Partly Cloudy
-
-**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
-
-According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
-
-As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
-
-Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.\
-"""
                     ),
                 ],
                 usage=RequestUsage(
@@ -1174,6 +1174,17 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
+
+Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
+
+There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
+
+Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).\
+"""
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['current weather in Mexico City']},
@@ -1203,17 +1214,6 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                         timestamp=IsDatetime(),
                         provider_name='google',
                     ),
-                    TextPart(
-                        content="""\
-In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
-
-Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
-
-There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
-
-Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).\
-"""
-                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=495,
@@ -1242,6 +1242,48 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_google_model_web_search_sources_stay_out_of_replayed_history(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """Gemini 3 sends web search sources in grounding metadata; they go on the return but aren't sent back."""
+    m = GoogleModel('gemini-3.8-flash', provider=google_provider)
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run('Who won the most recent FIFA World Cup? Answer in one sentence.')
+    [(_, web_search_return)] = result.response.native_tool_calls
+    assert web_search_return.content == snapshot(
+        {
+            'search_suggestions': IsStr(),
+            'sources': [
+                {
+                    'domain': None,
+                    'title': 'fifa.com',
+                    'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEMbk8QbJonPMnT_uWEA6q0Re1yKhP8dloRXiLsSxL5Qo_c4uF9veKB-rwlq26xw6WQpmgVNl2N9drzLsNGtiLfvTkN1UVqszmDpg-6meVeecQ7XTk_H7DYCfQq-hEwaaj5SbFomTQ_5buWBrUu4UeKTleZpDpcV9WFTTN0ftLJjQxt-JmVy_-qZ8iXAA==',
+                }
+            ],
+        }
+    )
+
+    result = await agent.run('And who was the runner-up? One sentence.', message_history=result.all_messages())
+    assert result.output == snapshot('Argentina was the runner-up.')
+
+    replayed_tool_responses = [
+        part['toolResponse']
+        for content in request_json(vcr.requests[1])['contents']
+        for part in content['parts']
+        if 'toolResponse' in part
+    ]
+    assert replayed_tool_responses == snapshot(
+        [
+            {
+                'id': 'call_461390',
+                'tool_type': 'GOOGLE_SEARCH_WEB',
+                'response': {'search_suggestions': IsStr()},
+            }
         ]
     )
 
@@ -1288,7 +1330,46 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """
-                    )
+                    ),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['weather in San Francisco today']},
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'Weather information for San Francisco, CA, US',
+                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'timeanddate.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'weather.gov',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'wunderground.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'accuweather.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                            },
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=119,
@@ -1412,6 +1493,64 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """
                 ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=2,
+                part=NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'domain': None,
+                            'title': 'Weather information for San Francisco, CA, US',
+                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'timeanddate.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'weather.gov',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'wunderground.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'accuweather.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                        },
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                ),
+                previous_part_kind='builtin-tool-call',
             ),
         ]
     )
@@ -1433,6 +1572,17 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+### Scattered Thunderstorms and Mild Temperatures in Mexico City Today
+
+**Mexico City, Mexico** - The weather in Mexico City today is generally cloudy with scattered thunderstorms expected to develop, particularly this afternoon. Temperatures are mild, with highs forecasted to be in the mid-70s and lows in the upper 50s.
+
+Currently, the temperature is approximately 78°F (26°C), but it feels like 77°F (25°C). The forecast for the rest of the day indicates a high of around 73°F to 75°F (23°C to 24°C). Tonight, the temperature is expected to drop to a low of about 57°F (14°C).
+
+There is a high chance of rain throughout the day, with some reports stating a 60% to 85% probability of precipitation. Hourly forecasts indicate that the likelihood of rain increases significantly in the late afternoon and evening. Winds are coming from the north-northeast at 10 to 15 mph.\
+"""
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather in Mexico City today']},
@@ -1466,17 +1616,6 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google',
-                    ),
-                    TextPart(
-                        content="""\
-### Scattered Thunderstorms and Mild Temperatures in Mexico City Today
-
-**Mexico City, Mexico** - The weather in Mexico City today is generally cloudy with scattered thunderstorms expected to develop, particularly this afternoon. Temperatures are mild, with highs forecasted to be in the mid-70s and lows in the upper 50s.
-
-Currently, the temperature is approximately 78°F (26°C), but it feels like 77°F (25°C). The forecast for the rest of the day indicates a high of around 73°F to 75°F (23°C to 24°C). Tonight, the temperature is expected to drop to a low of about 57°F (14°C).
-
-There is a high chance of rain throughout the day, with some reports stating a 60% to 85% probability of precipitation. Hourly forecasts indicate that the likelihood of rain increases significantly in the late afternoon and evening. Winds are coming from the north-northeast at 10 to 15 mph.\
-"""
                     ),
                 ],
                 usage=RequestUsage(
@@ -3380,7 +3519,7 @@ def test_map_usage():
 def test_google_vertex_skips_include_server_side_tool_invocations(
     vertex_client_google_provider: GoogleProvider,
 ) -> None:
-    """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+    """Vertex doesn't support `include_server_side_tool_invocations` (the SDK raises on it), so it isn't set there.
 
     The model is built the way #6792 reports: a
     Vertex-backed `genai.Client` wrapped in `GoogleProvider`, whose `system` stays `'google'` —
@@ -3519,6 +3658,24 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
             ),
             ModelResponse(
                 parts=[
+                    TextPart(
+                        content="""\
+Based on your location in **San Francisco**, here is the weather forecast for today, **Tuesday, July 28, 2026**:
+
+*   **Condition:** Sunny and clear throughout the day and night.
+*   **Temperature:** \n\
+    *   **Current:** Approximately **66°F (19°C)**.
+    *   **High:** Expected to reach around **67°F to 71°F (19°C - 22°C)**.
+    *   **Low:** Around **57°F (14°C)** tonight.
+*   **Humidity:** About **73% - 78%**.
+*   **Precipitation:** 0% chance of rain.
+*   **Wind:** A gentle breeze from the southwest at about **10 mph (16 km/h)**.
+
+**Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
+""",
+                        provider_name='google-cloud',
+                        provider_details={'thought_signature': IsStr()},
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'queries': ['weather San Francisco July 28 2026']},
@@ -3552,24 +3709,6 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-cloud',
-                    ),
-                    TextPart(
-                        content="""\
-Based on your location in **San Francisco**, here is the weather forecast for today, **Tuesday, July 28, 2026**:
-
-*   **Condition:** Sunny and clear throughout the day and night.
-*   **Temperature:** \n\
-    *   **Current:** Approximately **66°F (19°C)**.
-    *   **High:** Expected to reach around **67°F to 71°F (19°C - 22°C)**.
-    *   **Low:** Around **57°F (14°C)** tonight.
-*   **Humidity:** About **73% - 78%**.
-*   **Precipitation:** 0% chance of rain.
-*   **Wind:** A gentle breeze from the southwest at about **10 mph (16 km/h)**.
-
-**Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
-""",
-                        provider_name='google-cloud',
-                        provider_details={'thought_signature': IsStr()},
                     ),
                 ],
                 usage=RequestUsage(
@@ -4010,7 +4149,7 @@ def test_google_process_response_filters_empty_text_parts(google_provider: Googl
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     response = _generate_response_with_texts(response_id='resp-123', texts=['', 'first', '', 'second'])
 
-    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+    result = model._process_response(response, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
     assert result.parts == snapshot([TextPart(content='first'), TextPart(content='second')])
 
@@ -4023,7 +4162,7 @@ def test_google_process_response_empty_candidates(google_provider: GoogleProvide
             'candidates': [],
         }
     )
-    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+    result = model._process_response(response, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
     assert result == snapshot(
         ModelResponse(
@@ -4484,6 +4623,9 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 ),
                 ModelResponse(
                     parts=[
+                        TextPart(
+                            content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.'
+                        ),
                         NativeToolCallPart(
                             tool_name='file_search',
                             args={},
@@ -4501,9 +4643,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='google',
-                        ),
-                        TextPart(
-                            content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.'
                         ),
                     ],
                     usage=RequestUsage(
@@ -4551,6 +4690,17 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                 ),
                 ModelResponse(
                     parts=[
+                        TextPart(
+                            content="""\
+The Eiffel Tower is a world-renowned landmark located in Paris, the capital of France. It is a wrought-iron lattice tower situated on the Champ de Mars.
+
+Here are some key facts about the Eiffel Tower:
+*   **Creator:** The tower was designed and built by the company of French civil engineer Gustave Eiffel, and it is named after him.
+*   **Construction:** It was constructed from 1887 to 1889 to serve as the entrance arch for the 1889 World's Fair.
+*   **Height:** The tower is 330 meters (1,083 feet) tall, which is about the same height as an 81-story building. It was the tallest man-made structure in the world for 41 years until the Chrysler Building in New York City was completed in 1930.
+*   **Tourism:** It is one of the most visited paid monuments in the world, attracting millions of visitors each year. The tower has three levels for visitors, with restaurants on the first and second levels. The top level's upper platform is 276 meters (906 feet) above the ground, making it the highest observation deck accessible to the public in the European Union.\
+"""
+                        ),
                         NativeToolCallPart(
                             tool_name='file_search',
                             args={},
@@ -4572,17 +4722,6 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             provider_name='google',
-                        ),
-                        TextPart(
-                            content="""\
-The Eiffel Tower is a world-renowned landmark located in Paris, the capital of France. It is a wrought-iron lattice tower situated on the Champ de Mars.
-
-Here are some key facts about the Eiffel Tower:
-*   **Creator:** The tower was designed and built by the company of French civil engineer Gustave Eiffel, and it is named after him.
-*   **Construction:** It was constructed from 1887 to 1889 to serve as the entrance arch for the 1889 World's Fair.
-*   **Height:** The tower is 330 meters (1,083 feet) tall, which is about the same height as an 81-story building. It was the tallest man-made structure in the world for 41 years until the Chrysler Building in New York City was completed in 1930.
-*   **Tourism:** It is one of the most visited paid monuments in the world, attracting millions of visitors each year. The tower has three levels for visitors, with restaurants on the first and second levels. The top level's upper platform is 276 meters (906 feet) above the ground, making it the highest observation deck accessible to the public in the European Union.\
-"""
                         ),
                     ],
                     usage=RequestUsage(
@@ -6933,3 +7072,49 @@ high: Needs attention today.\
             },
         }
     )
+
+
+@pytest.mark.parametrize(
+    ('call', 'content', 'content_type'),
+    [
+        pytest.param('request', b'   ', 'application/json', id='request'),
+        pytest.param(
+            'stream',
+            b'data: {"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}, "index": 0}]}\r\n\r\n'
+            b'data: {not json\r\n\r\n',
+            'text/event-stream',
+            id='stream',
+        ),
+        pytest.param('count_tokens', b'   ', 'application/json', id='count_tokens'),
+    ],
+)
+async def test_google_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, call: str, content: bytes, content_type: str
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(200, content=content, headers={'content-type': content_type})
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
+            elif call == 'stream':
+                async with Agent(model).run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await Agent(model).run('Hello')
+
+    # The SDK wraps a bad streamed chunk in its own error type.
+    cause = errors.UnknownApiResponseError if call == 'stream' else json.JSONDecodeError
+    assert isinstance(exc_info.value.__cause__, cause)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

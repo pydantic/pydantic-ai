@@ -8,7 +8,7 @@ keep only the exception's type. With `ui_events` on, it also records
 CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
 
-`configure` opens the settings menu (turning the plugin on, `C` in `/plugins`, or `/plugins configure
+`configure` opens the settings menu (turning the plugin on, `c` in `/plugins`, or `/plugins configure
 observability`). Each edit is saved at once, and the loader loads the plugin again when the menu closes, so the
 next run uses it. Its first row runs the project setup in `logfire_setup`.
 """
@@ -371,9 +371,14 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'send_to_logfire': 'if-token-present',
     }
     host.save_settings(config.model_copy(update=update))
+    kept = (
+        'only that name and the email you signed in with'
+        if email
+        else 'only that name; Logfire did not share your email'
+    )
     return (
         f'Logfire traces now go to {chosen.project.label}. Its write token is saved in /keys as '
-        f'{chosen.token.name}; plugin settings keep only that name and the email you signed in with.'
+        f'{chosen.token.name}; plugin settings keep {kept}.'
     )
 
 

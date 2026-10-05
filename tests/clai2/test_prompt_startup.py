@@ -46,7 +46,7 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
-        pipe.send_text('/exit\n')
+        pipe.send_text('/exit\r')
         await chat(
             Agent(TestModel()),
             deps=None,
@@ -56,3 +56,31 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
     text = '\n'.join(Text.from_ansi(row).plain for row in captured[0].frame(width=200, height=200).rows)
     assert text.count('PLUGIN_LOAD_NOTICE') == text.count('PLUGIN_END_NOTICE') == 1
     assert output.getvalue().count('PLUGIN_LOAD_NOTICE') == output.getvalue().count('PLUGIN_END_NOTICE') == 1
+
+
+@pytest.mark.parametrize('command', ['/clear', 'clear'])
+async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str) -> None:
+    surfaces: list[PromptSurface] = []
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...]) -> None:
+            surfaces.append(self)
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+    output = io.StringIO()
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        pipe.send_text(f'hello\r{command}\r/exit\r')
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+    before, after = output.getvalue().split('\x1b[2J\x1b[H')
+    assert '> hello' in before
+    assert '/new starts a session' in Text.from_ansi(after).plain
+    text = '\n'.join(Text.from_ansi(row).plain for row in surfaces[0].transcript.frame(width=200, height=200).rows)
+    assert text.count('/new starts a session') == 1
+    assert '> hello' not in text
+    assert 'New session started.' not in text

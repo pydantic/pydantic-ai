@@ -118,7 +118,8 @@ REALTIME_PARITY_CASES = [
         supports_image_input=False,
         supports_manual_turn_control=False,
         supports_interruption=False,
-        supports_native_tools=False,
+        # Web search, run by the delegated backend.
+        supports_native_tools=True,
         supports_text_output=False,
         drives_turns_with_text=False,
         synthesizes_turn_boundary=True,
@@ -376,6 +377,7 @@ async def test_audio_tool_round_parity(
     parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
     assets_path: Path,
     realtime_recording: bool,
+    request: pytest.FixtureRequest,
 ) -> None:
     """A spoken turn executes a local tool and records the same normalized four-message round.
 
@@ -384,6 +386,11 @@ async def test_audio_tool_round_parity(
     model like GPT-Live can run at all. Both must produce the same history.
     """
     case, provider, cassette = parity_ws_cassette
+    if case.model_kind == 'openai':
+        # OpenAI's server VAD cancels an empty reply when the user goes on speaking, and commits the
+        # second turn after that reply ended. The shadow core files the turn after it, in the provider's
+        # order; the current core files it where the user started speaking (SIM-11).
+        request.applymarker(pytest.mark.shadow_divergence(reason='SIM-11: spoken turn in provider order'))
     model = _model(case, provider)
     profile = model.profile
     assert profile.get('synthesizes_turn_boundary', False) is case.synthesizes_turn_boundary

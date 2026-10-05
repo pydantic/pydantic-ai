@@ -273,10 +273,11 @@ async def test_failures_say_what_went_wrong_and_save_nothing(
 async def test_an_unknown_account_email_still_sets_up_the_project(account: Answer, configure: Configure) -> None:
     host = make_host()
     harness = Harness(server=FakeLogfire(account=account))
-    await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
+    message = await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
     saved = host.settings(LogfireSettings)
     assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
     assert saved.account is None
+    assert message.endswith('plugin settings keep only that name; Logfire did not share your email.')
 
 
 async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatch, configure: Configure) -> None:
