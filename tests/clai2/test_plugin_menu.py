@@ -183,6 +183,7 @@ def test_rows_details_and_keys(tmp_path: Path) -> None:
     assert menu.details(MenuItem('stray', value=None)) == ''
     assert menu.details(MenuItem('typed', value=0)) == ''
     assert len(fake.redraws) == 4
+    assert menu.close(fake, alpha).item is alpha
     assert menu.build() is not None
 
 
@@ -272,7 +273,7 @@ def test_hotkeys_act_on_the_kept_matches(
         monkeypatch=monkeypatch,
         capsys=capsys,
     )
-    assert result.cancelled
+    assert result.item is not None and result.item.value == 'directory'
     for frame in frames[-5:]:
         assert 'search: directory' in frame and '○ alpha' not in frame
     assert '● directory' in frames[-4] and '● directory' in frames[-3]
@@ -306,7 +307,7 @@ def test_configure_from_search(
     assert result.item is not None and result.item.value == Configure('tuned')
 
 
-@pytest.mark.parametrize('keys', [['ctrl-c'], [Key.ESCAPE, Key.ESCAPE], [Key.ESCAPE, 'q']])
+@pytest.mark.parametrize('keys', [['ctrl-c'], [Key.ESCAPE, Key.ESCAPE]])
 @pytest.mark.parametrize('names', [(), ('alpha',)])
 def test_no_matches_and_cancel(
     tmp_path: Path,
@@ -323,7 +324,7 @@ def test_no_matches_and_cancel(
     assert '(no matches)' in frames[len(frames) - len(keys)]
 
 
-@pytest.mark.parametrize('close', [[Key.ESCAPE, Key.ESCAPE], ['q']])
+@pytest.mark.parametrize('close', [[Key.ESCAPE, Key.ESCAPE], [Key.ESCAPE, 'q']])
 def test_removing_the_last_match(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], close: list[str]
 ) -> None:
@@ -336,7 +337,10 @@ def test_removing_the_last_match(
         monkeypatch=monkeypatch,
         capsys=capsys,
     )
-    assert result.cancelled
+    if close[-1] == 'q':
+        assert result.item is not None and result.item.value == 'alpha', 'Esc cleared the filter, q closes on a row'
+    else:
+        assert result.cancelled
     assert 'search: installed' in frames[-len(close)] and '(no matches)' in frames[-len(close)]
     assert [entry.name for entry in loader.entries()] == ['alpha']
 

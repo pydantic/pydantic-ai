@@ -157,6 +157,10 @@ class PluginMenu(Generic[DepsT]):
         menu.replace_items(self.items())
         return None
 
+    def close(self, menu: Redrawable, item: MenuItem) -> MenuResult:
+        """Q: close; every change was already applied."""
+        return MenuResult(item=item)
+
     def build(self) -> Menu:
         """Wire rows, details, and keys into a termflow menu."""
         builder = (
@@ -166,8 +170,8 @@ class PluginMenu(Generic[DepsT]):
             .list_width(self._list_width())
             .preview(self.details)
         )
-        hotkeys = {' ': self.toggle, 'c': self.configure, 'r': self.reload, 'd': self.remove}
-        return slash_search(builder, footer=_HINT, key_source=menu_key, hotkeys=hotkeys, close_key='q')
+        hotkeys = {' ': self.toggle, 'c': self.configure, 'r': self.reload, 'd': self.remove, 'q': self.close}
+        return slash_search(builder, footer=_HINT, key_source=menu_key, hotkeys=hotkeys)
 
     def _name_width(self) -> int:
         return max((len(entry.name) for entry in self._loader.entries()), default=0)

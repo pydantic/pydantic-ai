@@ -19,12 +19,9 @@ def _typed(key: str) -> bool:
 class _SlashSearch:
     """Translates raw keys for termflow's search, which otherwise filters on every typed key."""
 
-    def __init__(
-        self, *, key_source: Callable[[], str], hotkeys: Mapping[str, KeyHandler], close_key: str | None
-    ) -> None:
+    def __init__(self, *, key_source: Callable[[], str], hotkeys: Mapping[str, KeyHandler]) -> None:
         self.key_source = key_source
         self.hotkeys = hotkeys
-        self.close_key = close_key
         self.mode: Literal['browse', 'search', 'filtered'] = 'browse'
         self.query = ''
         """Mirrors termflow's query, which its public API does not expose."""
@@ -66,8 +63,6 @@ class _SlashSearch:
         if key == '/':
             self.mode = 'search'
             return ''
-        if key == self.close_key:
-            return Key.ESCAPE
         if key in self.hotkeys:
             return _HOTKEY + key
         # Termflow's search consumes typed characters; outside a search they do nothing.
@@ -86,15 +81,14 @@ def slash_search(
     footer: str,
     key_source: Callable[[], str],
     hotkeys: Mapping[str, KeyHandler] | None = None,
-    close_key: str | None = None,
 ) -> Menu:
     """Build a menu where plain keys are hotkeys and `/` starts a search.
 
     While searching, typed characters (hotkeys included) edit the query, Backspace deletes, and
     the arrows move. Esc leaves the search and clears the query. Enter picks the highlighted row,
     except in a menu with hotkeys: there it ends the search and keeps the matches, so the hotkeys
-    act on them, and the next Esc clears the filter. Otherwise Esc, like `close_key`, closes.
+    act on them, and the next Esc clears the filter. Otherwise Esc closes.
     The footer starts with `/ search`, followed by `footer`.
     """
-    search = _SlashSearch(key_source=key_source, hotkeys=dict(hotkeys or {}), close_key=close_key)
+    search = _SlashSearch(key_source=key_source, hotkeys=dict(hotkeys or {}))
     return search.build(builder.footer_hint(f'/ search · {footer}'))
