@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 from threading import Event as ThreadEvent
 from typing import Any, Literal, TypeVar, cast
+from uuid import UUID
 
 import anyio
 import pytest
@@ -9498,6 +9499,35 @@ async def test_agent_realtime_session_resolves_conversation_id_like_a_run() -> N
     assert await recorded_conversation_id()
 
 
+async def test_agent_realtime_continues_a_text_runs_conversation() -> None:
+    """A text run's `conversation` is spoken in directly: its history, running total and id all carry."""
+    agent: Agent[None, str] = Agent(TestModel(custom_output_text='A joke.'))
+    text = await agent.run('Tell me a joke.')
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=text.conversation
+    ).session() as session:
+        await session.send('And another.')
+
+        assert session.all_messages()[: len(text.all_messages())] == text.all_messages()
+        assert session.usage.requests == text.usage.requests
+        assert session.new_messages()[0].conversation_id == text.conversation_id
+        # Handed back, the bundle still carries the text run's total, not a restarted one.
+        assert session.conversation.usage.requests == text.usage.requests
+
+
+def test_agent_realtime_rejects_a_conversation_alongside_its_pieces() -> None:
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = agent.run_sync('Hi').conversation
+
+    with pytest.raises(UserError, match='`conversation` already carries `message_history`'):
+        agent.realtime(
+            FakeRealtimeModel(FakeRealtimeConnection([])),
+            conversation=conversation,
+            message_history=conversation.messages,
+        )
+
+
 async def test_agent_realtime_session_run_id_matches_a_run() -> None:
     seen_run_ids: list[str | None] = []
     agent: Agent[None, str] = Agent(deps_type=type(None))
@@ -9872,6 +9902,65 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
         assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
         assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
+
+
+def test_session_conversation_bundles_what_a_text_run_needs() -> None:
+    """A spoken conversation hands a text run the same bundle `AgentRunResult.conversation` does."""
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Earlier turn')])]
+    session = RealtimeSession(
+        FakeRealtimeConnection([]),
+        message_history=history,
+        usage=RunUsage(requests=2, input_tokens=30),
+        conversation_id='conv-1',
+    )
+
+    conversation = session.conversation
+
+    assert conversation.messages == history
+    assert conversation.usage.requests == 2
+    assert conversation.usage.input_tokens == 30
+    assert conversation.conversation_id == 'conv-1'
+
+
+def test_session_conversation_mints_an_id_when_the_session_has_none() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]))
+
+    conversation = session.conversation
+
+    assert UUID(conversation.conversation_id).version == 7
+    assert conversation.messages == []
+    # One identity to store the conversation under, not a new one per read.
+    assert session.conversation.conversation_id == conversation.conversation_id
+
+
+async def test_session_conversation_stamps_the_turns_recorded_before_it() -> None:
+    """The id is minted on the first read, but the turns before it belong to the same conversation.
+
+    Without stamping them, the bundle would carry an id its own earlier messages don't, and a store
+    keyed on either would split one conversation in two.
+    """
+    session = RealtimeSession(FakeRealtimeConnection([]))
+    await session.send('turn it up')
+
+    conversation = session.conversation
+
+    assert [message.conversation_id for message in conversation.messages] == [conversation.conversation_id]
+
+
+def test_session_conversation_continues_the_seeded_conversation() -> None:
+    """A session seeded with a conversation's history continues it, as one `Agent.realtime` opens would."""
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Earlier turn')], conversation_id='c1')]
+    session = RealtimeSession(FakeRealtimeConnection([]), message_history=history)
+
+    assert session.conversation.conversation_id == 'c1'
+
+
+def test_session_conversation_usage_is_a_copy() -> None:
+    session = RealtimeSession(FakeRealtimeConnection([]), usage=RunUsage(requests=2))
+
+    session.conversation.usage.requests += 10
+
+    assert session.usage.requests == 2
 
 
 async def test_cost_limit_passed_by_a_reply_settled_at_close_is_reported() -> None:

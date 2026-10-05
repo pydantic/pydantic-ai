@@ -1,4 +1,6 @@
-"""The built-in `logfire_mcp` plugin: harness `LogfireMCP`, a settings menu, and keys kept in `/keys`.
+"""Query your Logfire data from the agent through the Logfire MCP server.
+
+The built-in `logfire_mcp` plugin: harness `LogfireMCP`, a settings menu, and keys kept in `/keys`.
 
 Plugin settings are plaintext SQLite, so they hold only the name of a `/keys` entry plus `LogfireMCP`'s
 non-secret options, all edited in the menu that `/plugins configure logfire_mcp` opens.
@@ -7,21 +9,26 @@ non-secret options, all edited in the menu that `/plugins configure logfire_mcp`
 import asyncio
 import os
 import threading
+from collections.abc import Sequence
 from dataclasses import replace
+from functools import partial
 from urllib.parse import urlsplit
 
+import anyio
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from keyring.errors import KeyringError
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, Announce, DeviceAuth, SignInError, forget, status
 from pydantic_clai2.mcp import http_client
-from pydantic_clai2.plugins import PluginHost, SessionStart
+from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
 from pydantic_clai2.ui.rendering import theme
@@ -56,42 +63,57 @@ class LogfireMCPSettings(BaseModel):
         return url
 
 
-def activate(host: PluginHost[None]) -> None:
-    """Offer the settings menu now; connect at session start, off the event loop."""
-    settings = host.settings(LogfireMCPSettings)
+class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
+    """The settings menu and `/logfire_mcp` are there on load; the connection is chosen at session start, off the loop."""
 
-    def announce(line: str) -> None:
-        # Links, codes, and notices can carry text from a self-hosted server, so terminal controls are made inert.
-        host.console.print(terminal_text(line), markup=False, highlight=False)
+    def __init__(self, host: PluginHost[None], settings: LogfireMCPSettings) -> None:
+        super().__init__(host, settings)
+        self.capability: LogfireMCP[None] | None = None
+        """Built by `on_session_start`; runs that start earlier get no Logfire MCP tools."""
 
-    async def command(args: list[str]) -> str:
-        return await _command(args, settings=settings, announce=announce)
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return (self._for_run,)
 
-    @host.configure
-    async def configure() -> str:
-        return await _configure(LogfireMCPSource(host))
+    def get_commands(self) -> Sequence[Command]:
+        async def command(args: list[str]) -> str:
+            return await _command(args, settings=self.settings, announce=self._announce)
 
-    @host.on('session_start')
-    async def connect(event: SessionStart) -> None:
+        return (
+            Command(
+                name='logfire_mcp',
+                description='Sign in to Logfire through the browser, or forget that sign-in (/logfire_mcp login|logout).',
+                handler=command,
+                complete=lambda _: ('login', 'logout'),
+            ),
+        )
+
+    async def configure(self) -> str:
+        return await _configure(LogfireMCPSource(self.host))
+
+    async def on_session_start(self, event: SessionStart) -> None:
         # A worker thread: `/keys` takes a lock another CLAI process can hold, and the keyring can block.
-        capability, missing = await asyncio.to_thread(_capability, settings=settings, announce=announce)
-        host.add(capability)
+        self.capability, missing = await anyio.to_thread.run_sync(
+            partial(_capability, settings=self.settings, announce=self._announce), abandon_on_cancel=True
+        )
         if missing is not None:
             # Loading anyway keeps the settings menu available; each run fails closed until the key is saved.
-            host.console.print(
+            self.host.console.print(
                 f'Logfire MCP has no credential: {missing} is not in /keys. {SETUP}',
                 style=theme.color(theme.WARNING),
                 markup=False,
             )
 
-    host.commands.register(
-        Command(
-            name='logfire_mcp',
-            description='Sign in to Logfire through the browser, or forget that sign-in (/logfire_mcp login|logout).',
-            handler=command,
-            complete=lambda _: ('login', 'logout'),
-        )
-    )
+    async def _for_run(self, ctx: RunContext[None]) -> LogfireMCP[None] | None:
+        capability = self.capability
+        if capability is None or not callable(capability.auth):
+            return capability
+        # Resolved here, not by `LogfireMCP`: a run would not set up its per-run toolset nested in this factory's.
+        token = await anyio.to_thread.run_sync(capability.auth, ctx, abandon_on_cancel=True)
+        return replace(capability, auth=token)
+
+    def _announce(self, line: str) -> None:
+        # Links, codes, and notices can carry text from a self-hosted server, so terminal controls are made inert.
+        self.host.console.print(terminal_text(line), markup=False, highlight=False)
 
 
 def _capability(*, settings: LogfireMCPSettings, announce: Announce) -> tuple[LogfireMCP[None], str | None]:
@@ -138,7 +160,7 @@ async def _command(args: list[str], *, settings: LogfireMCPSettings, announce: A
         return 'Logfire runs use this sign-in when no API key is chosen, set, or saved.'
     if args == ['logout']:
         try:
-            forgotten = await asyncio.to_thread(forget)
+            forgotten = await anyio.to_thread.run_sync(forget, abandon_on_cancel=True)
         except (KeyringError, OSError) as exc:
             raise ValueError(
                 f'Could not delete the saved Logfire browser sign-in ({type(exc).__name__}); run /logfire_mcp logout to retry.'
@@ -343,11 +365,13 @@ async def _choose_key() -> KeyReference | None | str:
         return None
     # Added only if absent, atomically, so a key another CLAI process just saved is never replaced unasked.
     try:
-        await asyncio.to_thread(save_key, name=KEY_NAME, value=value, replace=False)
+        await anyio.to_thread.run_sync(
+            partial(save_key, name=KEY_NAME, value=value, replace=False), abandon_on_cancel=True
+        )
     except KeyExistsError:
         if not await run_worker(_confirm_replace):
             return None
-        await asyncio.to_thread(save_key, name=KEY_NAME, value=value)
+        await anyio.to_thread.run_sync(partial(save_key, name=KEY_NAME, value=value), abandon_on_cancel=True)
     return KeyReference(name=KEY_NAME)
 
 

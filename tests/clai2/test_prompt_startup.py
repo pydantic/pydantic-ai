@@ -37,11 +37,12 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'notice.py').write_text(
-        'def activate(host):\n'
-        "    host.console.print('PLUGIN_LOAD_NOTICE')\n"
-        "    @host.on('session_end')\n"
-        '    async def end(event):\n'
-        "        host.console.print('PLUGIN_END_NOTICE')\n"
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Notice(Plugin):\n'
+        '    async def on_session_start(self, event):\n'
+        "        self.host.console.print('PLUGIN_LOAD_NOTICE')\n"
+        '    async def on_session_end(self, event):\n'
+        "        self.host.console.print('PLUGIN_END_NOTICE')\n"
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):

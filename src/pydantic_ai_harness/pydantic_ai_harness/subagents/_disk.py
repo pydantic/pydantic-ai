@@ -1,4 +1,4 @@
-"""Load sub-agent definitions from markdown files, read through a workspace.
+"""Load sub-agent definitions from Markdown or standalone TOML through a workspace.
 
 A definition is a markdown file with optional YAML-style frontmatter:
 
@@ -17,14 +17,25 @@ coding assistants write (`name`, `description`, `model`, `color`, and `tools` or
 the frontmatter is the agent's instructions. `model` and `color` are ignored: the
 model is inherited from the parent (overridable via `SubAgents.agent_overrides`),
 and `color` has no pyai equivalent.
+
+Codex standalone `.toml` definitions require nonempty string `name`, `description`,
+and `developer_instructions` fields. Optional `tools` or `allowed-tools` are lists
+of nonempty strings or comma-separated strings. Supplying both is rejected.
+`model`, `effort`, `model_reasoning_effort`, and `color` are ignored with a warning;
+model and effort overrides belong in `agent_overrides`. All other fields cause
+that file to be skipped, including permission/sandbox settings and the old
+`[agents.name] config_file` format. No configuration is executed or followed.
+TOML requires Python 3.11+ for stdlib `tomllib`; Markdown also works on Python 3.10.
 """
 
 from __future__ import annotations
 
 import posixpath
+import sys
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TypeGuard
 
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ThinkingLevel
@@ -36,20 +47,19 @@ class AgentOverride:
     """Per-agent override for a disk-loaded sub-agent, keyed by the agent's name.
 
     Both fields are optional. An unset `model` inherits the parent run's model; an
-    unset `effort` runs at the capability's minimum effort floor (see
-    `clamp_effort`).
+    unset `effort` leaves the inherited model's thinking setting unchanged.
     """
 
     model: Model | KnownModelName | str | None = None
     """Model to run this disk agent with, in place of inheriting the parent's."""
 
     effort: ThinkingLevel | None = None
-    """Thinking/reasoning level for this disk agent. Raised to at least the floor."""
+    """Thinking/reasoning level for this disk agent, passed through unchanged."""
 
 
 @dataclass(frozen=True)
 class ParsedAgent:
-    """One parsed agent definition: frontmatter fields plus the markdown body."""
+    """One parsed agent definition: identity, tool names, and instructions."""
 
     name: str | None
     description: str | None
@@ -145,9 +155,60 @@ class DiskDefinition:
     parsed: ParsedAgent
 
 
-def _definition(text: str, stem: str) -> DiskDefinition:
-    parsed = parse_agent_markdown(text)
-    return DiskDefinition(parsed.name or stem, parsed)
+def _is_object_list(*, value: object) -> TypeGuard[list[object]]:
+    """Narrow TOML arrays without introducing unknown element types."""
+    return isinstance(value, list)
+
+
+def _toml_tools(*, fields: dict[str, object]) -> tuple[str, ...]:
+    if 'tools' in fields and 'allowed-tools' in fields:
+        raise ValueError('use only one of `tools` and `allowed-tools`')
+    if 'tools' not in fields and 'allowed-tools' not in fields:
+        return ()
+    raw = fields.get('tools', fields.get('allowed-tools'))
+    if isinstance(raw, str):
+        items: Sequence[object] = raw.split(',')
+    elif _is_object_list(value=raw):
+        items = raw
+    else:
+        raise ValueError('`tools` / `allowed-tools` must be a string or list of strings')
+    tools: list[str] = []
+    for item in items:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError('tool names must be nonempty strings')
+        tools.append(item.strip())
+    return tuple(tools)
+
+
+def _parse_agent_toml(*, text: str, path: str) -> ParsedAgent:
+    if sys.version_info < (3, 11):
+        raise ValueError('TOML disk agents require Python 3.11+ (`tomllib`)')
+    import tomllib
+
+    fields: dict[str, object] = tomllib.loads(text)
+    supported = {'name', 'description', 'developer_instructions', 'tools', 'allowed-tools'}
+    ignored = {'model', 'effort', 'model_reasoning_effort', 'color'}
+    unsupported = fields.keys() - supported - ignored
+    if unsupported:
+        raise ValueError(
+            f'unsupported TOML settings {sorted(unsupported)!r}; permission/sandbox configuration '
+            'and `[agents.name] config_file` are not supported'
+        )
+    required: list[str] = []
+    for key in ('name', 'description', 'developer_instructions'):
+        value = fields.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f'`{key}` must be a nonempty string')
+        required.append(value.strip())
+    tools = _toml_tools(fields=fields)
+    ignored_fields = fields.keys() & ignored
+    if ignored_fields:
+        warnings.warn(
+            f'Ignoring TOML disk sub-agent settings {sorted(ignored_fields)!r} in {path!r}; '
+            'use `agent_overrides` for model and effort',
+            stacklevel=3,
+        )
+    return ParsedAgent(name=required[0], description=required[1], tools=tools, body=required[2])
 
 
 def _warn_unreadable(path: str, exc: Exception) -> None:
@@ -162,7 +223,7 @@ async def _is_dir(workspace: Workspace, path: str) -> bool:
 
 
 async def _load_folder(workspace: Workspace, folder: str) -> list[DiskDefinition]:
-    """Every `*.md` definition directly in `folder`, in sorted name order; a missing folder has none.
+    """Every `.md` or `.toml` definition directly in `folder`, sorted by name; a missing folder has none.
 
     Sorted order keeps the roster, and so the prompt listing, the same for every run over the same files.
     """
@@ -171,27 +232,35 @@ async def _load_folder(workspace: Workspace, folder: str) -> list[DiskDefinition
     result: list[DiskDefinition] = []
     entries = sorted(await workspace.list_dir(folder), key=lambda entry: entry.name)
     for entry in entries:
-        if entry.is_dir or not entry.name.endswith('.md'):
+        if entry.is_dir or not entry.name.endswith(('.md', '.toml')):
             continue
         try:
             text = await workspace.read_text(entry.path)
         except (OSError, UnicodeDecodeError) as exc:
             _warn_unreadable(entry.path, exc)
             continue
-        result.append(_definition(text, posixpath.splitext(entry.name)[0]))
+        try:
+            parsed = (
+                _parse_agent_toml(text=text, path=entry.path)
+                if entry.name.endswith('.toml')
+                else parse_agent_markdown(text)
+            )
+        except ValueError as exc:
+            warnings.warn(f'Skipping invalid disk sub-agent file {entry.path!r}: {exc}', stacklevel=3)
+            continue
+        result.append(DiskDefinition(parsed.name or posixpath.splitext(entry.name)[0], parsed))
     return result
 
 
 async def load_definitions(workspace: Workspace, agent_folders: str | Sequence[str]) -> list[DiskDefinition]:
     """Load definitions through `workspace`, in precedence order.
 
-    - a `str`: the convention folders `.agents/<str>/` then `.claude/<str>/` under the working directory.
-      Both are scanned, so a workspace that uses `.agents/` for something else (such as skills) still loads
-      agents from `.claude/`; on a name collision `.agents/` wins.
+    - a `str`: `.agents/<str>/`, `.claude/<str>/`, then `.codex/<str>/` under the working directory.
+      All are scanned; on a name collision the earlier folder wins.
     - a sequence of workspace paths: those folders in order, each read once (by real path).
     """
     if isinstance(agent_folders, str):
-        folders = [posixpath.join(root, agent_folders) for root in ('.agents', '.claude')]
+        folders = [posixpath.join(root, agent_folders) for root in ('.agents', '.claude', '.codex')]
     else:
         folders = agent_folders
     result: list[DiskDefinition] = []

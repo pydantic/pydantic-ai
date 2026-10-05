@@ -21,7 +21,7 @@ def run(*, splash: Splash | None = None) -> None:
         nargs='?',
         const='',
         metavar='NAME',
-        help='Start in a new Git worktree; omit NAME to generate one',
+        help='Start in a Git worktree, reopening NAME if it exists; omit NAME to generate one',
     )
     parser.add_argument(
         '-a',
@@ -42,15 +42,19 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     _validate_args(args, parser)
+    if args.database is not None:
+        # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
+        args.database = args.database.resolve()
     try:
         from pydantic_ai.usage import UsageLimits
-        from pydantic_clai2._app import DEFAULT_PLUGINS, chat, create_agent
+        from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
+        from pydantic_clai2.cli.self_update import Relaunch
         from pydantic_clai2.commands import config_command, plugins_command
         from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
-        from pydantic_clai2.runtime.worktrees import create_worktree, offer_worktree_cleanup
+        from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup, open_worktree
     finally:
         if splash is not None:
             splash.stop()
@@ -63,12 +67,13 @@ def run(*, splash: Splash | None = None) -> None:
             return
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
-            workspace = create_worktree(name=args.worktree)
+            worktree = open_worktree(name=args.worktree)
             print(
-                f'Worktree: {workspace} (branch: clai/{workspace.name}). Kept unless removal is confirmed on exit.',
+                f'{"Worktree" if worktree.created else "Reopened worktree"}: {worktree.path} '
+                f'(branch: {worktree.branch}). Kept unless removal is confirmed on exit.',
                 file=sys.stderr if args.prompt is not None else sys.stdout,
             )
-            os.chdir(workspace)
+            os.chdir(worktree.path)
         project = load_project_settings(Path.cwd())
         overrides = store.overrides() | project.overrides
         if model := args.model or os.getenv('CLAI_MODEL'):
@@ -101,18 +106,39 @@ def run(*, splash: Splash | None = None) -> None:
                 usage_limits=UsageLimits(request_limit=settings.request_limit),
                 settings=settings,
                 store=store,
-                builtin_plugins=DEFAULT_PLUGINS,
+                builtin_plugins=DEFAULT_PLUGINS if args.agent else STOCK_PLUGINS,
                 project=project,
                 resume=args.resume,
                 load_plugins=agent is None,
             )
         )
         offer_worktree_cleanup()
+    except Relaunch as relaunch:
+        # Replace this process with the new build; the working directory, a worktree included, carries over.
+        argv = relaunch_argv(args, executable=relaunch.executable, session_id=relaunch.session_id)
+        sys.stdout.flush()
+        os.execv(relaunch.executable, argv)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
         parser.error(str(exc))
     except KeyboardInterrupt:
         if args.prompt is not None:
             raise SystemExit(130) from None
+
+
+def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str | None) -> list[str]:
+    """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`."""
+    argv = [executable]
+    if args.agent is not None:
+        argv += ['--agent', args.agent]
+    if args.model is not None:
+        argv += ['--model', args.model]
+    if args.request_limit is not None:
+        argv += ['--request-limit', str(args.request_limit)]
+    if args.database is not None:
+        argv += ['--database', str(args.database)]
+    if session_id is not None:
+        argv += ['--resume', session_id]
+    return argv
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:

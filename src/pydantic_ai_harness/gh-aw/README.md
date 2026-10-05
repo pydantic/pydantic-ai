@@ -11,8 +11,10 @@ the `pydantic-ai` id to this path, but only to suggest it: naming the engine
 without the import fails to compile with a tip carrying the line to add.
 
 The engine runs the [Pydantic AI](https://ai.pydantic.dev) CLI (`pai`) with `Coder`
-by default, providing filesystem access and unrestricted shell commands inside the sandbox,
-plus the gh-aw gateway's MCP tools.
+by default, in a `LocalWorkspace` on the checkout, providing filesystem access and
+unrestricted shell commands inside the sandbox, plus the gh-aw gateway's MCP tools. Shell
+commands get the step's environment minus provider credential variables (`OPENAI_*`,
+`ANTHROPIC_*` and the like).
 
 ## Quick start
 

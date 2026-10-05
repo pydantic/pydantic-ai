@@ -43,6 +43,13 @@ async def main(prior_history=()):
         await session.send('Continue where we left off.')
 ```
 
+To continue a text run's conversation, pass its
+[`conversation`][pydantic_ai.agent.AgentRunResult.conversation] as `conversation=` instead. It seeds the
+history and also carries the running [`usage`][pydantic_ai.usage.RunUsage] and the `conversation_id`, so
+[usage limits](../agent.md#usage-limits) keep counting across the handoff and the session correlates with the run
+in telemetry. Going the other way, [`session.conversation`][pydantic_ai.realtime.RealtimeSession.conversation]
+is the bundle to hand to the next text run.
+
 Seeded tool calls and results are replayed as native function calls where the provider's protocol
 permits, and as readable text where it doesn't. Thinking signatures and provider-native execution
 metadata are omitted because they belong to the session that produced them.
@@ -50,6 +57,14 @@ metadata are omitted because they belong to the session that produced them.
 Content-less speech parts are skipped because they carry no replayable content. Unsupported content
 raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently dropped. Video,
 documents, uploaded-file references, and model-generated files cannot be seeded.
+
+!!! warning "Seeded history is trusted"
+    As in a standard run, `message_history` is treated as trusted server-side state: its system
+    prompts become session instructions, and its image URLs are downloaded by your server
+    according to the [download settings](../input.md#user-side-download-vs-direct-file-url) each URL
+    carries. If the history came from a browser or another untrusted client, pass it through
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before seeding the session; see
+    [Loading untrusted history](../message-history.md#loading-untrusted-history).
 
 Speech transcripts are preferred over retained audio. Where no transcript exists, retained user
 audio is replayed on models whose profile sets `supports_seeding_audio`, as long as it was recorded
