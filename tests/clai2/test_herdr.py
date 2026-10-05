@@ -191,7 +191,7 @@ async def test_context_percentage(recorded: RecordingClient) -> None:
         capabilities=[ReportContextUsage(context_window=10_000), *loaded.capabilities],
     )
     await agent.run('hello')
-    await loaded.dispatch(TurnEnd(text='hello', outcome='completed'))
+    # The figure is reported during the run, before the turn ends.
     metadata = [params for method, params in recorded.reports if method == 'pane.report_metadata'][-1]
     tokens = metadata['tokens']
     assert isinstance(tokens, dict)

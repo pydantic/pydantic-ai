@@ -141,6 +141,8 @@ class _Reporter:
 
     async def usage(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
         self.context = f'{event.fraction:.0%}' if event.resolved else None
+        # Mid-turn, so the sidebar's context figure keeps up during a long run.
+        self.refresh()
 
     async def finished(self, event: TurnEnd) -> None:
         self.waiting.clear()
