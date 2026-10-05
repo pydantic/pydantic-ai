@@ -145,8 +145,9 @@ THINKING = PURPLE
 # The logo keeps Pydantic's brand colours under every palette; do not pass these through `color()`.
 LOGO = f'bold {LITHIUM}'
 BANNER = (LITHIUM, PURPLE, AI_CYAN)
-DIFF_ADDITION = '#465258'
-DIFF_DELETION = '#682B36'
+# Claude Code's dark-theme diff backgrounds: a green and a red at the same depth, so additions read as additions.
+DIFF_ADDITION = '#225C2B'
+DIFF_DELETION = '#7A2936'
 
 _SLOTS = {
     LITHIUM: 12,

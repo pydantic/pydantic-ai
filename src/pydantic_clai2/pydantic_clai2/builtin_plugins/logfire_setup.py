@@ -25,6 +25,7 @@ from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, save_ke
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
@@ -180,16 +181,13 @@ def https_origin(text: str) -> str:
 
 def pick_project(runners: Runners, projects: list[Project]) -> Project | None:
     """One of the projects the user can write to; blocking, so it runs in `run_worker`."""
-    result = runners.run_choice(
+    builder = (
         MenuBuilder('Send traces to which project?')
         .style(markdown_style())
         .items([MenuItem(project.label, value=project) for project in projects])
-        .searchable()
         .preview(lambda item: 'CLAI creates a write token for this project and saves it in /keys.')
-        .footer_hint('type to filter - Enter select - Esc cancel')
-        .key_source(menu_key)
-        .build()
     )
+    result = runners.run_choice(slash_search(builder, footer='enter select · esc cancel', key_source=menu_key))
     if result.cancelled or result.item is None or not isinstance(result.item.value, Project):
         return None
     return result.item.value

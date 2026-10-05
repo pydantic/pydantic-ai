@@ -509,13 +509,14 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
         await model.started.wait()
         return '!make test'
 
-    async def run_shell_command(command: str, *, console: Console, interrupts: object) -> None:
+    async def run_shell_command(command: str, *, console: Console, interrupts: object) -> str:
         # The fork finishes while the command owns the terminal; its output must wait.
         model.release.set()
         for _ in range(20):
             await asyncio.sleep(0.01)
         assert 'FORK #1' not in output.getvalue()
         console.print(f'ran {command}')
+        return f'ran {command}'
 
     monkeypatch.setattr('pydantic_clai2._app.run_shell_command', run_shell_command)
 
