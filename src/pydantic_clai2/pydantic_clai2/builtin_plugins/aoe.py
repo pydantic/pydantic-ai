@@ -383,13 +383,12 @@ class _Reporter:
         if conversation_id == self.published.session_id:
             return
         assert self.mappings is not None, 'only an attached reporter publishes'
+        # The mapping first: it lives outside the hooks directory, so it lands even when that is unusable.
+        await run_sync(self.mappings.write, self.instance.instance_id, conversation_id)
+        if _SESSION_ID.fullmatch(conversation_id):
+            await run_sync(self.instance.write, 'session_id', conversation_id + '\n')
+        # Only now, so a failed write is tried again on the next change.
         self.published.session_id = conversation_id
-        try:
-            if _SESSION_ID.fullmatch(conversation_id):
-                await run_sync(self.instance.write, 'session_id', conversation_id + '\n')
-        finally:
-            # The mapping lives outside the hooks directory, so record it even when that is unusable.
-            await run_sync(self.mappings.write, self.instance.instance_id, conversation_id)
 
     async def publish_title(self) -> None:
         title = self.host.conversation.title

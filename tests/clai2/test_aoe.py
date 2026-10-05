@@ -172,7 +172,7 @@ async def started(env: Fixture, tmp_path: Path) -> AsyncIterator[tuple[Session[N
     session = make_session(tmp_path)
     loaded = await load(session)
     await env.status('idle')
-    await env.write('mapping')
+    await env.write('session_id')
     yield session, loaded
     await loaded.dispatch(SessionEnd(reason='exit'))
 
@@ -316,7 +316,7 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     loaded = await load(session)
     await env.status('idle')
-    await env.write('mapping')
+    await env.write('session_id')
     base = env.hooks
     assert stat.S_IMODE(base.stat().st_mode) == 0o700
     assert stat.S_IMODE(env.directory.stat().st_mode) == 0o700
@@ -336,7 +336,7 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
     await env.aoe('rename')
     assert env.renames() == ['--title=Fix the parser', '--title=Parser fix']
     await session.clear()
-    await env.write('mapping', session.conversation_id)
+    await env.write('session_id', session.conversation_id + '\n')
     assert (env.directory / 'session_id').read_text() == session.conversation_id + '\n'
     assert mapping.read_text() == session.conversation_id + '\n'
     assert not list(env.directory.glob('.*.tmp'))
@@ -616,11 +616,11 @@ async def test_an_id_aoe_would_reject_is_only_mapped(env: Fixture, tmp_path: Pat
         Agent(TestModel()),
         deps=None,
         conversations=store,
-        summary=ConversationSummary(id='-dash-first', workspace=str(tmp_path)),
+        # Already titled, so the title push after the session step shows that step has finished.
+        summary=ConversationSummary(id='-dash-first', workspace=str(tmp_path), revision=1, title='Saved'),
     )
     loaded = await load(session)
-    # The mapping is written after the `session_id` file would be.
-    await env.write('mapping')
+    await env.aoe('rename')
     await loaded.dispatch(SessionEnd(reason='exit'))
     assert (env.state / INSTANCE).read_text() == '-dash-first\n'
     assert not (env.directory / 'session_id').exists()
@@ -630,3 +630,26 @@ def test_a_main_checkout_is_not_a_linked_worktree(tmp_path: Path) -> None:
     (tmp_path / '.git').mkdir()
     (tmp_path / 'src').mkdir()
     assert not aoe.linked_worktree(tmp_path / 'src')
+
+
+async def test_a_failed_mapping_write_is_tried_again(
+    env: Fixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    write = aoe.Mappings.write
+    failures = [OSError('disk full')]
+
+    def flaky(self: aoe.Mappings, instance_id: str, conversation_id: str) -> None:
+        if failures:
+            raise failures.pop()
+        write(self, instance_id, conversation_id)
+
+    monkeypatch.setattr(aoe.Mappings, 'write', flaky)
+    session = make_session(tmp_path)
+    loaded = await load(session)
+    await env.status('idle')
+    assert not (env.state / INSTANCE).exists()
+    # The next change publishes again, and this time the mapping lands.
+    await session.prompt('any change')
+    await env.write('session_id', session.conversation_id + '\n')
+    assert (env.state / INSTANCE).read_text() == session.conversation_id + '\n'
+    await loaded.dispatch(SessionEnd(reason='exit'))
