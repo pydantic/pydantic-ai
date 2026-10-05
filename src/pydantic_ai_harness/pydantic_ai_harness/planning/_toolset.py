@@ -505,8 +505,12 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             _TOOL_CALL_STORE.reset(token)
 
     async def _resolve(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
-        """The store for this call: through the capability's durable operations when it passed them."""
-        if self._operations is not None:
+        """The store for this call: through the capability's durable operations inside a tool call.
+
+        A plan method called directly, outside `call_tool`, has no tool call store for its operations
+        to share, so it resolves one store and uses it for the whole call.
+        """
+        if self._operations is not None and tool_call_store() is not None:
             return _RecordedPlanStore(self._operations, ctx)
         return await resolve_run_store(ctx, self._capability, self)
 

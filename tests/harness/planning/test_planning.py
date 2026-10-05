@@ -221,6 +221,25 @@ async def test_worker_tree_resolves_store_without_caching_it() -> None:
     assert [item.content for item in await first.get_items()] == ['only-first']
 
 
+async def test_direct_call_in_a_worker_tree_uses_one_store() -> None:
+    """A plan method called outside `call_tool` resolves one store for the whole call."""
+    stores: list[InMemoryPlanStore] = []
+
+    def resolve(ctx: RunContext[None]) -> InMemoryPlanStore:
+        stores.append(InMemoryPlanStore())
+        return stores[-1]
+
+    planning = Planning[None](store_resolver=resolve)
+    toolset = cast(PlanningToolset[None], planning.get_toolset())
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), root_capability=planning)
+    object.__setattr__(ctx, 'emit', AsyncMock())
+
+    result = await toolset.write_plan(ctx, [PlanItem(content='step')])
+
+    assert 'step' in result
+    assert len(stores) == 1
+
+
 async def test_worker_tree_resolves_the_store_once_per_tool_call() -> None:
     """Each store call is its own durable operation, and all of one tool call's must use one store."""
     stores: list[InMemoryPlanStore] = []
