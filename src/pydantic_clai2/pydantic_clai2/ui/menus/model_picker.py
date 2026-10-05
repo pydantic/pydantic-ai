@@ -27,7 +27,7 @@ class DeleteModel:
     name: str
 
 
-_SUBCOMMANDS = ('add', 'settings')
+MODEL_SUBCOMMANDS = ('add', 'settings')
 """`/model` subcommands; model names normally start with `PROVIDER:`, so none is called `add` or `settings`."""
 
 _USAGE = 'Usage: /model [NAME] | /model add [NAME] | /model settings [NAME]'
@@ -36,7 +36,7 @@ _USAGE = 'Usage: /model [NAME] | /model add [NAME] | /model settings [NAME]'
 def model_completions(context: CommandContext, args: list[str]) -> list[str]:
     """Read the saved list on each completion so changes appear immediately."""
     if len(args) <= 1:
-        return [*_SUBCOMMANDS, *context.store.models()]
+        return [*MODEL_SUBCOMMANDS, *context.store.models()]
     if len(args) == 2 and args[0] == 'add':
         return list(set_completions(['model', args[1]], plugin_models=context.plugin_models()))
     if len(args) == 2 and args[0] == 'settings':

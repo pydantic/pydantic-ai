@@ -66,7 +66,7 @@ from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.menu_worker import holding_output
-from pydantic_clai2.ui.menus.model_picker import model_command, model_completions
+from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command
@@ -441,7 +441,7 @@ def create_shell(
             handler=lambda args: model_command(context, args),
             complete=lambda args: model_completions(context, args),
             during_turn=True,
-            during_turn_subcommands=('add', 'settings'),
+            during_turn_subcommands=MODEL_SUBCOMMANDS,
         )
     )
     # Deprecated spellings of `/model add` and `/model settings`, kept working for existing habits.
