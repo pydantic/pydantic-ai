@@ -404,7 +404,7 @@ class _Reporter:
             self.titles = False
 
     def turn(self, *, failed: bool) -> None:
-        """A turn started, or ended; one that failed, before or during its run, shows `error` until the next."""
+        """A turn started (`failed=False`), or one failed, before or during its run: `error` lasts until the next starts."""
         self.failed = failed
         self.update()
 
@@ -489,8 +489,9 @@ class AoePlugin(Plugin):
             self.reporter.turn(failed=False)
 
     async def on_turn_end(self, event: TurnEnd) -> None:
-        if self.reporter is not None:
-            self.reporter.turn(failed=event.outcome == 'failed')
+        # Only a failure changes anything: a fork finishing must not clear another turn's `error`.
+        if self.reporter is not None and event.outcome == 'failed':
+            self.reporter.turn(failed=True)
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
         if self.reporter is not None:

@@ -329,7 +329,8 @@ symlink, owned by another user, or open to group or others. It reports `running`
 while a prompt's agent run is in progress (rewritten every minute, as AoE ignores an
 older `running`), `waiting` while an `ask_user` question is open, `error` after a
 failed turn until the next prompt starts, and `idle` otherwise. Background `/fork`
-runs do not count as `running`, but a failed fork is a failed turn and shows `error`.
+runs do not count as `running`, but a failed fork is a failed turn and shows `error`;
+a fork that completes does not clear it.
 Other approval prompts are not tracked. The file is removed when
 CLAI2 exits; AoE removes the directory when it stops the session.
 
@@ -342,7 +343,7 @@ directory, such as after AoE moved a worktree, is not resumed; use `/resume`. Ao
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
 **Title.** When the conversation's title changes (its first prompt, background naming,
-or a rename in `/resume`), the plugin runs `aoe session rename -t TITLE`. It skips this
+or a rename in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`. It skips this
 in a linked Git worktree (not a submodule), because AoE's `session.tie_workdir_to_name`
 (on by default) would move an AoE-managed worktree out from under the running CLAI2,
 and stops trying for the session once AoE refuses a rename; a rename that times out is
