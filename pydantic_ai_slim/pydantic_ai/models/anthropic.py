@@ -506,7 +506,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h']
-    """Whether to add `cache_control` to the last tool definition.
+    """Whether to add `cache_control` to the last tool definition. Defaults to the message caching TTL.
 
     When enabled, the last tool in the `tools` array will have `cache_control` set,
     allowing Anthropic to cache tool definitions and reduce costs.
@@ -521,7 +521,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache_instructions: bool | Literal['5m', '1h']
-    """Whether to add `cache_control` to the last system prompt block.
+    """Whether to add `cache_control` to the last static system prompt block. Defaults to the message caching TTL.
 
     When enabled, the last system prompt will have `cache_control` set,
     allowing Anthropic to cache system instructions and reduce costs.
@@ -541,13 +541,14 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_cache: bool | Literal['5m', '1h']
-    """Enable prompt caching for multi-turn conversations.
+    """Enable prompt caching for multi-turn conversations. Defaults to `True` (5 minutes).
 
     Passes a top-level `cache_control` parameter so the server automatically applies a
     cache breakpoint to the last cacheable block and moves it forward as conversations grow.
+    Also adds an explicit breakpoint to the latest tool call, preserving its existing TTL if present.
 
     On Bedrock and Vertex, automatic caching is not yet supported, so this falls back to
-    per-block caching on the last user message. If the last content block already has
+    per-block caching on the last message. If the last content block already has
     `cache_control` from an explicit `CachePoint`, it is preserved.
 
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
@@ -1013,7 +1014,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest retention requested by active Anthropic cache settings."""
-        settings = merge_model_settings(self.settings, model_settings) or {}
+        settings = self._cache_settings(merge_model_settings(self.settings, model_settings))
         return self._max_cache_retention(
             settings.get('anthropic_cache'),
             settings.get('anthropic_cache_instructions'),
@@ -1197,11 +1198,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        prepared_settings = self._cache_settings(prepared_settings)
         if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
         return prepared_settings, model_request_parameters
+
+    @staticmethod
+    def _cache_settings(model_settings: ModelSettings | None) -> AnthropicModelSettings:
+        settings = cast(AnthropicModelSettings, dict(model_settings or {}))
+        cache = settings.setdefault('anthropic_cache', not settings.get('anthropic_cache_messages', False))
+        ttl = cache or settings.get('anthropic_cache_messages', False)
+        settings.setdefault('anthropic_cache_instructions', ttl)
+        settings.setdefault('anthropic_cache_tool_definitions', ttl)
+        return settings
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
@@ -2094,6 +2105,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
+        # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
+        # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
+        # cannot use prompt caching`); they're hidden from the model until tool search
+        # discovers them, so they aren't part of the cacheable prompt prefix anyway.
+        if cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions'):
+            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
+            for tool in reversed(tools):
+                if tool.get('defer_loading') is not True:
+                    tool['cache_control'] = self._build_cache_control(ttl)
+                    break
+
         return tools, mcp_servers, beta_features
 
     def _prepare_tools_and_tool_choice(
@@ -2149,17 +2171,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
         ]
-
-        # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
-        # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
-        # cannot use prompt caching`); they're hidden from the model until tool search
-        # discovers them, so they aren't part of the cacheable prompt prefix anyway.
-        if cache_tool_defs := model_settings.get('anthropic_cache_tool_definitions'):
-            ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
-            for tool in reversed(tools):
-                if tool.get('defer_loading') is not True:
-                    tool['cache_control'] = self._build_cache_control(ttl)
-                    break
 
         if 'parallel_tool_calls' in model_settings and tool_choice['type'] != 'none':
             tool_choice['disable_parallel_tool_use'] = not model_settings['parallel_tool_calls']
@@ -2823,6 +2834,22 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 f'System prompt and tool definitions already use {used_cache_points} cache points, '
                 f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
             )
+        # Reserve a slot for the latest tool call before newer tool results or user content.
+        latest_tool_call: object | None = None
+        for message in reversed(anthropic_messages):
+            content = message['content']
+            if isinstance(content, str):
+                continue
+            for block in reversed(cast(list[BetaContentBlockParam], content)):
+                if is_str_dict(block) and block['type'] in ('tool_use', 'server_tool_use'):
+                    if 'cache_control' in block and remaining_budget > 0:
+                        latest_tool_call = block
+                        remaining_budget -= 1
+                    break
+            else:
+                continue
+            break
+
         # Remove excess cache points from messages (newest to oldest)
         for message in reversed(anthropic_messages):
             content = message['content']
@@ -2833,6 +2860,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for block in reversed(cast(list[BetaContentBlockParam], content)):
                 block_dict = cast(dict[str, Any], block)
 
+                if block is latest_tool_call:
+                    continue
                 if 'cache_control' in block_dict:
                     if remaining_budget > 0:
                         remaining_budget -= 1
@@ -2897,8 +2926,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if caching is not enabled.
             anthropic_messages: The list of Anthropic message params to apply fallback to.
         """
-        if resolved_ttl and isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS):
-            self._apply_message_cache_control(anthropic_messages, resolved_ttl)
+        if resolved_ttl:
+            self._cache_latest_tool_call(anthropic_messages, resolved_ttl)
+            if isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS):
+                self._apply_message_cache_control(anthropic_messages, resolved_ttl)
 
     def _apply_explicit_message_caching(
         self,
@@ -2911,7 +2942,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         if cache_messages := model_settings.get('anthropic_cache_messages'):
             ttl: Literal['5m', '1h'] = '5m' if cache_messages is True else cache_messages
+            self._cache_latest_tool_call(anthropic_messages, ttl)
             self._apply_message_cache_control(anthropic_messages, ttl)
+
+    def _cache_latest_tool_call(self, messages: list[BetaMessageParam], ttl: Literal['5m', '1h']) -> None:
+        for message in reversed(messages):
+            content = message['content']
+            if isinstance(content, str):
+                continue
+            for block in reversed(cast(list[BetaContentBlockParam], content)):
+                if is_str_dict(block) and block['type'] in ('tool_use', 'server_tool_use'):
+                    block.setdefault('cache_control', self._build_cache_control(ttl))
+                    return
 
     def _apply_message_cache_control(
         self,

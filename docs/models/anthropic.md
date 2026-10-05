@@ -229,11 +229,13 @@ The `remaining` field on `task_budget` is for *client-side* compaction patterns 
 
 ## Prompt Caching
 
-Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports automatic caching, per-block message caching, and explicit cache breakpoints:
+Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. `AnthropicModel` enables caching by default with a **5-minute TTL**, including breakpoints on tool definitions, static system instructions, and the latest tool call in the conversation. The latest tool-call breakpoint is preserved when older message breakpoints are trimmed to meet Anthropic's four-breakpoint limit.
+
+Set `anthropic_cache='1h'` for a 1-hour TTL. Set `anthropic_cache=False` to disable default caching; explicitly enabled instruction, tool-definition, message, and `CachePoint` breakpoints still apply. Individual settings such as `anthropic_cache_instructions=False` override their defaults.
 
 ### Automatic Caching
 
-The simplest way to enable prompt caching is with [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
+[`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache] is enabled by default. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
 
 ```python {test="skip"}
 from pydantic_ai import Agent

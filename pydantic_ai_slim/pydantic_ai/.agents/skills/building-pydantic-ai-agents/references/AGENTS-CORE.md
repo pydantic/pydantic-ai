@@ -26,6 +26,10 @@ print(result.output)
 
 Pass an explicit `name=` to each agent: it labels the agent's run span in Logfire. When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict), which matters once more than one agent runs in the same app.
 
+## Anthropic Prompt Caching
+
+`AnthropicModel` caches by default with a 5-minute TTL: tool definitions, static instructions, the latest tool call, and the growing conversation. Use `AnthropicModelSettings(anthropic_cache='1h')` for a 1-hour TTL, or `anthropic_cache=False` to disable the defaults. Explicit cache settings and `CachePoint` markers remain effective; `anthropic_cache_messages` selects per-block caching instead of automatic caching for compatible proxies.
+
 ## Structured Output with Pydantic Models
 
 Use `output_type=MyModel` when the model should return validated structured data.

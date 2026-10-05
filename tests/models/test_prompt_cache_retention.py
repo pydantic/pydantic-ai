@@ -86,7 +86,7 @@ def test_anthropic_resolve_cache_retention_biases_high() -> None:
     )
 
     assert model.resolve_cache_retention(settings) == timedelta(hours=1)
-    assert model.resolve_cache_retention(None) is None
+    assert model.resolve_cache_retention(None) == timedelta(minutes=5)
 
 
 @pytest.mark.parametrize(
