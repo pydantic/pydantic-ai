@@ -54,6 +54,12 @@ def test_anthropic_cache_defaults(tmp_path: Path, provider: str, ttl: str) -> No
     }
     assert context.model_settings(model) == expected
     assert context.store.model_settings(model) == {}
+    source = ModelSettingsSource(context.store, model)
+    menu = FieldMenu(source, searchable=False)
+    for key in expected:
+        row = menu.row_for(key)
+        assert row is not None
+        assert source.current(row) == ttl
     context.store.save_model_settings(model, {key: False for key in expected})
     assert context.model_settings(model) == {key: False for key in expected}
 
