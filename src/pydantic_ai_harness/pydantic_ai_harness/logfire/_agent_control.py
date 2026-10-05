@@ -340,24 +340,29 @@ def _blocks(parts: Sequence[InstructionPart]) -> list[Block]:
     return [Block(text=part.content, id=_instruction_key(part), dynamic=part.dynamic) for part in parts]
 
 
-def _without_implicit_drops(config: AgentConfig) -> AgentConfig:
+def _without_implicit_drops(config: AgentConfig, blocks: Sequence[Block]) -> AgentConfig:
     """The config without the instruction entries that would drop a block they never asked to drop.
 
     The contract drops an addressed block when its entry's `instructions` is `None`, and validates an
     entry whose `instructions` key is missing to that same `None` while ignoring keys it does not know.
     So `{"id": "agent", "text": "..."}` -- one misspelled key -- removes the agent's whole prompt and
-    says nothing. The stored JSON schema documents an explicit `null` as the way to drop a block, so
-    an explicit `null` is the only thing this takes as one: an entry whose `instructions` was never
-    set is left out with a warning and its block keeps the code-defined text.
+    says nothing. The stored JSON schema describes `null` as the way to drop a block, so an explicit
+    `null` is the only thing this takes as one: an entry whose `instructions` was never set is left out
+    with a warning and its block keeps the code-defined text.
+
+    Only entries that would actually drop something are held back -- ones addressing a static block
+    this request assembles. Every other entry still reaches the contract, which reports an `id` nothing
+    carries, or only a dynamic block carries, under `on_unmatched` as it would any other.
     """
     instructions = config.instructions
     if not isinstance(instructions, list):
         return config
+    droppable = {block.id for block in blocks if block.id is not None and not block.dynamic}
     kept: list[str | InstructionBlock] = []
     for entry in instructions:
         if (
             isinstance(entry, InstructionBlock)
-            and entry.id is not None
+            and entry.id in droppable
             and 'instructions' not in entry.model_fields_set
         ):
             _warn_dropped(
@@ -783,17 +788,24 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             return
         if not isinstance(variable.logfire_instance.config.get_variable_provider(), NoOpVariableProvider):
             return
-        if os.environ.get('LOGFIRE_API_KEY'):
-            cause = (
-                '`LOGFIRE_API_KEY` is set, but this Logfire instance has not been configured, and only a configured '
-                'instance reads it. Call `logfire.configure()`.'
-            )
-        else:
+        on_default_instance = self.logfire_instance is None and not isinstance(self.name, Variable)
+        if not os.environ.get('LOGFIRE_API_KEY'):
             cause = (
                 'Reading Logfire variables needs an API key with the `project:read_variables` scope (a write token '
                 'cannot read them), set as `LOGFIRE_API_KEY` or passed as `logfire.configure(api_key=...)`.'
             )
-        if self.logfire_instance is None and not isinstance(self.name, Variable):
+        elif on_default_instance:
+            cause = (
+                '`LOGFIRE_API_KEY` is set, but the default Logfire instance has not been configured, and only a '
+                'configured instance reads it. Call `logfire.configure()`.'
+            )
+        else:
+            cause = (
+                '`LOGFIRE_API_KEY` is set, but the Logfire instance this capability was given has not been '
+                'configured, and only a configured instance reads it. Pass the instance `logfire.configure()` '
+                'returned.'
+            )
+        if on_default_instance:
             cause += (
                 ' This capability resolves on the default Logfire instance: if your application configures its '
                 'own, pass it as `AgentControl(logfire_instance=...)`.'
@@ -888,11 +900,10 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         config = self._current_config()
         if config is None or not config.instructions:
             return request_context
-        config = _without_implicit_drops(config)
         parameters = request_context.model_request_parameters
         parts = list(parameters.instruction_parts or [])
         blocks = _blocks(parts)
-        applied = apply_instructions(blocks, config)
+        applied = apply_instructions(blocks, _without_implicit_drops(config, blocks))
         # A block that passed through untouched is the object it went in as, so identity is what says
         # which part it came from. A replaced one is a copy carrying the same `id`, and only a
         # non-dynamic part can be replaced, so consuming those in order matches them up even when an
