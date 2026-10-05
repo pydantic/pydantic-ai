@@ -68,7 +68,10 @@ MissingDirectories: TypeAlias = Literal['error', 'skip']
 """What `Skills` does with a library directory that does not exist: fail the run, or skip it."""
 
 DuplicateNames: TypeAlias = Literal['error', 'keep_first']
-"""What `Skills` does when two valid skills with different `SKILL.md` files share a name: fail the run, or keep the first with a warning."""
+"""What `Skills` does when two valid skills with different `SKILL.md` files share a name.
+
+Fail the run, or keep the first with a warning.
+"""
 
 _ARGUMENTS_PLACEHOLDER = re.compile(r'\$ARGUMENTS(?![\[\w])')
 """`$ARGUMENTS` itself, not Claude Code's indexed `$ARGUMENTS[0]` or a longer name such as `$ARGUMENTS_LIST`."""
