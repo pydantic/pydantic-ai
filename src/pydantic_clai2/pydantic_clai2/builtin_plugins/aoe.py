@@ -37,7 +37,6 @@ from pydantic_clai2.plugins import (
     SessionEnd,
     SessionStart,
     TurnEnd,
-    TurnStart,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -329,6 +328,8 @@ class _Reporter:
     async def run(self, ctx: RunContext[None], handler: WrapRunHandler) -> AgentRunResult[object]:
         foreground = self.foreground(ctx)
         self.running += foreground
+        # The next prompt's run clears a failure; a `/fork` starting or finishing leaves it showing.
+        self.failed = self.failed and not foreground
         self.update()
         try:
             return await handler()
@@ -403,9 +404,9 @@ class _Reporter:
             # AoE refused, as it does for a running worktree-tied session, so stop asking for this session.
             self.titles = False
 
-    def turn(self, *, failed: bool) -> None:
-        """A turn started (`failed=False`), or one failed, before or during its run: `error` lasts until the next starts."""
-        self.failed = failed
+    def turn_failed(self) -> None:
+        """A turn failed, before or during its run: `error` lasts until the next prompt's run starts."""
+        self.failed = True
         self.update()
 
     async def stop(self) -> None:
@@ -484,14 +485,10 @@ class AoePlugin(Plugin):
         except (LookupError, ValueError, RuntimeError):
             _LOGGER.debug('aoe: could not resume %s', conversation_id, exc_info=True)
 
-    async def on_turn_start(self, event: TurnStart) -> None:
-        if self.reporter is not None:
-            self.reporter.turn(failed=False)
-
     async def on_turn_end(self, event: TurnEnd) -> None:
         # Only a failure changes anything: a fork finishing must not clear another turn's `error`.
         if self.reporter is not None and event.outcome == 'failed':
-            self.reporter.turn(failed=True)
+            self.reporter.turn_failed()
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
         if self.reporter is not None:

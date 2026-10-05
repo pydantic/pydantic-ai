@@ -328,9 +328,9 @@ the plugin writes it the way AoE's own hooks do, refusing a directory that is a
 symlink, owned by another user, or open to group or others. It reports `running`
 while a prompt's agent run is in progress (rewritten every minute, as AoE ignores an
 older `running`), `waiting` while an `ask_user` question is open, `error` after a
-failed turn until the next prompt starts, and `idle` otherwise. Background `/fork`
-runs do not count as `running`, but a failed fork is a failed turn and shows `error`;
-a fork that completes does not clear it.
+failed turn until the next prompt's agent run starts, and `idle` otherwise. Background
+`/fork` runs do not count as `running`, but a failed fork is a failed turn and shows
+`error`; a fork starting or completing does not clear it.
 Other approval prompts are not tracked. The file is removed when
 CLAI2 exits; AoE removes the directory when it stops the session.
 

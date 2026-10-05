@@ -367,7 +367,8 @@ async def test_a_failed_turn_is_an_error_until_the_next(env: Fixture, tmp_path: 
         assert ended.outcome == 'failed'
         await shell.loader.fire(ended)
         await env.status('error')
-        # A background fork that completes meanwhile leaves the failure showing.
+        # A background fork that starts and completes meanwhile leaves the failure showing.
+        await shell.loader.fire(TurnStart(text='forked'))
         await shell.loader.fire(TurnEnd(text='forked', outcome='completed'))
         [entry] = [entry for entry in shell.loader.entries() if entry.name == 'aoe']
         assert entry.loaded is not None and isinstance(plugin := entry.loaded.plugin, aoe.AoePlugin)
