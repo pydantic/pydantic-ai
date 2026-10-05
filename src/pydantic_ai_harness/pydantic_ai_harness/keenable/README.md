@@ -105,3 +105,21 @@ wait, rephrase, or try another URL rather than abort the run. A `get_page` call
 that comes back with no readable content is a `ModelRetry` too. A `401`, `402`,
 or `403` propagates as `httpx.HTTPStatusError`: a rejected key or an exhausted
 account is configuration the model cannot fix.
+
+## Multiple instances
+
+Two instances register the same tool names and share the default `id`
+(`keenable_search`), so two that differ raise an error. To run a second setup in
+one agent, give it a distinct `id` and wrap it in core's `PrefixTools`
+capability, which puts a prefix in front of its tool names.
+
+## Durable execution
+
+Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/), each Keenable request is recorded, so a
+recovered run reuses the result instead of making the request again. Temporal
+and Prefect record each tool call in its own activity or task. DBOS runs
+function tools in workflow code, so there the request runs as its own step.
+
+The records are named after the capability's `id`, which defaults to
+`keenable_search`, so durable execution needs no configuration. Changing an
+`id` renames the records, which in-flight runs then cannot find.

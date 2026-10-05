@@ -302,6 +302,11 @@ def test_the_toolset_validates_budgets_when_built_directly(kwargs: dict[str, Any
         KeenableSearchToolset[None](client=FakeClient(), **{**budgets, **kwargs})
 
 
+def test_from_spec_sets_a_distinct_id():
+    assert KeenableSearch[None].from_spec().id == 'keenable_search'
+    assert KeenableSearch[None].from_spec(id='docs_search').id == 'docs_search'
+
+
 def test_from_spec_builds_the_default_client():
     capability = KeenableSearch[None].from_spec(num_results=2, max_snippet_chars=10, max_page_chars=20)
 

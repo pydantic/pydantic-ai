@@ -6,6 +6,7 @@ import functools
 import json
 import os
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, Concatenate, ParamSpec, Protocol, TypeVar, cast
 
 import httpx
@@ -15,6 +16,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._durable import ToolOperation, raise_retry
 
 KEENABLE_DEFAULT_BASE_URL = 'https://api.keenable.ai'
 """Base URL of the hosted Keenable API."""
@@ -219,6 +221,14 @@ def _recoverable(
     return wrapper
 
 
+@dataclass(frozen=True)
+class KeenableSearchOperations:
+    """The durable operations a `KeenableSearch` capability runs its toolset's Keenable requests through."""
+
+    web_search: ToolOperation
+    get_page: ToolOperation
+
+
 class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
     """Gives an agent web research tools backed by the Keenable API.
 
@@ -234,6 +244,10 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
     and trims each excerpt to `max_snippet_chars`, and `get_page` truncates at
     `max_page_chars` and appends a marker so the model knows the page continued.
     All three bounds are validated here as well as by `KeenableSearch`.
+
+    `KeenableSearch` passes `operations` so that each tool's Keenable request
+    runs as one of its durable operations, whose result durable execution
+    records instead of making the request again on recovery.
     """
 
     def __init__(
@@ -243,8 +257,10 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         num_results: int,
         max_snippet_chars: int,
         max_page_chars: int,
+        id: str | None = None,
+        operations: KeenableSearchOperations | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         # `KeenableSearch` validates these at construction, but the toolset is
         # public too, so a direct caller gets the same guarantee. Validated
         # before the client is built, so a bad budget fails on its own terms.
@@ -252,6 +268,7 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         self._max_snippet_chars = validated_budget('max_snippet_chars', max_snippet_chars)
         self._max_page_chars = validated_budget('max_page_chars', max_page_chars)
         self._client: KeenableClient = client if client is not None else HttpKeenableClient()
+        self._operations = operations
         self.add_function(self.web_search, name='web_search')
         self.add_function(self.get_page, name='get_page')
 
@@ -266,6 +283,8 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The matching pages, each with title, URL, and an excerpt.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.web_search(query))
         # A result without a URL is unusable, so it is dropped before the limit
         # is applied rather than after; otherwise one malformed entry would cost
         # a slot and `web_search` would return fewer results than asked for.
@@ -297,6 +316,8 @@ class KeenableSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The page content as markdown, truncated to the configured budget.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.get_page(url))
         page = await self._client.fetch(url)
         content = str(page.get('content') or '')
         if not content:

@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.keenable._toolset import KeenableClient, KeenableSearchToolset, validated_budget
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._durable import RetryRequest, retry_as_result
+from pydantic_ai_harness.keenable._toolset import (
+    HttpKeenableClient,
+    KeenableClient,
+    KeenableSearchOperations,
+    KeenableSearchToolset,
+    validated_budget,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -43,6 +54,10 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
     keyless, and the capability talks to them over `httpx`, which
     `pydantic-ai-harness` already depends on. Set `KEENABLE_API_KEY` (or pass a
     configured `client`) to raise rate limits.
+
+    Each tool's Keenable request runs as a durable operation, so under durable
+    execution a recovered run reuses the recorded result instead of making the
+    request again.
     """
 
     num_results: int = 5
@@ -88,6 +103,9 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
     in tests.
     """
 
+    id: str | None = 'keenable_search'
+    """Stable identity for durable execution, which records each Keenable request under it."""
+
     def __post_init__(self) -> None:
         """Validate the output budgets, so a bad one fails here and not mid-run."""
         validated_budget('num_results', self.num_results)
@@ -104,13 +122,44 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
             return f'{self.guidance} {_UNTRUSTED_CONTENT_INSTRUCTIONS}' if self.guidance else None
         return _INSTRUCTIONS
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
+
     def get_toolset(self) -> KeenableSearchToolset[AgentDepsT]:
         """Build the toolset providing `web_search` and `get_page`."""
+        return self._build_toolset(
+            id=self.id, operations=KeenableSearchOperations(web_search=self._web_search, get_page=self._get_page)
+        )
+
+    @durable_operation('web_search')
+    async def _web_search(self, query: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.web_search(query))
+
+    @durable_operation('get_page')
+    async def _get_page(self, url: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.get_page(url))
+
+    @cached_property
+    def _client(self) -> KeenableClient:
+        return self.client if self.client is not None else HttpKeenableClient()
+
+    @cached_property
+    def _requests(self) -> KeenableSearchToolset[AgentDepsT]:
+        """The toolset whose tools make the Keenable requests that the durable operations run."""
+        return self._build_toolset()
+
+    def _build_toolset(
+        self, *, id: str | None = None, operations: KeenableSearchOperations | None = None
+    ) -> KeenableSearchToolset[AgentDepsT]:
         return KeenableSearchToolset[AgentDepsT](
-            client=self.client,
+            client=self._client,
             num_results=self.num_results,
             max_snippet_chars=self.max_snippet_chars,
             max_page_chars=self.max_page_chars,
+            id=id,
+            operations=operations,
         )
 
     @classmethod
@@ -121,6 +170,7 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
         max_snippet_chars: int = 500,
         max_page_chars: int = 10_000,
         guidance: str | None = None,
+        id: str | None = 'keenable_search',
     ) -> KeenableSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -132,4 +182,5 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
             max_snippet_chars=max_snippet_chars,
             max_page_chars=max_page_chars,
             guidance=guidance,
+            id=id,
         )

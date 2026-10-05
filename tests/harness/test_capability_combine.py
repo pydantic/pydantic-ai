@@ -409,8 +409,8 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one You.com search configuration per id, and its domain lists are an access boundary',
         lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
     ),
-    'KeenableSearch': Collides(
-        'its toolset registers `web_search` and `get_page` under fixed names',
+    'KeenableSearch': Narrows(
+        'one Keenable search configuration per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(), cls(num_results=3)),
     ),
     'Slack': Narrows(
