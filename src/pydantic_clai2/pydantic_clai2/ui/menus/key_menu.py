@@ -58,7 +58,7 @@ class KeysSource:
 
     def reset(self, row: FieldRow) -> str:
         """Deletion requires the explicit confirmation flow."""
-        raise ValueError('An API key is required. Use D to delete a saved key.')
+        raise ValueError('An API key is required. Use d to delete a saved key.')
 
 
 def build_keys_menu(*, names: list[str], message: str = '') -> Menu:
