@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from builtins import BaseExceptionGroup
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -18,7 +18,8 @@ from rich.console import Console
 from termflow.tui.keys import Key
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, StepEvent, ToolEffectRecord
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
@@ -106,6 +107,42 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     assert not service.namer.submit(saved_id)
     context.set_setting(['sessions.naming_model', 'null'])
     assert context.settings.session_namer_model is None
+
+
+async def test_browser_opened_mid_turn_defers_the_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    prior = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    await prior.prompt('saved turn')
+    started, release = anyio.Event(), anyio.Event()
+
+    async def wait(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        started.set()
+        await release.wait()
+        yield 'done'
+
+    session = Session(Agent(FunctionModel(stream_function=wait)), deps=None, conversations=store, workspace=tmp_path)
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        clear_history=session.clear,
+        apply_setting=lambda key, settings: None,
+    )
+    service = Sessions(session=session, store=store, context=context)
+
+    def select(browser: SessionBrowser) -> str:
+        return prior.summary.id
+
+    monkeypatch.setattr(SessionBrowser, 'run', select)
+    async with anyio.create_task_group() as running:
+        running.start_soon(session.prompt, 'busy')
+        await started.wait()
+        assert await service.command([]) == (
+            f'A turn is running. Enter /resume {prior.summary.id} to restore that session once it ends.'
+        )
+        release.set()
+    assert session.summary.id != prior.summary.id
+    assert 'Resumed' in await service.command([])
+    assert session.summary.id == prior.summary.id
 
 
 async def test_browser_resumes_other_directory_without_confirmation(

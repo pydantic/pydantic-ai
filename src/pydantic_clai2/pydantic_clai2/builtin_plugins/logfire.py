@@ -71,7 +71,8 @@ class LogfireSettings(BaseModel):
     )
     ui_events: bool = Field(
         default=False,
-        description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions.',
+        description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions. '
+        'With message content included, submitted prompts carry their text.',
     )
 
 
@@ -138,7 +139,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
         if self.settings.ui_events:
-            self._unsubscribe = telemetry.subscribe(self._clai2, root=self._session_tracing.root)
+            self._unsubscribe = telemetry.subscribe(
+                self._clai2, root=self._session_tracing.root, include_content=self.settings.include_content
+            )
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
                 self._clai2.log('info', 'session started', attributes={'model': model})
