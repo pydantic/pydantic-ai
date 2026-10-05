@@ -123,6 +123,11 @@ async def test_launch_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     )
     assert session.conversation_id == NEW_ID
     assert service.chosen
+    # Only while the shell holds that conversation: a plugin loaded after `/new` was not given one.
+    await session.clear()
+    assert not service.chosen
+    await session.resume(NEW_ID)
+    assert service.chosen
 
     def cancel(browser: SessionBrowser) -> str:
         return ''
