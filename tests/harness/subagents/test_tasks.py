@@ -997,7 +997,13 @@ async def test_by_default_an_owned_delegate_does_not_delegate() -> None:
     assert offered == {'go': ['delegate_task', 'stop_task', 'list_tasks'], 'subtask': []}
 
 
-async def test_a_delegate_tool_named_like_a_task_control_keeps_its_name() -> None:
+@pytest.mark.parametrize(
+    ('tool_name', 'offered_tools'),
+    [('stop_task', ['stop_task', 'list_tasks']), ('list_tasks', ['list_tasks', 'stop_task'])],
+)
+async def test_a_delegate_tool_named_like_a_task_control_keeps_its_name(
+    tool_name: str, offered_tools: list[str]
+) -> None:
     offered: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1010,7 +1016,7 @@ async def test_a_delegate_tool_named_like_a_task_control_keeps_its_name() -> Non
         with owner.bind():
             agent = Agent(
                 FunctionModel(respond),
-                capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None, tool_name='stop_task')],
+                capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None, tool_name=tool_name)],
             )
             await agent.run('go', conversation_id='root')
-    assert offered == ['stop_task', 'list_tasks']
+    assert offered == offered_tools
