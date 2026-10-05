@@ -60,7 +60,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
-    from openai.types.responses.response_output_message import ResponseOutputMessage
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
 
@@ -94,7 +94,7 @@ def responses_completion(text: str = 'done', usage: ResponseUsage | None = None)
         [
             ResponseOutputMessage(
                 id='output-1',
-                content=[ResponseOutputText(text=text, type='output_text', annotations=[])],
+                content=cast('list[Content]', [ResponseOutputText(text=text, type='output_text', annotations=[])]),
                 role='assistant',
                 status='completed',
                 type='message',
@@ -118,8 +118,11 @@ async def test_openai_chat_cache_point_and_options(
         model = OpenAIChatModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(ttl='1h'), 'Use the context.'])
+    result = await Agent(model, model_settings=settings).run(
+        ['Stable context.', CachePoint(ttl='1h'), 'Use the context.']
+    )
 
+    assert result.output == 'response'
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['messages'] == snapshot(
@@ -162,9 +165,8 @@ async def test_openai_chat_multiple_cache_points(allow_model_requests: None):
 
     await Agent(model).run(['Product docs.', CachePoint(), 'Session context.', CachePoint(), 'Question.'])
 
-    request = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'prompt_cache_options' not in request
-    assert request['messages'] == snapshot(
+    assert 'prompt_cache_options' not in get_mock_chat_completion_kwargs(mock_client)[0]
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
         [
             {
                 'role': 'user',
@@ -221,8 +223,10 @@ async def test_openai_chat_cache_point_history_prefix_stability(allow_model_requ
     await agent.run('Follow-up question.', message_history=history)
 
     first_request, second_request = get_mock_chat_completion_kwargs(mock_client)
-    assert second_request['messages'][0] == first_request['messages'][0]
-    assert second_request['messages'][0] == snapshot(
+    first_messages = cast('list[dict[str, Any]]', first_request['messages'])
+    second_messages = cast('list[dict[str, Any]]', second_request['messages'])
+    assert second_messages[0] == first_messages[0]
+    assert second_messages[0] == snapshot(
         {
             'role': 'user',
             'content': [
@@ -235,7 +239,7 @@ async def test_openai_chat_cache_point_history_prefix_stability(allow_model_requ
             ],
         }
     )
-    assert second_request['messages'][-1] == {'role': 'user', 'content': 'Follow-up question.'}
+    assert second_messages[-1] == {'role': 'user', 'content': 'Follow-up question.'}
 
 
 @pytest.mark.parametrize(
@@ -258,9 +262,11 @@ async def test_openai_chat_cache_point_supported_content_types(
     result = await Agent(model).run([content_item, CachePoint()])
 
     assert result.output == 'response'
-    content = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]['content']
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = cast('list[dict[str, Any]]', request['messages'])
+    content = cast('list[dict[str, Any]]', messages[0]['content'])
     assert content[0]['type'] == expected_type
-    assert content[0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert content[0].get('prompt_cache_breakpoint') == {'mode': 'explicit'}
 
 
 async def test_openai_chat_cache_point_first_content_raises(allow_model_requests: None):
@@ -383,8 +389,9 @@ async def test_openai_chat_cache_point_filtered_without_support(allow_model_requ
     mock_client = MockOpenAI.create_mock(chat_completion())
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
-    await Agent(model).run(['text before', CachePoint(), 'text after'])
+    result = await Agent(model).run(['text before', CachePoint(), 'text after'])
 
+    assert result.output == 'response'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
         [
             {
@@ -408,8 +415,9 @@ async def test_openai_chat_prompt_cache_options_sent_for_any_model(allow_model_r
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+    result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
 
+    assert result.output == 'response'
     request = get_mock_chat_completion_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['messages'] == [
@@ -448,10 +456,11 @@ async def test_openai_responses_cache_point_and_options(
         model = OpenAIResponsesModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    await Agent(model, model_settings=settings).run(
+    result = await Agent(model, model_settings=settings).run(
         ['Stable reference material.', CachePoint(ttl='1h'), 'Use the reference.']
     )
 
+    assert result.output == 'done'
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['input'] == snapshot(
@@ -494,9 +503,8 @@ async def test_openai_responses_multiple_cache_points(allow_model_requests: None
 
     await Agent(model).run(['Product docs.', CachePoint(), 'Session context.', CachePoint(), 'Question.'])
 
-    request = get_mock_responses_kwargs(mock_client)[0]
-    assert 'prompt_cache_options' not in request
-    assert request['input'] == snapshot(
+    assert 'prompt_cache_options' not in get_mock_responses_kwargs(mock_client)[0]
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
         [
             {
                 'role': 'user',
@@ -529,8 +537,10 @@ async def test_openai_responses_cache_point_history_prefix_stability(allow_model
     await agent.run('Follow-up question.', message_history=history)
 
     first_request, second_request = get_mock_responses_kwargs(mock_client)
-    assert second_request['input'][0] == first_request['input'][0]
-    assert second_request['input'][0] == snapshot(
+    first_input = cast('list[dict[str, Any]]', first_request['input'])
+    second_input = cast('list[dict[str, Any]]', second_request['input'])
+    assert second_input[0] == first_input[0]
+    assert second_input[0] == snapshot(
         {
             'role': 'user',
             'content': [
@@ -543,7 +553,7 @@ async def test_openai_responses_cache_point_history_prefix_stability(allow_model
             ],
         }
     )
-    assert second_request['input'][-1] == {'role': 'user', 'content': 'Follow-up question.'}
+    assert second_input[-1] == {'role': 'user', 'content': 'Follow-up question.'}
 
 
 async def test_openai_responses_image_cache_point(allow_model_requests: None):
@@ -580,10 +590,12 @@ async def test_openai_responses_file_cache_point(allow_model_requests: None):
         [BinaryContent(b'%PDF-1.4', media_type='application/pdf'), CachePoint(), 'Summarize the reference.']
     )
 
-    content = get_mock_responses_kwargs(mock_client)[0]['input'][0]['content']
+    request_input = get_mock_responses_kwargs(mock_client)[0]['input']
+    content = request_input[0]['content']
     assert isinstance(content, list)
-    assert content[0]['type'] == 'input_file'
-    assert content[0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    first_content = cast('dict[str, Any]', content[0])
+    assert first_content['type'] == 'input_file'
+    assert first_content.get('prompt_cache_breakpoint') == {'mode': 'explicit'}
 
 
 async def test_openai_responses_cache_point_first_content_raises(allow_model_requests: None):
@@ -677,8 +689,9 @@ async def test_openai_responses_cache_point_filtered_without_support(allow_model
     mock_client = MockOpenAIResponses.create_mock(responses_completion('response'))
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=mock_client))
 
-    await Agent(model).run(['text before', CachePoint(), 'text after'])
+    result = await Agent(model).run(['text before', CachePoint(), 'text after'])
 
+    assert result.output == 'response'
     assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
         [
             {
@@ -702,8 +715,9 @@ async def test_openai_responses_prompt_cache_options_sent_for_any_model(allow_mo
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+    result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
 
+    assert result.output == 'done'
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['input'] == [
