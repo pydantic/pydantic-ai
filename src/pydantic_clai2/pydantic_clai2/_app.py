@@ -249,7 +249,12 @@ async def chat(
             if not shell.reload_requested:
                 if (executable := shell.updates.relaunch) is not None:
                     summary = shell.session.summary
-                    raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
+                    raise Relaunch(
+                        executable=executable,
+                        session_id=summary.id if summary.revision else None,
+                        # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
+                        new_session_id=summary.id if not summary.revision and shell.sessions.chosen else None,
+                    )
                 return
             shell.reload_requested = False
             if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
@@ -530,7 +535,7 @@ def create_shell(
         store=store,
         console=console,
         commands=commands,
-        session_start=lambda: SessionStart(agent=agent, settings=context.settings),
+        session_start=lambda: SessionStart(agent=agent, settings=context.settings, conversation_chosen=sessions.chosen),
         builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),

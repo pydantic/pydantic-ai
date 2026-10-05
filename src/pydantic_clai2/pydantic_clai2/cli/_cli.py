@@ -131,7 +131,12 @@ def run(*, splash: Splash | None = None) -> None:
         offer_worktree_cleanup()
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
-        argv = relaunch_argv(args, executable=relaunch.executable, session_id=relaunch.session_id)
+        argv = relaunch_argv(
+            args,
+            executable=relaunch.executable,
+            session_id=relaunch.session_id,
+            new_session_id=relaunch.new_session_id,
+        )
         sys.stdout.flush()
         os.execv(relaunch.executable, argv)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
@@ -141,8 +146,13 @@ def run(*, splash: Splash | None = None) -> None:
             raise SystemExit(130) from None
 
 
-def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str | None) -> list[str]:
-    """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`."""
+def relaunch_argv(
+    args: argparse.Namespace, *, executable: str, session_id: str | None, new_session_id: str | None = None
+) -> list[str]:
+    """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`.
+
+    An unsaved conversation started with `--session-id` restarts under `new_session_id`.
+    """
     argv = [executable]
     if args.agent is not None:
         argv += ['--agent', args.agent]
@@ -154,6 +164,8 @@ def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str 
         argv += ['--database', str(args.database)]
     if session_id is not None:
         argv += ['--resume', session_id]
+    elif new_session_id is not None:
+        argv += ['--session-id', new_session_id]
     return argv
 
 

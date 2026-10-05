@@ -1,7 +1,9 @@
 """`--session-id` and `--fork-session` name a new conversation or continue in a copy, as Claude Code's do."""
 
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from typing import ClassVar
 from uuid import UUID
 
 import anyio
@@ -18,21 +20,16 @@ from pydantic_clai2 import chat
 from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.cli import _cli, headless
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import Plugin, SessionStart
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
-from tests.clai2.test_conversation_identity import RECORDER, Recorder
 
 NEW_ID = '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f'
 OTHER_ID = '6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b'
-
-
-@pytest.fixture(autouse=True)
-def fresh_recorder() -> None:
-    Recorder.seen.clear()
 
 
 def session_in(tmp_path: Path) -> Session[None, str]:
@@ -120,10 +117,12 @@ async def test_launch_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     saved = session.conversation_id
     await session.clear()
 
-    assert (
-        await service.start(resume=saved, session_id=NEW_ID, fork=True) == f'Forked saved work ({saved}) into {NEW_ID}.'
+    assert not service.chosen
+    assert await service.start(resume=saved, session_id=NEW_ID, fork=True) == (
+        f'Resumed saved work ({saved}).\nForked saved work ({saved}) into {NEW_ID}.'
     )
     assert session.conversation_id == NEW_ID
+    assert service.chosen
 
     def cancel(browser: SessionBrowser) -> str:
         return ''
@@ -135,12 +134,24 @@ async def test_launch_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert session.conversation_id == saved
 
 
+class Launched(Plugin):
+    """Records the conversation it starts on, and whether the launch options chose it."""
+
+    seen: ClassVar[list[tuple[str, str | None, bool]]] = []
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        conversation = self.host.conversation
+        self.seen.append((conversation.conversation_id, conversation.title, event.conversation_chosen))
+
+
 async def test_chat_applies_launch_options_before_plugins(tmp_path: Path) -> None:
     saved = Session(
         Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=tmp_path / 'sessions.db')
     )
     await saved.prompt('earlier work')
-    for resume, session_id in ((None, NEW_ID), (saved.conversation_id, None)):
+    Launched.seen.clear()
+    launches: list[tuple[str | None, str | None]] = [(None, NEW_ID), (saved.conversation_id, None), (None, None)]
+    for resume, session_id in launches:
         with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
             pipe.send_text('/exit\n')
             await chat(
@@ -148,14 +159,31 @@ async def test_chat_applies_launch_options_before_plugins(tmp_path: Path) -> Non
                 deps=None,
                 console=Console(file=StringIO()),
                 store=SettingsStore(tmp_path / 'settings.db'),
-                builtin_plugins=[RECORDER],
+                builtin_plugins=[PluginSettings(id='launched', factory='tests.clai2.test_session_flags:Launched')],
                 resume=resume,
                 session_id=session_id,
                 fork_session=resume is not None,
             )
-    [(_, new, untitled), (_, fork, title)] = Recorder.seen
-    assert (new, untitled) == (NEW_ID, None)
-    assert fork not in (NEW_ID, saved.conversation_id) and title == 'earlier work'
+    [new, fork, plain] = Launched.seen
+    assert new == (NEW_ID, None, True)
+    assert fork[0] not in (NEW_ID, saved.conversation_id) and fork[1:] == ('earlier work', True)
+    assert plain[1:] == (None, False)
+
+
+async def test_fork_keeps_the_interrupted_warning(tmp_path: Path) -> None:
+    session = session_in(tmp_path)
+    store = session.conversations
+    assert store is not None
+    interrupted = await store.save(summary=replace(session.summary, outcome='failed'), messages=[])
+    context = CommandContext(
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        apply_setting=lambda key, settings: None,
+    )
+    notice = await Sessions(session=session_in(tmp_path), store=store, context=context).start(
+        resume=interrupted.id, fork=True
+    )
+    assert 'Interrupted session' in notice and 'Forked' in notice
 
 
 async def test_headless_fork(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

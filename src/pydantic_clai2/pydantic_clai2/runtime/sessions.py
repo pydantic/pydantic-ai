@@ -41,6 +41,8 @@ class Sessions(Generic[DepsT, OutputT]):
         self.session = session
         self.store = store
         self.context = context
+        self.chosen = False
+        """Whether launch options picked the conversation; see `SessionStart.conversation_chosen`."""
         self.quiet: Callable[[], AbstractAsyncContextManager[None]] = bare_screen
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
         self.namer = SessionNamer(
@@ -82,16 +84,18 @@ class Sessions(Generic[DepsT, OutputT]):
         return report
 
     async def start(self, *, resume: str | None, session_id: str | None = None, fork: bool = False) -> str:
-        """Apply the launch options, before plugins load, and return the notice to show.
+        """Apply the launch options and return the notice to show.
 
         `resume` restores a conversation (`''` opens the browser). With `fork`, a restored one is
         copied to `session_id`, or a random ID; otherwise `session_id` names the new conversation.
         """
         notice = await self.command([resume] if resume else []) if resume is not None else ''
         if fork and notice:
-            return await self.session.fork(session_id)
-        if session_id is not None:
+            # Keep the resume notice: it warns about an interrupted session, which the copy no longer records.
+            notice = f'{notice}\n{await self.session.fork(session_id)}'
+        elif session_id is not None:
             await self.session.clear(session_id)
+        self.chosen = self.chosen or bool(notice) or session_id is not None
         return notice
 
     async def command(self, args: list[str]) -> str:

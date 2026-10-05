@@ -1630,7 +1630,7 @@ Six `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
-| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings` | no |
+| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |

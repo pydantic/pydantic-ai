@@ -255,7 +255,7 @@ The CLAI moments are async methods returning None:
 
 | Method | Event | Use |
 | --- | --- | --- |
-| on_session_start | SessionStart(agent, settings) | Initialize session resources |
+| on_session_start | SessionStart(agent, settings, conversation_chosen) | Initialize session resources |
 | on_session_end | SessionEnd(reason) | Clean up; reason is exit, eof, or error |
 | on_turn_start | TurnStart(text) | Rewrite event.text or event.cancel() |
 | on_turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
