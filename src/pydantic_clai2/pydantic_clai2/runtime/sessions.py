@@ -121,6 +121,9 @@ class Sessions(Generic[DepsT, OutputT]):
         selected = await run_worker(browse)
         if not selected:
             return ''
+        if self.session.running:
+            # The browser opens mid-turn, but a running conversation cannot be swapped out.
+            return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.session.resume(selected, allow_other_workspace=True)
 
 
