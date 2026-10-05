@@ -47,7 +47,6 @@ from . import _invariants
 from ._invariants import SimulatedToolError
 from ._loop import SimulatedLoop, SimulationStuck
 from ._truth import GroundTruth
-from ._wire import SendFault
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -243,12 +242,6 @@ class Simulation(ABC):
     def expected_requests(self) -> int | None:
         """What `usage.requests` should be, if not one per recorded response (a model reporting requests with usage)."""
         return None
-
-    @property
-    @abstractmethod
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        """`(frame, last frame read, fault)` for every send a fault failed."""
-        ...
 
     # --- lifecycle ------------------------------------------------------------------------------
 

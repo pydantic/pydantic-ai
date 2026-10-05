@@ -3,8 +3,8 @@
 import asyncio
 import math
 import sys
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
@@ -56,7 +56,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.runtime._session import Session, StockAgent
+from pydantic_clai2.runtime._session import Session, StockAgent, current_session_id
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
@@ -212,7 +212,10 @@ async def chat(
                     async with create_task_group() as workers:
                         workers.start_soon(shell.sessions.namer.run)
                         try:
-                            with transcript.capture(console):
+                            with (
+                                transcript.capture(console),
+                                shell.defer_identity() if resume is not None else nullcontext(),
+                            ):
                                 await shell.loader.load_all(fresh=fresh)
                                 _report_project_plugins(shell.loader, console)
                                 if resume is not None:
@@ -525,6 +528,7 @@ def create_shell(
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
+        session_id=lambda: shell.session_id,
         status=status,
         enabled=load_plugins,
     )
@@ -550,6 +554,8 @@ def create_shell(
                 _PLUGINS_OFF if not loader.enabled else loader.command(args) if args else open_plugins_menu(loader)
             ),
             complete=lambda args: _PLUGIN_ACTIONS if len(args) <= 1 else (entry.name for entry in loader.entries()),
+            during_turn=True,
+            args_during_turn=True,
         )
     )
     for plugin in plugins:
@@ -647,6 +653,21 @@ class _Shell(Generic[DepsT, OutputT]):
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
+    _identity_pending: bool = field(default=False, init=False)
+
+    @property
+    def session_id(self) -> str | None:
+        """The active saved ID, unavailable while startup is choosing a conversation to resume."""
+        return None if self._identity_pending else current_session_id() or self.session.summary.id
+
+    @contextmanager
+    def defer_identity(self) -> Generator[None]:
+        """Keep startup telemetry unassigned until the requested conversation is selected."""
+        self._identity_pending = True
+        try:
+            yield
+        finally:
+            self._identity_pending = False
 
     def __post_init__(self) -> None:
         self.tasks = Tasks(
@@ -696,7 +717,7 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model = model or self.session.model
         child.tool_retries = self.session.tool_retries
         child.resolve_model = self.session.resolve_model
-        child.model_settings = self.context.model_settings(child.model or _model_label(self.agent))
+        child.model_settings = self.context.live_model_settings(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
         return child
 
@@ -812,14 +833,18 @@ class _Shell(Generic[DepsT, OutputT]):
         return True
 
     async def _run_mid_turn(self, text: str) -> None:
-        if self.plugins_busy(text):
-            # `/plugins` is not a `during_turn` command, so `run_now` never hands it over.
-            return  # pragma: no cover
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
+            if self.plugins_busy(text):
+                return
             with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
                 await _execute_command(self.commands, text, console=self.console, status=self.status)
+            self._show_status_segments()
+
+    def _show_status_segments(self) -> None:
+        """Paint the status segments of the plugins loaded now."""
+        self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
 
     async def _rewind(self) -> None:
         assert self.editor is not None
@@ -843,7 +868,7 @@ class _Shell(Generic[DepsT, OutputT]):
                     self.status.context_alert = False
                 self.status.model = model
                 self.status.workspace = self.session.workspace
-                self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
+                self._show_status_segments()
                 if self.editor is not None:
                     text = await self.editor.read()
                 else:
@@ -964,7 +989,7 @@ class _Shell(Generic[DepsT, OutputT]):
         self.session.plugins = self.run_plugins()
         model = self.session.model or _model_label(self.agent)
         try:
-            self.session.model_settings = self.context.model_settings(model)
+            self.session.model_settings = self.context.live_model_settings(model)
         except ValidationError as exc:
             self.console.print(
                 f'Invalid saved model settings for {model}. Fix or reset them with /model settings {model}.',
@@ -982,12 +1007,14 @@ class _Shell(Generic[DepsT, OutputT]):
             except Exception as exc:  # noqa: BLE001 -- report a failed headless turn to the CLI.
                 return TurnEnd(text=start.text, outcome='failed', error=exc)
             return TurnEnd(text=start.text, outcome='completed', result=result)
-        # Menus open mid-turn only after this turn has captured its settings; session changes
-        # they save apply once it ends. A menu still open when it ends delays the next prompt.
+        # Menus open mid-turn only after this turn has captured its settings and plugins; session
+        # changes they save apply once it ends, as does the teardown of plugins they unload, while
+        # this model's saved settings reach its next request. A menu still open when it ends delays
+        # the next prompt.
         ended = TurnEnd(text=start.text, outcome='cancelled')
-        with self.session_settings.turn():
+        with self.session_settings.turn(), self.speculation.turn():
             send, receive = create_memory_object_stream[str](math.inf)
-            async with create_task_group() as mid_turn:
+            async with self.loader.turn(), create_task_group() as mid_turn:
                 mid_turn.start_soon(self._serve_mid_turn, receive)
                 self._mid_turn_commands = send
                 try:
@@ -1114,7 +1141,13 @@ async def _run_prompt(
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
 
+    def context_window(window: int) -> None:
+        # The `compaction` gauge, when loaded, already measured this request, honouring its override.
+        if status.context_window is None:
+            status.context_window = window
+
     session.on_context_usage = context_usage
+    session.on_context_window = context_window
     session.on_stream_event = observe
     status_line = StatusLine(console, status, enabled=screen.editor is None, spinner=spinner)
 
@@ -1156,4 +1189,5 @@ async def _run_prompt(
         status.activity = 'ready'
         status.cost = session_usage(session.messages).total.cost
         session.on_context_usage = None
+        session.on_context_window = None
         await renderer.finish()

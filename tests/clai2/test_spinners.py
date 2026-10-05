@@ -414,13 +414,17 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
         plain = Text.from_ansi(title).plain
         if width == 80:
             frame = BUILTIN_SPINNERS['binary'].frames[0]
-            # An empty queue has nothing to steer, so the title carries no queue hints.
+            # An empty queue and draft have nothing to steer, so the title carries no queue hints.
             assert plain.rstrip('─') == f' Working {frame} '
             assert f'{accent}{frame}' in title
+            hint = f' Working {frame} | Enter: queue | Alt+Enter: steer '
+            live.buffer.replace('typed')
+            assert Text.from_ansi(live.frame()[0]).plain.startswith(hint)
+            live.buffer.replace('')
             live.submit('follow up')
             follow_up, plain = (Text.from_ansi(row).plain for row in live.frame()[:2])
             assert follow_up == 'Follow-up: follow up'
-            assert plain.startswith(f' Working {frame} | Enter: queue | Alt+Enter: steer queued ')
+            assert plain.startswith(hint)
         else:
             # Too narrow to show the whole frame: nothing is highlighted rather than half a frame.
             assert plain.startswith(' Working') and accent not in title
