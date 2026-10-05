@@ -581,7 +581,9 @@ While a turn is running, `/set`, `/model`, `/add_model`, `/model_settings`,
 instead of queueing. The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
-running turn ends. With arguments, these commands queue like any other.
+running turn ends. `/model_settings` edits to the running model apply to its
+next model request in the same turn. With arguments, these commands queue like
+any other.
 
 `run.tool_retries` sets the default retry budget per tool call, starting at `3`.
 Use a non-negative integer; `0` disables retries. Changes apply to the next turn.
@@ -641,7 +643,8 @@ model without changing the active model. Esc returns from settings to this list;
 Esc again closes it. `/model_settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
 `Ctrl+S` in `/add_model` opens the same editor. Edits save immediately and apply
-on the next prompt. `r` resets a field; Esc or Ctrl-C goes back. Fixed choices
+from the model's next request, even in a running turn. `r` resets a field; Esc
+or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
 First add `openai-codex:gpt-6-astra` with `/add_model`, then open `/model_settings openai-codex:gpt-6-astra`

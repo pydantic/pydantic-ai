@@ -699,7 +699,7 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model = model or self.session.model
         child.tool_retries = self.session.tool_retries
         child.resolve_model = self.session.resolve_model
-        child.model_settings = self.context.model_settings(child.model or _model_label(self.agent))
+        child.model_settings = self.context.live_model_settings(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
         return child
 
@@ -964,7 +964,7 @@ class _Shell(Generic[DepsT, OutputT]):
         self.session.plugins = self.run_plugins()
         model = self.session.model or _model_label(self.agent)
         try:
-            self.session.model_settings = self.context.model_settings(model)
+            self.session.model_settings = self.context.live_model_settings(model)
         except ValidationError as exc:
             self.console.print(
                 f'Invalid saved model settings for {model}. Fix or reset them with /model_settings {model}.',
@@ -983,7 +983,8 @@ class _Shell(Generic[DepsT, OutputT]):
                 return TurnEnd(text=start.text, outcome='failed', error=exc)
             return TurnEnd(text=start.text, outcome='completed', result=result)
         # Menus open mid-turn only after this turn has captured its settings; session changes
-        # they save apply once it ends. A menu still open when it ends delays the next prompt.
+        # they save apply once it ends, while this model's saved settings reach its next request.
+        # A menu still open when it ends delays the next prompt.
         ended = TurnEnd(text=start.text, outcome='cancelled')
         with self.session_settings.turn():
             send, receive = create_memory_object_stream[str](math.inf)

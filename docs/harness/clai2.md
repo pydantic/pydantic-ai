@@ -216,7 +216,9 @@ While a turn is running, `/set`, `/model`, `/add_model`, `/model_settings`,
 instead of queueing. The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
-running turn ends. With arguments, these commands queue like any other.
+running turn ends. `/model_settings` edits to the running model apply to its
+next model request in the same turn. With arguments, these commands queue like
+any other.
 
 ## Models and their settings
 

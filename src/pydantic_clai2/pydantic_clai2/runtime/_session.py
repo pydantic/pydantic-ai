@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from anyio import get_cancelled_exc_class, move_on_after
 
-from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai import Agent, AgentModelSettings, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -26,7 +26,6 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputSpec
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
@@ -199,7 +198,8 @@ class Session(Generic[DepsT, OutputT]):
             SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
         )
         self.model: str | None = None
-        self.model_settings: ModelSettings | None = None
+        self.model_settings: AgentModelSettings[DepsT] | None = None
+        """Passed to each run; a callable is resolved before every model request, so it can change mid-run."""
         self.tool_retries: int | None = None
         self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name
         self.agent = agent
