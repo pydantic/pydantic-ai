@@ -351,9 +351,8 @@ class Session(Generic[DepsT, OutputT]):
                 candidate = replace(self.summary, run_id=run_id, owner_pid=os.getpid(), model=self.model)
                 if self.conversations is not None:
                     if self.summary.revision == 0:
-                        title = ' '.join(''.join(c for c in (text or '') if c.isprintable() or c.isspace()).split())[
-                            :64
-                        ]
+                        printable = ''.join(c for c in (text or '') if c.isprintable() or c.isspace())
+                        title = ' '.join(printable.split())[:64]
                         candidate = replace(candidate, title=title or 'New session')
                     accepted: list[ModelMessage] = [*previous, *submitted]
                     self.summary = await self.conversations.save(
