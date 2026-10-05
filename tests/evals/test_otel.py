@@ -26,6 +26,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
+    from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import AttributeValue, SpanNode, SpanQuery, SpanTree
 
 with try_import() as logfire_import_successful:
@@ -1130,6 +1131,29 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'refer to the documentation at '
         'https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
     )
+
+
+async def test_run_task_without_span_capture_when_task_raises(mocker: MockerFixture):
+    """`run_task` records no span metrics when a failing task has no span tree to extract them from.
+
+    Without a span-capturing tracer provider `context_subtree()` yields a `SpanTreeRecordingError`
+    rather than a `SpanTree`, so there is nothing to extract and the original error still propagates.
+    """
+    from opentelemetry.trace import ProxyTracerProvider
+
+    from pydantic_evals._task_run import CURRENT_TASK_RUN, run_task
+
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
+    )
+    with pytest.raises(RuntimeError, match='boom'):
+        with run_task() as get_eval_context_kwargs:
+            raise RuntimeError('boom')
+
+    kwargs = get_eval_context_kwargs()  # pyright: ignore[reportPossiblyUnboundVariable]
+    assert isinstance(kwargs['_span_tree'], SpanTreeRecordingError)
+    assert kwargs['metrics'] == {}
+    assert CURRENT_TASK_RUN.get() is None
 
 
 async def test_context_subtree_finalizes_tree_on_exception():
