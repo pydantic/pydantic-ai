@@ -354,7 +354,7 @@ background. Browsing does not apply a palette or save a setting. Enter confirms;
 Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
-status, and diff highlighting. Starting and exiting with this choice leaves your
+and status. Its diffs use green additions and red deletions. Starting and exiting with this choice leaves your
 terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
@@ -457,7 +457,7 @@ repeated completion heading before the diff or output.
 
 Native capability events drive specialized output: `FileEditedEvent` renders its
 bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
-uses. The default appearance keeps CLAI's existing addition and deletion
+uses. The default appearance uses Claude Code's green addition and red deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code syntax colours retain the Monokai default. Successful file writes also show the proposed diff from their matching
 `FileChangeRequestEvent`: new files show additions, overwrites show before/after
