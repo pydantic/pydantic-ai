@@ -2155,8 +2155,8 @@ model or replays a tool. Call it between turns, for example from `on_session_sta
 conversation saved in another directory or still running in another process. Every loaded
 plugin, the caller included, then receives `on_conversation_changed`, and the status row
 starts afresh. An in-memory `Transcript` has nothing saved, so its `resume` raises
-`LookupError`. `host.status` is the footer's state: `context_tokens` and `context_window` render as compact used/max, such as
-`128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
+`LookupError`. `host.status` is the footer's state: `context_tokens` and
+`context_window` render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
 not an assumed fallback. Set `context_alert` to paint the figure in the warning
 colour. The built-in `compaction` plugin fills these fields from Harness usage
 events, including an explicit window override, and clears the window when unloaded. A host built outside the shell gets an in-memory
