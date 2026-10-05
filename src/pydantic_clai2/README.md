@@ -291,7 +291,7 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
 `/new` starts a new saved conversation, without deleting the previous one or
-input recall. `/clear`, or bare `clear`, is an alias of `/new`. Model responses and tool results are not saved to this file.
+input recall. `/clear`, or bare `clear`, does the same and also clears the screen back to the startup banner. Model responses and tool results are not saved to this file.
 
 ## CI coverage
 

@@ -5,7 +5,7 @@ import math
 import sys
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -184,14 +184,8 @@ async def chat(
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
-        console.print()
-        print_banner(console)
-        console.print(
-            '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
-            style=theme.color(theme.MUTED),
-        )
         project = project or ProjectSettings()
-        _report_project(project, console)
+        _print_welcome(project, console)
         use_defaults = builtin_plugins is DEFAULT_PLUGINS
         use_stock_defaults = builtin_plugins is STOCK_PLUGINS
         shell = create_shell(
@@ -354,6 +348,7 @@ def create_shell(
     """Build shared session services, without attaching terminal input in headless mode."""
     settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
     store = store or SettingsStore()
+    transcript = transcript if transcript is not None else TranscriptBuffer()
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
     session = Session(
         agent,
@@ -479,13 +474,26 @@ def create_shell(
         Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
     )
 
-    new_command = Command(
-        name='new',
-        description='Start a new session; preserve the previous session',
-        handler=lambda _: session.clear() or 'New session started. Previous session remains saved.',
+    new_session = 'New session started. Previous session remains saved.'
+
+    def clear(_: list[str]) -> str:
+        session.clear()
+        console.clear()
+        # Forget the old conversation too, or the next resize would replay it.
+        transcript.clear()
+        _print_welcome(project, console)
+        return ''
+
+    commands.register(
+        Command(
+            name='new',
+            description='Start a new session; preserve the previous session',
+            handler=lambda _: session.clear() or new_session,
+        )
     )
-    commands.register(new_command)
-    commands.register(replace(new_command, name='clear', description='Alias of /new'))
+    commands.register(
+        Command(name='clear', description='Like /new, and also clear the screen back to the banner', handler=clear),
+    )
     commands.register(
         Command(
             name='usage',
@@ -586,7 +594,7 @@ def create_shell(
         status=status,
         prompt=prompt,
         history=history,
-        transcript=transcript if transcript is not None else TranscriptBuffer(),
+        transcript=transcript,
         images=images,
         interrupts=Interrupts(),
         screen=screen,
@@ -1007,6 +1015,17 @@ class _Shell(Generic[DepsT, OutputT]):
                     self._mid_turn_commands = None
                     send.close()
         return ended
+
+
+def _print_welcome(project: ProjectSettings, console: Console) -> None:
+    """The banner and hints a fresh launch shows, which `/clear` returns to."""
+    console.print()
+    print_banner(console)
+    console.print(
+        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
+        style=theme.color(theme.MUTED),
+    )
+    _report_project(project, console)
 
 
 def _report_project(project: ProjectSettings, console: Console) -> None:
