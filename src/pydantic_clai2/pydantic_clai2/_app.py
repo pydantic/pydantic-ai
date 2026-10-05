@@ -184,14 +184,8 @@ async def chat(
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
-        console.print()
-        print_banner(console)
-        console.print(
-            '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
-            style=theme.color(theme.MUTED),
-        )
         project = project or ProjectSettings()
-        _report_project(project, console)
+        _print_welcome(project, console)
         use_defaults = builtin_plugins is DEFAULT_PLUGINS
         use_stock_defaults = builtin_plugins is STOCK_PLUGINS
         shell = create_shell(
@@ -487,7 +481,8 @@ def create_shell(
         console.clear()
         # Forget the old conversation too, or the next resize would replay it.
         transcript.clear()
-        return new_session
+        _print_welcome(project, console)
+        return ''
 
     commands.register(
         Command(
@@ -497,7 +492,7 @@ def create_shell(
         )
     )
     commands.register(
-        Command(name='clear', description='Like /new, and also clear the screen', handler=clear),
+        Command(name='clear', description='Like /new, and also clear the screen back to the banner', handler=clear),
     )
     commands.register(
         Command(
@@ -1020,6 +1015,17 @@ class _Shell(Generic[DepsT, OutputT]):
                     self._mid_turn_commands = None
                     send.close()
         return ended
+
+
+def _print_welcome(project: ProjectSettings, console: Console) -> None:
+    """The banner and hints a fresh launch shows, which `/clear` returns to."""
+    console.print()
+    print_banner(console)
+    console.print(
+        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
+        style=theme.color(theme.MUTED),
+    )
+    _report_project(project, console)
 
 
 def _report_project(project: ProjectSettings, console: Console) -> None:

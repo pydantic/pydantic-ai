@@ -59,9 +59,7 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
 
 
 @pytest.mark.parametrize('command', ['/clear', 'clear'])
-async def test_clear_resets_the_screen_and_replay_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
-) -> None:
+async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     surfaces: list[PromptSurface] = []
 
     class Surface(PromptSurface):
@@ -79,9 +77,10 @@ async def test_clear_resets_the_screen_and_replay_cache(
             console=Console(file=output, force_terminal=True, width=80, height=24),
             store=SettingsStore(tmp_path / 'config.db'),
         )
-    written = output.getvalue()
-    assert written.index('> hello') < written.index('\x1b[2J\x1b[H') < written.index('New session started.')
+    before, after = output.getvalue().split('\x1b[2J\x1b[H')
+    assert '> hello' in before
+    assert '/new starts a session' in Text.from_ansi(after).plain
     text = '\n'.join(Text.from_ansi(row).plain for row in surfaces[0].transcript.frame(width=200, height=200).rows)
-    assert 'New session started.' in text
+    assert text.count('/new starts a session') == 1
     assert '> hello' not in text
-    assert '/new starts a session' not in text
+    assert 'New session started.' not in text
