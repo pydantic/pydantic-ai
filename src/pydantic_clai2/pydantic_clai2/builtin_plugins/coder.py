@@ -210,8 +210,9 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         skills = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
         try:
             catalog = await skills.load(LocalWorkspaceBackend(Path(await anyio.Path.cwd())))
-        except (UserError, ValueError) as exc:
-            # A misconfigured folder would otherwise fail every turn; leave skills out instead.
+        except (UserError, ValueError, OSError) as exc:
+            # A misconfigured or unreadable folder would otherwise fail every turn, or the whole plugin, so
+            # skills are left out and the file and shell tools still load.
             self._skill_notices = (f'Skills are off: {exc}',)
             return
         self._skills = skills

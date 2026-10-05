@@ -207,6 +207,18 @@ class TestSkillCatalog:
         assert '\x1b' not in output.getvalue()
         assert 'bad\\x1bc' in output.getvalue()
 
+    async def test_an_unreadable_folder_turns_skills_off_but_keeps_coder(self, project: Path) -> None:
+        library = project / '.agents' / 'skills'
+        write_skill(library, 'review')
+        library.chmod(0)
+        try:
+            loaded, output = await load_coder()
+        finally:
+            library.chmod(0o755)
+
+        assert [type(capability) for capability in loaded.capabilities] == [Coder]
+        assert output.getvalue().startswith('Skills are off: [Errno 13] Permission denied')
+
     async def test_a_misconfigured_folder_turns_skills_off_with_a_notice(self, project: Path) -> None:
         write_skill(project / 'skills', 'review')
         loaded, output = await load_coder({'skill_folders': ['skills/review']})

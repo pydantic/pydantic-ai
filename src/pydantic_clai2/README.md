@@ -1276,7 +1276,12 @@ The model's catalog is read at the start of every turn, so it lists a skill you
 add mid-session. Its `/command` arrives after `/reload` or
 `/plugins reload coder`. Choose different folders in `/plugins configure coder`
 under **Skill folders**, as a JSON list of paths; `~/` means your home directory
-and `[]` turns skills off.
+and `[]` turns skills off. A folder CLAI cannot read turns skills off for the
+session with a notice; the coding tools still load.
+
+Skill commands are read on this machine. With a plugin that runs the agent in a
+sandbox, the model's catalog is read from the sandbox's workspace instead, so the
+two can differ.
 
 ## Bring an agent
 
