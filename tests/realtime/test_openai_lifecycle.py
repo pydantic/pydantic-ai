@@ -924,8 +924,8 @@ def test_a_failed_commit_drops_only_what_it_noted() -> None:
     lifecycle.message_sent(0)
     first = lifecycle.audio_commit_sent()
     second = lifecycle.audio_commit_sent()
-    lifecycle.audio_commit_failed(first)
-    assert list(lifecycle._sent_before_commits) == [second]  # pyright: ignore[reportPrivateUsage]
-    lifecycle.socket_replaced()
     lifecycle.audio_commit_failed(second)
+    assert list(lifecycle._sent_before_commits) == [first]  # pyright: ignore[reportPrivateUsage]
+    lifecycle.socket_replaced()
+    lifecycle.audio_commit_failed(first)
     assert not lifecycle._sent_before_commits  # pyright: ignore[reportPrivateUsage]
