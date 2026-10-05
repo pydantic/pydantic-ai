@@ -695,6 +695,9 @@ class TestSkillsLoad:
         catalog = await Skills('skills', workspace=LocalWorkspaceBackend(tmp_path)).load()
 
         assert [skill.name for skill in catalog.skills] == ['review']
+        # As `load_capability` does, `render` leaves out a directory the model's tools cannot reach.
+        assert catalog.skills[0].in_run_workspace is False
+        assert catalog.skills[0].render('app.py') == '# Skill: review\n\nFollow these directions.\n\nARGUMENTS: app.py'
 
     async def test_load_needs_a_workspace_for_the_runs_libraries(self) -> None:
         with pytest.raises(UserError, match=r'`Skills.load\(\)` needs the workspace the libraries are in'):

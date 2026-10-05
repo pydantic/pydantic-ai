@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import get_args, overload
 
@@ -19,10 +19,9 @@ from pydantic_ai_harness.skills._loader import (
     MissingDirectories,
     SkillCatalog,
     SkillDefinition,
-    duplicate_name,
     load_skill_libraries,
-    render_skill,
     same_skill,
+    skip_duplicate_name,
 )
 
 _MAX_DESCRIPTION_LENGTH = 1024
@@ -47,12 +46,12 @@ class _Skill(AbstractCapability[AgentDepsT]):
     Instructions only, with no toolset, so a durable engine accepts it although it is built per run.
     """
 
-    def __init__(self, skill: SkillDefinition, *, with_directory: bool) -> None:
+    def __init__(self, skill: SkillDefinition) -> None:
         self.id = skill.name
         # Continuation lines are indented so a multiline description doesn't read as separate catalog entries.
         self.description = skill.description.replace('\n', '\n  ')
         self.defer_loading = True
-        self.instructions = render_skill(skill, None, with_directory=with_directory)
+        self.instructions = skill.render()
 
     def get_instructions(self) -> str:
         return self.instructions
@@ -232,15 +231,10 @@ class Skills(AbstractCapability[AgentDepsT]):
         """
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
-        loaded, skipped = await self._load(ctx.workspace)
-        for message in (*skipped, *self._advice(tuple(skill for skill, _ in loaded))):
+        catalog = await self._load(ctx.workspace)
+        for message in (*catalog.skipped, *self._advice(catalog.skills)):
             warnings.warn(message, UserWarning, stacklevel=2)
-        if not loaded:
-            return self
-        # A library read from `workspace=` is not where the model's file tools work, so its path is left out.
-        return CombinedCapability(
-            [_Skill[AgentDepsT](skill, with_directory=from_run_workspace) for skill, from_run_workspace in loaded]
-        )
+        return CombinedCapability([_Skill[AgentDepsT](skill) for skill in catalog.skills]) if catalog.skills else self
 
     async def load(self, workspace: WorkspaceBackend | None = None) -> SkillCatalog:
         """Read the selected skills now, as a run does at its start, without emitting warnings.
@@ -263,12 +257,10 @@ class Skills(AbstractCapability[AgentDepsT]):
             raise UserError(
                 '`Skills.load()` needs the workspace the libraries are in, such as `LocalWorkspaceBackend(".")`.'
             )
-        loaded, skipped = await self._load(run_workspace)
-        return SkillCatalog(skills=tuple(skill for skill, _ in loaded), skipped=tuple(skipped))
+        return await self._load(run_workspace)
 
-    async def _load(self, run_workspace: Workspace | None) -> tuple[list[tuple[SkillDefinition, bool]], list[str]]:
-        """Each selected skill, with whether it came from the run's workspace, and what was skipped."""
-        by_name: dict[str, tuple[Workspace, SkillDefinition, bool]] = {}
+    async def _load(self, run_workspace: Workspace | None) -> SkillCatalog:
+        by_name: dict[str, tuple[Workspace, SkillDefinition]] = {}
         messages: list[str] = []
         for source in self._sources:
             workspace = source.workspace or run_workspace
@@ -285,12 +277,15 @@ class Skills(AbstractCapability[AgentDepsT]):
             for skill in skills:
                 previous = by_name.get(skill.name)
                 if previous is None:
-                    by_name[skill.name] = (workspace, skill, source.workspace is None)
+                    # A library read from `workspace=` is not where the model's file tools work.
+                    by_name[skill.name] = (workspace, replace(skill, in_run_workspace=source.workspace is None))
                     continue
-                previous_workspace, previous_skill, _ = previous
+                previous_workspace, previous_skill = previous
                 if not await same_skill((previous_workspace, previous_skill.path), (workspace, skill.path)):
-                    messages.append(duplicate_name(skill.name, previous_skill.path, skill.path, source.duplicate_names))
-        return [(skill, from_run_workspace) for _, skill, from_run_workspace in by_name.values()], messages
+                    messages.append(
+                        skip_duplicate_name(skill.name, previous_skill.path, skill.path, source.duplicate_names)
+                    )
+        return SkillCatalog(skills=tuple(skill for _, skill in by_name.values()), skipped=tuple(messages))
 
     @staticmethod
     def _advice(definitions: tuple[SkillDefinition, ...]) -> list[str]:

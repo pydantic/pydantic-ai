@@ -91,6 +91,12 @@ class SkillDefinition:
     path: str
     """Absolute workspace path of the `SKILL.md` it was read from."""
 
+    in_run_workspace: bool = True
+    """Whether it was read from the run's workspace, where the model's file and shell tools can reach its directory.
+
+    `False` for a library read from `Skills(workspace=...)`; `render` then leaves the directory out.
+    """
+
     @property
     def directory(self) -> str:
         """Absolute workspace path of the skill's directory, which holds any `scripts/` or `references/`."""
@@ -102,25 +108,20 @@ class SkillDefinition:
         Pass `arguments` when a user invokes the skill with a command such as `/code-review src/app.py`:
         every `$ARGUMENTS` in the body becomes `arguments`, and a body without `$ARGUMENTS` gets
         `ARGUMENTS: <arguments>` appended. Other placeholders, such as Claude Code's indexed `$0`, are
-        left unchanged. Without `arguments`, the body is unchanged, as the model loads it.
+        left unchanged. Without `arguments`, the result is what `load_capability` returns.
 
-        The directory is a path in the workspace the skill was read from.
+        The directory line is left out unless `in_run_workspace`.
         """
-        return render_skill(self, arguments, with_directory=True)
-
-
-def render_skill(skill: SkillDefinition, arguments: str | None, *, with_directory: bool) -> str:
-    """`SkillDefinition.render`, optionally without the directory line, for a directory the model cannot reach."""
-    body = skill.body
-    if arguments is not None:
-        if _ARGUMENTS_PLACEHOLDER in body:
-            body = body.replace(_ARGUMENTS_PLACEHOLDER, arguments)
-        elif arguments:
-            body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
-    heading = f'# Skill: {skill.name}'
-    if with_directory:
-        heading += f'\n\nSkill directory: `{skill.directory}`. Relative paths in this skill resolve against it.'
-    return f'{heading}\n\n{body}' if body else heading
+        body = self.body
+        if arguments is not None:
+            if _ARGUMENTS_PLACEHOLDER in body:
+                body = body.replace(_ARGUMENTS_PLACEHOLDER, arguments)
+            elif arguments:
+                body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
+        heading = f'# Skill: {self.name}'
+        if self.in_run_workspace:
+            heading += f'\n\nSkill directory: `{self.directory}`. Relative paths in this skill resolve against it.'
+        return f'{heading}\n\n{body}' if body else heading
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -263,7 +264,7 @@ async def same_skill(first: tuple[Workspace, str], second: tuple[Workspace, str]
     return await first_workspace.read_bytes(first_path) == await second_workspace.read_bytes(second_path)
 
 
-def duplicate_name(name: str, kept: str, skipped: str, duplicate_names: DuplicateNames) -> str:
+def skip_duplicate_name(name: str, kept: str, skipped: str, duplicate_names: DuplicateNames) -> str:
     """The warning for `skipped`, whose name an earlier `SKILL.md`, `kept`, has; raises when duplicates are errors."""
     if duplicate_names == 'error':
         raise ValueError(f'Duplicate skill name {name!r}: {kept} and {skipped}.')
@@ -354,7 +355,7 @@ async def load_skill_libraries(
         if (previous := by_name.get(skill.name)) is None:
             by_name[skill.name] = skill
         elif not await same_skill((workspace, previous.path), (workspace, skill_file)):
-            skipped.append(duplicate_name(skill.name, previous.path, skill_file, duplicate_names))
+            skipped.append(skip_duplicate_name(skill.name, previous.path, skill_file, duplicate_names))
     return list(by_name.values()), skipped
 
 
