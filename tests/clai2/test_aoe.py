@@ -103,10 +103,12 @@ class Fixture:
             if name == 'status' and content == expected:
                 return
 
-    async def write(self, expected: str) -> None:
-        """Wait until the plugin writes the file `expected`, whatever its content."""
-        while (await asyncio.wait_for(self.writes.get(), timeout=10))[0] != expected:
-            pass
+    async def write(self, expected: str, content: str | None = None) -> None:
+        """Wait until the plugin writes the file `expected`, with `content` when given."""
+        while True:
+            name, written = await asyncio.wait_for(self.writes.get(), timeout=10)
+            if name == expected and content in (None, written):
+                return
 
     async def aoe(self, command: str) -> tuple[str, ...]:
         """Wait until the plugin runs `aoe ... <command> ...`."""
@@ -334,7 +336,7 @@ async def test_states_session_and_title(env: Fixture, tmp_path: Path) -> None:
     await env.aoe('rename')
     assert env.renames() == ['--title=Fix the parser', '--title=Parser fix']
     await session.clear()
-    await env.write('mapping')
+    await env.write('mapping', session.conversation_id)
     assert (env.directory / 'session_id').read_text() == session.conversation_id + '\n'
     assert mapping.read_text() == session.conversation_id + '\n'
     assert not list(env.directory.glob('.*.tmp'))
@@ -457,7 +459,7 @@ async def test_restarted_pane_resumes_its_conversation(env: Fixture, tmp_path: P
     # `--session-id` chose an empty conversation, which wins.
     named = make_session(tmp_path)
     loaded = await load(named, chosen=True)
-    await env.write('mapping')
+    await env.write('mapping', named.conversation_id)
     assert named.messages == []
     assert (env.state / INSTANCE).read_text() == named.conversation_id + '\n'
     await loaded.dispatch(SessionEnd(reason='exit'))
@@ -468,7 +470,7 @@ async def test_restarted_pane_resumes_its_conversation(env: Fixture, tmp_path: P
     explicit = make_session(tmp_path)
     await explicit.resume(other.conversation_id)
     loaded = await load(explicit)
-    await env.write('mapping')
+    await env.write('mapping', other.conversation_id)
     assert explicit.conversation_id == other.conversation_id
     assert (env.state / INSTANCE).read_text() == other.conversation_id + '\n'
     await loaded.dispatch(SessionEnd(reason='exit'))
