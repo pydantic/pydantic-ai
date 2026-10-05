@@ -28,6 +28,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityCreation, CapabilityStore
 from pydantic_ai_harness.localstack import LocalStack
+from pydantic_ai_harness.planning import Planning, SqlitePlanStore
 from tests.conftest import detach_dbos_logging
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
@@ -205,6 +206,7 @@ def _counting_aws_cli() -> str:
 
 
 _CREATION_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_creation_'))
+_PLAN_DATABASE = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_plan_')) / 'plan.db'
 _AUTHORED = """
 from pydantic_ai.capabilities import AbstractCapability
 
@@ -261,6 +263,12 @@ _AGENTS: dict[str, Agent[None, str]] = {
         ('list_authored_capabilities', {}),
         ('disable_authored_capability', {'name': 'marker'}),
     ),
+    'planning': _agent(
+        'planning_agent',
+        Planning[None](store=SqlitePlanStore(database=str(_PLAN_DATABASE))),
+        ('write_plan', {'items': [{'id': 'first', 'content': 'Write the migration'}]}),
+        ('add_task', {'content': 'Run the tests'}),
+    ),
 }
 
 
@@ -291,6 +299,18 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
 
         monkeypatch.setattr(CapabilityStore, method, counted)
 
+    # The plan tools read the store many times; a write is what recovery must not repeat.
+    for method in ('set_items', 'add_item'):
+        original = getattr(SqlitePlanStore, method)
+
+        async def counted_plan(
+            self: SqlitePlanStore, *args: Any, _original: Any = original, _method: str = method
+        ) -> Any:
+            _requests[f'plan.{_method}'] += 1
+            return await _original(self, *args)
+
+        monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
+
     def snapshot() -> Counter[str]:
         counts = Counter(_requests)
         if aws_count.exists():
@@ -311,6 +331,7 @@ _EXPECTED_STEPS: dict[str, Collection[str]] = {
         'capability_creation.list_all',
         'capability_creation.disable',
     ],
+    'planning': ['planning.set_items', 'planning.add_item'],
 }
 
 
