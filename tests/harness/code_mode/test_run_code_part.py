@@ -39,9 +39,8 @@ class RecordRunCode(AbstractCapability[Any]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        narrowed = ToolCallPart.narrow_type(call, tool_kind=tool_def.tool_kind)
-        if isinstance(narrowed, RunCodeCallPart):
-            self.codes.append(narrowed.code)
+        if isinstance(call, RunCodeCallPart):
+            self.codes.append(call.code)
         return await handler(args)
 
 

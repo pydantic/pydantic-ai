@@ -55,7 +55,7 @@ class RunCodeCallPart(ToolCallPart, namespace='code_mode', tool_kind='run_code')
 
     @property
     def typed_args(self) -> RunCodeArgs | None:
-        """The parsed arguments, or `None` while a streamed JSON string is still incomplete."""
+        """The parsed arguments, or `None` if they are incomplete (still streaming) or don't match `RunCodeArgs`."""
         if self.args is None or isinstance(self.args, dict):
             return self.args
         try:
@@ -65,6 +65,6 @@ class RunCodeCallPart(ToolCallPart, namespace='code_mode', tool_kind='run_code')
 
     @property
     def code(self) -> str | None:
-        """The submitted Python code, or `None` while the arguments are still streaming."""
+        """The submitted Python code, or `None` if the arguments are incomplete (still streaming) or malformed."""
         typed = self.typed_args
         return typed['code'] if typed is not None else None
