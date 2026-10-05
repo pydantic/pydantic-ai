@@ -8,6 +8,8 @@ With `token` naming a `/keys` entry, everything goes to that key's Logfire proje
 `configure` opens the settings menu (turning the plugin on, `c` in `/plugins`, or `/plugins configure
 observability`). Each edit is saved at once, and the loader loads the plugin again when the menu closes, so the
 next run uses it. Its first row runs the project setup in `logfire_setup`.
+
+`/logfire optimize` (see `logfire_optimize`) works only after that setup signed in and saved a read token.
 """
 
 import os
@@ -24,8 +26,10 @@ from typing_extensions import Self
 
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_clai2.builtin_plugins.logfire_optimize import Access, OptimizeCommand
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
 from pydantic_clai2.ui import telemetry
@@ -40,6 +44,14 @@ class LogfireAccount(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
     email: str
     token: KeyReference
+
+
+class LogfireReadAccess(BaseModel):
+    """The `/keys` entry holding the read token project setup saved, and the write token saved beside it."""
+
+    model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
+    token: KeyReference
+    write_token: KeyReference
 
 
 class LogfireSettings(BaseModel):
@@ -75,6 +87,39 @@ class LogfireSettings(BaseModel):
         description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions. '
         'With message content included, submitted prompts carry their text.',
     )
+    read_access: LogfireReadAccess | None = Field(
+        default=None,
+        description='Saved by project setup: a read token for the same project, which /logfire optimize reads '
+        'agent runs with only while `token` still names the write token saved beside it.',
+    )
+
+
+NOT_SIGNED_IN = (
+    '/logfire optimize reads your agent runs with the Logfire sign-in from observability setup, and you have not '
+    'signed in there. Run /plugins configure observability and choose Logfire project.'
+)
+NO_READ_TOKEN = (
+    '/logfire optimize needs a read token for the Logfire project traces go to, and CLAI has none saved for it '
+    '(it was set up before this command existed, through LOGFIRE_TOKEN, or Logfire refused one). Run /plugins '
+    'configure observability and choose Logfire project to sign in again.'
+)
+
+
+async def read_access(settings: LogfireSettings) -> Access:
+    """Where `/logfire optimize` reads from, or a `ValueError` saying how to sign in: the hard gate.
+
+    Only a read token saved by this plugin's own setup, beside the write token still in use, counts, so the
+    command never reads a project other than the one traces go to.
+    """
+    if settings.token is None or settings.base_url is None:
+        raise ValueError(NOT_SIGNED_IN)
+    access = settings.read_access
+    if access is None or access.write_token != settings.token:
+        raise ValueError(NO_READ_TOKEN)
+    keys = await to_thread.run_sync(load_keys, abandon_on_cancel=True)
+    if access.token.name not in keys:
+        raise ValueError(f'{access.token.name} is not in /keys. {NO_READ_TOKEN}')
+    return Access(base_url=settings.base_url, read_token=keys[access.token.name].get_secret_value())
 
 
 class LogfirePlugin(Plugin[LogfireSettings]):
@@ -121,11 +166,20 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
         """Tag the identity settings so older builds sharing the database can ignore them."""
-        requires = {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        requires = {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'read_access': ['logfire-read-access'],
+        }
         return cls(host, host.settings(LogfireSettings, requires=requires))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._session_tracing, self.instrumentation)
+
+    def get_commands(self) -> Sequence[Command]:
+        """`/logfire optimize`, which refuses with how to sign in until setup has saved a read token."""
+        settings = self.settings
+        return (OptimizeCommand(host=self.host, access=lambda: read_access(settings)).command(),)
 
     async def configure(self) -> str:
         """The settings menu; its project row runs the setup that signs in and picks where traces go."""
@@ -321,7 +375,7 @@ class LogfireSource:
     def reset(self, row: FieldRow) -> str:
         """Restore one option's default; the project row forgets the chosen key, server, and sign-in email."""
         data = self.settings.model_dump(mode='json')
-        for key in ('token', 'base_url', 'account') if row.key == PROJECT else (row.key,):
+        for key in ('token', 'base_url', 'account', 'read_access') if row.key == PROJECT else (row.key,):
             data.pop(key, None)
         self._host.save_settings(LogfireSettings.model_validate(data))
         return f'Reset {row.label}.'
@@ -346,15 +400,18 @@ SETUP: Callable[[PluginHost[None]], Setup] = _announce
 async def _configure(host: PluginHost[None], setup: Setup) -> str:
     """The setup menu; saving new settings makes the loader load the plugin again, now sending to the project."""
     config = host.settings(LogfireSettings)
-    chosen = await run_setup(setup, current=config.base_url, owned=config.token)
+    owned_read = config.read_access.token if config.read_access else None
+    chosen = await run_setup(setup, current=config.base_url, owned=config.token, owned_read=owned_read)
     if chosen is None:
         return 'Logfire setup cancelled; settings unchanged.'
     # Setting up a project means sending to it, even if sending had been turned off.
     email = chosen.account_email
+    read = chosen.read_token
     update = {
         'token': chosen.token,
         'base_url': chosen.base_url,
         'account': LogfireAccount(email=email, token=chosen.token) if email else None,
+        'read_access': LogfireReadAccess(token=read, write_token=chosen.token) if read else None,
         'send_to_logfire': 'if-token-present',
     }
     host.save_settings(config.model_copy(update=update))
@@ -363,9 +420,14 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         if email
         else 'only that name; Logfire did not share your email'
     )
+    optimize = (
+        f' Its read token, for /logfire optimize, is saved as {read.name}.'
+        if read
+        else ' /logfire optimize stays off without a read token.'
+    )
     return (
         f'Logfire traces now go to {chosen.project.label}. Its write token is saved in /keys as '
-        f'{chosen.token.name}; plugin settings keep {kept}.'
+        f'{chosen.token.name}; plugin settings keep {kept}.{optimize}'
     )
 
 

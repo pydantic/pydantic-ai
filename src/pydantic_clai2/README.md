@@ -1912,6 +1912,41 @@ send the token elsewhere, and sending is turned on if it was off. Choose the row
 again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the
 credentials file.
 
+### Proposing agent improvements
+
+Project setup also tries to create a read token for the same project, saved in
+`/keys` as `LOGFIRE_READ_TOKEN_<ORG>_<PROJECT>`. If Logfire refuses it, tracing
+still works but optimization stays off. For an existing setup, choose **Logfire
+project** again to get the read token.
+
+```text
+/logfire optimize agents
+/logfire optimize preview support
+/logfire optimize propose support don't stop at the first failing test
+```
+
+The command lists named Pydantic AI agents with runs in the last seven days,
+previews up to twelve runs (failures first), and proposes targeted prompt changes,
+with evidence citations and a diff. It also reports things a prompt cannot fix.
+The proposal uses your current session model and costs a model call. It sends
+recorded message content and the recorded system prompt to that model, not your
+Logfire credentials. Use preview before proposing. With content recording off,
+evidence may be too thin to suggest a change.
+
+This is advisory: nothing is applied or saved to the Logfire proposal inbox.
+Logfire's Agent Optimization proposal and evidence-preview routes are private
+web-app APIs. CLAI uses the public `/v1/query` API instead, with the read token
+from observability setup. It does not reproduce scheduled optimization or the
+platform's deeper trace analysis. See [the API notes](docs/logfire-optimization.md).
+
+Only observability's project sign-in enables this command. `LOGFIRE_TOKEN`, SDK
+credentials, and the separate `logfire_mcp` login do not. Without setup it refuses
+with instructions to sign in; disabling observability removes the command.
+Switching the write-token key invalidates the saved read access until setup runs
+again. Resetting **Logfire project** clears that access but leaves the keys in
+`/keys`, where you can delete them. Revoke unwanted tokens in Logfire too.
+Agent names currently cannot contain spaces.
+
 ### Sending UX telemetry to the Pydantic shared project
 
 `@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire

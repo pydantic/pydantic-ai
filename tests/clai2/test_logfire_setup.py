@@ -15,7 +15,7 @@ from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_clai2.builtin_plugins import logfire as logfire_plugin, logfire_setup
-from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings
+from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireReadAccess, LogfireSettings
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError, https_origin
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, save_key
 from pydantic_clai2.plugins import PluginHost, SessionEnd, load_plugin
@@ -48,6 +48,7 @@ class FakeLogfire:
     )
     projects: Answer = field(default_factory=lambda: httpx.Response(200, json=PROJECTS))
     write_token: Answer = field(default_factory=lambda: httpx.Response(200, json={'token': 'pylf_v1_us_write'}))
+    read_token: Answer = field(default_factory=lambda: httpx.Response(200, json={'token': 'pylf_v1_us_read'}))
     requests: list[httpx.Request] = field(default_factory=list[httpx.Request])
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -61,6 +62,8 @@ class FakeLogfire:
             answer = self.account
         elif path == '/v1/writable-projects/':
             answer = self.projects
+        elif path == '/v1/organizations/pydantic/projects/clai2/read-tokens':
+            answer = self.read_token
         else:
             assert path == '/v1/organizations/pydantic/projects/clai2/write-tokens/'
             answer = self.write_token
@@ -171,9 +174,12 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     message = await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
     assert message == (
         'Logfire traces now go to pydantic/clai2. Its write token is saved in /keys as '
-        'LOGFIRE_TOKEN_PYDANTIC_CLAI2; plugin settings keep only that name and the email you signed in with.'
+        'LOGFIRE_TOKEN_PYDANTIC_CLAI2; plugin settings keep only that name and the email you signed in with. '
+        'Its read token, for /logfire optimize, is saved as LOGFIRE_READ_TOKEN_PYDANTIC_CLAI2.'
     )
-    assert load_keys()['LOGFIRE_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v1_us_write'
+    keys = load_keys()
+    assert keys['LOGFIRE_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v1_us_write'
+    assert keys['LOGFIRE_READ_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v1_us_read'
     saved = host.settings(LogfireSettings)
     assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
     # Saved even for a hosted region, so `LOGFIRE_BASE_URL` cannot send this token elsewhere.
@@ -183,14 +189,20 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     assert saved.account == LogfireAccount(
         email='mike@example.com', token=KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
     )
+    assert saved.read_access == LogfireReadAccess(
+        token=KeyReference(name='LOGFIRE_READ_TOKEN_PYDANTIC_CLAI2'),
+        write_token=KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2'),
+    )
     assert harness.lines == [
         'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123'
     ]
     assert harness.opened == ['https://logfire-us.pydantic.dev/auth/dev-123']
-    new, *_, me, listed, minted = harness.server.requests
+    new, *_, me, listed, minted, read = harness.server.requests
     assert new.url.params['machine_name']
     assert me.url.path == '/v1/account/me'
     assert me.headers['Authorization'] == listed.headers['Authorization'] == minted.headers['Authorization']
+    assert read.headers['Authorization'] == 'user-token'
+    assert json.loads(read.content) == {'description': 'CLAI /logfire optimize'}
     assert minted.headers['Authorization'] == 'user-token'
     assert str(minted.url).startswith(US)
 
@@ -277,7 +289,21 @@ async def test_an_unknown_account_email_still_sets_up_the_project(account: Answe
     saved = host.settings(LogfireSettings)
     assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
     assert saved.account is None
-    assert message.endswith('plugin settings keep only that name; Logfire did not share your email.')
+    assert 'plugin settings keep only that name; Logfire did not share your email.' in message
+    assert saved.read_access is not None  # The sign-in, not the email, is what reading needs.
+
+
+@pytest.mark.parametrize('answer', [httpx.Response(403), refuse, httpx.Response(200, json={'nope': 1})])
+async def test_a_refused_read_token_still_sets_up_tracing(answer: Answer, configure: Configure) -> None:
+    host = make_host()
+    harness = Harness(server=FakeLogfire(read_token=answer))
+    message = await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
+    saved = host.settings(LogfireSettings)
+    assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
+    assert saved.read_access is None
+    assert message.endswith(' /logfire optimize stays off without a read token.')
+    assert harness.lines[-1].endswith('Traces still go to pydantic/clai2, but /logfire optimize needs a read token.')
+    assert list(load_keys()) == ['LOGFIRE_TOKEN_PYDANTIC_CLAI2']
 
 
 async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatch, configure: Configure) -> None:
@@ -314,6 +340,7 @@ def test_https_origin_rejects(typed: str) -> None:
 def test_project_key_names_are_valid_key_names() -> None:
     project = logfire_setup.Project(organization_name='Pydantic Inc.', project_name='clai-2')
     assert project.key_name == 'LOGFIRE_TOKEN_PYDANTIC_INC_CLAI_2'
+    assert project.read_key_name == 'LOGFIRE_READ_TOKEN_PYDANTIC_INC_CLAI_2'
     assert project.label == 'Pydantic Inc./clai-2'
     hostile = logfire_setup.Project(organization_name='org', project_name='p\x1b]52;c;UE9JU09O\x07\n')
     assert hostile.label == 'org/p\\x1b]52;c;UE9JU09O\\x07\\x0a'
@@ -344,12 +371,18 @@ async def test_an_unrelated_key_of_the_same_name_is_kept(configure: Configure, r
     assert keys['LOGFIRE_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'someone-elses'
     assert keys['LOGFIRE_TOKEN_PYDANTIC_CLAI2_2'].get_secret_value() == 'pylf_v1_us_write'
     # Setting up the same project again replaces the key the plugin owns, instead of adding another.
-    renewed = FakeLogfire(write_token=httpx.Response(200, json={'token': 'pylf_v1_us_renewed'}))
+    renewed = FakeLogfire(
+        write_token=httpx.Response(200, json={'token': 'pylf_v1_us_renewed'}),
+        read_token=httpx.Response(200, json={'token': 'pylf_v1_us_read_renewed'}),
+    )
     await configure(host, Harness(server=renewed).setup(scripted([US, project])))
     assert recorder.tokens == [None, 'pylf_v1_us_write']  # The second activation sent with the saved key.
     keys = load_keys()
     assert keys['LOGFIRE_TOKEN_PYDANTIC_CLAI2_2'].get_secret_value() == 'pylf_v1_us_renewed'
     assert 'LOGFIRE_TOKEN_PYDANTIC_CLAI2_3' not in keys
+    # The plugin's own read token is replaced too, instead of piling up numbered copies.
+    assert keys['LOGFIRE_READ_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v1_us_read_renewed'
+    assert 'LOGFIRE_READ_TOKEN_PYDANTIC_CLAI2_2' not in keys
 
 
 async def test_running_out_of_key_names_says_so(configure: Configure, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,7 +4,9 @@ It runs Logfire's own device sign-in (the one behind `logfire auth`), not the MC
 `pydantic_clai2.logfire_oauth`: MCP tokens are issued for the MCP server alone and cannot mint write
 tokens. The user token lives only for the duration of setup. What is kept is a project write token, saved in
 `/keys`, and the plugin settings naming it and the signed-in account's email, so the loader reloads the plugin
-and traces go to that project, with session roots tagged with that email.
+and traces go to that project, with session roots tagged with that email. The same sign-in also creates a
+project read token, saved in `/keys` too, which `/logfire optimize` queries agent runs with; tracing does
+not need it, so setup carries on without it when Logfire refuses one.
 """
 
 import platform
@@ -35,6 +37,8 @@ REGIONS = {'Logfire US': 'https://logfire-us.pydantic.dev', 'Logfire EU': 'https
 SELF_HOSTED = 'self-hosted'
 SIGN_IN_TIMEOUT = 600.0
 """Seconds to wait for the browser approval, as `logfire auth` does."""
+READ_TOKEN_DESCRIPTION = 'CLAI /logfire optimize'
+"""How the read token setup creates is labelled in Logfire's project settings."""
 _POLL_FAILURES = 4
 
 ModelT = TypeVar('ModelT', bound=BaseModel)
@@ -79,7 +83,15 @@ class Project(BaseModel):
     @property
     def key_name(self) -> str:
         """The `/keys` entry for this project's write token, such as `LOGFIRE_TOKEN_PYDANTIC_CLAI2`."""
-        return re.sub(r'[^A-Z0-9]+', '_', f'LOGFIRE_TOKEN_{self.organization_name}_{self.project_name}'.upper())
+        return self._key_name('LOGFIRE_TOKEN')
+
+    @property
+    def read_key_name(self) -> str:
+        """The `/keys` entry for this project's read token, such as `LOGFIRE_READ_TOKEN_PYDANTIC_CLAI2`."""
+        return self._key_name('LOGFIRE_READ_TOKEN')
+
+    def _key_name(self, prefix: str) -> str:
+        return re.sub(r'[^A-Z0-9]+', '_', f'{prefix}_{self.organization_name}_{self.project_name}'.upper())
 
 
 _PROJECTS: TypeAdapter[list[Project]] = TypeAdapter(list[Project])
@@ -98,19 +110,23 @@ class Setup:
 
 @dataclass(frozen=True)
 class Chosen:
-    """What setup produced: the saved key, the Logfire it belongs to, and the account that signed in."""
+    """What setup produced: the saved keys, the Logfire they belong to, and the account that signed in."""
 
     token: KeyReference
     base_url: str
     project: Project
     account_email: str | None
+    read_token: KeyReference | None = None
+    """The saved read token, or `None` when Logfire refused one."""
 
 
-async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | None) -> Chosen | None:
-    """Pick a destination, sign in, pick a project, and save its write token; `None` when cancelled.
+async def run_setup(
+    setup: Setup, *, current: str | None, owned: KeyReference | None, owned_read: KeyReference | None = None
+) -> Chosen | None:
+    """Pick a destination, sign in, pick a project, and save its write and read tokens; `None` when cancelled.
 
-    `owned` is the key the plugin already uses: setting up the same project again replaces it, but any other
-    key of the same name is left alone.
+    `owned` and `owned_read` are the keys the plugin already uses: setting up the same project again replaces
+    them, but any other key of the same name is left alone.
     """
     base_url = await run_worker(lambda: pick_destination(setup.runners, current=current))
     if base_url is None:
@@ -127,9 +143,20 @@ async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | 
                 span.set('outcome', 'cancelled')
                 return None
             value = await _write_token(http, base_url, user_token, project)
+            read_value = await _read_token(http, base_url, user_token, project, setup.announce)
         name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
+        read_token = None
+        if read_value is not None:
+            read_name = await to_thread.run_sync(lambda: _save(project.read_key_name, read_value, owned=owned_read))
+            read_token = KeyReference(name=read_name)
         span.set('outcome', 'saved')
-    return Chosen(token=KeyReference(name=name), base_url=base_url, project=project, account_email=account_email)
+    return Chosen(
+        token=KeyReference(name=name),
+        base_url=base_url,
+        project=project,
+        account_email=account_email,
+        read_token=read_token,
+    )
 
 
 def pick_destination(runners: Runners, *, current: str | None) -> str | None:
@@ -248,6 +275,23 @@ async def _write_token(http: httpx.AsyncClient, base_url: str, user_token: str, 
     path = f'/v1/organizations/{project.organization_name}/projects/{project.project_name}/write-tokens/'
     response = await _call(http.post(f'{base_url}{path}', headers={'Authorization': user_token}))
     return _parse(_UserToken, response).token
+
+
+async def _read_token(
+    http: httpx.AsyncClient, base_url: str, user_token: str, project: Project, announce: Announce
+) -> str | None:
+    """A read token for `/logfire optimize`, or `None` when Logfire refuses one; tracing does not need it."""
+    path = f'/v1/organizations/{project.organization_name}/projects/{project.project_name}/read-tokens'
+    try:
+        response = await _call(
+            http.post(
+                f'{base_url}{path}', headers={'Authorization': user_token}, json={'description': READ_TOKEN_DESCRIPTION}
+            )
+        )
+        return _parse(_UserToken, response).token
+    except SetupError as exc:
+        announce(f'{exc} Traces still go to {project.label}, but /logfire optimize needs a read token.')
+        return None
 
 
 async def _call(request: Awaitable[httpx.Response]) -> httpx.Response:
