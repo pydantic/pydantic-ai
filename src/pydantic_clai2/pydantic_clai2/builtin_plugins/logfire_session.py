@@ -53,8 +53,9 @@ class SessionTracing(AbstractCapability[None]):
                 )
             )
             self._roots[session_id] = root
-            if session_id != self._fallback_id:
-                self._announce(root, session_id)
+            # Also before `--resume` picks the conversation, or for a host with no saved conversations: the email
+            # is known now, and binding the root to its conversation announces it again with that ID.
+            self._announce(root, session_id)
         return self._roots[session_id]
 
     def _identity(self) -> dict[str, str | list[str]]:

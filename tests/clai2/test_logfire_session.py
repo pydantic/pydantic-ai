@@ -274,6 +274,9 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
             )
     roots = [span for span in recorder.spans() if span.name == 'CLAI session']
     assert [(span.attributes or {})['agent_session_id'] for span in roots] == [saved.summary.id]
+    # Announced again with the saved ID once it is bound, at the latest at exit when no turn runs.
+    opened = [span for span in recorder.spans() if span.name == 'CLAI session opened']
+    assert (opened[-1].attributes or {})['agent_session_id'] == saved.summary.id
     root_context = roots[0].context
     assert root_context is not None
     ui = [

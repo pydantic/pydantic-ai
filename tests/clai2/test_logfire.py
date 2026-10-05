@@ -458,13 +458,14 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Reco
         await close(plugin)
     telemetry.record('after the plugin unloaded')
     assert messages(recorder) == [
+        'CLAI session opened',
         'session started',
         'turn cancelled',
         'setting sessions.naming changed',
         'not a UI event',
         'CLAI session',
     ]
-    started, _, changed, other, _ = recorder.spans()
+    _, started, _, changed, other, _ = recorder.spans()
     # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
     assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
     assert (started.attributes or {})['model'] == (model or 'agent default')
