@@ -1894,8 +1894,11 @@ queued follow-up to the active run through core's
 tools, or changing the draft. Each press sends one message. If the run is no
 longer accepting steering, the message stays queued. Slash commands and exit
 signals are not steered or skipped over. With no queued message, Alt+Enter does
-nothing. When idle, Enter starts a turn. Shift-Enter inserts a newline.
-Modified-key reporting is enabled only while the editor owns input.
+nothing. When idle, Enter starts a turn. Shift-Enter inserts a newline when the
+terminal distinguishes it from Enter. Ctrl-J inserts a newline on terminals
+that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty keyboard
+reporting is enabled only while the editor owns input and released for menus
+and on exit.
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for

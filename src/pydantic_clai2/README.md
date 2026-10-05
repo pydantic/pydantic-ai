@@ -920,8 +920,12 @@ Each Alt+Enter sends one message. If the run is no longer accepting steering,
 the message stays queued. Slash commands, `!` shell commands, and exit signals
 are not steered or skipped over. With no queued message, Alt+Enter does nothing.
 While running with at least one queued message, the input box shows both shortcuts.
-Shift-Enter inserts a newline. CLAI requests modified
-key reporting while the editor is active and releases it for menus and on exit.
+Shift-Enter inserts a newline when the terminal reports it separately from Enter.
+Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
+GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.
+Use Ctrl-J there, or a terminal that supports modified-key reporting, such as
+Kitty or xterm. CLAI enables xterm and Kitty keyboard reporting only while the
+editor is active and releases it for menus and on exit.
 Ctrl-R searches history; Enter accepts a search
 result without submitting it. Ctrl-D exits when the draft is empty. Ctrl-C at
 input clears the line; during a run it cancels the turn and returns to input. No cancelled run is automatically retried.
