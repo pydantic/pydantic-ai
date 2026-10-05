@@ -171,7 +171,13 @@ async def test_a_slow_notice_outlives_the_naming_timeout(tmp_path: Path) -> None
         notified.append((conversation_id, title))
         done.set()
 
+    named_by_user = await store.save(
+        summary=ConversationSummary(workspace='/a', title_source='user'),
+        messages=[ModelRequest(parts=[UserPromptPart('keep my title')])],
+    )
     namer = SessionNamer(store=store, generate=generate, timeout=0.01, on_named=on_named)
+    # A conversation that needs no name saves nothing, so the shell hears nothing about it.
+    assert namer.submit(named_by_user.id)
     assert namer.submit(summary.id)
     with anyio.fail_after(10):
         async with anyio.create_task_group() as group:
