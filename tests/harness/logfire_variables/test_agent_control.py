@@ -70,7 +70,7 @@ _UNREADABLE = (
 )
 _NO_API_KEY = (
     'Reading Logfire variables needs an API key with the `project:read_variables` scope (a write token cannot '
-    'read them), set as `LOGFIRE_API_KEY` for `logfire.configure()` to read or passed as '
+    'read them), set as `LOGFIRE_API_KEY` for `logfire.configure()` to read, or passed as '
     '`logfire.configure(api_key=...)`.'
 )
 _UNCONFIGURED_DEFAULT = (
@@ -78,12 +78,17 @@ _UNCONFIGURED_DEFAULT = (
     'instance reads it. Call `logfire.configure()`.'
 )
 _UNCONFIGURED_GIVEN = (
-    '`LOGFIRE_API_KEY` is set, but the Logfire instance it resolves on has not been configured, and only a '
-    'configured instance reads it. Use the instance `logfire.configure()` returned.'
+    '`LOGFIRE_API_KEY` is set, but its Logfire instance has not been configured, and only a configured instance '
+    'reads it. Use the instance `logfire.configure()` returned.'
 )
-_ON_DEFAULT = ' This capability resolves on the default Logfire instance: if your application configures its own, '
-_PASS_INSTANCE = _ON_DEFAULT + 'pass it as `AgentControl(logfire_instance=...)`.'
-_CREATE_VARIABLE = _ON_DEFAULT + 'create the `Variable` on that instance.'
+_PASS_INSTANCE = (
+    ' This capability resolves on the default Logfire instance: if your application configures its own, pass it '
+    'as `AgentControl(logfire_instance=...)`.'
+)
+_CREATE_VARIABLE = (
+    ' This variable was created on the default Logfire instance: if your application configures its own, create '
+    'the `Variable` on yours.'
+)
 
 
 @pytest.mark.parametrize(

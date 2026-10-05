@@ -790,30 +790,32 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             return
         # `Variable` keeps a `with_settings()` copy of its instance, which shares the instance's config.
         on_default_instance = variable.logfire_instance.config is logfire.DEFAULT_LOGFIRE_INSTANCE.config
-        instance = 'the default Logfire instance' if on_default_instance else 'the Logfire instance it resolves on'
         if not os.environ.get('LOGFIRE_API_KEY'):
             cause = (
                 'Reading Logfire variables needs an API key with the `project:read_variables` scope (a write token '
-                'cannot read them), set as `LOGFIRE_API_KEY` for `logfire.configure()` to read or passed as '
+                'cannot read them), set as `LOGFIRE_API_KEY` for `logfire.configure()` to read, or passed as '
                 '`logfire.configure(api_key=...)`.'
+            )
+        elif on_default_instance:
+            cause = (
+                '`LOGFIRE_API_KEY` is set, but the default Logfire instance has not been configured, and only a '
+                'configured instance reads it. Call `logfire.configure()`.'
             )
         else:
             cause = (
-                f'`LOGFIRE_API_KEY` is set, but {instance} has not been configured, and only a configured instance '
-                'reads it. '
-                + (
-                    'Call `logfire.configure()`.'
-                    if on_default_instance
-                    else 'Use the instance `logfire.configure()` returned.'
-                )
+                '`LOGFIRE_API_KEY` is set, but its Logfire instance has not been configured, and only a configured instance '
+                'reads it. Use the instance `logfire.configure()` returned.'
             )
-        if on_default_instance:
-            remedy = (
-                'create the `Variable` on that instance'
-                if isinstance(self.name, Variable)
-                else 'pass it as `AgentControl(logfire_instance=...)`'
+        if on_default_instance and isinstance(self.name, Variable):
+            cause += (
+                ' This variable was created on the default Logfire instance: if your application configures its '
+                'own, create the `Variable` on yours.'
             )
-            cause += f' This capability resolves on the default Logfire instance: if your application configures its own, {remedy}.'
+        elif on_default_instance:
+            cause += (
+                ' This capability resolves on the default Logfire instance: if your application configures its '
+                'own, pass it as `AgentControl(logfire_instance=...)`.'
+            )
         _warn_dropped(
             f'`AgentControl` cannot read {variable.name!r}: its Logfire instance has no variable provider, so the '
             f'agent runs as defined in code and nothing published in Logfire applies. {cause}'
