@@ -126,6 +126,10 @@ async def test_a_plugin_login_signs_in_profiles_when_it_offers_them(tmp_path: Pa
     assert await login_command(['claude@work'], codex=codex, plugins=plugins, store=store) == 'Signed in as work.'
     assert profiles == ['work']
     assert store.models() == ['claude-code@work:opus']
+    # Without a profile, the plugin's own sign-in runs and saves the plain model name.
+    assert await login_command(['claude'], codex=codex, plugins=plugins, store=store) == 'Signed in.'
+    assert profiles == ['work']
+    assert store.models() == ['claude-code:opus', 'claude-code@work:opus']
     with pytest.raises(ValueError, match='The single sign-in does not support profiles'):
         await login_command(['single@work'], codex=codex, plugins=plugins, store=store)
     with pytest.raises(ValueError, match='Profile'):
