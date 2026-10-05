@@ -9150,7 +9150,10 @@ async def test_provider_reentry_after_close():
 @requires_openai
 async def test_gateway_provider_reentry_after_close():
     """Gateway provider restores event_hooks on re-entry."""
-    from pydantic_ai.providers.gateway import gateway_provider
+    from pydantic_ai.providers.gateway import (
+        _GatewayRequestHook,  # pyright: ignore[reportPrivateUsage]
+        gateway_provider,
+    )
 
     provider = gateway_provider('openai', api_key='test-key', base_url='https://gateway.example.com/proxy')
 
@@ -9158,7 +9161,7 @@ async def test_gateway_provider_reentry_after_close():
         first_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
         assert first_client is not None
         assert not first_client.is_closed
-        assert len(first_client.event_hooks.get('request', [])) == 1
+        assert sum(isinstance(hook, _GatewayRequestHook) for hook in first_client.event_hooks['request']) == 1
     assert first_client.is_closed
 
     async with provider:
@@ -9166,7 +9169,7 @@ async def test_gateway_provider_reentry_after_close():
         assert second_client is not None
         assert not second_client.is_closed
         assert second_client is not first_client
-        assert len(second_client.event_hooks.get('request', [])) == 1
+        assert sum(isinstance(hook, _GatewayRequestHook) for hook in second_client.event_hooks['request']) == 1
     assert second_client.is_closed
 
 

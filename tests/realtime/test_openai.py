@@ -68,6 +68,7 @@ from pydantic_ai.realtime import (
     RealtimeSessionReconnectEvent,
     WebRTCSession,
 )
+from pydantic_ai.realtime._lifecycle import UserTurnEnded, UserTurnStarted
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
@@ -1037,7 +1038,7 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
         'create_response': True,
         'interrupt_response': True,
     }
-    assert session['audio']['input']['transcription'] == {'model': 'gpt-realtime-whisper'}  # `'auto'` resolved
+    assert session['audio']['input']['transcription'] == {'model': 'gpt-live-transcribe'}  # `'auto'` resolved
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
@@ -2605,6 +2606,74 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
     ]
 
 
+async def test_idle_timeout_commit_with_failed_transcription_records_no_user_turn() -> None:
+    """A failed transcription of the silent idle-timeout item is no spoken turn either, so history gets none."""
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+        {
+            'type': 'conversation.item.input_audio_transcription.failed',
+            'item_id': 'idle',
+            'content_index': 0,
+            'error': {'type': 'server_error', 'code': 'transcription_failed', 'message': 'No speech.'},
+        },
+    ]
+    connection = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        events = await collect_session_events(session)
+
+    assert not any(isinstance(event, RealtimeInputTranscriptionErrorEvent) for event in events)
+    assert session.new_messages() == []
+    assert connection._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_idle_timeout_commit_without_transcription_is_not_a_spoken_turn() -> None:
+    """With transcription off, no transcript retires the idle-timeout item, so its commit does."""
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+    ]
+    ws = FakeWebSocket([json.dumps(frame) for frame in frames])
+    conn = OpenAIRealtimeConnection(ws, input_transcription_enabled=False)  # type: ignore[arg-type]
+    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+
+    assert not any(isinstance(event, UserTurnStarted | UserTurnEnded) for event in events)
+    assert conn._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_idle_timeout_commit_is_not_a_spoken_turn() -> None:
+    """The silent buffer server VAD commits when `idle_timeout_ms` runs out yields no user turn or transcript.
+
+    Its transcription is still billed, so its usage is reported. The recorded conversation is
+    `test_openai_ws.py::test_idle_timeout_nudge_is_not_a_user_turn`; this pins the transcript deltas it lacks,
+    and that a later spoken turn is still reported.
+    """
+    usage = {'type': 'duration', 'seconds': 5}
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+        {'type': 'conversation.item.input_audio_transcription.delta', 'item_id': 'idle', 'delta': ''},
+        {
+            'type': 'conversation.item.input_audio_transcription.completed',
+            'item_id': 'idle',
+            'transcript': '',
+            'usage': usage,
+        },
+        {'type': 'input_audio_buffer.committed', 'item_id': 'spoken', 'previous_item_id': 'idle'},
+    ]
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
+    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+
+    assert events[:-1] == [
+        SessionUsage(usage=RequestUsage(details={'input_transcription_seconds': 5}), response_scoped=False),
+        UserTurnStarted(turn_id='spoken'),
+        UserTurnEnded(turn_id='spoken'),
+    ]
+
+
 @pytest.mark.parametrize('usage', [None, {}], ids=['absent', 'empty'])
 async def test_transcription_completed_without_usage_emits_only_the_transcript(usage: dict[str, Any] | None) -> None:
     """A final transcript with nothing to report costs no usage event — the counterpart of the case above.
@@ -3617,6 +3686,17 @@ async def test_truncate_resets_generated_audio_between_responses() -> None:
         'content_index': 0,
         'audio_end_ms': 5,
     }
+
+
+async def test_truncate_clamps_at_the_profile_output_sample_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 3200 bytes of mono PCM16 is 100 ms at 16 kHz (and would be ~67 ms at the 24 kHz default).
+    ws = FakeWebSocket([_created(), _updated(), _audio_delta('item_7', audio_bytes=3200)])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', profile=RealtimeModelProfile(audio_output_sample_rate=16000))
+    async with _connect(model, 'x') as conn:
+        _ = [e async for e in conn]
+        await conn.send(TruncateOutput(audio_end_ms=1000))
+    assert json.loads(ws.sent[-1])['audio_end_ms'] == 100
 
 
 async def test_truncate_sideband_connection_does_not_clamp() -> None:

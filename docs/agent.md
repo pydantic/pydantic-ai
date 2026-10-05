@@ -842,7 +842,7 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-Pressing Ctrl-C during [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] cancels the run too: catch the `KeyboardInterrupt` and pass it to `from_cancellation()` to recover the run state.
+Pressing Ctrl-C during [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cancels the run too: catch the `KeyboardInterrupt` and pass it to `from_cancellation()` to recover the run state.
 
 On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
 
@@ -1392,16 +1392,16 @@ result1 = agent.run_sync('Who was Albert Einstein?')
 print(result1.output)
 #> Albert Einstein was a German-born theoretical physicist.
 
-# Second run, passing previous messages
+# Second run, continuing the first one's conversation
 result2 = agent.run_sync(
     'What was his most famous equation?',
-    message_history=result1.new_messages(),  # (1)!
+    conversation=result1.conversation,  # (1)!
 )
 print(result2.output)
 #> Albert Einstein's most famous equation is (E = mc^2).
 ```
 
-1. Continue the conversation; without `message_history` the model would not know who "his" was referring to.
+1. Continue the conversation; without it the model would not know who "his" was referring to. A [`Conversation`][pydantic_ai.conversation.Conversation] carries the messages along with the running usage and the conversation ID, and is what to [store](persistence.md#storing-a-conversation-yourself) between requests. Passing `message_history=result1.all_messages()` instead carries only the messages; see [Messages and chat history](message-history.md).
 
 _(This example is complete, it can be run "as is")_
 
