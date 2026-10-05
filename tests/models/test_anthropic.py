@@ -27,6 +27,7 @@ from pydantic_ai import (
     CachePoint,
     Citation,
     CitationSource,
+    ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
@@ -34,6 +35,7 @@ from pydantic_ai import (
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -320,6 +322,223 @@ def test_anthropic_empty_cited_text_is_not_an_excerpt() -> None:
             provider_details={'encrypted_index': 'opaque-index'},
         )
     ]
+
+
+def _document_citation(excerpt: str, start: int, end: int, citation_type: str = 'char_location') -> Citation:
+    return Citation(
+        sources=[
+            DocumentCitationSource(
+                title='Policy',
+                excerpts=[excerpt],
+                provider_details={
+                    'type': citation_type,
+                    'document_index': 0,
+                    'start_char_index': start,
+                    'end_char_index': end,
+                },
+            )
+        ]
+    )
+
+
+def _history_with_citations(provider_name: str, citations: list[Citation]) -> list[ModelMessage]:
+    """Message history as it comes back from JSON storage, with a text document and a cited answer."""
+    return ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            [
+                                'What is the return window?',
+                                BinaryContent(
+                                    data=b'The return window is thirty days from purchase.', media_type='text/plain'
+                                ),
+                            ]
+                        )
+                    ]
+                ),
+                ModelResponse(parts=[TextPart('Thirty days.', citations=citations)], provider_name=provider_name),
+                ModelRequest(parts=[UserPromptPart('Continue.')]),
+            ]
+        )
+    )
+
+
+async def test_anthropic_replays_own_citations(allow_model_requests: None):
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history = _history_with_citations(
+        'anthropic',
+        [
+            Citation(
+                sources=[WebCitationSource(url='https://example.com', title='Example', excerpts=['web excerpt'])],
+                provider_details={'encrypted_index': 'opaque-index'},
+            ),
+            Citation(
+                sources=[WebCitationSource(url='https://example.com/empty')],
+                provider_details={'encrypted_index': 'opaque-index-2'},
+            ),
+            _document_citation('thirty days', 21, 32),
+            # Not replayed: the range no longer selects the excerpt, the location kind has no recorded replay, the
+            # document citation has no excerpt, the web citation has no `encrypted_index`, or the citation is anchored
+            # to the generated text.
+            _document_citation('thirty days', 0, 11),
+            _document_citation('thirty days', 21, 32, citation_type='page_location'),
+            Citation(sources=[DocumentCitationSource(title='Policy')]),
+            Citation(sources=[WebCitationSource(url='https://example.com', excerpts=['web excerpt'])]),
+            Citation(
+                sources=[WebCitationSource(url='https://example.com')], anchor=ContentCitationAnchor(start=0, end=6)
+            ),
+        ],
+    )
+
+    await model.request(history, ModelSettings(include_citations=True), ModelRequestParameters())
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'type': 'text',
+                    'text': 'Thirty days.',
+                    'citations': [
+                        {
+                            'type': 'web_search_result_location',
+                            'url': 'https://example.com',
+                            'title': 'Example',
+                            'cited_text': 'web excerpt',
+                            'encrypted_index': 'opaque-index',
+                        },
+                        {
+                            'type': 'web_search_result_location',
+                            'url': 'https://example.com/empty',
+                            'title': None,
+                            'cited_text': '',
+                            'encrypted_index': 'opaque-index-2',
+                        },
+                        {
+                            'type': 'char_location',
+                            'cited_text': 'thirty days',
+                            'document_index': 0,
+                            'document_title': 'Policy',
+                            'start_char_index': 21,
+                            'end_char_index': 32,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+
+async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_model_requests: None):
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the return window?')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart('read_policy', {}, tool_call_id='call-1'),
+                ToolCallPart('read_policy', {}, tool_call_id='call-2'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'read_policy',
+                    [BinaryContent(data=b'Refunds take a week.', media_type='text/plain')],
+                    tool_call_id='call-1',
+                ),
+                # Sent as string content, which holds no documents.
+                ToolReturnPart('read_policy', [], tool_call_id='call-2'),
+                UserPromptPart(
+                    [BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain')]
+                ),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Thirty days.',
+                    citations=[
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    excerpts=['thirty days'],
+                                    provider_details={
+                                        'type': 'char_location',
+                                        'document_index': 1,
+                                        'start_char_index': 21,
+                                        'end_char_index': 32,
+                                    },
+                                )
+                            ]
+                        )
+                    ],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, ModelSettings(include_citations=True), ModelRequestParameters())
+
+    [answer] = [
+        message
+        for message in get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+        if message['role'] == 'assistant' and message['content'][0]['type'] == 'text'
+    ]
+    assert answer['content'][0]['citations'] == [
+        {
+            'type': 'char_location',
+            'cited_text': 'thirty days',
+            'document_index': 1,
+            'document_title': None,
+            'start_char_index': 21,
+            'end_char_index': 32,
+        }
+    ]
+
+
+async def test_anthropic_document_citations_need_include_citations_for_replay(allow_model_requests: None):
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await model.request(
+        _history_with_citations('anthropic', [_document_citation('thirty days', 21, 32)]),
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'type': 'text', 'text': 'Thirty days.'}],
+    }
+
+
+async def test_anthropic_sends_other_providers_citations_as_text(allow_model_requests: None):
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await model.request(
+        _history_with_citations('bedrock', [_document_citation('thirty days', 21, 32)]), None, ModelRequestParameters()
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'type': 'text', 'text': 'Thirty days.'}],
+    }
 
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])

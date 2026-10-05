@@ -487,6 +487,62 @@ def _map_citations(
     return [Citation(sources=sources, anchor=anchor)] if sources else None
 
 
+def _map_citations_for_replay(
+    citations: list[Citation], text: str, document_texts: list[str | None]
+) -> ContentBlockOutputTypeDef | None:
+    """Rebuild the `citationsContent` block Bedrock returned for this text, or return `None` to send plain text.
+
+    Only the shape Pydantic AI builds from a Bedrock cited block is rebuilt: one citation covering the whole text
+    part. Every source must be a character range that still selects its excerpt from a plain-text document in the
+    request. `document_texts` holds the text of each document in the request's messages, or `None` if it isn't text.
+    """
+    if len(citations) != 1:
+        return None
+    anchor = citations[0].anchor
+    if not isinstance(anchor, ContentCitationAnchor) or (anchor.start, anchor.end) != (0, len(text)):
+        return None
+    mapped_sources: list[CitationOutputTypeDef] = []
+    for source in citations[0].sources:
+        location = (source.provider_details or {}).get('location')
+        char_location = location.get('documentChar') if _utils.is_str_dict(location) else None
+        if not _utils.is_str_dict(char_location):
+            return None
+        index, start, end = char_location.get('documentIndex'), char_location.get('start'), char_location.get('end')
+        if (
+            not isinstance(index, int)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+            or not 0 <= index < len(document_texts)
+            or (document_text := document_texts[index]) is None
+            or not 0 <= start < end
+            or source.excerpts != [document_text[start:end]]
+        ):
+            return None
+        mapped_source: CitationOutputTypeDef = {
+            'location': {'documentChar': {'documentIndex': index, 'start': start, 'end': end}},
+            'sourceContent': [{'text': document_text[start:end]}],
+        }
+        if source.title is not None:
+            mapped_source['title'] = source.title
+        mapped_sources.append(mapped_source)
+    return {'citationsContent': {'content': [{'text': text}], 'citations': mapped_sources}}
+
+
+def _citation_document_texts(messages: Sequence[MessageUnionTypeDef]) -> list[str | None]:
+    """Return the text of each document block in `messages` in order, or `None` if it isn't text.
+
+    Returns no documents if a tool result contains one, as it's unknown whether Bedrock counts those.
+    """
+    result: list[str | None] = []
+    for message in messages:
+        for block in message['content']:
+            if (document := block.get('document')) is not None:
+                result.append(document['source'].get('text'))
+            elif any('document' in item for item in block.get('toolResult', {}).get('content', [])):
+                return []
+    return result
+
+
 def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
     """Parse an S3 URL into a Bedrock DocumentSourceTypeDef."""
     parsed = urlparse(url)
@@ -1452,7 +1508,18 @@ class BedrockConverseModel(Model[BaseClient]):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        content.append({'text': item.content})
+                        citation_block = (
+                            _map_citations_for_replay(
+                                item.citations, item.content, _citation_document_texts(bedrock_messages)
+                            )
+                            # Replay checks citations against the documents' text, which is only sent as text when
+                            # citations are enabled.
+                            if settings.get('include_citations', False)
+                            and item.citations
+                            and (item.provider_name or message.provider_name) == self.system
+                            else None
+                        )
+                        content.append(citation_block or {'text': item.content})
                     elif isinstance(item, ThinkingPart):
                         if (
                             item.provider_name == self.system

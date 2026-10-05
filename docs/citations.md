@@ -115,6 +115,25 @@ chunk of the source.
 Treat citation URLs, titles, and excerpts as untrusted data. Excerpts can contain private retrieved content, so choose
 deliberately whether to log, render, or send them to a client.
 
+## Citations in message history
+
+[Stored message history](message-history.md#storing-and-loading-messages-to-json) keeps
+[`TextPart.citations`][pydantic_ai.messages.TextPart.citations]. When you send that history to the provider that
+produced the citations, these citations are sent back with the text:
+
+- **Anthropic**: web search citations, and citations of plain-text documents with `include_citations=True`.
+- **Amazon Bedrock**: citations of plain-text documents, with `include_citations=True`.
+- **OpenAI Responses**: URL and file citations, when item IDs are sent (see
+  [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids]).
+
+An Anthropic or Bedrock document citation is only sent back while the cited document is still in the message history
+and the cited text still matches it. Everything else, including all citations from a different provider, is sent as
+plain text. Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the text.
+
+!!! warning "The model may not see the source"
+    A follow-up such as "Tell me more about source [1]" may reach a model that sees the `[1]` marker but not its URL
+    or excerpt. If the model needs the source, include it in the new prompt or let the model retrieve it again.
+
 ## Provider support
 
 | Provider/API | Citations returned | How to enable | Provider support notes |
