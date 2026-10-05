@@ -1491,6 +1491,8 @@ rather than adding a separate `Finished:` line to the transcript.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.
+Bare `http://` and `https://` URLs, and `<https://...>` autolinks, are shown in the
+link colour and are clickable too; URLs inside code spans are left as code.
 URLs longer than 2,048 characters are shown without clickable metadata to limit
 streaming output size.
 Links survive viewport resizing; following one uses your terminal's usual click
