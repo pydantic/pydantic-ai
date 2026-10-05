@@ -554,6 +554,8 @@ def create_shell(
                 _PLUGINS_OFF if not loader.enabled else loader.command(args) if args else open_plugins_menu(loader)
             ),
             complete=lambda args: _PLUGIN_ACTIONS if len(args) <= 1 else (entry.name for entry in loader.entries()),
+            during_turn=True,
+            args_during_turn=True,
         )
     )
     for plugin in plugins:
@@ -831,14 +833,18 @@ class _Shell(Generic[DepsT, OutputT]):
         return True
 
     async def _run_mid_turn(self, text: str) -> None:
-        if self.plugins_busy(text):
-            # `/plugins` is not a `during_turn` command, so `run_now` never hands it over.
-            return  # pragma: no cover
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
+            if self.plugins_busy(text):
+                return
             with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
                 await _execute_command(self.commands, text, console=self.console, status=self.status)
+            self._show_status_segments()
+
+    def _show_status_segments(self) -> None:
+        """Paint the status segments of the plugins loaded now."""
+        self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
 
     async def _rewind(self) -> None:
         assert self.editor is not None
@@ -862,7 +868,7 @@ class _Shell(Generic[DepsT, OutputT]):
                     self.status.context_alert = False
                 self.status.model = model
                 self.status.workspace = self.session.workspace
-                self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
+                self._show_status_segments()
                 if self.editor is not None:
                     text = await self.editor.read()
                 else:
@@ -1001,12 +1007,13 @@ class _Shell(Generic[DepsT, OutputT]):
             except Exception as exc:  # noqa: BLE001 -- report a failed headless turn to the CLI.
                 return TurnEnd(text=start.text, outcome='failed', error=exc)
             return TurnEnd(text=start.text, outcome='completed', result=result)
-        # Menus open mid-turn only after this turn has captured its settings; session changes
-        # they save apply once it ends. A menu still open when it ends delays the next prompt.
+        # Menus open mid-turn only after this turn has captured its settings and plugins; session
+        # changes they save apply once it ends, as does the teardown of plugins they unload. A menu
+        # still open when it ends delays the next prompt.
         ended = TurnEnd(text=start.text, outcome='cancelled')
         with self.session_settings.turn():
             send, receive = create_memory_object_stream[str](math.inf)
-            async with create_task_group() as mid_turn:
+            async with self.loader.turn(), create_task_group() as mid_turn:
                 mid_turn.start_soon(self._serve_mid_turn, receive)
                 self._mid_turn_commands = send
                 try:

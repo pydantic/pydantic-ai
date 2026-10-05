@@ -19,7 +19,7 @@ from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart
-from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
+from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginError, PluginLoader, PluginSettingsError
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -397,6 +397,47 @@ async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) 
     assert message.startswith('Disabled counter. Delete ')
     assert not harness.store.plugins()[0].enabled
     assert harness.loader.entries()[0].state == 'disabled'
+
+
+async def test_plugins_unloaded_during_a_turn_end_after_it(tmp_path: Path) -> None:
+    """The running agent still holds what they declared, so `session_end` waits for the turn."""
+    harness = Harness(tmp_path)
+    harness.write('alpha', end_body="host.console.print('alpha cleaned')")
+    harness.write('beta', end_body="raise RuntimeError('beta cleanup')")
+    (harness.store.plugins_dir / 'gamma.py').write_text(
+        'from pydantic_ai.capabilities import Hooks\nfrom pydantic_clai2.plugins import Plugin\n\n\n'
+        'class Gamma(Plugin):\n    def get_capabilities(self):\n        return (Hooks(),)\n'
+    )
+    await harness.loader.load_all()
+    async with harness.loader.turn():
+        assert await harness.loader.command(['disable', 'alpha']) == 'Disabled alpha.'
+        assert await harness.loader.command(['disable', 'gamma']) == f'Disabled gamma.\n{TURN_NOTICE}'
+        assert await harness.loader.command(['reload', 'beta']) == 'Reloaded beta.'
+        assert 'alpha' not in harness.commands
+        assert [plugin.enabled for plugin in harness.store.plugins()] == [False, False]
+        assert harness.loader.capabilities() == []
+        assert harness.text.count('beta started') == 2
+        assert 'stopped' not in harness.text
+    assert harness.text.index('alpha stopped exit') < harness.text.index('alpha cleaned')
+    assert harness.text.index('alpha cleaned') < harness.text.index('beta stopped exit')
+    assert "Plugin 'beta': RuntimeError: beta cleanup" in harness.text
+    await harness.loader.disable('beta')
+    assert harness.text.count('beta stopped exit') == 2
+
+
+async def test_a_cancelled_turn_still_ends_the_plugins_it_unloaded(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.write(
+        'alpha', end_body="await __import__('anyio').lowlevel.checkpoint()\n        host.console.print('cleaned')"
+    )
+    await harness.loader.load_all()
+    with anyio.CancelScope() as scope:
+        async with harness.loader.turn():
+            await harness.loader.disable('alpha')
+            scope.cancel()
+            await anyio.lowlevel.checkpoint()
+    assert scope.cancelled_caught
+    assert 'alpha stopped exit\ncleaned' in harness.text
 
 
 async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:

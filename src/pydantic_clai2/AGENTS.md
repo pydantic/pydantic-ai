@@ -76,8 +76,12 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **One `LoadedPlugin` per plugin.** It holds the instance and what its `get_*`
   methods returned, so unloading is "discard this `LoadedPlugin`". No
   `callback -> owner` map, no scanning registries for a plugin's name.
-- **Load and unload only between turns.** `/commands` already run between turns,
-  so this falls out for free; do not add a mid-run path.
+- **A running agent run never changes its plugins.** Core binds capabilities once
+  per run, so `/plugins` (the one `args_during_turn` command) may load and unload
+  mid-turn, but the run keeps the snapshot `run_turn` bound. `PluginLoader.turn()`
+  defers `on_session_end` of plugins unloaded meanwhile until the run is over,
+  shielded from cancellation. Do not swap capabilities inside a run; that needs
+  core support.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.

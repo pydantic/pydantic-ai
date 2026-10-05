@@ -20,7 +20,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.describe import describe
-from pydantic_clai2.plugins.loader import PluginEntry, PluginLoader
+from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginEntry, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
 
@@ -343,6 +343,15 @@ def test_removing_the_last_match(
         assert result.cancelled
     assert 'search: installed' in frames[-len(close)] and '(no matches)' in frames[-len(close)]
     assert [entry.name for entry in loader.entries()] == ['alpha']
+
+
+async def test_details_say_that_a_running_turn_keeps_its_plugins(tmp_path: Path) -> None:
+    loader = make_loader(tmp_path, 'alpha')
+    menu = PluginMenu(loader, apply=run_now)
+    alpha = menu.items()[0]
+    assert TURN_NOTICE not in ' '.join(unstyled(menu.details(alpha)).split())
+    async with loader.turn():
+        assert ' '.join(unstyled(menu.details(alpha)).split()).endswith(TURN_NOTICE)
 
 
 def test_errors_become_a_notice(tmp_path: Path) -> None:
