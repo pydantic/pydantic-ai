@@ -132,6 +132,19 @@ including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
 
+## Option keys on macOS
+
+CLAI asks the terminal to report modified keys, so Option+Enter (steer) works in
+Herdr, and in iTerm2 even with its default Option key setting. If Option+Enter
+still queues the message like Enter, the terminal is sending a plain Enter:
+
+- Terminal.app: turn on Settings > Profiles > Keyboard > Use Option as Meta key.
+- tmux: tmux forwards Alt+Enter, but does not pass CLAI's request on to the
+  outer terminal. Set that terminal to send Option as Alt, for example iTerm2's
+  Settings > Profiles > Keys > Left Option key: Esc+. Herdr needs no setup.
+- For Shift-Enter (newline) inside tmux, add `set -g extended-keys on` to
+  `~/.tmux.conf`. Without it, tmux sends Shift-Enter as Enter.
+
 ## Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
@@ -924,13 +937,16 @@ then move through the suggestions. Editing the recalled text ends the walk, so
 suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
-To steer instead, first queue the message with Enter, then press Alt+Enter
-(Option+Enter). This sends the oldest queued follow-up to the active run at its
-next opportunity without cancelling in-flight tools or changing your draft.
-Each Alt+Enter sends one message. If the run is no longer accepting steering,
-the message stays queued. Slash commands, `!` shell commands, and exit signals
-are not steered or skipped over. With no queued message, Alt+Enter does nothing.
-While running with at least one queued message, the input box shows both shortcuts.
+To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
+draft, this sends the draft to the run at its next opportunity, without
+cancelling in-flight tools. Messages already queued stay queued. With an empty
+draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
+message. Slash commands, `!` shell commands, and exit signals are never steered.
+A draft that cannot steer, including any draft while idle, is taken as if you
+pressed Enter. A queued message that cannot steer stays queued and is not
+skipped over. While running with a draft or a queued message, the input box
+shows both shortcuts. If Option+Enter queues like Enter, see
+[Option keys on macOS](#option-keys-on-macos).
 Shift-Enter inserts a newline when the terminal reports it separately from Enter.
 Ctrl-J inserts a newline in the editor; plain Enter submits. Some terminals, including
 GNOME Terminal/VTE on Ubuntu, send the same input for Shift-Enter and Enter.

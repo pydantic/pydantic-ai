@@ -354,7 +354,9 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
             live.buffer.replace('steer this')
             live.feed('enter')
             live.feed('alt-enter')
-    assert steered == ['steer this']
+            live.buffer.replace('steer that')
+            live.feed('alt-enter')
+    assert steered == ['steer this', 'steer that']
     assert recorded(exporter) == [
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 16}),
         (
@@ -369,5 +371,6 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
         ('prompt submitted', {'route': 'submitted', 'recalled': True, 'kind': 'shell', 'chars': 3}),
         ('prompt interrupt', {'key': 'ctrl-c', 'cancelled_turn': False}),
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'prompt', 'chars': 10}),
-        ('prompt steer', {'steered': True}),
+        ('prompt steer', {'steered': True, 'source': 'queue'}),
+        ('prompt steer', {'steered': True, 'source': 'draft'}),
     ]
