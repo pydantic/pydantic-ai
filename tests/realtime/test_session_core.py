@@ -1060,3 +1060,22 @@ def test_retained_audio_eviction_does_not_walk_what_waits_or_has_no_audio(monkey
     feed(session_core, *(AudioSent(data=bytes(480)) for _ in range(50)))
     # Each chunk strips a message that still has audio, at most: it never passes over those that don't.
     assert strips <= 50
+
+
+def test_retained_audio_eviction_keeps_a_message_that_still_has_audio_in_line() -> None:
+    """A message with several parts that loses only its oldest part's audio stays first in line for the next eviction."""
+    session_core = feed(
+        _budget_core(0.2),
+        started('r1'),
+        AudioDelta(_tenth_of_a_second(1), response_id='r1', item_id='a1'),
+        said('r1', 'One.', item_id='a1'),
+        AudioDelta(_tenth_of_a_second(2), response_id='r1', item_id='a2'),
+        said('r1', 'Two.', item_id='a2'),
+        ended('r1'),
+        AudioSent(data=_tenth_of_a_second(3)),
+    )
+    assert [(transcript, audio) for _, transcript, audio in _retained(session_core)] == [
+        ('One.', False),
+        ('Two.', True),
+    ]
+    assert session_core._recorded_audio == [session_core._responses['r1']]  # pyright: ignore[reportPrivateUsage]
