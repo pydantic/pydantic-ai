@@ -450,6 +450,10 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
     ]
     assert adapter.validate_python({'output': 'hi'}).output == 'hi'
 
+    bare = TypeAdapter(AgentRunResult).json_schema(mode='validation')
+    assert set(bare['properties']) == set(accepted['properties'])
+    assert bare['required'] == ['output']
+
 
 def test_each_output_type_keeps_its_own_validation_schema() -> None:
     """Two parameterizations in one API each publish their own `output`, not one shared definition."""
