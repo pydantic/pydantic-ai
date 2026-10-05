@@ -65,7 +65,6 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.ui.menus.key_menu import keys_command
-from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
@@ -838,8 +837,7 @@ class _Shell(Generic[DepsT, OutputT]):
             self.console.print()
             if self.plugins_busy(text):
                 return
-            with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
-                await _execute_command(self.commands, text, console=self.console, status=self.status)
+            await _execute_command(self.commands, text, console=self.console, status=self.status)
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:

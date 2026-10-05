@@ -239,9 +239,13 @@ streamed output while CLAI works, and remains editable. A `Working` label and
 animated spinner, in the same pink accent as tool names, appear in the box's top border while a turn or its lifecycle
 hooks are active, without adding a row to the input area. The animation uses the editor's existing refresh
 cycle and disappears when work finishes, fails, or is cancelled. It is not part
-of your draft or submitted message. The editor reserves rows below a terminal
-scroll region. Both partial and completed output stream directly above it,
-without erasing or repainting the input box. Typing updates the draft row; a
+of your draft or submitted message. The editor sits below a Termflow live transcript panel on the alternate screen.
+Both partial and completed output paint above it without repainting unchanged
+input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
+changing the draft. New output leaves a scrolled view in place; returning to the
+bottom or submitting follows new output again. Hold Shift or Option to select
+text with the mouse, depending on your terminal. On exit, CLAI prints the retained
+transcript into native terminal scrollback. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
@@ -1446,8 +1450,8 @@ Streaming uses the defaults from [Code Puppy's smoothing adapters](https://githu
   renderer, at Code Puppy's thinking pace: 20 ms ticks, 0.4-second catch-up,
   minimum two characters per tick. The `Thinking` heading ends without a
   newline, so the first rendered reasoning line continues on the heading's row.
-- Both writers feed the terminal scroll region directly. Partial text does not
-  wait for an editor refresh, and a completed line does not clear the input box.
+- Both writers feed the live transcript panel. Output paints at up to 60 frames
+  per second; changed cells do not clear the input box.
 - Smoothing applies only to interactive terminal output. Redirected output is
   written directly. Parts drain before the next heading, tool status, or prompt.
 
@@ -1632,22 +1636,26 @@ output count, updated after each turn and hidden until a response has price data
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
-The shell owns a pinned editor below a VT terminal scroll region, with Termflow
-layout and completion helpers. Rich and Termflow transcript output scroll above
-it without repainting the editor. The hardware cursor stays hidden during input;
-a nonblinking reverse-video cell marks the editing position. Status and resize
-checks run ten times per second, writing only changed rows. Terminals shorter
-than six rows or narrower than six columns omit the border. Below three rows,
-the draft is retained but hidden until the terminal grows. The pinned surface
-requires VT scrolling-margin support. While resizing, the visible viewport goes
-blank and incoming output is buffered. After 250 ms without another size change,
-CLAI redraws recent transcript at the new width and restores the current draft.
-It does not clear terminal scrollback or conversation history. The repaint cache
-retains up to 2,000 lines and one million characters per editor, plus a bounded
-partial line; it includes startup and plugin lifecycle notices and is carried
-across shell reloads. Output arriving during resize
-is kept separately and flushed in order, spilling to a private temporary file
-for large bursts. Full-screen menus release scrolling margins and detach the keyboard reader before taking over.
+The shell owns a pinned editor below a Termflow live transcript panel. It uses
+Termflow's cell buffer and changed-cell painter, not a second terminal canvas or
+a prompt-toolkit renderer. The hardware cursor stays hidden during input; a
+nonblinking reverse-video cell marks the editing position. Status checks run ten
+times per second. Terminals shorter than six rows or narrower than six columns
+omit the border. Below three rows, the draft is retained but hidden until the
+terminal grows. Resizing repaints the panel at the new size and preserves the
+draft and scroll position. It never erases terminal scrollback.
+
+Assistant text and thinking retain their Markdown source and render again when
+the width or theme changes. Tool and command output rewrap with their original
+colours. Full-screen menus temporarily leave the panel and detach its keyboard
+reader. Output arriving during a menu stays in the transcript and appears when
+the menu closes. Inline questions borrow the panel. The transcript includes
+startup and plugin lifecycle notices and is carried across shell reloads.
+It retains up to 10,000 items and four million characters, plus a bounded partial
+line. Old output is dropped at those limits; oversized Markdown parts keep their
+rendered tail instead of their source. `/clear` hides earlier output from the
+panel but retains it for the exit printout within these limits. Hyperlinks are
+preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 The status row follows Code Puppy's styling: muted surrounding text, an accented

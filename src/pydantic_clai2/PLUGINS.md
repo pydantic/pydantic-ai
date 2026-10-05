@@ -889,7 +889,7 @@ For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
 The picker uses `host.full_screen()` only to flush streaming output and suspend
-the editor's input reader. It does not switch to the alternate screen. The draft
+the editor's input reader. It keeps the live panel's alternate screen. The draft
 is restored on exit, and your picks are printed to the transcript afterwards.
 `/plugins disable ask_user` takes the tool away.
 
@@ -1926,19 +1926,18 @@ The spinner uses the same pink `ACCENT` as tool names, while the label and borde
 stay muted. The indicator appears
 without adding an input row or changing the draft. The indicator uses the editor's refresh cycle, adds no
 background task, and is hidden while a full-screen interface owns the terminal.
-The editor reserves bottom rows with terminal scrolling margins. Both partial
-and complete output go straight to the transcript region, without suspending or
-repainting the input box. The shell paints changed editor rows itself, using
-Termflow layout helpers; it does not run a prompt-toolkit renderer. Its cursor
-is a nonblinking highlighted cell, separate from the transcript cursor.
-Resize blanks the visible viewport and buffers transcript writes until the size
-has been stable for 250 ms. It then replays a bounded recent transcript tail and
-restores the draft; it does not erase terminal scrollback or conversation history.
-The buffer includes startup and plugin lifecycle output. It retains ANSI styling,
-not arbitrary terminal-control operations.
-Use `self.host.full_screen()` for widgets instead of printing cursor-control sequences
-into the transcript. Large output bursts during resize spill to a private temporary
-file and are flushed in order after the viewport is rebuilt.
+The editor and transcript share a Termflow live cell buffer on the alternate
+screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
+output without changing the draft. New output does not move a scrolled view.
+On exit, the retained transcript prints into native terminal scrollback.
+Resize, theme changes, and returning from a menu repaint from the transcript.
+Assistant Markdown renders again at the new width and theme; tool and command
+output rewraps with its original colours. The transcript includes startup and
+plugin lifecycle output. It keeps styling, not arbitrary terminal controls.
+Use `self.host.full_screen()` for widgets instead of printing cursor-control
+sequences into the transcript. `run_worker` temporarily leaves the live panel
+for full-screen widgets; output continues into the transcript without painting
+until the widget closes. Inline questions keep the panel on screen.
 The Termflow smoothing defaults match Code Puppy: responses use 12 ms ticks, a 0.5-second
 catch-up window, and at least one character per tick; thinking uses 20 ms ticks,
 a 0.4-second window, and at least two characters per tick, and renders as dimmed

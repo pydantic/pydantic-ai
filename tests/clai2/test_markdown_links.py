@@ -10,7 +10,7 @@ from rich.text import Text
 
 from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart, ThinkingPartDelta
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.rendering._rendering import LinkOutput
 
 URL = 'https://github.com/pydantic/pydantic-ai-harness/pull/1006'
@@ -76,23 +76,20 @@ async def test_abort_mid_label_does_not_leave_a_hyperlink() -> None:
 async def test_streamed_link_survives_surface_resize() -> None:
     output = io.StringIO()
     size = (120, 24)
-    now = 0.0
-    surface = PromptSurface(output=output, size=lambda: size, clock=lambda: now)
+    surface = PromptSurface(output=output, size=lambda: size)
     surface.paint(('prompt',))
     console = Console(file=surface, force_terminal=True, width=120)
     renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
     await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(f'Opened [PR #1006]({URL}).')))
     await renderer.finish()
     size = (100, 30)
-    surface.paint(('prompt',))
     start = len(output.getvalue())
-    now = 0.3
     surface.paint(('prompt',))
-    replay = output.getvalue()[start:]
-    text = Text.from_ansi(replay)
-    assert text.get_style_at_offset(console, text.plain.index('PR #1006')).link == URL
-    assert text.get_style_at_offset(console, text.plain.index('prompt')).link is None
-    surface.release()
+    assert 'Opened PR #1006' in Text.from_ansi(output.getvalue()[start:]).plain
+    surface.restore()
+    printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1])
+    assert printed.get_style_at_offset(console, printed.plain.index('PR #1006')).link == URL
+    assert printed.get_style_at_offset(console, printed.plain.index('Opened')).link is None
 
 
 async def test_model_control_bytes_cannot_inject_terminal_commands() -> None:

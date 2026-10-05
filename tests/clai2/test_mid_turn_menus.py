@@ -14,6 +14,7 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from rich.text import Text
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
@@ -31,7 +32,8 @@ from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from tests.clai2.test_tasks import task
 
@@ -68,15 +70,24 @@ async def test_run_worker_holds_output_only_while_the_widget_runs() -> None:
     log: list[str] = []
 
     @contextmanager
-    def hold() -> Generator[None]:
-        log.append('hold')
+    def hold(*, leave_screen: bool) -> Generator[None]:
+        log.append(f'hold leave_screen={leave_screen}')
         yield
         log.append('replay')
 
     with holding_output(hold):
         assert await run_worker(lambda: log.append('menu') or 'done') == 'done'
+        await run_worker(lambda: log.append('inline'), inline=True)
     await run_worker(lambda: log.append('unheld'))
-    assert log == ['hold', 'menu', 'replay', 'unheld']
+    assert log == [
+        'hold leave_screen=True',
+        'menu',
+        'replay',
+        'hold leave_screen=False',
+        'inline',
+        'replay',
+        'unheld',
+    ]
 
 
 async def test_overlay_takes_turns_with_widgets_without_pausing_the_stream() -> None:
@@ -128,14 +139,12 @@ async def test_model_settings_saved_mid_turn_reach_the_running_models_next_reque
 ) -> None:
     """An edit saved from a menu worker thread while a tool runs applies to the same turn's next request."""
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
-    written: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if 'Finished work' in ''.join(written):
+        def changed(self) -> None:
+            super().changed()
+            if 'Finished work' in _plain(self.transcript):
                 streamed.set()
-            return super().write(text)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     store = SettingsStore(tmp_path / 'config.db')
@@ -215,14 +224,12 @@ def test_menu_opens_mid_turn_on_a_plain_asyncio_loop(tmp_path: Path, monkeypatch
 async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
     opened, close = threading.Event(), threading.Event()
-    written: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if 'Finished work' in ''.join(written):
+        def changed(self) -> None:
+            super().changed()
+            if 'Finished work' in _plain(self.transcript):
                 streamed.set()
-            return super().write(text)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
 
@@ -267,7 +274,7 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
             close.set()
             pipe.send_text('/exit\r')
             await done.wait()
-    text = output.getvalue()
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert text.index('> /menu') < text.index('Finished work') < text.index('menu closed') < text.index('Goodbye.')
 
 
@@ -396,3 +403,8 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
     else:
         assert f'Disabled alpha.\n{TURN_NOTICE}' in text
         assert text.index(reply) < text.index('alpha ended') < text.index('> /exit')
+
+
+def _plain(transcript: TranscriptBuffer) -> str:
+    """Streamed Markdown lands in the transcript, not in `write`."""
+    return Text.from_ansi('\n'.join(transcript.frame(width=200, height=500).rows)).plain

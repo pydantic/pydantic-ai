@@ -9,7 +9,7 @@ from rich.style import Style
 from rich.text import Text
 from termflow.ansi.utils import visible_length
 
-from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer, render_ansi, style_prefix
+from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock, TranscriptBuffer, render_ansi, style_prefix
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -231,3 +231,75 @@ def test_colour_reset_does_not_close_a_hyperlink_across_lines() -> None:
     buffer.write('\x1b]8;;\x1b\\ unlinked')
     text = Text.from_ansi(buffer.frame(width=80, height=10).rows[-1])
     assert text.get_style_at_offset(console, -1).link is None
+
+
+def _block(buffer: TranscriptBuffer, *, width: int = 40) -> MarkdownBlock:
+    def render(*, source: str, width: int) -> str:
+        return f'rendered at {width}: {source}\n'
+
+    return buffer.markdown(render=render, width=width, changed=lambda: None)
+
+
+def test_markdown_part_starts_on_its_own_row_and_keeps_its_id() -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('tool header')
+    block = _block(buffer)
+    assert buffer.ids() == range(0, 3)
+    block.extend('**hi**')
+    block.write('streamed\npartial')
+    block.flush()
+    buffer.write('after\n')
+    assert plain(buffer, width=40) == ['tool header', 'streamed', 'partial', 'after', '']
+    assert plain(buffer, width=30) == ['tool header', 'rendered at 30: **hi**', 'after', '']
+    assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['streamed', 'partial']
+
+
+def test_printed_skips_output_already_in_scrollback_and_includes_cleared_output() -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('startup\n')
+    buffer.mark_printed()
+    buffer.write('\tconversation\n')
+    block = _block(buffer)
+    block.extend('answer')
+    block.write('answer\n')
+    buffer.clear()
+    buffer.write('after clear\n')
+    assert Text.from_ansi(buffer.printed(width=40)).plain == ('        conversation\nanswer\nafter clear')
+    assert buffer.printed(width=40) == ''
+    block.freeze()
+    assert plain(buffer) == ['after clear', '']
+
+
+def test_markdown_parts_count_towards_the_line_limit() -> None:
+    buffer = TranscriptBuffer(max_lines=2)
+    _block(buffer)
+    buffer.write('one\ntwo\n')
+    assert buffer.ids() == range(1, 4)
+    assert plain(buffer) == ['one', 'two', '']
+
+
+def test_oversized_markdown_keeps_a_bounded_tail_and_does_not_evict_itself() -> None:
+    buffer = TranscriptBuffer(max_chars=10, max_lines=2)
+    block = _block(buffer)
+    block.extend('source much larger than the limit')
+    block.extend('ignored after freezing')
+    assert block.source is None
+    block.write('one\ntwo\nthree\n')
+    assert plain(buffer, width=40) == ['two', 'three', '']
+    block.write('four\n')
+    assert plain(buffer, width=40) == ['three', 'four', ''], 'a same-length tail still invalidates its cache'
+    block.write('pending-too-long')
+    assert block.chars <= 10
+    assert plain(buffer, width=40) == ['g-too-long', '']
+    buffer.write('new\nnext\n')
+    block.write('evicted block still receiving output')
+    assert plain(buffer, width=40) == ['new', 'next', '']
+
+
+def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() -> None:
+    buffer = TranscriptBuffer(max_chars=10)
+    block = _block(buffer)
+    block.extend('source')
+    block.write('answer\n')
+    assert block.source is None
+    assert plain(buffer, width=40) == ['answer', '']

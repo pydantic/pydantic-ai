@@ -33,6 +33,7 @@ from pydantic_clai2.ui.menus import key_menu
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
 from pydantic_clai2.ui.prompt.live_prompt import PromptWakeup
+from pydantic_clai2.ui.prompt.prompt_surface import ENTER
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.menu_script import Script, pick, typed
 from tests.clai2.test_tasks import task
@@ -357,7 +358,8 @@ async def test_banner_keeps_brand_colours_under_every_theme(
         store=SettingsStore(tmp_path / 'config.db'),
         console=console,
     )
-    text = Text.from_ansi(output.getvalue())
+    # Before the live panel opens; its frames repaint the same banner from the transcript.
+    text = Text.from_ansi(output.getvalue().split(ENTER, 1)[0])
     logo_rows = [line for line in text.split() if {'█', '═'} & set(line.plain) or line.plain == 'CLAI 2.0']
     colours = [
         line.get_style_at_offset(console, len(line.plain) - len(line.plain.lstrip())).color for line in logo_rows

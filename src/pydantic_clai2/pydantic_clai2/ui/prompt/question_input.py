@@ -28,6 +28,9 @@ def question_input() -> Generator[Callable[[], str | Paste]]:
         # Inline questions keep Ctrl-J as confirmation, unlike the multiline editor.
         if key == 'ctrl-j':
             key = 'enter'
+        elif key == 'mouse':
+            # The live panel reports the wheel; a question has nothing to scroll.
+            return
         pending.put(Paste(text=data) if key == 'paste' else key)
 
     def read() -> str | Paste:

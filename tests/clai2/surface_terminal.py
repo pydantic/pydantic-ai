@@ -1,8 +1,9 @@
-"""Small VT screen fixture for the cursor/margin operations emitted by PromptSurface.
+"""Small VT screen fixture for the cursor, margin, and screen operations CLAI emits.
 
 Unlike StringIO assertions, this checks what remains on screen after rows move.
 Resize deliberately retains existing row coordinates, reproducing the stale-band
-case that bottom-anchoring tmux can hide. This is not a general terminal emulator.
+case that bottom-anchoring tmux can hide. The alternate screen is kept apart from
+the main one and its history, as terminals do. This is not a general terminal emulator.
 """
 
 import io
@@ -21,6 +22,12 @@ class SurfaceTerminal(io.StringIO):
         self.top, self.bottom = 0, height - 1
         self.wrap = True
         self.history: list[str] = []
+        self.main: tuple[list[list[str]], tuple[int, int]] | None = None
+        """The main screen and its cursor, kept while the alternate screen shows."""
+
+    @property
+    def alternate(self) -> bool:
+        return self.main is not None
 
     def resize(self, *, width: int, height: int, bottom_anchored: bool = False) -> None:
         """Resize without moving old UI rows to the new screen bottom."""
@@ -50,7 +57,9 @@ class SurfaceTerminal(io.StringIO):
 
     def write(self, text: str) -> int:
         super().write(text)
-        for token in re.findall(r'\x1b\[[0-9;?<>]*[A-Za-z]|\x1b.|[^\x1b]', text):
+        for token in re.findall(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?<>]*[A-Za-z]|\x1b.|[^\x1b]', text):
+            if token.startswith('\x1b]'):
+                continue  # OSC: hyperlinks and palettes have no cells
             if token == '\x1b7':
                 self.saved = (self.row, self.column)
             elif token == '\x1b8':
@@ -72,7 +81,7 @@ class SurfaceTerminal(io.StringIO):
 
     def advance(self) -> None:
         if self.row == self.bottom:
-            if self.top == 0:  # pragma: no branch
+            if self.top == 0 and self.main is None:  # pragma: no branch
                 self.history.append(''.join(self.cells[0]).rstrip())
             del self.cells[self.top]
             self.cells.insert(self.bottom, [' '] * self.width)
@@ -81,7 +90,13 @@ class SurfaceTerminal(io.StringIO):
 
     def control(self, token: str) -> None:
         params, code = token[2:-1], token[-1]
-        if code == 'H':
+        if token == '\x1b[?1049h' and self.main is None:
+            self.main = (self.cells, (self.row, self.column))
+            self.cells = [[' '] * self.width for _ in range(self.height)]
+        elif token == '\x1b[?1049l' and self.main is not None:
+            self.cells, (self.row, self.column) = self.main
+            self.main = None
+        elif code == 'H':
             row, col = (int(part) for part in params.split(';'))
             self.row = min(max(0, row - 1), self.height - 1)
             self.column = min(max(0, col - 1), self.width - 1)

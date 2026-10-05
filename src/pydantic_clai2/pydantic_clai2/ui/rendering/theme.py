@@ -23,6 +23,11 @@ def names() -> tuple[str, ...]:
     return theme_names()
 
 
+def name() -> str:
+    """The session's theme name, read at render time so a change applies to the next frame."""
+    return _ACTIVE.get()()
+
+
 def current() -> TerminalPalette | None:
     """Read the session's palette; `None` keeps the existing CLAI appearance."""
     name = _ACTIVE.get()()
