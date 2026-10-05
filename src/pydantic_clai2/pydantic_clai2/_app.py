@@ -5,7 +5,7 @@ import math
 import sys
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -354,6 +354,7 @@ def create_shell(
     """Build shared session services, without attaching terminal input in headless mode."""
     settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
     store = store or SettingsStore()
+    transcript = transcript if transcript is not None else TranscriptBuffer()
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
     session = Session(
         agent,
@@ -479,13 +480,25 @@ def create_shell(
         Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
     )
 
-    new_command = Command(
-        name='new',
-        description='Start a new session; preserve the previous session',
-        handler=lambda _: session.clear() or 'New session started. Previous session remains saved.',
+    new_session = 'New session started. Previous session remains saved.'
+
+    def clear(_: list[str]) -> str:
+        session.clear()
+        console.clear()
+        # Forget the old conversation too, or the next resize would replay it.
+        transcript.clear()
+        return new_session
+
+    commands.register(
+        Command(
+            name='new',
+            description='Start a new session; preserve the previous session',
+            handler=lambda _: session.clear() or new_session,
+        )
     )
-    commands.register(new_command)
-    commands.register(replace(new_command, name='clear', description='Alias of /new'))
+    commands.register(
+        Command(name='clear', description='Like /new, and also clear the screen', handler=clear),
+    )
     commands.register(
         Command(
             name='usage',
@@ -586,7 +599,7 @@ def create_shell(
         status=status,
         prompt=prompt,
         history=history,
-        transcript=transcript if transcript is not None else TranscriptBuffer(),
+        transcript=transcript,
         images=images,
         interrupts=Interrupts(),
         screen=screen,
