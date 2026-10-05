@@ -66,10 +66,10 @@ class Recorder:
 class Published(AbstractCapability[None]):
     """A capability selecting a model and supplying settings, like Logfire's `AgentControl`."""
 
-    model: str | None = None
+    model: Model | str | None = None
     settings: ModelSettings | None = None
 
-    def get_model(self) -> str | None:
+    def get_model(self) -> Model | str | None:
         return self.model
 
     def get_model_settings(self) -> ModelSettings | None:
@@ -317,17 +317,23 @@ async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
     assert recorder.calls == snapshot([('anthropic:claude-sonnet-4-6', {})])
 
 
-async def test_saved_settings_stay_with_their_model(tmp_path: Path) -> None:
-    """Settings saved for CLAI's default model are not sent to the model a capability selects instead."""
-    recorder, _ = await run_turn(
+@pytest.mark.parametrize('stock', [True, False], ids=['stock', 'supplied'])
+async def test_saved_settings_stay_with_their_model(tmp_path: Path, stock: bool) -> None:
+    """Settings saved for the default model are not sent to the model a capability selects instead."""
+    name = 'openai-codex:gpt-6-astra'
+    recorder = Recorder()
+    # Without a chosen model nothing resolves names for a supplied agent, so its capability selects an instance.
+    other = 'anthropic:claude-sonnet-4-6'
+    published = Published(model=other if stock else recorder.resolve(other))
+    await run_turn(
         tmp_path,
-        settings=Settings(),
-        saved={
-            'openai-codex:gpt-6-astra': {'service_tier': 'priority', 'custom_params': {'reasoning.summary': 'auto'}}
-        },
-        plugins=(Published(model='anthropic:claude-sonnet-4-6'),),
+        settings=Settings() if stock else Settings(model=None),
+        saved={name: {'service_tier': 'priority', 'custom_params': {'reasoning.summary': 'auto'}}},
+        plugins=(published,) if stock else (),
+        agent=None if stock else Agent(recorder.resolve(name), deps_type=type(None), capabilities=[published]),
+        recorder=recorder,
     )
-    assert recorder.calls == snapshot([('anthropic:claude-sonnet-4-6', {})])
+    assert recorder.calls == [(other, {})]
 
 
 async def test_agent_capability_settings_beat_family_defaults(tmp_path: Path) -> None:
