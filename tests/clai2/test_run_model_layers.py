@@ -402,10 +402,9 @@ async def test_fork_keeps_how_the_model_was_chosen(tmp_path: Path, model: str | 
 @pytest.mark.parametrize('stock', [True, False], ids=['stock', 'supplied'])
 async def test_selected_model_resolves_through_clai_first(tmp_path: Path, stock: bool) -> None:
     """CLAI resolves the selected model before a resolver on the agent or a plugin, as when it did so before each run."""
-    elsewhere = Recorder()
 
     def claim(ctx: ModelResolutionContext[None], model_id: str) -> Model:
-        return elsewhere.resolve(model_id)
+        raise AssertionError(f'{model_id!r} reached a resolver after CLAI')  # pragma: no cover
 
     resolver = ResolveModelId[None](claim)
     recorder, _ = await run_turn(
@@ -415,7 +414,6 @@ async def test_selected_model_resolves_through_clai_first(tmp_path: Path, stock:
         agent=None if stock else Agent(None, deps_type=type(None), capabilities=[resolver]),
     )
     assert [name for name, _ in recorder.calls] == ['openai-codex:gpt-6-astra' if stock else 'openai:gpt-6']
-    assert elsewhere.calls == []
 
 
 @pytest.mark.parametrize('chosen', [False, True], ids=['capability', 'chosen'])
