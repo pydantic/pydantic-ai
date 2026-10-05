@@ -628,6 +628,10 @@ class TestMCPToolsetIntegration:
         async def save_checkpoint() -> str:
             return 'saved'
 
+        @server.tool(meta={'ui': {'visibility': []}})
+        async def hidden_everywhere() -> str:
+            return 'hidden'
+
         @server.tool(meta={'ui': {'visibility': ['app', 'model']}})
         async def create_view() -> str:
             return 'created'

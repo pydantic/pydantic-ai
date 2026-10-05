@@ -1755,7 +1755,7 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
 
 
 def _is_app_only(tool: mcp_types.Tool) -> bool:
-    """Whether an MCP Apps (SEP-1865) server keeps the tool from the model, by leaving `"model"` out of `_meta.ui.visibility`."""
+    """Whether an MCP Apps (SEP-1865) server keeps the tool from the model, with a `_meta.ui.visibility` of `["app"]` or `[]`."""
     match tool.meta:
         case {'ui': {'visibility': ['app'] | []}}:
             return True
