@@ -570,7 +570,8 @@ class PluginLoader(Generic[DepsT]):
         _requested('remove', name)
         requires = self._requirements(entry)
         await self.unload(name)
-        if entry.path is not None and not entry.shipped:
+        # A relative path never names a drop-in, only an approval saved before paths were anchored: forget it.
+        if entry.path is not None and entry.path.is_absolute() and not entry.shipped:
             self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
             return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
@@ -687,6 +688,13 @@ class PluginLoader(Generic[DepsT]):
 
     def _import(self, entry: PluginEntry[DepsT], *, fresh: bool) -> ModuleType:
         if entry.path is not None:
+            if not entry.path.is_absolute():
+                # Saved approvals are shared by every repository, so a relative path would run whatever
+                # file sits at it under the launch directory. Project files are anchored before approval.
+                raise ValueError(
+                    f'{entry.path} is relative, so it would load from whichever directory CLAI starts in. '
+                    f'Use /plugins remove {entry.name} and approve it again, or give it an absolute path.'
+                )
             return import_file(entry.name, entry.path)
         module_name = entry.declaration.factory.partition(':')[0]
         module = importlib.import_module(module_name)
