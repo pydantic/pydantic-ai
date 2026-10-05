@@ -591,6 +591,11 @@ class TestAgentSpec:
         assert capability.include_deep_search is True
         assert capability.include_domains == ['a.dev']
         assert capability.client is None
+        assert capability.id == 'exa_search'
+
+    def test_from_spec_sets_a_distinct_id(self) -> None:
+        """A second instance next to `PrefixTools` needs its own `id`, so a spec has to be able to set one."""
+        assert ExaSearch[None].from_spec(include_domains=['a.dev'], id='a_search').id == 'a_search'
 
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')

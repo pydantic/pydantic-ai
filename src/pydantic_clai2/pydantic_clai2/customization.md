@@ -664,8 +664,8 @@ CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings
 are declared in ModelSettingsForm in model_settings.py; extend that form, not a
 second editor. Credentials belong in provider-supported storage, not model
-settings. /login signs in to subscriptions: /login codex (the default),
-/login copilot, and any sign-in a plugin returns from get_logins.
+settings. /login signs in to subscriptions: /login openai-codex,
+/login github-copilot, and any sign-in a plugin returns from get_logins.
 
 ## Test and verify
 

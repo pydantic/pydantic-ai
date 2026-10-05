@@ -439,7 +439,9 @@ outcomes; unmanaged events and exception propagation keep their original contrac
 Metadata and final/interrupted histories are atomically saved under `directory`.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
-Inspect possible partial effects before an explicit resume.
+Inspect possible partial effects before an explicit resume. A resume closes out tool
+calls the interruption left unanswered with an `interrupted` tool return, so the child
+sees they did not complete.
 
 Managed children with `forward_usage=True` share live usage accounting and inherit
 parent ceilings. A per-child budget is converted to an absolute ceiling at launch;

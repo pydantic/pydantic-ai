@@ -2,7 +2,7 @@
 
 The built-in `grain` plugin: harness's `Grain` capability, with no secret in plugin settings.
 
-`/grain` (or `C` in `/plugins`, and turning the plugin on) opens a menu for the token source and the non-secret settings; each change is saved at once and applies
+`/grain` (or `c` in `/plugins`, and turning the plugin on) opens a menu for the token source and the non-secret settings; each change is saved at once and applies
 to the next prompt. The token comes from, in order: the `GRAIN_ACCESS_TOKEN` environment variable; a named key from
 `/keys` (only the key's name is saved, and it is resolved on every run, so replacing the key in `/keys` applies and
 deleting it fails closed); or a browser sign-in whose tokens go to the OS keyring the way `/mcp` OAuth servers keep
