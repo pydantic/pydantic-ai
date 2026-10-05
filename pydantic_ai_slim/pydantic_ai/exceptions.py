@@ -16,8 +16,6 @@ from ._warnings import (
     UsageExtractionFailedWarning as UsageExtractionFailedWarning,
 )
 
-ExceptionGroup = ExceptionGroup  # noqa: F821
-
 if TYPE_CHECKING:
     from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
     from .usage import RunUsage
@@ -603,7 +601,7 @@ class ModelHTTPError(ModelAPIError):
             return None
 
 
-class FallbackExceptionGroup(ExceptionGroup[Any]):
+class FallbackExceptionGroup(ExceptionGroup[Any]):  # noqa: F821
     """A group of exceptions that can be raised when all fallback models fail."""
 
 
