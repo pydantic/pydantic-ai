@@ -930,7 +930,8 @@ They are the session's and the connection's to fix, not the core's, since the co
 connection reports:
 
 - `SIM-1`: a reply lost with a dropped connection is not asked for again by the reconnect;
-- `SIM-4`, `SIM-23`: the connection drops a whole frame when a request it sends from its receive loop fails,
+- `SIM-4`, `SIM-23`: the connection drops a whole frame when a request (or xAI's held audio) it sends from its receive
+  loop fails,
   or is cancelled by a close, so the core never sees that response's usage or terminal either;
 - `SIM-10`: the connection drops what a response said after a cancel that reached the server too late;
 - `SIM-15`: a tool that raises leaves the session unable to get the replies still owed after it: the
@@ -946,8 +947,8 @@ connection reports:
 - `SIM-27`: a hand commit under server VAD splits the user's turn in two, and only one is recorded;
 - `SIM-34`: unlike the rest, mostly the core's own: it loses a turn `commit_audio()` committed when the connection
   drops, or the session closes or ends, before its reply is over (the current session records it, except on xAI);
-- `SIM-35`: without transcription, a clear made after server VAD committed a turn, before the session read the
-  commit, drops that turn;
+- `SIM-35`: without transcription, a clear made after the provider committed a turn (server VAD, or a request on
+  xAI push-to-talk), before the session read the commit, drops that turn;
 - `SIM-36`: on xAI push-to-talk, audio sent after a repeated `response.done` is held behind a reply that ended;
 - `8763c #3`: a response already under way takes a turn's reservation; the core still does this where server VAD
   is set not to answer (`create_response: False`).
