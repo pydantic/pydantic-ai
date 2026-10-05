@@ -1,6 +1,7 @@
 """The per-model settings a user can edit, validated before they reach `ModelSettings`."""
 
 import re
+from collections.abc import Mapping
 from typing import Literal
 
 from anthropic.types.beta import (
@@ -245,6 +246,16 @@ def model_defaults(*, model: str) -> dict[str, JsonValue]:
         'openai_reasoning_summary': 'detailed',
         'openai_text_verbosity': 'low',
     }
+
+
+def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> ModelSettings | None:
+    """The family defaults for `model` that `saved` leaves unset, as `ModelSettings`.
+
+    Every default fills exactly one `ModelSettings` key, so merging the saved settings over these
+    gives the same settings as `model_settings_from_json(saved, model=model)`.
+    """
+    defaults = {key: value for key, value in model_defaults(model=model).items() if key not in saved}
+    return ModelSettingsForm.model_validate(defaults).to_model_settings()
 
 
 def model_settings_from_json(values: dict[str, JsonValue], *, model: str = '') -> ModelSettingsForm:
