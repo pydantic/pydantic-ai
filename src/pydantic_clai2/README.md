@@ -319,7 +319,7 @@ Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875)
 ## Start chatting
 
 Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
-Run `/login codex` to connect your ChatGPT/Codex subscription.
+Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 
@@ -472,7 +472,7 @@ no agent telemetry spans.
 The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
-`/login codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
+`/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes.
 
@@ -495,7 +495,7 @@ Installing or selecting a plaintext backend can store the key in plaintext. Core
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
-If Codex cannot refresh your login, CLAI tells you to run `/login codex`
+If Codex cannot refresh your login, CLAI tells you to run `/login openai-codex`
 in an interactive session, then retry your message. This replaces the generic
 connection error that can hide an expired login. Headless runs show the same
 advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
@@ -526,7 +526,7 @@ an awaitable string.
 uv run clai2
 ```
 
-In CLAI, run `/login copilot`, then open `/add_model` and choose
+In CLAI, run `/login github-copilot`, then open `/add_model` and choose
 `github-copilot`. The provider menu also starts login when no credentials exist.
 You do not need to register an OAuth application or configure a client ID.
 CLAI supplies the same [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -553,14 +553,14 @@ Credentials use the existing keyring backend under the `github-copilot` account,
 separate from Codex and API keys. Without a keyring, CLAI reports the plaintext
 `credentials-github-copilot.json` fallback file, created with mode `0600`.
 Tokens and their issuance time stay out of settings, history, and login output.
-Expiring tokens require `/login copilot` again; CLAI does not refresh them.
+Expiring tokens require `/login github-copilot` again; CLAI does not refresh them.
 A failed or cancelled authorization leaves the previous login unchanged.
 
 Without a saved login, CLAI accepts `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, or `COPILOT_GITHUB_TOKEN`, in that order.
 It does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another application's token files.
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
-`/login` without a provider continues to sign in to Codex.
+`/login` without a name asks which sign-in to run.
 
 ## Settings and commands
 

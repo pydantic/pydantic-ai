@@ -206,7 +206,7 @@ Output-validation and HTTP transport retry budgets are unchanged.
 
 ## Credentials
 
-CLAI's `/login codex`, `/login copilot`, and the vllm and openrouter connections store tokens
+CLAI's `/login openai-codex`, `/login github-copilot`, and the vllm and openrouter connections store tokens
 in the configured keyring backend, not plugin settings. Plugins that need an API key, such as
 [`posthog`](#posthog-posthog-analytics-signed-in-for-clai), keep it in `/keys` and save only its name. Large token bundles use
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
@@ -221,7 +221,7 @@ details.
 uv run clai2
 ```
 
-Run `/login copilot`, then open `/add_model` and choose `github-copilot`.
+Run `/login github-copilot`, then open `/add_model` and choose `github-copilot`.
 The provider menu also starts login when no credentials exist. No application
 registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -244,7 +244,7 @@ organization policy still control inference access. A known ID also works with
 The `github-copilot` keyring account is separate from Codex and named API keys.
 Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
 fallback, created with mode `0600`. Tokens and issuance time stay out of settings,
-history, and login output. Expiring tokens require another `/login copilot`;
+history, and login output. Expiring tokens require another `/login github-copilot`;
 there is no automatic refresh. Failed or cancelled authorization preserves the
 previous login.
 
@@ -254,7 +254,7 @@ no login is saved. Copilot login does not read `GH_TOKEN`, `GITHUB_TOKEN`, the
 `GITHUB_TOKEN` key in `/keys`, or another application's token files; that key
 belongs to the separate [`github` plugin](#github-tools-from-githubs-hosted-mcp-server). This is shell-owned authentication, not a plugin API.
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
-Bare `/login` continues to sign in to Codex.
+Bare `/login` asks which sign-in to run.
 
 ## Herdr integration
 
@@ -1031,7 +1031,7 @@ The token is looked up on every run. If none is available when the plugin loads
 loads, prints a warning, and keeps its settings menu available. Until you sign
 in or save a key, each run fails with an error saying how to fix it, so the agent
 never runs as the wrong account. `/keys` does not stop you renaming or deleting a
-key that a plugin uses. Neither sign-in uses your `/login copilot` login,
+key that a plugin uses. Neither sign-in uses your `/login github-copilot` login,
 and Copilot does not read the `GITHUB_TOKEN` key. The plugin emits no telemetry
 of its own; tool calls appear in core's spans.
 
@@ -1716,7 +1716,7 @@ A prompt cancelled by `on_turn_start` never starts an agent run and is not retai
 `/fork` fires both handlers for its background run too: an `on_turn_start` that cancels
 the prompt refuses the fork, and `on_turn_end` runs when the fork finishes.
 
-Codex token-refresh failures show `/login codex` recovery advice, including
+Codex token-refresh failures show `/login openai-codex` recovery advice, including
 when the SDK wraps them as connection errors. This changes only the terminal
 message: `TurnEnd.error` still contains the original exception and its chain.
 Headless runs show the same advice on stderr and exit with code 1.
@@ -2321,9 +2321,10 @@ effort. Any other value raises `ValueError`.
 
 ### Add a sign-in to `/login`: `get_logins()`
 
-`/login NAME` signs in to a subscription: `codex` (bare `/login`) and `copilot`
-ship with CLAI, and `openai-codex` and `github-copilot` still work. A plugin whose
-models need a sign-in adds its own name next to them:
+`/login NAME` signs in to a subscription: `openai-codex` and `github-copilot`
+ship with CLAI, named after the model prefix each one unlocks (the earlier `codex`
+and `copilot` still work), and bare `/login` asks which one to run. A plugin whose
+models need a sign-in adds its own name next to them, ideally its model prefix:
 
 ```python
 from collections.abc import Sequence

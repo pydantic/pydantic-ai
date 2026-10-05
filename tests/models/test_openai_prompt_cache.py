@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock
 import pytest
 from cassetter import Cassette
 
-from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, ModelRequest, ModelResponse, TextPart
+from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
