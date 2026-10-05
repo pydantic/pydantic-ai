@@ -1084,6 +1084,7 @@ async def _run_prompt(
         shell_lines=settings.shell_lines,
         grep_lines=settings.grep_lines,
         tool_arg_chars=settings.tool_arg_chars,
+        tool_calls=settings.tool_calls,
         renderers=[*renderers, task_row] if tasks is not None else renderers,
     )
     status.streamed_chars = 0

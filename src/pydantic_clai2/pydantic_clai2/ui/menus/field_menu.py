@@ -9,6 +9,7 @@ from typing import Protocol
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_clai2.ui import telemetry
@@ -21,6 +22,7 @@ KEEP = 'Keep current'
 SAVE_AND_CLOSE = 'Save & close'
 SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
 _LIST_HINT = 'type to filter - Enter edit - R reset - Esc close'
+_PREVIEW_LIST_WIDTH = 30
 
 
 class _SaveAndClose:
@@ -68,6 +70,8 @@ class FieldRow:
     secret: bool = False
     note: str = ''
     """Where the value comes from when not from the user; shown muted after the value."""
+    preview: Callable[[str, int], str] | None = None
+    """Renders a sample of a choice for the choice picker's right-hand panel, given its width."""
 
     def display(self, value: str) -> str:
         """Label a choice without changing its stored or validated value."""
@@ -195,7 +199,7 @@ class FieldMenu:
         if row.allow_custom:
             items += [MenuItem(CUSTOM, value=CUSTOM), MenuItem(KEEP, value=KEEP)]
         initial = row.choices.index(current) if current in row.choices else 0
-        return (
+        builder = (
             MenuBuilder(f'Choose {row.label or row.key}')
             .style(markdown_style())
             .items(items)
@@ -203,8 +207,17 @@ class FieldMenu:
             .initial_index(initial)
             .footer_hint('Enter select - Esc keep current')
             .key_source(menu_key)
-            .build()
         )
+        if row.preview is not None:
+            builder.list_width(_PREVIEW_LIST_WIDTH).preview(partial(self._preview, row.preview))
+        return builder.build()
+
+    @staticmethod
+    def _preview(render: Callable[[str, int], str], item: MenuItem) -> str:
+        """Size the sample to the panel; the typed-value and keep rows have none."""
+        if not isinstance(item.value, str) or item.value in (CUSTOM, KEEP):
+            return ''
+        return render(item.value, max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
 
     def build_editor(self, row: FieldRow) -> TextInput:
         """A typed input that validates as you go; empty resets."""

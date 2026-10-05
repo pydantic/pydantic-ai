@@ -59,6 +59,12 @@ Use `/set display.tool_output true` to show shell and grep details, or
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
+To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
+one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
+tool or other output follows. Grouped mode shows only names and counts, so it ignores
+`display.tool_output` and `display.tool_arg_chars`; file diffs still print and end the line. `/set` previews
+both styles when you pick one. The default is `detailed`, one line per call.
+
 ## Source layout
 
 The shell entry point lives in `_app.py`. Related implementations live in
@@ -1396,6 +1402,13 @@ without a specialized summary list their arguments after the name as `name=value
 muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
 changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
+
+With `/set display.tool_calls grouped`, each call adds to a run of the same tool on one line instead
+of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is redrawn from column zero
+as each call arrives, so the last count is final only once another tool, text, a diff, or a widget follows.
+A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends. Grouped
+mode ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output; file
+diffs keep their own headers. The setting applies to the next turn.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.

@@ -398,6 +398,14 @@ muted compact-JSON values. Each value shows at most 40 characters by default; `/
 changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
+With `/set display.tool_calls grouped`, each call adds to a run of the same tool on one line instead
+of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is redrawn from column zero
+as each call arrives, so the last count is final only once another tool, text, a diff, or a widget follows.
+A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends. Grouped
+mode ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output; file
+diffs keep their own headers. `/set` previews both styles when you pick one. The setting applies to the
+next turn; the default is `detailed`.
+
 ## Grep previews
 
 Grep calls display the expression and path. Results show the first 20 logical

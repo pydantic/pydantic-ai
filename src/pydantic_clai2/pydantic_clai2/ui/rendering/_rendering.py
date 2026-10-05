@@ -34,9 +34,13 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
 )
+from pydantic_ai_harness.filesystem import FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent, SandboxCallOrder
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.grep_output import GrepOutput
+from pydantic_clai2.ui.rendering.tool_group import ToolCallGroup
 from pydantic_clai2.ui.rendering.tool_output import ToolOutput, print_tool_header, terminal_text, tool_arguments_text
 
 
@@ -100,6 +104,7 @@ class StreamRenderer:
         shell_lines: int = 20,
         grep_lines: int = 20,
         tool_arg_chars: int = 40,
+        tool_calls: ToolCallDisplay = 'detailed',
         renderers: Sequence[Callable[[AgentStreamEvent], RenderableType | None]] = (),
     ) -> None:
         self.console = console
@@ -109,6 +114,7 @@ class StreamRenderer:
         self.tool_arg_chars = tool_arg_chars
         self._tool_output = ToolOutput(console, shell_lines=shell_lines, show_output=show_tool_output)
         self._grep_output = GrepOutput(console, lines=grep_lines, show_output=show_tool_output)
+        self._group = ToolCallGroup(console) if tool_calls == 'grouped' else None
         self.smooth_seconds = smooth_seconds
         self._thinking = False
         self._heading_printed = False
@@ -135,16 +141,15 @@ class StreamRenderer:
                 if isinstance(event.part, TextPart):
                     self.rendered_text = True
             return
-        if isinstance(event, CapabilityEvent):
-            await self.finish()
-            if self._tool_output.render(event):
-                return
+        if isinstance(event, CapabilityEvent) and await self._render_capability(event):
+            return
         if isinstance(event, PartStartEvent) and isinstance(event.part, (TextPart, ThinkingPart)):
-            await self.finish()
+            await self._drain()
             self.stop_loading()
             thinking = isinstance(event.part, ThinkingPart)
             if thinking and not self.show_thinking:
                 return
+            self._close_group()
             self._thinking = thinking
             self._index = event.index
             self._start_part()
@@ -157,9 +162,19 @@ class StreamRenderer:
             elif isinstance(event.delta, ThinkingPartDelta):
                 self._feed(event.delta.content_delta or '')
         elif isinstance(event, PartStartEvent) or isinstance(event, PartEndEvent) and event.index == self._index:
-            await self.finish()
+            await self._drain()
         elif isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent)):
             await self._render_tool(event)
+
+    async def _render_capability(self, event: CapabilityEvent) -> bool:
+        """Return whether the event was handled. A group hides shell output and yields to diffs."""
+        await self._drain()
+        if self._group is not None:
+            if isinstance(event, (CommandStartedEvent, CommandOutputEvent, CommandFinishedEvent)):
+                return True
+            if isinstance(event, (FileEditedEvent, FileWrittenEvent)):
+                self._group.close()
+        return self._tool_output.render(event)
 
     async def _render_sandbox_call(self, event: AgentStreamEvent) -> bool:
         """Render a call from inside `run_code` like a direct one, under its `run_code` header."""
@@ -172,7 +187,7 @@ class StreamRenderer:
         return True
 
     async def _render_tool(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
-        await self.finish()
+        await self._drain()
         self.stop_loading()
         self._render_tool_event(event)
 
@@ -181,6 +196,10 @@ class StreamRenderer:
             return
         if isinstance(event, FunctionToolResultEvent):
             self._tool_output.discard_call(event.part.tool_call_id)
+        if self._group is not None:
+            if isinstance(event, FunctionToolCallEvent):
+                self._group.add(event.part.tool_name)
+            return
         if self._grep_output.render(event):
             return
         if isinstance(event, FunctionToolCallEvent) and not self._tool_output.render_call(event):
@@ -264,7 +283,16 @@ class StreamRenderer:
                 self._renderer.render(event)
 
     async def finish(self) -> None:
-        """Drain rendered Markdown before the next part, tool, or prompt appears."""
+        """Drain rendered Markdown and end any tool-call group before the next part, widget, or prompt appears."""
+        await self._drain()
+        self._close_group()
+
+    def _close_group(self) -> None:
+        if self._group is not None:
+            self._group.close()
+
+    async def _drain(self) -> None:
+        """Flush the open Markdown part. Tool calls keep counting into their group around it."""
         if self._buffer:
             self._line(self._buffer)
         if self._parser is not None and self._renderer is not None:
@@ -281,6 +309,7 @@ class StreamRenderer:
     async def abort(self) -> None:
         """Discard pending output on cancellation and let the drainer terminate."""
         self._tool_output.abort()
+        self._close_group()
         writer, self._writer = self._writer, None
         self._reset()
         if writer is not None:
