@@ -22,7 +22,8 @@ that records only path, body and headers on a live transport, while `timeout` is
 `include_citations`, `tool_choice`, and `thinking` are excluded and stay hand-maintained, for different reasons:
 
 - `include_citations` changes only requests that contain an inline document or Web Fetch tool, while this harness
-  deliberately uses one plain text request for every model. Its dedicated Anthropic tests assert both request shapes.
+  deliberately uses one plain text request for every model. The provider-specific tests assert the request shapes
+  for Anthropic, Bedrock, and xAI.
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
   express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload

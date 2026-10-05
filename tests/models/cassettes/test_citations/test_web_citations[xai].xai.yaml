@@ -1,0 +1,165 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Run one X search for a post by @pydantic about Pydantic AI. Summarize
+            it and cite the post URL.
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - x_search:
+          allowed_x_handles:
+          - pydantic
+          enable_image_understanding: false
+          enable_video_understanding: false
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      include:
+      - INCLUDE_OPTION_INLINE_CITATIONS
+      - INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CmUKYQpfUnVuIG9uZSBYIHNlYXJjaCBmb3IgYSBwb3N0IGJ5IEBweWRhbnRpYyBhYm91dCBQeWRh
+      bnRpYyBBSS4gU3VtbWFyaXplIGl0IGFuZCBjaXRlIHRoZSBwb3N0IFVSTC4QARIZZ3Jvay00LWZh
+      c3Qtbm9uLXJlYXNvbmluZ4oBECIOGghweWRhbnRpYygAMACSAQIIAdIBAgcC
+  response_sample:
+    json:
+      id: e507ca7a-6993-981d-9850-d1fe6244c2c6
+      outputs:
+      - message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call-7f94c7b6-a7f9-46db-a465-84a7dbb70e25-0
+            type: TOOL_CALL_TYPE_X_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: x_keyword_search
+              arguments: '{"query":"from:pydantic \"Pydantic AI\"","limit":"1","mode":"Latest"}'
+          - id: call-7f94c7b6-a7f9-46db-a465-84a7dbb70e25-1
+            type: TOOL_CALL_TYPE_X_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: x_user_search
+              arguments: '{"query":"pydantic","count":"1"}'
+      - index: 1
+        message:
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call-7f94c7b6-a7f9-46db-a465-84a7dbb70e25-0
+            type: TOOL_CALL_TYPE_X_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: x_keyword_search
+              arguments: '{"query":"from:pydantic \"Pydantic AI\"","limit":"1","mode":"Latest"}'
+          encrypted_content: giboRGdrRg3stinwKtpgfcK5SSLfT4Vxm5rBoE7byl/PliN+BSVR0qUEnZ4w7JyX1u4ngFrzXZdr/4ePeTbNa9EVN6hYKQK4PHhoisobsavQfFXYSa1oYfF24d+ge07clc0z4TXYRp33H0rhEe08p/L/FEDLu8zzSmmKfnUT4LtwLV91pRLOyXZ7cF1nrhBWGw85uazvJa+1xcsFSzoHdt2sNRB6k4NKicG1OS4YdjYDyV5Z8GE4rteu7hIbKYLPocJy1AZeIPSgw9vaz0YE6O5SUKUKJm+8vOhMX9tFFftYSmEFaj0cj1Qfkrl4op114y4PF6URPOIDjAvNLYBqcA3BjqL7pnwfmLfK/bB66FbAtzVcEtscDBhPeWYWCZ+SDfuo3xEjaYKfjxbvEI1j5O2ecGEzjPtQ8MJ6bI0DUYTGsqSO/WgFNUs/qcYucj4Qo50XnExErOgkR49353Iv03ZV812ToYXFTPsCC1iNydKj4dNfNH05RBjvjDq6i36PCy4NE8BpHSnbqYXE/HtJCq0GyjI5qqg7qm4wqa4JmjvaHLKFxcSFSpH//7gRDc479aJwhjm1VqGic1rB3/1S2QQZ1YopBjmQkqMdvTiXVFgcrAHhFzw3EQw53KwEyQgouPyxVrmgZI0WfwMe/98eobrqgiOi4rPC8Lm2En7QPlsEtCtoKYGHk2qAm8W9n0UtE+luuCH5FWIePlx4m8rBNS2yr4TNW2lNN9Aplr40D5EqoqG0dEJ2cqk+FC4Wl32iRh963b9+aEV2GZib03vobGwRg8/JzDrnxbHtjugFixGoO4l5u8PfX4OOVvOTpBEkm/l12QTg1d75Y2xd7oCH/Aj571CFFiqBTsyLOsdKancR91NXEMvhNCrD1HE6asWx2Mm5+Ygv3V+YTRRNpmp3iuebA++UmVblu781qOH9NClV9fR5gEqTN8wjPhh60z5+F/TrpJ3VF0O3t8khz6HSKNSXI3cEPHohQZSW5HP7/psK2yYOoCT3pLOeE65gtd2nlpeLGHIPJr/n4KIKRD1COzcrjsiMmWw/nKMK9JySyg6xFhxTfoIf0qv1VWs5EQ9mQ0l7A6I1aZu0pw
+          citations:
+          - x_citation:
+              url: https://x.com/i/status/2105281513579249831
+      - index: 2
+        message:
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call-7f94c7b6-a7f9-46db-a465-84a7dbb70e25-1
+            type: TOOL_CALL_TYPE_X_SEARCH_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: x_user_search
+              arguments: '{"query":"pydantic","count":"1"}'
+          encrypted_content: 9UK3zGrgTqG+2KzhBfCV4ddt8Cm8QELNGrKTNg
+      - finish_reason: REASON_STOP
+        index: 3
+        message:
+          content: "**Post summary:**  \nPydantic (@pydantic) announced that Pydantic\
+            \ AI tools can now run commands and edit files through a single unified\
+            \ API (`ctx.workspace`), regardless of the underlying environment. The\
+            \ tools work seamlessly across local machines, SSH hosts, Bubblewrap sandboxes,\
+            \ or cloud sandboxes like Modal, E2B, and Fly.io Sprites—by simply swapping\
+            \ one capability, the tools remain unchanged. The post includes an image\
+            \ (likely a diagram or screenshot).[[1]](https://x.com/pydantic/status/2105281513579249831)\n\
+            \n**Post URL:** https://x.com/pydantic/status/2105281513579249831"
+          role: ROLE_ASSISTANT
+          citations:
+          - id: '1'
+            start_index: 460
+            x_citation:
+              url: https://x.com/pydantic/status/2105281513579249831
+            end_index: 516
+      created: '2026-10-02T15:55:20.268424854Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 174
+        prompt_tokens: 3422
+        total_tokens: 3596
+        prompt_text_tokens: 3422
+        cached_prompt_text_tokens: 3008
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_X_SEARCH
+        - SERVER_SIDE_TOOL_X_SEARCH
+        cost_in_usd_ticks: '65541000'
+      citations:
+      - https://x.com/i/status/2105281513579249831
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - x_search:
+            allowed_x_handles:
+            - pydantic
+            enable_image_understanding: false
+            enable_video_understanding: false
+        top_p: 0.95
+        include:
+        - INCLUDE_OPTION_INLINE_CITATIONS
+        - INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT
+    raw: !!binary |
+      CiRlNTA3Y2E3YS02OTkzLTk4MWQtOTg1MC1kMWZlNjI0NGMyYzYS/AEa+QEQAhqMAQorY2FsbC03
+      Zjk0YzdiNi1hN2Y5LTQ2ZGItYTQ2NS04NGE3ZGJiNzBlMjUtMBADGAFSWQoQeF9rZXl3b3JkX3Nl
+      YXJjaBJFeyJxdWVyeSI6ImZyb206cHlkYW50aWMgXCJQeWRhbnRpYyBBSVwiIiwibGltaXQiOiIx
+      IiwibW9kZSI6IkxhdGVzdCJ9GmQKK2NhbGwtN2Y5NGM3YjYtYTdmOS00NmRiLWE0NjUtODRhN2Ri
+      YjcwZTI1LTEQAxgBUjEKDXhfdXNlcl9zZWFyY2gSIHsicXVlcnkiOiJweWRhbnRpYyIsImNvdW50
+      IjoiMSJ9OAESowoQARqeChAFGowBCitjYWxsLTdmOTRjN2I2LWE3ZjktNDZkYi1hNDY1LTg0YTdk
+      YmI3MGUyNS0wEAMYAVJZChB4X2tleXdvcmRfc2VhcmNoEkV7InF1ZXJ5IjoiZnJvbTpweWRhbnRp
+      YyBcIlB5ZGFudGljIEFJXCIiLCJsaW1pdCI6IjEiLCJtb2RlIjoiTGF0ZXN0In0qzghnaWJvUkdk
+      clJnM3N0aW53S3RwZ2ZjSzVTU0xmVDRWeG01ckJvRTdieWwvUGxpTitCU1ZSMHFVRW5aNHc3SnlY
+      MXU0bmdGcnpYWmRyLzRlUGVUYk5hOUVWTjZoWUtRSzRQSGhvaXNvYnNhdlFmRlhZU2Exb1lmRjI0
+      ZCtnZTA3Y2xjMHo0VFhZUnAzM0gwcmhFZTA4cC9ML0ZFREx1OHp6U21tS2ZuVVQ0THR3TFY5MXBS
+      TE95WFo3Y0YxbnJoQldHdzg1dWF6dkphKzF4Y3NGU3pvSGR0MnNOUkI2azROS2ljRzFPUzRZZGpZ
+      RHlWNVo4R0U0cnRldTdoSWJLWUxQb2NKeTFBWmVJUFNndzl2YXowWUU2TzVTVUtVS0ptKzh2T2hN
+      WDl0RkZmdFlTbUVGYWowY2oxUWZrcmw0b3AxMTR5NFBGNlVSUE9JRGpBdk5MWUJxY0EzQmpxTDdw
+      bndmbUxmSy9iQjY2RmJBdHpWY0V0c2NEQmhQZVdZV0NaK1NEZnVvM3hFamFZS2ZqeGJ2RUkxajVP
+      MmVjR0V6alB0UThNSjZiSTBEVVlUR3NxU08vV2dGTlVzL3FjWXVjajRRbzUwWG5FeEVyT2drUjQ5
+      MzUzSXYwM1pWODEyVG9ZWEZUUHNDQzFpTnlkS2o0ZE5mTkgwNVJCanZqRHE2aTM2UEN5NE5FOEJw
+      SFNuYnFZWEUvSHRKQ3EwR3lqSTVxcWc3cW00d3FhNEptanZhSExLRnhjU0ZTcEgvLzdnUkRjNDc5
+      YUp3aGptMVZxR2ljMXJCMy8xUzJRUVoxWW9wQmptUWtxTWR2VGlYVkZnY3JBSGhGenczRVF3NTNL
+      d0V5UWdvdVB5eFZybWdaSTBXZndNZS85OGVvYnJxZ2lPaTRyUEM4TG0yRW43UVBsc0V0Q3RvS1lH
+      SGsycUFtOFc5bjBVdEUrbHV1Q0g1RldJZVBseDRtOHJCTlMyeXI0VE5XMmxOTjlBcGxyNDBENUVx
+      b3FHMGRFSjJjcWsrRkM0V2wzMmlSaDk2M2I5K2FFVjJHWmliMDN2b2JHd1JnOC9KekRybnhiSHRq
+      dWdGaXhHb080bDV1OFBmWDRPT1Z2T1RwQkVrbS9sMTJRVGcxZDc1WTJ4ZDdvQ0gvQWo1NzFDRkZp
+      cUJUc3lMT3NkS2FuY1I5MU5YRU12aE5DckQxSEU2YXNXeDJNbTUrWWd2M1YrWVRSUk5wbXAzaXVl
+      YkErK1VtVmJsdTc4MXFPSDlOQ2xWOWZSNWdFcVROOHdqUGhoNjB6NStGL1RycEozVkYwTzN0OGto
+      ejZIU0tOU1hJM2NFUEhvaFFaU1c1SFA3L3BzSzJ5WU9vQ1QzcExPZUU2NWd0ZDJubHBlTEdISVBK
+      ci9uNEtJS1JEMUNPemNyanNpTW1Xdy9uS01LOUp5U3lnNnhGaHhUZm9JZjBxdjFWV3M1RVE5bVEw
+      bDdBNkkxYVp1MHB3MjgiLAoqaHR0cHM6Ly94LmNvbS9pL3N0YXR1cy8yMTA1MjgxNTEzNTc5MjQ5
+      ODMxOghpbnRlcm5ldDgBEpcBEAIakgEQBRpkCitjYWxsLTdmOTRjN2I2LWE3ZjktNDZkYi1hNDY1
+      LTg0YTdkYmI3MGUyNS0xEAMYAVIxCg14X3VzZXJfc2VhcmNoEiB7InF1ZXJ5IjoicHlkYW50aWMi
+      LCJjb3VudCI6IjEifSomOVVLM3pHcmdUcUcrMkt6aEJmQ1Y0ZGR0OENtOFFFTE5HcktUTmc4ARKV
+      BQgDEAMajgUKxwQqKlBvc3Qgc3VtbWFyeToqKiAgClB5ZGFudGljIChAcHlkYW50aWMpIGFubm91
+      bmNlZCB0aGF0IFB5ZGFudGljIEFJIHRvb2xzIGNhbiBub3cgcnVuIGNvbW1hbmRzIGFuZCBlZGl0
+      IGZpbGVzIHRocm91Z2ggYSBzaW5nbGUgdW5pZmllZCBBUEkgKGBjdHgud29ya3NwYWNlYCksIHJl
+      Z2FyZGxlc3Mgb2YgdGhlIHVuZGVybHlpbmcgZW52aXJvbm1lbnQuIFRoZSB0b29scyB3b3JrIHNl
+      YW1sZXNzbHkgYWNyb3NzIGxvY2FsIG1hY2hpbmVzLCBTU0ggaG9zdHMsIEJ1YmJsZXdyYXAgc2Fu
+      ZGJveGVzLCBvciBjbG91ZCBzYW5kYm94ZXMgbGlrZSBNb2RhbCwgRTJCLCBhbmQgRmx5LmlvIFNw
+      cml0ZXPigJRieSBzaW1wbHkgc3dhcHBpbmcgb25lIGNhcGFiaWxpdHksIHRoZSB0b29scyByZW1h
+      aW4gdW5jaGFuZ2VkLiBUaGUgcG9zdCBpbmNsdWRlcyBhbiBpbWFnZSAobGlrZWx5IGEgZGlhZ3Jh
+      bSBvciBzY3JlZW5zaG90KS5bWzFdXShodHRwczovL3guY29tL3B5ZGFudGljL3N0YXR1cy8yMTA1
+      MjgxNTEzNTc5MjQ5ODMxKQoKKipQb3N0IFVSTDoqKiBodHRwczovL3guY29tL3B5ZGFudGljL3N0
+      YXR1cy8yMTA1MjgxNTEzNTc5MjQ5ODMxEAIyPgoBMRDMAyIzCjFodHRwczovL3guY29tL3B5ZGFu
+      dGljL3N0YXR1cy8yMTA1MjgxNTEzNTc5MjQ5ODMxMIQEOAEqCwjop//VBhCWrf9/Mghncm9rLTQu
+      MzoTZnBfZWIzYzAwM2ZjNjZjMTRlZEojCK4BEN4aGIwcIN4aOMAXSgICAliIp6AfkAHKDpgBhgGg
+      AQFSKmh0dHBzOi8veC5jb20vaS9zdGF0dXMvMjEwNTI4MTUxMzU3OTI0OTgzMVomEAEtMzMzPzoC
+      CAFCECIOGghweWRhbnRpYygAMABNMzNzP3ICBwKCATYKKmh0dHBzOi8veC5jb20vaS9zdGF0dXMv
+      MjEwNTI4MTUxMzU3OTI0OTgzMRIIaW50ZXJuZXQ=

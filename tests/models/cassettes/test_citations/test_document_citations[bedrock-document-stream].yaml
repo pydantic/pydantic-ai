@@ -1,0 +1,61 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "According to the document, what is the return window? Answer
+      in one sentence and cite the document."}, {"document": {"name": "Document 1", "format": "txt", "source": {"text": "The
+      return window is thirty days from purchase."}, "citations": {"enabled": true}}}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NmE1YzVmYjAtMjEwOC00MGJlLWJjNjAtZDc2NTk5OGIyMDdm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '353'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
+  response:
+    body:
+      string: !!binary |
+        AAAAmgAAAFJ78dAACzpldmVudC10eXBlBwAMbWVzc2FnZVN0YXJ0DTpjb250ZW50LXR5cGUHABBh
+        cHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsicCI6ImFiY2RlZmdoaWprbG1u
+        b3BxcnN0dXZ3eHl6QUJDIiwicm9sZSI6ImFzc2lzdGFudCJ92EeA9QAAAV0AAABXm/LD4Qs6ZXZl
+        bnQtdHlwZQcAEWNvbnRlbnRCbG9ja0RlbHRhDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9q
+        c29uDTptZXNzYWdlLXR5cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjAsImRlbHRhIjp7
+        ImNpdGF0aW9uIjp7ImxvY2F0aW9uIjp7ImRvY3VtZW50Q2hhciI6eyJkb2N1bWVudEluZGV4Ijow
+        LCJlbmQiOjQ3LCJzdGFydCI6MH19LCJzb3VyY2VDb250ZW50IjpbeyJ0ZXh0IjoiVGhlIHJldHVy
+        biB3aW5kb3cgaXMgdGhpcnR5IGRheXMgZnJvbSBwdXJjaGFzZS4ifV0sInRpdGxlIjoiRG9jdW1l
+        bnQgMSJ9fSwicCI6ImFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6QUIifbGC2UcAAAC7AAAAV/c6
+        IjsLOmV2ZW50LXR5cGUHABFjb250ZW50QmxvY2tEZWx0YQ06Y29udGVudC10eXBlBwAQYXBwbGlj
+        YXRpb24vanNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7ImNvbnRlbnRCbG9ja0luZGV4IjowLCJk
+        ZWx0YSI6eyJ0ZXh0IjoiVGhlIHJldHVybiJ9LCJwIjoiYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4
+        In2kn2r4AAAA+AAAAFfoaQCiCzpldmVudC10eXBlBwARY29udGVudEJsb2NrRGVsdGENOmNvbnRl
+        bnQtdHlwZQcAEGFwcGxpY2F0aW9uL2pzb24NOm1lc3NhZ2UtdHlwZQcABWV2ZW50eyJjb250ZW50
+        QmxvY2tJbmRleCI6MCwiZGVsdGEiOnsidGV4dCI6IiB3aW5kb3cgaXMgdGhpcnR5IGRheXMgZnJv
+        bSBwdXJjaGFzZS4ifSwicCI6ImFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6QUJDREVGR0hJSktM
+        TU5PUFFSU1RVVldYWVowMTIzNDUifVJ4cxoAAADAAAAAVg4/w3MLOmV2ZW50LXR5cGUHABBjb250
+        ZW50QmxvY2tTdG9wDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNzYWdlLXR5
+        cGUHAAVldmVudHsiY29udGVudEJsb2NrSW5kZXgiOjAsInAiOiJhYmNkZWZnaGlqa2xtbm9wcXJz
+        dHV2d3h5ekFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaMDEyMzQ1NjcifRD00sEAAACkAAAAUfzp
+        h10LOmV2ZW50LXR5cGUHAAttZXNzYWdlU3RvcA06Y29udGVudC10eXBlBwAQYXBwbGljYXRpb24v
+        anNvbg06bWVzc2FnZS10eXBlBwAFZXZlbnR7InAiOiJhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5
+        ekFCQ0RFRkdISSIsInN0b3BSZWFzb24iOiJlbmRfdHVybiJ9AqpuFwAAAOYAAABOU9KBgQs6ZXZl
+        bnQtdHlwZQcACG1ldGFkYXRhDTpjb250ZW50LXR5cGUHABBhcHBsaWNhdGlvbi9qc29uDTptZXNz
+        YWdlLXR5cGUHAAVldmVudHsibWV0cmljcyI6eyJsYXRlbmN5TXMiOjI2NjJ9LCJwIjoiYWJjZGVm
+        Z2hpamtsbW4iLCJ1c2FnZSI6eyJpbnB1dFRva2VucyI6NTgzLCJvdXRwdXRUb2tlbnMiOjI4LCJz
+        ZXJ2ZXJUb29sVXNhZ2UiOnt9LCJ0b3RhbFRva2VucyI6NjExfX1EDiZr
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1

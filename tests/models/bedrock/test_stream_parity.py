@@ -98,10 +98,11 @@ def replay() -> Iterator[_Replay]:
     client.close()
 
 
-def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:
+def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:  # noqa: C901
     """Fold `ConverseStream` events into the `Converse` response they stream."""
     blocks: dict[int, dict[str, Any]] = {}
     tool_inputs: dict[int, str] = {}
+    citations: dict[int, list[dict[str, Any]]] = {}
     response: dict[str, Any] = {}
     for event in events:
         if start := event.get('contentBlockStart'):
@@ -116,6 +117,8 @@ def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:
             block = blocks.setdefault(index, {})
             if 'text' in delta:
                 block['text'] = block.get('text', '') + delta['text']
+            if 'citation' in delta:
+                citations.setdefault(index, []).append(delta['citation'])
             if 'toolUse' in delta:
                 tool_inputs[index] += delta['toolUse'].get('input', '')
             if 'toolResult' in delta:
@@ -135,6 +138,10 @@ def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:
             response |= {key: metadata[key] for key in ('usage', 'metrics', 'trace') if key in metadata}
     for index, tool_input in tool_inputs.items():
         blocks[index]['toolUse']['input'] = json.loads(tool_input) if tool_input else {}
+    # `Converse` returns a cited text block as `citationsContent`, holding the text and its citations.
+    for index, block_citations in citations.items():
+        text = blocks[index].pop('text', '')
+        blocks[index]['citationsContent'] = {'content': [{'text': text}], 'citations': block_citations}
     # `Converse` leaves out the whitespace-only text blocks that `ConverseStream` sends, like Qwen3's `''` and `'\n\n'`
     # (live-verified on Qwen3 models; see `test_bedrock_qwen_stream_whitespace_text_blocks`).
     content = [block for _, block in sorted(blocks.items()) if 'text' not in block or block['text'].strip()]

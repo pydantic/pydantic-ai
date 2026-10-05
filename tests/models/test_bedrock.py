@@ -23,6 +23,9 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     BinaryContent,
     CachePoint,
+    Citation,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -51,6 +54,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -1336,6 +1340,170 @@ async def test_bedrock_unified_service_tier_auto_omits(
     assert 'serviceTier' not in kwargs
 
 
+@pytest.mark.parametrize('include_citations', [False, True])
+async def test_bedrock_include_citations_request_setting(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    text_document_content: BinaryContent,
+    include_citations: bool,
+) -> None:
+    """The shared setting is forwarded on Bedrock document blocks only when enabled."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'The document is a test.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 6},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await Agent(model, model_settings=ModelSettings(include_citations=include_citations)).run(
+        ['What is in this document?', text_document_content]
+    )
+
+    document = mock_converse.call_args.kwargs['messages'][0]['content'][1]['document']
+    expected: dict[str, object] = {
+        'name': 'Document 1',
+        'format': 'txt',
+        'source': {'text': 'Dummy TXT file\n'} if include_citations else {'bytes': b'Dummy TXT file\n'},
+    }
+    if include_citations:
+        expected['citations'] = {'enabled': True}
+    assert document == expected
+
+
+async def test_bedrock_include_citations_for_uploaded_document(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """The shared setting also applies to supported documents already stored in S3."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'The document is a test.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 5, 'outputTokens': 6},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await Agent(model, model_settings=ModelSettings(include_citations=True)).run(
+        [
+            'What is in this document?',
+            UploadedFile(file_id='s3://bucket/report.pdf', provider_name='bedrock', media_type='application/pdf'),
+        ]
+    )
+
+    assert mock_converse.call_args.kwargs['messages'][0]['content'][1]['document'] == {
+        'name': 'Document 1',
+        'format': 'pdf',
+        'source': {'s3Location': {'uri': 's3://bucket/report.pdf'}},
+        'citations': {'enabled': True},
+    }
+
+
+async def test_bedrock_include_citations_rejects_non_utf8_text_document(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Citations require text documents to be sent as UTF-8 text, rather than opaque bytes."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+
+    with pytest.raises(UserError, match='Bedrock citations require UTF-8 text documents'):
+        await Agent(model, model_settings=ModelSettings(include_citations=True)).run(
+            ['What is in this document?', BinaryContent(data=b'\xff', media_type='text/plain')]
+        )
+
+    mock_converse.assert_not_called()
+
+
+async def test_bedrock_include_citations_ignores_unsupported_document_format(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Bedrock document citations support TXT and PDF only; other formats remain ordinary documents."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'Done.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await Agent(model, model_settings=ModelSettings(include_citations=True)).run(
+        ['What is in this document?', BinaryContent(data=b'column\nvalue\n', media_type='text/csv')]
+    )
+
+    assert mock_converse.call_args.kwargs['messages'][0]['content'][1]['document'] == {
+        'name': 'Document 1',
+        'format': 'csv',
+        'source': {'bytes': b'column\nvalue\n'},
+    }
+
+
+async def test_bedrock_tool_return_documents_disable_citations(bedrock_provider: BedrockProvider) -> None:
+    """Tool-return documents stay ordinary tool output even when citations are globally enabled."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Show me the reports.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_reports', args={}, tool_call_id='tool-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_reports',
+                    tool_call_id='tool-1',
+                    content=[
+                        BinaryContent(data=b'inline report', media_type='text/plain', identifier='inline-report'),
+                        UploadedFile(
+                            file_id='s3://bucket/uploaded.txt',
+                            provider_name='bedrock',
+                            identifier='uploaded-report',
+                        ),
+                    ],
+                )
+            ]
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(include_citations=True)
+    )
+
+    assert bedrock_messages == [
+        {'role': 'user', 'content': [{'text': 'Show me the reports.'}]},
+        {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 'tool-1', 'name': 'get_reports', 'input': {}}}]},
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'toolResult': {
+                        'toolUseId': 'tool-1',
+                        'content': [
+                            {'text': 'See file inline-report.'},
+                            {
+                                'document': {
+                                    'name': 'Document 2',
+                                    'format': 'txt',
+                                    'source': {'s3Location': {'uri': 's3://bucket/uploaded.txt'}},
+                                }
+                            },
+                        ],
+                        'status': 'success',
+                    }
+                },
+                {'text': '<tool_result tool_name="get_reports" tool_call_id="tool-1" file_id="inline-report">'},
+                {
+                    'document': {
+                        'name': 'Document 1',
+                        'format': 'txt',
+                        'source': {'bytes': b'inline report'},
+                    }
+                },
+                {'text': '</tool_result>'},
+            ],
+        },
+    ]
+
+
 async def test_bedrock_usage_with_cached_tokens(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ):
@@ -1531,6 +1699,234 @@ async def test_bedrock_trace_streamed_metadata_before_stop(
         'trace': _BEDROCK_GUARDRAIL_TRACE,
     }
     assert message.finish_reason == 'content_filter'
+
+
+async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvider) -> None:
+    """Bedrock maps list-valued `sourceContent` to public source excerpts."""
+    text = 'The policy allows thirty days for returns.'
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    response = await model._process_response(  # pyright: ignore[reportPrivateUsage]
+        cast(
+            Any,
+            {
+                'output': {
+                    'message': {
+                        'role': 'assistant',
+                        'content': [
+                            {
+                                'citationsContent': {
+                                    'content': [{'text': text}],
+                                    'citations': [
+                                        {
+                                            'title': 'Returns policy',
+                                            'source': 'Document 1',
+                                            'sourceContent': [
+                                                {'text': 'Returns are accepted within thirty days.'},
+                                                {'text': 'Proof of purchase is required.'},
+                                            ],
+                                            'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                                        },
+                                        {
+                                            'title': 'Pydantic AI',
+                                            'location': {'web': {'url': 'https://ai.pydantic.dev'}},
+                                        },
+                                    ],
+                                }
+                            }
+                        ],
+                    }
+                },
+                'stopReason': 'end_turn',
+                'usage': {'inputTokens': 10, 'outputTokens': 9, 'totalTokens': 19},
+                'ResponseMetadata': {'HTTPStatusCode': 200},
+            },
+        )
+    )
+
+    assert response.parts == [
+        TextPart(
+            text,
+            citations=[
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            excerpts=[
+                                'Returns are accepted within thirty days.',
+                                'Proof of purchase is required.',
+                            ],
+                            provider_details={
+                                'source': 'Document 1',
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                            },
+                        ),
+                        WebCitationSource(
+                            url='https://ai.pydantic.dev',
+                            title='Pydantic AI',
+                        ),
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=len(text)),
+                )
+            ],
+        )
+    ]
+
+
+_RETURNS_POLICY_CITATION = {
+    'title': 'Returns policy',
+    'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+}
+
+
+@pytest.mark.parametrize(
+    'citations_content,expected',
+    [
+        pytest.param(
+            {'content': [], 'citations': [_RETURNS_POLICY_CITATION]},
+            TextPart(
+                '',
+                citations=[
+                    Citation(
+                        sources=[
+                            DocumentCitationSource(
+                                title='Returns policy',
+                                provider_details={'location': _RETURNS_POLICY_CITATION['location']},
+                            )
+                        ]
+                    )
+                ],
+            ),
+            id='citation-without-text',
+        ),
+        pytest.param(
+            {'content': [{'text': 'No citation.'}], 'citations': []},
+            TextPart('No citation.'),
+            id='text-without-citation',
+        ),
+        pytest.param(
+            {'content': [{'text': 'Empty citation.'}], 'citations': [cast(dict[str, Any], {})]},
+            TextPart('Empty citation.'),
+            id='citation-without-source-fields',
+        ),
+    ],
+)
+async def test_bedrock_partial_citation_block(
+    bedrock_provider: BedrockProvider, citations_content: dict[str, Any], expected: TextPart
+) -> None:
+    """A citations block missing its text or its citations keeps whatever it has, without an anchor."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    response = await model._process_response(  # pyright: ignore[reportPrivateUsage]
+        cast(
+            Any,
+            {
+                'output': {'message': {'role': 'assistant', 'content': [{'citationsContent': citations_content}]}},
+                'stopReason': 'end_turn',
+                'usage': {'inputTokens': 10, 'outputTokens': 9, 'totalTokens': 19},
+                'ResponseMetadata': {'HTTPStatusCode': 200},
+            },
+        )
+    )
+
+    assert response.parts == [expected]
+
+
+async def test_bedrock_stream_citation_mapping(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Bedrock streaming attaches citation deltas to the text block they support."""
+    text = 'The policy allows thirty days for returns.'
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {
+            'contentBlockDelta': {
+                'contentBlockIndex': 0,
+                'delta': {
+                    'citation': {
+                        'title': 'Returns policy',
+                        'sourceContent': [{'text': 'Returns are accepted within thirty days.'}],
+                        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                    }
+                },
+            }
+        }
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': text}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with Agent(model).run_stream('What is the return window?') as result:
+        await result.get_output()
+
+    assert result.response.parts == [
+        TextPart(
+            text,
+            citations=[
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            excerpts=['Returns are accepted within thirty days.'],
+                            provider_details={
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}}
+                            },
+                        )
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=len(text)),
+                )
+            ],
+        )
+    ]
+
+
+async def test_bedrock_stream_empty_citation_mapping(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Bedrock streaming preserves citations when a citation block has no text delta."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {
+            'contentBlockDelta': {
+                'contentBlockIndex': 0,
+                'delta': {
+                    'citation': {
+                        'title': 'Returns policy',
+                        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+                    }
+                },
+            }
+        }
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with Agent(model).run_stream('What is the return window?') as result:
+        await result.get_output()
+
+    assert result.response.parts == [
+        TextPart(
+            '',
+            citations=[
+                Citation(
+                    sources=[
+                        DocumentCitationSource(
+                            title='Returns policy',
+                            provider_details={
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}}
+                            },
+                        )
+                    ]
+                )
+            ],
+        )
+    ]
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
