@@ -26,7 +26,7 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
-from pydantic_ai.models import Model, ModelResolutionContext
+from pydantic_ai.models import Model, ModelResolutionContext, infer_model
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -145,7 +145,7 @@ class _SessionModels(ResolveModelId[DepsT]):
     """Resolve model names through CLAI first, as when CLAI resolved the selected model before each run.
 
     Outermost, so it is tried before a resolver on the agent or a plugin, unless that one is outermost
-    too. Names CLAI does not resolve to a model itself are left to those resolvers, then to `infer_model`.
+    too. Names CLAI returns unchanged are left to those resolvers, then to `infer_model`.
     """
 
     def get_ordering(self) -> CapabilityOrdering:
@@ -407,7 +407,9 @@ class Session(Generic[DepsT, OutputT]):
         model = self.resolve_model(model_id)
         if isinstance(model, Awaitable):
             model = await model
-        return model if isinstance(model, Model) else None
+        if isinstance(model, Model):
+            return model
+        return infer_model(model) if model != model_id else None
 
     def steer(self, text: str, *, images: Sequence[BinaryContent] = ()) -> bool:
         """Deliver input to the active run, or decline when no run is accepting input."""

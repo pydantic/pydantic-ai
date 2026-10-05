@@ -440,6 +440,16 @@ async def test_names_clai_does_not_handle_are_left_to_other_resolvers(tmp_path: 
     assert [name for name, _ in recorder.calls] == ['anthropic:claude-sonnet-4-6']
 
 
+async def test_selected_name_clai_translates(tmp_path: Path) -> None:
+    """A `resolve_model` that translates the selected name to another one runs the translated model."""
+    recorder, _ = await run_turn(
+        tmp_path,
+        settings=resolve_settings({'model': 'fast'}),
+        resolve=lambda name: 'test' if name == 'fast' else name,
+    )
+    assert recorder.calls == []
+
+
 @pytest.mark.parametrize('source', ['saved', 'cli'])
 async def test_chosen_model_beats_capability_model(tmp_path: Path, source: str) -> None:
     """A model the user chose is passed to `agent.run`, so it wins over a capability's."""
