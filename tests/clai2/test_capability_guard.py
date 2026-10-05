@@ -1,6 +1,5 @@
 """Fail-soft run setup: a plugin capability that rejects its configuration costs itself, not the turn."""
 
-import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,9 +15,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard, raised_here, setup_errors
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup
 
 
 @dataclass
@@ -90,7 +86,7 @@ async def test_simultaneous_setup_errors_report_every_failing_capability(tmp_pat
         PluginGuard[None](RefusesForRun(), plugin='two'),
     )
     conversation.on_setup_error = reported.append
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(ExceptionGroup):  # noqa: F821
         await conversation.prompt('hello')
     assert sorted(error.plugin for error in reported) == ['one', 'two']
 
@@ -98,7 +94,7 @@ async def test_simultaneous_setup_errors_report_every_failing_capability(tmp_pat
 async def test_simultaneous_foreign_setup_errors_still_fail(tmp_path: Path) -> None:
     guards = [PluginGuard[None](RefusesForRun(), plugin=name) for name in ('one', 'two')]
     bound = Agent(TestModel(), deps_type=type(None), capabilities=guards)
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(ExceptionGroup):  # noqa: F821
         await session(bound, tmp_path).prompt('hello')
 
 
@@ -106,8 +102,8 @@ def test_setup_errors_only_when_every_failure_is_one() -> None:
     error = CapabilitySetupError(plugin='x', capability=object(), error=UserError('x'))
     assert setup_errors(error) == [error]
     assert setup_errors(ValueError('x')) is None
-    assert setup_errors(ExceptionGroup('x', [error, ExceptionGroup('y', [error])])) == [error, error]
-    assert setup_errors(ExceptionGroup('x', [error, ValueError('x')])) is None
+    assert setup_errors(ExceptionGroup('x', [error, ExceptionGroup('y', [error])])) == [error, error]  # noqa: F821
+    assert setup_errors(ExceptionGroup('x', [error, ValueError('x')])) is None  # noqa: F821
 
 
 async def test_errors_after_setup_propagate(tmp_path: Path) -> None:
