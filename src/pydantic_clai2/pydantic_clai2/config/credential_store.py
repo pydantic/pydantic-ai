@@ -24,6 +24,8 @@ _SERVICE = 'pydantic-clai2'
 _ACCOUNT = 'openai-codex'
 _KEY_ACCOUNT = 'encryption-key'
 _PREFIX = 'clai-chunks-v1:'
+_SLASH = '%2F'
+"""How `/` is written in a credential file name; no account name CLAI stores otherwise contains `%`."""
 # A locked or failing keyring is not "no keyring": only these mean nothing is configured.
 _NO_KEYRING = (NoKeyringError, InitError)
 
@@ -36,13 +38,15 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
     without constructing a database.
     """
     root = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
-    return root / f'credentials-{account}.json'
+    # A gateway profile such as `gateway/openai@work` stays one file in this folder, not a subfolder.
+    return root / f'credentials-{account.replace("/", _SLASH)}.json'
 
 
 def profile_accounts() -> list[str]:
     """Saved `PROVIDER@PROFILE` accounts, read from file names alone; nothing is decrypted."""
     paths = credentials_path(account='').parent.glob('credentials-*@*')
-    return sorted({path.stem.removeprefix('credentials-') for path in paths if path.suffix in ('.enc', '.json')})
+    names = {path.stem.removeprefix('credentials-') for path in paths if path.suffix in ('.enc', '.json')}
+    return sorted(name.replace(_SLASH, '/') for name in names)
 
 
 @contextmanager

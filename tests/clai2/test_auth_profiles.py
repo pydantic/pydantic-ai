@@ -26,7 +26,12 @@ from pydantic_clai2.auth import CodexAuth, CodexCredentials, login_command
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.api_keys import KeyReference, key_users, save_key, save_key_connection
-from pydantic_clai2.config.credential_store import load_codex_credentials, profile_accounts, save_codex_credentials
+from pydantic_clai2.config.credential_store import (
+    credentials_path,
+    load_codex_credentials,
+    profile_accounts,
+    save_codex_credentials,
+)
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot, key_profiles, openrouter, vllm
 from pydantic_clai2.models.chains import chain_command, chain_completions, settings_model
@@ -466,8 +471,11 @@ def test_key_users_cover_profile_connections() -> None:
     value = json.dumps({'token': {'name': 'SHARED'}})
     save_key_connection(account='anthropic@work', token=KeyReference(name='SHARED'), value=value)
     save_codex_credentials(account='openai-codex@work', value=CREDENTIALS_JSON)
-    assert profile_accounts() == ['anthropic@work', 'openai-codex@work']
-    assert key_users(name='SHARED') == ['anthropic@work']
+    save_key_connection(account='gateway/openai@work', token=KeyReference(name='SHARED'), value=value)
+    # A gateway profile is one file beside the others, so it is found like them.
+    assert credentials_path(account='gateway/openai@work').parent == credentials_path(account='openai').parent
+    assert profile_accounts() == ['anthropic@work', 'gateway/openai@work', 'openai-codex@work']
+    assert key_users(name='SHARED') == ['anthropic@work', 'gateway/openai@work']
 
 
 CREDENTIALS_JSON = json.dumps({'access_token': 'a', 'refresh_token': 'r', 'account_id': 'x'})
