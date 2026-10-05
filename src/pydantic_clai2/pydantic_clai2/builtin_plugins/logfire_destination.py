@@ -13,7 +13,7 @@ The last Logfire either plugin saved is remembered, so setting up the other one 
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import BaseModel
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
@@ -67,11 +67,27 @@ def parse_destination(text: str) -> Destination:
     if parts.username is not None or parts.password is not None:
         # The text would be saved in plaintext plugin settings; do not echo it back either.
         raise ValueError('Leave credentials out of the address: CLAI signs in through the browser.')
-    path = parts.path.rstrip('/')
-    if parts.scheme != 'https' or not parts.hostname or path not in ('', MCP_PATH) or parts.query or parts.fragment:
+    if not _is_logfire_address(parts):
         raise ValueError(f'Type a host (logfire.example.com), an https URL, or an MCP URL ending in /mcp, not {text}.')
     netloc = parts.netloc.lower()
     return Destination(base_url=f'https://{_LEGACY_HOSTS.get(netloc, netloc)}')
+
+
+def _is_logfire_address(parts: SplitResult) -> bool:
+    try:
+        # Raises on a port that is not a number.
+        _ = parts.port
+    except ValueError:
+        return False
+    host = parts.hostname or ''
+    return (
+        parts.scheme == 'https'
+        and bool(host)
+        and not any(char.isspace() for char in host)
+        and parts.path.rstrip('/') in ('', MCP_PATH)
+        and not parts.query
+        and not parts.fragment
+    )
 
 
 def destination_problem(text: str) -> str | None:

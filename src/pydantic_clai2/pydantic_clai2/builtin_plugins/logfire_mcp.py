@@ -229,7 +229,8 @@ _ROWS = (
                 '  (self-hosted or staging) by its host, URL,',
                 '  or MCP URL.',
                 'R: back to Logfire US.',
-                'Observability setup starts from the same one.',
+                'A Logfire picked with Enter is where',
+                '  observability setup starts, if it has none.',
             ]
         ),
         default=LOGFIRE_US_MCP_URL,

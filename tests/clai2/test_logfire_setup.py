@@ -332,7 +332,16 @@ def test_a_logfire_is_typed_as_a_host_its_url_or_its_mcp_url(typed: str, base_ur
 
 @pytest.mark.parametrize(
     'typed',
-    ['http://logfire.example.com', 'https://logfire.example.com/app', 'https://', '', 'x?y=1', 'x#f'],
+    [
+        'http://logfire.example.com',
+        'https://logfire.example.com/app',
+        'https://',
+        '',
+        'not a url',
+        'logfire.example.com:abc',
+        'x?y=1',
+        'x#f',
+    ],
 )
 def test_other_addresses_say_what_to_type(typed: str) -> None:
     problem = 'Type a host (logfire.example.com), an https URL, or an MCP URL ending in /mcp'
