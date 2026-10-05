@@ -6,6 +6,8 @@ on:
       - main
     tags:
       - "**"
+      # Moved by `clai2-bleeding.yml` for every CLAI change on `main`; not a release to build or publish.
+      - "!clai2-bleeding"
   pull_request: {}
 
 env:
