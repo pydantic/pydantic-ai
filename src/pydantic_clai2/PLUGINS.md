@@ -2409,9 +2409,9 @@ any model without the menu: one not yet in the list is added first, without
 checking that the provider serves it, so a wrong name fails on the next prompt.
 `/model add PROVIDER:NAME` does the same. Adding a model also selects it for the
 next prompt. `/model settings [NAME]` edits a model's settings. Tab suggests the
-`add` and `settings` subcommands and added models; model names normally start with a provider,
-so no real model is called `add` or `settings`. `/add_model` and `/model_settings` remain
-as deprecated spellings.
+`add` and `settings` subcommands and added models; model names normally start
+with a provider, so no real model is called `add` or `settings`. `/add_model`
+and `/model_settings` remain as deprecated spellings.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 

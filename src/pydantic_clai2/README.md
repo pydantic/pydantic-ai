@@ -598,8 +598,8 @@ option is available even when no models have been added.
 `/model PROVIDER:NAME` switches directly to any model. A model not yet in your
 list is added and selected; CLAI does not check that it exists, so a mistyped
 name fails on the next prompt with the provider's error. Tab completes the saved
-list and the `add` and `settings` subcommands. Model names normally start with a provider
-(`openai:gpt-5`), so no real model is called `add` or `settings`.
+list and the `add` and `settings` subcommands. Model names normally start with a
+provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
 The currently configured model is kept in the list when upgrading.
 
 | Command | What it does |
