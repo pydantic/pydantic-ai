@@ -189,7 +189,9 @@ def _warn_dropped(message: str) -> None:
     _warned_drops.add(message)
     try:
         warnings.warn(message)
-    except Exception:  # pragma: no cover
+    # Reached only by whichever test first emits a message under the suite's `filterwarnings = ['error']`
+    # outside `pytest.warns`; `_warned_drops` is process-wide, so which test that is depends on ordering.
+    except Exception:  # pragma: lax no cover
         # Emitted filter-independently, for the reason the contract's own `warn_dropped` is: every
         # drop reported here happens while a managed config is being read or applied, and
         # `docs/agent-control.md` promises a published config can never crash a run. Under
