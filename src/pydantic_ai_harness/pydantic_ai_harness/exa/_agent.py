@@ -19,7 +19,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
 from pydantic_ai_harness.exa._toolset import (
-    _AUTH_STATUS_RE,  # pyright: ignore[reportPrivateUsage]
+    _UNRECOVERABLE_STATUS_RE,  # pyright: ignore[reportPrivateUsage]
     _recoverable,  # pyright: ignore[reportPrivateUsage]
     _source_list,  # pyright: ignore[reportPrivateUsage]
     _with_sources,  # pyright: ignore[reportPrivateUsage]
@@ -394,7 +394,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
                 f'again with previous_run_id={run_id!r}.'
             )
         except ValueError as error:
-            if _AUTH_STATUS_RE.search(str(error)):
+            if _UNRECOVERABLE_STATUS_RE.search(str(error)):
                 raise
             return RetryRequest(
                 f'Waiting for Exa agent run {run_id} failed: {error}. '

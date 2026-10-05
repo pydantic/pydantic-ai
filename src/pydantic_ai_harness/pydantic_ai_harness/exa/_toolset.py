@@ -60,9 +60,11 @@ def _source_list(sources: Mapping[str, str | None]) -> list[ExaSource]:
 
 
 # exa-py raises a bare ValueError for any non-2xx response, embedding the HTTP
-# status in the message. 401/403 mean a bad or missing API key -- configuration
-# the model cannot correct, so those propagate instead of retrying.
-_AUTH_STATUS_RE = re.compile(r'status code (401|403)\b')
+# status in the message. 401/403 mean a bad or missing API key and 402 means the
+# team is out of credits or over a spending budget -- account state the model
+# cannot correct, so those propagate instead of retrying.
+# https://exa.ai/docs/admin/error-codes
+_UNRECOVERABLE_STATUS_RE = re.compile(r'status code (401|402|403)\b')
 
 
 class ExaClient(Protocol):
@@ -126,8 +128,8 @@ def _recoverable(
     response as a bare `ValueError` (message embeds the status code) and network
     failures as `httpx.HTTPError`. Rate limits, transient 5xx, and rejected
     parameters are things a model can recover from (wait, rephrase, adjust), so
-    they become retries; 401/403 auth failures are configuration errors and
-    propagate.
+    they become retries; 401/403 auth failures and 402 out-of-credits are
+    account errors and propagate.
     """
 
     @functools.wraps(fn)
@@ -137,7 +139,7 @@ def _recoverable(
         except httpx.HTTPError as error:
             raise ModelRetry(f'Exa request failed: {error}') from error
         except ValueError as error:
-            if _AUTH_STATUS_RE.search(str(error)):
+            if _UNRECOVERABLE_STATUS_RE.search(str(error)):
                 raise
             raise ModelRetry(f'Exa request failed: {error}') from error
 

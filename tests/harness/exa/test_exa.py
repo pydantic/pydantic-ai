@@ -308,9 +308,14 @@ class TestRecoverableErrors:
         with pytest.raises(ModelRetry, match=r'Exa request failed: .*429'):
             await _toolset(client).web_search('q')
 
-    async def test_auth_failure_propagates(self) -> None:
-        client = _FakeExaClient(error=ValueError('Request failed with status code 401: invalid API key'))
-        with pytest.raises(ValueError, match='status code 401'):
+    @pytest.mark.parametrize(
+        ('status', 'body'),
+        [('401', 'invalid API key'), ('402', '{"tag":"NO_MORE_CREDITS"}')],
+        ids=['auth', 'out-of-credits'],
+    )
+    async def test_account_failure_propagates(self, status: str, body: str) -> None:
+        client = _FakeExaClient(error=ValueError(f'Request failed with status code {status}: {body}'))
+        with pytest.raises(ValueError, match=f'status code {status}'):
             await _toolset(client).web_search('q')
 
     async def test_network_failure_becomes_model_retry(self) -> None:
