@@ -5287,8 +5287,8 @@ async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
 ) -> None:
     """History holds the reply back for the spoken turn's transcript, but the new socket must still get both.
 
-    A turn with no transcript at all has no words to replay (replay leaves media behind), so only the reply
-    goes out, as it always has.
+    A turn with no transcript at all has no words to replay (replay leaves media behind), so it goes out as the
+    marker that says the user spoke.
     """
     frames: list[dict[str, Any]] = [
         {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
@@ -5335,7 +5335,7 @@ async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
     assert [
         (item['role'], item['content'][0].get('text') or item['content'][0].get('transcript')) for item in replayed
     ] == [
-        *([('user', transcript)] if transcript else []),
+        ('user', transcript or '[The user spoke; no transcript is available.]'),
         ('assistant', 'Sunny.'),
     ]
 
