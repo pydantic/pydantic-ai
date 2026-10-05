@@ -1919,6 +1919,55 @@ async def test_replay_items_strips_media_and_keeps_tagged_text() -> None:
     ]
 
 
+async def test_replay_items_marks_a_spoken_turn_without_a_transcript() -> None:
+    """A spoken turn with no transcript replays as a marker, so the answer to it isn't left unprompted.
+
+    Each such turn gets its own marker, including one at the very end that was never answered: the
+    model should still know the user spoke. History itself keeps the `SpeechPart`.
+    """
+    audio = BinaryContent(data=b'\x02\x03', media_type='audio/wav')
+    history = [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=audio)]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Sure, booked for Friday.', audio=audio)]),
+        ModelRequest(parts=[SpeechPart(speaker='user')]),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='')]),
+        ModelResponse(parts=[TextPart(content='Anything else?')]),
+        ModelRequest(parts=[SpeechPart(speaker='user')]),
+    ]
+
+    assert await replay_items(history, profile=RealtimeModelProfile(), provider_name='openai') == snapshot(
+        [
+            {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Sure, booked for Friday.'}],
+            },
+            {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+            {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Anything else?'}]},
+            {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+        ]
+    )
+    assert history[0].parts == [SpeechPart(speaker='user', audio=audio)]
+
+
 async def test_replay_items_keeps_failed_multimodal_tool_return_wrapped_once() -> None:
     history = [
         ModelResponse(parts=[ToolCallPart(tool_name='inspect', args={}, tool_call_id='call-image')]),
