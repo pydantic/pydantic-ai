@@ -40,7 +40,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeSessionReconnectEvent,
-    _session as realtime_session,
+    _session as realtime_session,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
