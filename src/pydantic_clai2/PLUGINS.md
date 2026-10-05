@@ -287,17 +287,18 @@ answers, or tool contents are sent; session IDs, database paths, and conversatio
 titles are sent to the local herdr socket.
 
 The pane title follows the persisted conversation title, including background
-naming and manual renames in `/resume`, as `on_conversation_changed` reports them. Each metadata update keeps
-the current title. Only single-pane tabs are renamed. The original tab label is
-restored on session changes or clean unload, but a manually renamed or shared
-tab is left alone. An abrupt exit may leave the last tab label in place.
+naming and manual renames in `/resume`, as `on_conversation_changed` reports
+them. Each metadata update keeps the current title. Only single-pane tabs are
+renamed. The original tab label is restored on session changes or clean unload,
+but a manually renamed or shared tab is left alone. An abrupt exit may leave the
+last tab label in place.
 
 Socket IO uses a plugin-owned daemon worker with bounded, latest-wins mailboxes.
 State and session reports take priority over activity and metadata. Requests
 retry up to three times with the same sequence number; missing sockets and
 server errors are nonfatal. Unloading discards queued work and attempts one
-release with bounded shutdown. A departed
-or unresponsive herdr may miss reports; they do not fail the agent turn.
+release with bounded shutdown. A departed or unresponsive herdr may miss
+reports; they do not fail the agent turn.
 
 ## Agent of Empires integration
 

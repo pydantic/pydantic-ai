@@ -5,7 +5,7 @@ Shell integration for persisted conversations, the browser, and auxiliary naming
 
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Generic, TypeVar
 
 from rich.console import Console
@@ -19,7 +19,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.plugins import Plugin, bare_screen
+from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -42,7 +42,7 @@ class Sessions(Generic[DepsT, OutputT]):
         self.store = store
         self.context = context
         self._launched: str | None = None
-        self.quiet: Callable[[], AbstractAsyncContextManager[None]] = bare_screen
+        self.quiet: Callable[[], AbstractAsyncContextManager[None]] = nullcontext
         """Entered to tell plugins about a background rename; the shell holds it until no turn or command runs."""
         self.namer = SessionNamer(
             store=store,
@@ -57,8 +57,9 @@ class Sessions(Generic[DepsT, OutputT]):
             return
         before = self.session.title
         async with self.quiet():
-            # A rename in `/resume` while this waited wins over the generated name.
-            if self.session.title == before:
+            # A rename in `/resume` while this waited wins over the generated name. A save in the
+            # meantime may already have adopted it from the store without telling plugins.
+            if self.session.title in (before, title):
                 await self.session.renamed(conversation_id=conversation_id, title=title)
 
     async def generate(self, prompt: str) -> NamingResult | None:

@@ -219,6 +219,40 @@ async def test_background_names_wait_for_the_terminal(tmp_path: Path) -> None:
     assert events[-1] == ConversationChanged(conversation_id=session.conversation_id, title='Mine')
 
 
+async def test_a_name_a_save_already_adopted_still_reaches_plugins(tmp_path: Path) -> None:
+    """A turn's save copies a name naming stored meanwhile; the waiting notice must still be sent."""
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'settings.db'),
+        builtin_plugins=[],
+        project=ProjectSettings(),
+        headless=True,
+    )
+    session = shell.session
+    store = session.conversations
+    assert store is not None
+    events = recording(session)
+    await session.prompt('fix the renderer')
+    events.clear()
+    async with anyio.create_task_group() as tasks:
+        async with shell.forks.busy():
+            saved = (await store.get(conversation_id=session.conversation_id)).summary
+            assert await store.name(source=saved, title='Renderer fix')
+            tasks.start_soon(shell.sessions.named, session.conversation_id, 'Renderer fix')
+            await anyio.wait_all_tasks_blocked()
+            # The running turn's save adopts the stored name, and tells no plugin.
+            await session.commit_messages(session.messages)
+            assert session.title == 'Renderer fix'
+            assert events == []
+        await anyio.wait_all_tasks_blocked()
+    assert events == [ConversationChanged(conversation_id=session.conversation_id, title='Renderer fix')]
+
+
 async def test_headless_resume_precedes_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     saved = Session(
