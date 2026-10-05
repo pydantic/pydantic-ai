@@ -2,7 +2,6 @@
 
 import asyncio
 import math
-from builtins import BaseExceptionGroup
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field
@@ -224,7 +223,7 @@ async def chat(
                             reason = await shell.run()
                         finally:
                             workers.cancel_scope.cancel()
-                except BaseExceptionGroup as exc:
+                except BaseExceptionGroup as exc:  # noqa: F821
                     if len(exc.exceptions) == 1:
                         raise exc.exceptions[0] from None
                     raise

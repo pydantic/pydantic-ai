@@ -11,7 +11,6 @@ re-exported from `pydantic_graph` directly.
 from __future__ import annotations as _annotations
 
 import inspect
-from builtins import BaseExceptionGroup
 from collections import Counter, defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
@@ -1125,7 +1124,7 @@ def _unwrap_exception_groups():
     else:
         try:
             yield
-        except BaseExceptionGroup as e:
+        except BaseExceptionGroup as e:  # noqa: F821
             exception = e.exceptions[0]
             if exception.__cause__ is None:
                 # bizarrely, this prevents recursion errors when formatting the exception for logfire
