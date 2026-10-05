@@ -752,7 +752,6 @@ async def test_unpaired_native_tool_call_history_is_accepted(
                         'type': 'tool_use',
                         'name': 'add',
                         'input': {'a': 2, 'b': 2},
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                     }
                 ],
             },
@@ -850,7 +849,6 @@ async def test_in_flight_mcp_call_history_is_accepted(
                         'type': 'tool_use',
                         'name': 'add',
                         'input': {'a': 2, 'b': 2},
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                     },
                 ],
             },
@@ -938,7 +936,6 @@ async def test_in_flight_native_tool_call_history_is_accepted(
                         'type': 'tool_use',
                         'name': 'add',
                         'input': {'a': 2, 'b': 2},
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                     },
                 ],
             },

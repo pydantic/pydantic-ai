@@ -88,7 +88,6 @@ def test_strict_tools_supported_model_auto_enabled(
                     'additionalProperties': False,
                     'required': ['location'],
                 },
-                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
     )

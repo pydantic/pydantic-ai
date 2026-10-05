@@ -60,6 +60,15 @@ class ModelSettingsForm(BaseModel):
     openai_text_verbosity: Literal['low', 'medium', 'high'] | None = Field(
         default=None, description='Responses answer verbosity.'
     )
+    anthropic_cache: bool | Literal['5m', '1h'] | None = Field(
+        default=None, description='Claude conversation caching: off, on (5 minutes), or a TTL.'
+    )
+    anthropic_cache_instructions: bool | Literal['5m', '1h'] | None = Field(
+        default=None, description='Cache static Claude instructions.'
+    )
+    anthropic_cache_tool_definitions: bool | Literal['5m', '1h'] | None = Field(
+        default=None, description='Cache Claude tool descriptions and schemas.'
+    )
     anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled'] | None = Field(
         default=None, description='Claude thinking mode. Overrides generic thinking.'
     )
@@ -163,6 +172,12 @@ class ModelSettingsForm(BaseModel):
 
     def _anthropic_settings(self) -> AnthropicModelSettings:
         anthropic = AnthropicModelSettings()
+        if self.anthropic_cache is not None:
+            anthropic['anthropic_cache'] = self.anthropic_cache
+        if self.anthropic_cache_instructions is not None:
+            anthropic['anthropic_cache_instructions'] = self.anthropic_cache_instructions
+        if self.anthropic_cache_tool_definitions is not None:
+            anthropic['anthropic_cache_tool_definitions'] = self.anthropic_cache_tool_definitions
         if self.anthropic_effort is not None:
             anthropic['anthropic_effort'] = self.anthropic_effort
         thinking = self._anthropic_thinking()
@@ -231,7 +246,15 @@ class ModelSettingsForm(BaseModel):
 
 
 def model_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI defaults for GPT-6 and GPT-5.6 families, independent of provider."""
+    """CLAI caching defaults for Anthropic and reasoning defaults for GPT families."""
+    provider = model.partition(':')[0]
+    if provider in ('anthropic', 'gateway/anthropic', 'claude-code'):
+        ttl = '1h' if provider == 'claude-code' else '5m'
+        return {
+            'anthropic_cache': ttl,
+            'anthropic_cache_instructions': ttl,
+            'anthropic_cache_tool_definitions': ttl,
+        }
     name = model.partition(':')[2] if ':' in model else model
     name = name.rsplit('/', 1)[-1]
     if not re.match(r'^gpt-(?:6(?:\.\d+)?|5\.6)(?:$|[-:])', name):

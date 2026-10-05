@@ -471,8 +471,7 @@ async def test_anthropic_code_execution_files_cache_prefix_stable(
     else:
         for body, typed_messages in zip(bodies, messages_by_body):
             assert body['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
-            cached = [block for _, content in typed_messages for block in content if 'cache_control' in block]
-            assert all(block.get('type') in ('tool_use', 'server_tool_use') for block in cached)
+            assert all('cache_control' not in block for _, content in typed_messages for block in content)
 
     # (c) The prefix is genuinely reused: turn 2 reads back at least everything turn 1 wrote.
     assert first.usage.cache_write_tokens > 0

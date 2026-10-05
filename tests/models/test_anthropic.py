@@ -829,14 +829,7 @@ async def test_anthropic_cache_messages_uses_per_block_cache_control(
     mock_client = MockAnthropic.create_mock(c)
 
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        model,
-        model_settings=AnthropicModelSettings(
-            anthropic_cache_messages=cache_value,
-            anthropic_cache_instructions=False,
-            anthropic_cache_tool_definitions=False,
-        ),
-    )
+    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache_messages=cache_value))
 
     result = await agent.run('Hello')
     assert result.output == 'Response'
@@ -1135,7 +1128,6 @@ async def test_anthropic_eager_input_streaming(allow_model_requests: None):
                 'description': '',
                 'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
                 'eager_input_streaming': True,
-                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
         ]
     )
@@ -1886,7 +1878,7 @@ async def test_limit_cache_points_with_cache_messages(allow_model_requests: None
                 'role': 'user',
                 'content': [
                     {'text': 'Context 1', 'type': 'text'},
-                    {'text': 'Context 2', 'type': 'text'},
+                    {'text': 'Context 2', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
                     {'text': 'Context 3', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
                     {'text': 'Context 4', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
                     {'text': 'Question', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
@@ -1909,7 +1901,6 @@ async def test_limit_cache_points_all_settings(allow_model_requests: None):
         m,
         system_prompt='System instructions.',
         model_settings=AnthropicModelSettings(
-            anthropic_cache=False,
             anthropic_cache_instructions=True,  # 1 cache point
             anthropic_cache_tool_definitions=True,  # 1 cache point
         ),
@@ -1975,9 +1966,8 @@ async def test_anthropic_cache(allow_model_requests: None, setting: bool | Liter
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
 
-    assert completion_kwargs['system'] == [
-        {'type': 'text', 'text': 'System instructions.', 'cache_control': {'type': 'ephemeral', 'ttl': expected_ttl}}
-    ]
+    # System prompt should remain a plain string (no per-block cache_control added)
+    assert completion_kwargs['system'] == 'System instructions.'
 
 
 async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: None):
@@ -2030,7 +2020,6 @@ async def test_limit_cache_points_with_cache(allow_model_requests: None):
         system_prompt='System instructions.',
         model_settings=AnthropicModelSettings(
             anthropic_cache=True,
-            anthropic_cache_instructions=False,
         ),
     )
 
@@ -5515,13 +5504,7 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     await agent.run('hello')
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'system' in completion_kwargs
-    assert completion_kwargs['system'] == [
-        {
-            'type': 'text',
-            'text': 'this is the system prompt\n\nand this is another',
-            'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
-        }
-    ]
+    assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
 
 
 async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_requests: None):
@@ -5542,9 +5525,7 @@ async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_reque
     await agent.run('continue', message_history=message_history)
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['system'] == [
-        {'type': 'text', 'text': 'You are helpful.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
-    ]
+    assert kwargs['system'] == 'You are helpful.'
     wrapped_contents = [
         block['text']
         for msg in kwargs['messages']
@@ -5873,9 +5854,7 @@ async def test_anthropic_model_empty_message_on_history(
             ModelResponse(parts=[TextPart(content='Hello, how can I help you?')], kind='response'),
         ],
     )
-    assert request_capture.body()['system'] == snapshot(
-        [{'type': 'text', 'text': 'You are a helpful assistant.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
-    )
+    assert request_capture.body()['system'] == snapshot([{'type': 'text', 'text': 'You are a helpful assistant.'}])
     assert result.output == snapshot("""\
 I'd be happy to help you get a potato! Here are a few ways I can assist:
 
@@ -5913,7 +5892,6 @@ async def test_anthropic_web_search_tool(
                     'allowed_domains': None,
                     'blocked_domains': None,
                     'user_location': None,
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                 }
             ],
             None,
@@ -6361,7 +6339,6 @@ async def test_anthropic_model_web_search_tool_stream(
                     'allowed_domains': None,
                     'blocked_domains': None,
                     'user_location': None,
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                 }
             ],
             None,
@@ -7239,7 +7216,6 @@ async def test_anthropic_web_fetch_tool(
                     'blocked_domains': None,
                     'citations': None,
                     'max_content_tokens': None,
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                 }
             ],
             None,
@@ -7517,7 +7493,6 @@ async def test_anthropic_web_fetch_tool_stream(
                     'blocked_domains': None,
                     'citations': None,
                     'max_content_tokens': None,
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                 }
             ],
             None,
@@ -9147,16 +9122,7 @@ async def test_anthropic_code_execution_tool(
     second_result = await agent.run('How about 4 * 12390?')
 
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
-        (
-            [
-                {
-                    'name': 'code_execution',
-                    'type': 'code_execution_20260120',
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
-                }
-            ],
-            None,
-        )
+        ([{'name': 'code_execution', 'type': 'code_execution_20260120'}], None)
     )
     assert messages == snapshot(
         [
@@ -9316,16 +9282,7 @@ async def test_anthropic_code_execution_tool_stream(
 
     assert agent_run.result is not None
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
-        (
-            [
-                {
-                    'name': 'code_execution',
-                    'type': 'code_execution_20260120',
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
-                }
-            ],
-            None,
-        )
+        ([{'name': 'code_execution', 'type': 'code_execution_20260120'}], None)
     )
     assert agent_run.result.all_messages() == snapshot(
         [
@@ -9647,9 +9604,7 @@ async def test_anthropic_code_execution_tool_version_auto(
     await agent.run('hello')
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['tools'] == [
-        {'name': 'code_execution', 'type': expected_tool_type, 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
-    ]
+    assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
 
 
 @pytest.mark.parametrize(
@@ -9679,9 +9634,7 @@ async def test_anthropic_code_execution_tool_version_setting(
     await agent.run('hello')
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert completion_kwargs['tools'] == [
-        {'name': 'code_execution', 'type': expected_tool_type, 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
-    ]
+    assert completion_kwargs['tools'] == [{'name': 'code_execution', 'type': expected_tool_type}]
     assert completion_kwargs['betas'] is OMIT
 
 
@@ -9709,7 +9662,6 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     'allowed_domains': None,
                     'blocked_domains': None,
                     'user_location': None,
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                 }
             ],
             None,
@@ -9781,16 +9733,7 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
 
     result = await agent.run('Multiplied by 12390', model=model, message_history=result.all_messages())
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
-        (
-            [
-                {
-                    'name': 'code_execution',
-                    'type': 'code_execution_20260120',
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
-                }
-            ],
-            None,
-        )
+        ([{'name': 'code_execution', 'type': 'code_execution_20260120'}], None)
     )
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
@@ -10109,7 +10052,6 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
-                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
     )
@@ -10237,7 +10179,6 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
-                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
     )
@@ -10365,7 +10306,6 @@ Always respond with a JSON object that's compatible with this schema:
 
 Don't include any text or Markdown fencing before or after.
 """,
-                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             }
         ]
     )
@@ -10540,16 +10480,7 @@ async def test_anthropic_text_editor_code_execution_tool(
         'Then use the text editor to view the file and tell me what it contains.'
     )
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
-        (
-            [
-                {
-                    'name': 'code_execution',
-                    'type': 'code_execution_20260120',
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
-                }
-            ],
-            None,
-        )
+        ([{'name': 'code_execution', 'type': 'code_execution_20260120'}], None)
     )
     assert result.all_messages() == snapshot(
         [
@@ -10672,16 +10603,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
                         event_parts.append(event)
 
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
-        (
-            [
-                {
-                    'name': 'code_execution',
-                    'type': 'code_execution_20260120',
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
-                }
-            ],
-            None,
-        )
+        ([{'name': 'code_execution', 'type': 'code_execution_20260120'}], None)
     )
     assert event_parts == snapshot(
         [
@@ -11048,7 +10970,6 @@ async def test_anthropic_text_editor_code_execution_tool_message_replay(allow_mo
                         'id': 'srvtoolu_text_editor_1',
                         'name': 'text_editor_code_execution',
                         'input': {'command': 'view', 'path': '/tmp/hello.txt'},
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                     },
                     {
                         'type': 'text_editor_code_execution_tool_result',
@@ -11121,7 +11042,6 @@ async def test_anthropic_bash_code_execution_tool_message_replay(allow_model_req
                         'id': 'srvtoolu_bash_1',
                         'name': 'bash_code_execution',
                         'input': {'command': 'echo hello'},
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                     },
                     {
                         'type': 'bash_code_execution_tool_result',
@@ -11237,7 +11157,6 @@ async def test_anthropic_code_execution_tool_message_replay_with_list_results(al
                         'id': 'srvtoolu_text_editor_list',
                         'name': 'text_editor_code_execution',
                         'input': {'command': 'view', 'path': '/tmp/hello.txt'},
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                     },
                     {
                         'type': 'text_editor_code_execution_tool_result',
@@ -11392,7 +11311,6 @@ async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_too
                         'id': 'srvtoolu_default_code_call',
                         'name': 'code_execution',
                         'input': {'code': 'print(2 + 2)'},
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                     },
                     {
                         'type': 'code_execution_tool_result',
@@ -11441,7 +11359,6 @@ async def test_anthropic_web_search_tool_stream(
                     'allowed_domains': None,
                     'blocked_domains': None,
                     'user_location': None,
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                 }
             ],
             None,
@@ -11986,7 +11903,6 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
                     'allowed_domains': None,
                     'blocked_domains': None,
                     'user_location': None,
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                 }
             ],
             None,
@@ -12569,7 +12485,7 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
             'description': '',
             'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
         },
-        {'name': 'memory', 'type': 'memory_20250818', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+        {'name': 'memory', 'type': 'memory_20250818'},
     ]
     assert count_tokens_kwargs['mcp_servers'] is OMIT
     assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
@@ -12862,11 +12778,7 @@ async def test_anthropic_lazy_advertisement_appends_with_tool_addition(allow_mod
         completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=10)),
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(anthropic_client=mock_client),
-        settings=AnthropicModelSettings(anthropic_cache=False),
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
     refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
 
     @refunds.tool_plain
@@ -14397,7 +14309,6 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
 <parameter name="limit": 8}\
 """,
                         },
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                     }
                 ],
             },
@@ -14660,13 +14571,7 @@ async def test_anthropic_trims_before_latest_compaction(allow_model_requests: No
             ]
         )
     )
-    assert (
-        create_kwargs['system']
-        == count_kwargs['system']
-        == snapshot(
-            [{'type': 'text', 'text': 'Standing system prompt.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
-        )
-    )
+    assert create_kwargs['system'] == count_kwargs['system'] == snapshot('Standing system prompt.')
     assert 'compact-2026-01-12' in create_kwargs['betas']
     assert 'compact-2026-01-12' in count_kwargs['betas']
 
@@ -14686,9 +14591,7 @@ async def test_anthropic_standing_prompt_survives_response_first_history(allow_m
     await model.request(messages, None, ModelRequestParameters())
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['system'] == snapshot(
-        [{'type': 'text', 'text': 'Standing system prompt.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
-    )
+    assert kwargs['system'] == snapshot('Standing system prompt.')
     assert kwargs['messages'] == snapshot(
         [
             {'role': 'assistant', 'content': [{'content': 'Summary.', 'type': 'compaction'}]},
@@ -14719,9 +14622,7 @@ async def test_anthropic_standing_instructions_survive_compaction(allow_model_re
     await model.request(messages, None, ModelRequestParameters())
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['system'] == snapshot(
-        [{'text': 'Standing instructions.', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
-    )
+    assert kwargs['system'] == snapshot([{'text': 'Standing instructions.', 'type': 'text'}])
 
 
 async def test_anthropic_foreign_compaction_does_not_trim(allow_model_requests: None):
@@ -15074,7 +14975,7 @@ async def test_anthropic_compaction_usage_with_cache(
         # Distinct per case, so that recording one case doesn't read the cache the other wrote.
         instructions=f'You are a helpful assistant ({ttl} cache). Be very brief.',
         capabilities=[AnthropicCompaction(token_threshold=50_000)],
-        model_settings=AnthropicModelSettings(anthropic_cache=ttl, anthropic_cache_instructions=False),
+        model_settings=AnthropicModelSettings(anthropic_cache=ttl),
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
@@ -15154,7 +15055,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(
         async for _ in result.stream_text():
             pass
         usage = result.usage
-    assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, ['system[0]']))
+    assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
     assert usage == snapshot(
         RunUsage(
             input_tokens=55377,
@@ -15323,7 +15224,6 @@ async def test_pause_turn_web_search_vcr(
                     'allowed_domains': None,
                     'blocked_domains': None,
                     'user_location': None,
-                    'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
                 }
             ],
             None,

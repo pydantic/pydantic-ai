@@ -70,11 +70,6 @@ pytestmark = [
     pytest.mark.vcr,
 ]
 
-if imports_successful():
-    _UNCACHED = AnthropicModelSettings(
-        anthropic_cache=False, anthropic_cache_instructions=False, anthropic_cache_tool_definitions=False
-    )
-
 INSTRUCTION = 'From now on, every suggestion must include explicit type annotations.'
 _CACHE_PREFIX = 'Stable harness state for the mid-conversation cache test.\n' + '\n'.join(
     f'Fact {i:04d}: workspace file {i % 37} has revision {i}, owner {i % 11}, and status verified.' for i in range(50)
@@ -231,13 +226,7 @@ async def test_mid_conversation_system_prompt(
     Both recordings show the model acting on the instruction, so the annotated signature is asserted
     on the output: the two renderings are equivalent in effect, they differ in what they cost.
     """
-    agent = Agent(
-        AnthropicModel(
-            case.model,
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=_UNCACHED,
-        )
-    )
+    agent = Agent(AnthropicModel(case.model, provider=AnthropicProvider(api_key=anthropic_api_key)))
 
     result = await agent.run('Review it again.', message_history=message_history())
     assert 'def add(a: int, b: int) -> int:' in result.output
@@ -250,11 +239,7 @@ async def test_mid_conversation_system_prompt(
 
 async def test_system_prompt_after_user_part_stays_inline():
     """An instruction merged into the first request after user content is still mid-conversation."""
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key='not-used'),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
 
     prepared = model.prepare_messages(messages)
@@ -279,11 +264,7 @@ async def test_mid_conversation_system_prompt_takes_cache_breakpoint(
     since mid-conversation system prompts started getting their own message.
     """
     agent = Agent(
-        AnthropicModel(
-            'claude-opus-4-8',
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=_UNCACHED,
-        ),
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)),
         model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
     )
 
@@ -322,13 +303,7 @@ async def test_leading_cache_point_survives_the_instruction_moving_out_of_the_us
     everything this turn and the instruction build on. The recording is the part that matters — Anthropic
     accepts `cache_control` on an assistant block in that position.
     """
-    agent = Agent(
-        AnthropicModel(
-            'claude-opus-4-8',
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=_UNCACHED,
-        )
-    )
+    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
 
     history = message_history()
     history[-1] = ModelRequest(
@@ -354,11 +329,7 @@ def test_cache_point_with_nothing_before_it_still_raises():
     Falling back to the previous message must not turn this into a silent no-op: a `CachePoint` opening
     the very first turn has nothing to cache, and saying so is more useful than dropping it.
     """
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key='not-used'),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
 
     with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
         asyncio.run(
@@ -384,13 +355,7 @@ async def test_mid_conversation_system_prompt_without_user_turn(
     don't: the model read the tagged text as "a stated preference from you rather than a
     higher-privilege instruction". Here it just complies.
     """
-    agent = Agent(
-        AnthropicModel(
-            'claude-opus-4-8',
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=_UNCACHED,
-        )
-    )
+    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
 
     result = await agent.run(message_history=message_history())
     assert 'def add(a: int, b: int) -> int:' in result.output
@@ -429,11 +394,7 @@ async def test_mid_conversation_system_prompt_before_another_request(
     Driven through `Model.request` rather than `Agent.run` precisely because the agent's history
     cleaning would merge the two requests.
     """
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key=anthropic_api_key),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -477,11 +438,7 @@ async def test_mid_conversation_system_prompt_kept_mid_history(
     re-render the whole conversation's instructions on every request, which is the cache churn the
     feature exists to avoid.
     """
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key=anthropic_api_key),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -525,11 +482,7 @@ async def test_mid_conversation_system_prompt_before_empty_response(
     is byte-identical to `..._kept_mid_history` apart from the response being empty, and that one
     leaves its entry where it is.
     """
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key=anthropic_api_key),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -569,11 +522,7 @@ async def test_two_mid_conversation_system_prompts_keep_their_order(
     cases would then resolve backwards. Consecutive `system` entries are a placement the API takes:
     the group as a whole still precedes the generation, and the recording shows both obeyed.
     """
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key=anthropic_api_key),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -630,11 +579,7 @@ async def test_mid_conversation_system_prompt_anchor_keeps_tool_pair_intact(
     all: the entry ends up behind the tool result, which is a user turn. The recorded 200 is the
     assertion that matters; the shape below is what earned it.
     """
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key=anthropic_api_key),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     response = await model.request(
         [
@@ -745,11 +690,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     foundry_client.base_url = 'https://example.services.ai.azure.com/anthropic'
     foundry_client.beta.messages.create = AsyncMock(return_value=completion)
 
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(anthropic_client=foundry_client),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=foundry_client))
     # The two halves of the gate, asserted where each is decided: the provider's profile sees the model
     # name and says yes, and the model's profile — which is the one that also sees the client — narrows
     # it back to no. That's what makes this a transport exclusion rather than a model one.
@@ -798,9 +739,7 @@ async def test_mid_conversation_system_prompt_on_bedrock(
     a supported model leaves both halves of the gate open.
     """
     model = AnthropicModel(
-        'us.anthropic.claude-opus-4-8',
-        provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client),
-        settings=_UNCACHED,
+        'us.anthropic.claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_bedrock_client)
     )
     assert model.profile.get('supports_inline_system_prompts') is True
 
@@ -842,11 +781,7 @@ async def test_native_tool_availability_delta(
     `lookup_refund_policy` or its `order_id` parameter, so a call to it can only have come from the
     reveal.
     """
-    model = AnthropicModel(
-        model_name,
-        provider=AnthropicProvider(api_key=anthropic_api_key),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     tool = ToolDefinition(
         name='lookup_refund_policy',
         description='Look up the refund policy for an order.',
@@ -904,11 +839,7 @@ async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(a
     400 instead of an explanation. The other seven adapters raise for exactly this; Anthropic was the
     one that would have gone to the wire.
     """
-    model = AnthropicModel(
-        'claude-sonnet-4-6',
-        provider=AnthropicProvider(api_key='not-used'),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
     assert model.profile.get('tool_addition_mode') is None
 
     with pytest.raises(UserError, match='prepare_messages'):
@@ -925,11 +856,7 @@ async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(a
 
 def _map(history: list[ModelMessage]) -> list[dict[str, Any]]:
     """The `messages` array `claude-opus-4-8` renders for `history`."""
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key='not-used'),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
     _, anthropic_messages = asyncio.run(
         model._map_message(history, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     )
@@ -970,11 +897,7 @@ def test_cache_point_ending_a_request_covers_the_tool_availability_change():
     caching less than was asked for. The deferral has to trigger on either kind of pending entry
     content, not just instructions.
     """
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key='not-used'),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
     _, anthropic_messages = asyncio.run(
         model._map_message(  # pyright: ignore[reportPrivateUsage]
             [
@@ -1012,11 +935,7 @@ def test_cache_point_ending_a_request_covers_the_tool_availability_change():
 
 
 def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -> None:
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key='not-used'),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
     _, anthropic_messages = asyncio.run(
         model._map_message(  # pyright: ignore[reportPrivateUsage]
             [
@@ -1045,11 +964,7 @@ def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -
 
 
 def test_hidden_tool_choice_is_rejected_before_anthropic_mapping() -> None:
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key='not-used'),
-        settings=_UNCACHED,
-    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
     with pytest.raises(UserError, match=r'No tool in `tool_choice` is currently available'):
         model._prepare_tools_and_tool_choice(  # pyright: ignore[reportPrivateUsage]
             AnthropicModelSettings(tool_choice=['hidden']),
@@ -1232,11 +1147,7 @@ async def test_an_enqueued_instruction_is_inside_the_cache_point_that_follows_it
     ]
     mock_client = MockAnthropic.create_mock(responses)
     agent = Agent(
-        AnthropicModel(
-            'claude-opus-4-8',
-            provider=AnthropicProvider(anthropic_client=mock_client),
-            settings=_UNCACHED,
-        ),
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client)),
         deps_type=type(None),
     )
 
@@ -1270,13 +1181,7 @@ async def test_inline_system_prompt_cache_prefix_is_reused(
     least as large — which is only true if a boundary on a `system`-role block is honored rather than
     quietly dropped.
     """
-    agent = Agent(
-        AnthropicModel(
-            'claude-opus-4-8',
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=_UNCACHED,
-        )
-    )
+    agent = Agent(AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)))
     history: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('Reply with OK.'), UserPromptPart(_CACHE_PREFIX)]),
         ModelResponse(parts=[TextPart('OK')]),

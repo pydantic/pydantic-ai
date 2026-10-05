@@ -1170,7 +1170,7 @@ async def test_anthropic_drops_a_stale_thinking_block(
     so the recorded `thinking_dropped` replays even if the setting stopped reaching the wire. The
     outbound body and the beta header are what tie the transformation to what we actually sent.
     """
-    m = anthropic_model(model_name, capture=True, cache=False)
+    m = anthropic_model(model_name, capture=True)
     history = await stale_thinking_block_history(m)
 
     settings = AnthropicModelSettings(
@@ -1216,7 +1216,7 @@ async def test_anthropic_explicit_error_rejects_a_stale_thinking_block_on_bindin
     Sonnet 5.5 reject the replay after the instructions change, while Opus 5 accepts it. An explicit `'error'`
     is a caller asking to fail, so it is never retried.
     """
-    m = anthropic_model(model_name, capture=True, cache=False)
+    m = anthropic_model(model_name, capture=True)
     history = await stale_thinking_block_history(m)
 
     settings = AnthropicModelSettings(
