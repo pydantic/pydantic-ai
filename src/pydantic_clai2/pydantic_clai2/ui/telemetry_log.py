@@ -6,7 +6,7 @@ interactive session runs they go to a small rotating file instead.
 """
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -36,7 +36,7 @@ class _LogFile(RotatingFileHandler):
 
 
 @contextmanager
-def telemetry_log(path: Path, *, console: Console) -> Iterator[None]:
+def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if written.
 
     A logger that already reaches a handler, one the embedding application configured, is left alone: only

@@ -2,7 +2,7 @@
 
 import io
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -37,7 +37,7 @@ class _Exports(AbstractCapability[None]):
 
 
 @contextmanager
-def unconfigured_logging() -> Iterator[None]:
+def unconfigured_logging() -> Generator[None]:
     """Logging as the CLI leaves it, with no handler, inside the test body.
 
     pytest's own root handlers would hide `logging.lastResort`, and it adds them again for the call phase, so a
