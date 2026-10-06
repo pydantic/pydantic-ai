@@ -260,7 +260,7 @@ Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
 text; releasing the button copies it to the clipboard and the footer says so.
-Locally CLAI copies with `pbcopy` on macOS, `clip` on Windows, and `wl-copy`,
+Locally CLAI copies with `pbcopy` on macOS, PowerShell on Windows, and `wl-copy`,
 `xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
 terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
 *Applications in terminal may access clipboard*; tmux: `set-clipboard on`).

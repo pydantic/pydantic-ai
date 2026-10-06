@@ -36,17 +36,20 @@ def test_macos_uses_pbcopy_in_a_utf8_locale(installed: set[str]) -> None:
     assert copy_command(platform='darwin') == ClipboardCommand(argv=('/bin/pbcopy',), env={'LC_CTYPE': 'UTF-8'})
 
 
-def test_windows_uses_the_system_clip_never_one_found_on_path(
+def test_windows_uses_the_system_powershell_never_one_found_on_path(
     installed: set[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A `PATH` search on Windows tries the working directory first, where a repository could plant `clip.exe`."""
-    installed.add('clip')
+    """A `PATH` search on Windows tries the working directory first, where a repository could plant a program."""
+    installed.update({'clip', 'powershell'})
     monkeypatch.setenv('SystemRoot', str(tmp_path))
     assert copy_command(platform='win32') is None
-    clip = tmp_path / 'System32' / 'clip.exe'
-    clip.parent.mkdir()
-    clip.write_bytes(b'')
-    assert copy_command(platform='win32') == ClipboardCommand(argv=(str(clip),), encoding='utf-16')
+    powershell = tmp_path / 'System32' / 'WindowsPowerShell' / 'v1.0' / 'powershell.exe'
+    powershell.parent.mkdir(parents=True)
+    powershell.write_bytes(b'')
+    command = copy_command(platform='win32')
+    assert command is not None
+    assert command.argv[0] == str(powershell)
+    assert 'Set-Clipboard' in command.argv[-1]
 
 
 def test_linux_prefers_wayland_then_x11_tools(installed: set[str], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,13 +63,12 @@ def test_linux_prefers_wayland_then_x11_tools(installed: set[str], monkeypatch: 
     assert copy_command(platform='linux') == ClipboardCommand(argv=('/bin/wl-copy',))
 
 
-@pytest.mark.parametrize('encoding', ['utf-8', 'utf-16'])
-def test_run_copy_feeds_the_text_in_the_command_encoding(tmp_path: Path, encoding: str) -> None:
+def test_run_copy_feeds_utf8_text_and_the_command_environment(tmp_path: Path) -> None:
     path = tmp_path / 'clipboard'
     script = f'import os, sys; open({str(path)!r}, "wb").write(os.environ["MARK"].encode() + sys.stdin.buffer.read())'
-    command = ClipboardCommand(argv=(sys.executable, '-c', script), encoding=encoding, env={'MARK': '>'})
+    command = ClipboardCommand(argv=(sys.executable, '-c', script), env={'MARK': '>'})
     run_copy(command=command, text='héllo')
-    assert path.read_bytes()[1:].decode(encoding) == 'héllo'
+    assert path.read_bytes()[1:].decode() == 'héllo'
     assert path.read_bytes()[:1] == b'>', 'the command gets its own variables'
 
 
