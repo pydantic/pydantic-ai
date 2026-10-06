@@ -715,6 +715,21 @@ requests fail, stream renderers are not called, and host console output is
 suppressed. Plugins must not read input or print directly to stdout. Errors go
 to stderr with a nonzero exit status. `-m` also works in the interactive CLI.
 
+## The stock agent from code
+
+`open_stock_agent(workspace=..., model=..., capabilities=..., plugin_settings=...)` from
+pydantic_clai2 is an async context manager that yields the CLI's stock agent without the
+terminal, for agent.run, run_stream_events, iter, or harness run_acp_stdio. It binds the
+coder, repo_context, and compaction built-ins, then `capabilities`, so delegated tasks carry
+them. The tools work in `workspace` unless a passed capability supplies a workspace, such as
+a sandbox. Model names resolve as in the CLI, with CLAI's per-model defaults.
+`plugin_settings` merges settings over a built-in's stock ones, for example
+{'coder': {'sub_agents': False, 'agent_folders': []}}. Saved, drop-in, and project plugins,
+.clai/settings.json, saved model settings, and chain: fallback chains do not apply; nor do
+ask_user, observability, mcp, or this guide. When approvals end the run, as over ACP, set
+coder sub_agents to false: a delegated task's approval fails the run
+(https://github.com/pydantic/pydantic-ai/issues/4302).
+
 ## Managed delegation UI
 
 Interactive stock agents use harness `DelegationTasks`: `/tasks` inspects children,
