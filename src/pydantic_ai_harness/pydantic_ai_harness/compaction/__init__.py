@@ -22,6 +22,7 @@ from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
     estimate_context_tokens,
+    estimate_message_tokens,
     estimate_token_count,
 )
 from pydantic_ai_harness.compaction._sliding_window_compaction import SlidingWindowCompaction
@@ -50,6 +51,7 @@ __all__ = [
     'compact_now',
     'drain_summary_events',
     'estimate_context_tokens',
+    'estimate_message_tokens',
     'estimate_token_count',
     'is_pinned',
     'pin',

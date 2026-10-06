@@ -67,7 +67,12 @@ re-attached at every hop, and a strategy that forgot would silently drop the cor
 
 
 def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
-    """Collect all text segments from a sequence of messages, excluding instructions.
+    """Collect all text segments from a sequence of messages, excluding instructions."""
+    return [segment for segments in _message_segments(messages) for segment in segments]
+
+
+def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
+    """The text segments of each message, excluding instructions.
 
     Every part that carries text the provider is sent counts, including the ones a run only
     grows under load: a retry prompt, an extended-thinking block, the result of a
@@ -91,8 +96,9 @@ def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
         ),
         default=0,
     )
-    segments: list[str] = []
+    per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
+        segments: list[str] = []
         if isinstance(msg, ModelRequest):
             for request_part in msg.parts:
                 if request_part.part_kind == 'instruction-delta' and index < baseline_index:  # pyright: ignore[reportUnnecessaryComparison]
@@ -101,7 +107,8 @@ def _collect_message_text(messages: Sequence[ModelMessage]) -> list[str]:
         else:
             for response_part in msg.parts:
                 segments.extend(_response_part_text(response_part))
-    return segments
+        per_message.append(segments)
+    return per_message
 
 
 def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
@@ -281,6 +288,53 @@ def estimate_context_tokens(
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
     return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+
+
+def estimate_message_tokens(
+    messages: Sequence[ModelMessage],
+    tokenizer: Callable[[str], int] | None = None,
+) -> list[int]:
+    """Tokens each message adds to a request, measured with provider-reported usage where the history has it.
+
+    The text estimate (`tokenizer`, or ~4 characters per token) misses what a provider counts but
+    does not return as text, such as thinking kept as an empty part with a signature, and it
+    underestimates token-dense content. Usage measures both. A response counts at least its
+    `output_tokens`. Between two responses that carry usage, the later `input_tokens` minus the
+    earlier one is exactly what the earlier response and the requests after it added, so those
+    messages share that difference in proportion to their estimates. Where the history shrank
+    between two such responses, as it does across a compaction, the difference measures nothing
+    and the estimates stand; so do messages before the first such response and after the last.
+
+    Instructions are left out: they are sent with every request, not carried by any one message.
+    """
+    counts = [
+        max(
+            _estimate_segments(segments, tokenizer),
+            message.usage.output_tokens if isinstance(message, ModelResponse) else 0,
+        )
+        for message, segments in zip(messages, _message_segments(messages))
+    ]
+    anchors = [index for index, message in enumerate(messages) if _reported_input_tokens(message)]
+    for start, end in zip(anchors, anchors[1:]):
+        span = _reported_input_tokens(messages[end]) - _reported_input_tokens(messages[start])
+        if span < 0:
+            continue
+        estimated = max(sum(counts[start:end]), 1)
+        shares = [count * span // estimated for count in counts[start:end]]
+        shares[0] += span - sum(shares)
+        counts[start:end] = shares
+    return counts
+
+
+def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
+    if tokenizer is not None:
+        return sum(tokenizer(s) for s in segments)
+    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+
+
+def _reported_input_tokens(message: ModelMessage) -> int:
+    """The provider-reported input tokens of a response, or 0 for a request or a response without usage."""
+    return message.usage.input_tokens if isinstance(message, ModelResponse) else 0
 
 
 def has_context_usage_anchor(messages: Sequence[ModelMessage]) -> bool:
@@ -662,9 +716,21 @@ def find_token_cutoff(
 ) -> int:
     """Binary-search for a cutoff such that `messages[cutoff:]` fits in *target_tokens*.
 
-    Adjusts the result so that no tool-call pairs are orphaned.
+    A history with provider-reported usage is measured with `estimate_message_tokens`, so the
+    tail holds *target_tokens* as the provider counts them; one without falls back to the text
+    estimate. Adjusts the result so that no tool-call pairs are orphaned.
     """
-    if not messages or estimate_token_count(messages, tokenizer) <= target_tokens:
+    if has_context_usage_anchor(messages):
+        counts = estimate_message_tokens(messages, tokenizer)
+
+        def tail_tokens(start: int) -> int:
+            return sum(counts[start:])
+    else:
+
+        def tail_tokens(start: int) -> int:
+            return estimate_token_count(messages[start:], tokenizer)
+
+    if not messages or tail_tokens(0) <= target_tokens:
         return 0
 
     lo, hi = 0, len(messages)
@@ -672,7 +738,7 @@ def find_token_cutoff(
 
     while lo < hi:
         mid = (lo + hi) // 2
-        if estimate_token_count(messages[mid:], tokenizer) <= target_tokens:
+        if tail_tokens(mid) <= target_tokens:
             candidate = mid
             hi = mid
         else:

@@ -272,7 +272,16 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         startup = next(span for span in ui if span.name == 'session started')
         resumed = next(span for span in ui if span.name == 'conversation resumed')
         assert startup.parent == resumed.parent == root_context
-    assert all(span.context is not None and span.context.trace_id == root_context.trace_id for span in recorder.spans())
+    # The browser names sessions in the background, before any root is chosen: its own traces.
+    namer = {
+        span.context.trace_id
+        for span in recorder.spans()
+        if span.name == 'invoke_agent session_namer' and span.context is not None
+    }
+    assert all(
+        span.context is not None and span.context.trace_id in {root_context.trace_id, *namer}
+        for span in recorder.spans()
+    )
 
 
 @pytest.mark.parametrize(('prompt', 'outcome'), [('hello', 'completed'), ('explode', 'failed'), ('block', 'cancelled')])

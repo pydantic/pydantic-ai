@@ -33,6 +33,7 @@ from pydantic_clai2.config.api_keys import save_key
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, TurnEnd, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.runtime import agent_instrumentation
 from pydantic_clai2.ui import telemetry
 from tests.clai2.menu_script import Script, pick, typed
 
@@ -176,6 +177,62 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
     assert metrics.get_meter_provider() is meter
     assert propagate.get_global_textmap() is propagator
     assert agent.instrument is None
+
+
+async def test_agents_built_elsewhere_are_traced_while_loaded(recorder: Recorder) -> None:
+    """Summarizers and sub-agents build their own `Agent`, so only global instrumentation reaches them."""
+    previous = InstrumentationSettings()
+    Agent.instrument_all(previous)
+    try:
+        plugin = await start_logfire()
+        assert isinstance(plugin.plugin, LogfirePlugin)
+        assert agent_instrumentation.current() is plugin.plugin.instrumentation.settings
+        await Agent(TestModel(), name='nested').run('hello')
+        await close(plugin)
+        assert agent_instrumentation.current() is previous, 'unloading restores what was there before'
+    finally:
+        Agent.instrument_all(False)
+    assert [span.name for span in recorder.spans()].count('invoke_agent nested') == 1
+
+
+async def start_logfire() -> LoadedPlugin[None]:
+    plugin = load_logfire(make_host())
+    await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    return plugin
+
+
+async def test_agent_instrumentation_moves_to_a_remaining_copy(recorder: Recorder) -> None:
+    """Unloading one of two copies leaves agents traced by the live one, never by a shut-down instance."""
+    first, second = await start_logfire(), await start_logfire()
+    assert isinstance(first.plugin, LogfirePlugin) and isinstance(second.plugin, LogfirePlugin)
+    await close(second)
+    assert agent_instrumentation.current() is first.plugin.instrumentation.settings
+    second = await start_logfire()
+    await close(first)
+    assert isinstance(second.plugin, LogfirePlugin)
+    assert agent_instrumentation.current() is second.plugin.instrumentation.settings
+    await close(second)
+    assert agent_instrumentation.current() is False
+
+
+async def test_unloading_keeps_instrumentation_set_after_loading(recorder: Recorder) -> None:
+    plugin = await start_logfire()
+    later = InstrumentationSettings()
+    Agent.instrument_all(later)
+    try:
+        await close(plugin)
+        assert agent_instrumentation.current() is later
+    finally:
+        Agent.instrument_all(False)
+
+
+def test_global_tracer_follows_instrument_all() -> None:
+    assert agent_instrumentation.tracer() is None
+    Agent.instrument_all(True)
+    try:
+        assert agent_instrumentation.tracer() is not None
+    finally:
+        Agent.instrument_all(False)
 
 
 @pytest.mark.parametrize('content', [False, True])

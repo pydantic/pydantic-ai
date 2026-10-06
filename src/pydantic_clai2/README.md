@@ -1476,7 +1476,7 @@ The built-in `compaction` plugin is on by default, with or without `coder`.
 It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
 It protects the most recent 50,000 tokens (`protected_tokens`) from summarising and
-truncation. `coder`'s own tool-result clearing is separate: above 70% of the window it
+truncation, counted as the provider reported them, thinking included. `coder`'s own tool-result clearing is separate: above 70% of the window it
 still empties tool results older than its last three tool calls. `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall
 back to truncation; other exceptions propagate. The summary request is billed
@@ -1488,8 +1488,8 @@ threshold, but it protects at most half the conversation, so it always has older
 messages to summarise. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
 as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
-You get one line with the message counts before and after and an estimate of the
-tokens saved out of the total. When compacting would not make the conversation
+You get one line with the message counts before and after and the tokens saved out
+of the total, counted as the provider reported them where the history has them. When compacting would not make the conversation
 smaller, for example because the summary is longer than what it replaces, the
 conversation is left as it was and you are told so. An empty or one-message
 conversation sends nothing.
@@ -2137,9 +2137,13 @@ shows how to put a different one, a web form for instance, in its place.
 The stock CLI enables the built-in `observability` plugin by default. It adds Pydantic
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
-spans, including timing, token usage, and failures. It adds CLAI's own UI spans
-only when `ui_events` is on (see below). HTTP client instrumentation is off by
-default; agent instrumentation does not affect unrelated agents globally.
+spans, including timing, token usage, and failures. While it is loaded it also
+turns on Pydantic AI instrumentation for every agent (`Agent.instrument_all`), so
+agents CLAI does not run itself, such as the compaction summariser,
+sub-agents, and session naming, are traced to the same place, and `/compact` records a
+`compact_messages` span. Unloading restores the previous setting. It adds CLAI's
+own UI spans only when `ui_events` is on (see below). HTTP client instrumentation
+is off by default.
 
 Startup plugin load failures reported in the terminal are also sent through the configured
 Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
@@ -2266,8 +2270,10 @@ and shuts down that instance without shutting down application-global providers.
 The existing global propagator is preserved. Logfire's SDK may install shared
 executor context-propagation helpers; those SDK hooks are not removed on unload.
 The plugin does not mutate a supplied agent. While enabled, its explicit per-run
-`Instrumentation` takes precedence over that agent's instrumentation settings;
-disabling it leaves the agent's original configuration in effect. Custom
+`Instrumentation` takes precedence over that agent's instrumentation settings, and
+`Agent.instrument_all` points agents without their own settings at the plugin's
+instance; disabling it leaves the agent's original configuration and the previous
+`Agent.instrument_all` setting in effect. Custom
 `chat()` launchers only get built-ins when passed `builtin_plugins=DEFAULT_PLUGINS`.
 
 - [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)

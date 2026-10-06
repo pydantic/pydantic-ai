@@ -149,7 +149,9 @@ Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
 threshold math or an orchestrator in CLAI. Register the usage gauge after the
 chain so yellow means the compacted request still exceeds the threshold.
-`/compact` drives the same chain regardless of threshold. Only `ModelAPIError`,
+`/compact` drives the same chain regardless of threshold, keeps the result only
+when harness `estimate_message_tokens` (provider-reported usage) says it shrank,
+and passes `runtime/agent_instrumentation.tracer()` so it is traced. Only `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
 summary failure; other exceptions propagate. Its `configure` is a `FieldMenu`
 over `CompactionSettings`; the loader's reload builds the new chain. The status
@@ -311,7 +313,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
-| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
+| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation` and pointing `Agent.instrument_all` at it while loaded (restored on unload); `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
 | `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content; typed text goes only through `prompt_text`, which the subscriber's `include_content` gates |
@@ -342,6 +344,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
 | `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
 | `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
+| `runtime/agent_instrumentation.py` | reads core's process-wide `Agent.instrument_all` setting (core has no getter) and its tracer |
 | `runtime/speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
 | `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |

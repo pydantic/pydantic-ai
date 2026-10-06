@@ -68,6 +68,7 @@ from pydantic_ai_harness.compaction import (
     WarnNearLimits,
     drain_summary_events,
     estimate_context_tokens,
+    estimate_message_tokens,
     estimate_token_count,
     is_pinned,
     pin,
@@ -386,6 +387,45 @@ class TestFindTokenCutoff:
         # messages[2:] = 8 tokens (fits), messages[1:] = 12 (does not) -> candidate is 2,
         # which splits the pair, so it walks back to 1.
         assert find_token_cutoff(msgs, 8, tokenizer=len) == 1
+
+    def test_measures_the_tail_with_provider_usage(self):
+        """Thinking a provider returns without text counts, so the tail is not mostly unseen tokens."""
+        msgs: list[ModelMessage] = [
+            _user('start'),
+            _reported(input_tokens=100, output_tokens=5000),
+            _user('next'),
+            _reported(input_tokens=5200, output_tokens=10),
+            _user('last'),
+        ]
+        assert estimate_token_count(msgs) <= 100, 'the text estimate alone would keep everything'
+        assert find_token_cutoff(msgs, 100) == 2
+
+
+def _reported(*, input_tokens: int, output_tokens: int) -> ModelResponse:
+    """A response whose thinking came back without text, as some providers return it, with its usage."""
+    return ModelResponse(
+        parts=[ThinkingPart(content='', signature='sig'), TextPart(content='ok')],
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+
+
+class TestEstimateMessageTokens:
+    def test_without_usage_each_message_is_estimated(self):
+        msgs: list[ModelMessage] = [_user('x' * 40), _assistant('y' * 80)]
+        assert estimate_message_tokens(msgs) == [10, 20]
+        assert estimate_message_tokens(msgs, tokenizer=len) == [40, 80]
+
+    def test_usage_between_responses_is_shared_and_a_shrunk_history_keeps_estimates(self):
+        msgs: list[ModelMessage] = [
+            _user('x' * 40),  # before the first reported response: estimated
+            _reported(input_tokens=1000, output_tokens=300),
+            _user('y' * 400),  # with the response above, shares 2001 - 1000 in proportion 300:100
+            _reported(input_tokens=2001, output_tokens=200),
+            _user('z' * 40),  # the next response reports less input: compacted in between, so estimated
+            _reported(input_tokens=500, output_tokens=50),
+            _user('w' * 80),  # after the last reported response: estimated
+        ]
+        assert estimate_message_tokens(msgs) == [10, 751, 250, 200, 10, 50, 20]
 
 
 # ---------------------------------------------------------------------------

@@ -49,6 +49,21 @@ cheap and near-lossless). `TieredCompaction` triggers and stops on a single `tar
 `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a
 large total.
 
+### What counts toward `keep_tokens`
+
+The retained tail is measured per message with `estimate_message_tokens`, so `keep_tokens` means
+tokens as the provider counts them. A response counts at least its reported `output_tokens`, which
+includes thinking that some providers return as an empty part with only a signature. The messages
+between two responses that carry usage share the difference between their `input_tokens`, which is
+exactly what the provider counted for them. Before the first such response, after the last, and
+where the history shrank between two of them (across an earlier compaction), `tokenizer` or the
+~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
+provider usage is measured with the heuristic as before.
+
+**If you set `keep_tokens`, re-check it.** It used to be measured with the heuristic alone, which
+on a thinking-heavy history can see a third of the real tokens or less, so the same budget kept
+several times more history than it named. It now keeps the named amount, so fewer messages.
+
 ### `max_fraction`: one setting for every model
 
 An absolute `max_tokens` is only correct for the model it was measured against. Configure `180_000`
