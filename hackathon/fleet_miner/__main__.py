@@ -68,8 +68,13 @@ async def main(args: argparse.Namespace) -> None:
     existing = existing_doc.proposals if existing_doc else []
 
     cache_path = args.cache or HERE / '.cache' / f'facets-{re.sub(r"\W+", "_", args.facet_model)}.json'
-    facets = await facets_mod.extract_facets(prompts, model=args.facet_model, cache=facets_mod.FacetCache(cache_path))
-    print(f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent')
+    facets = (
+        {}
+        if args.reuse_clusters
+        else await facets_mod.extract_facets(prompts, model=args.facet_model, cache=facets_mod.FacetCache(cache_path))
+    )
+    if facets:
+        print(f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent')
 
     existing = [p for p in existing if p.id not in args.drop]
     clusters_path = HERE / '.cache' / 'clusters.json'

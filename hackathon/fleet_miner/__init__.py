@@ -4,4 +4,4 @@ A hackathon prototype of a "fleet scope" mode for Logfire's agent optimizer. It 
 Logfire side of the demo can stay frontend-only against EU staging.
 """
 
-__version__ = '0.2'
+__version__ = '0.3'

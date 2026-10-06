@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
 from .models import Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, strip_markup
@@ -42,6 +43,10 @@ Decide the kind:
 `name`: a short kebab-case slug. `description`: one short sentence saying when it applies.
 `suggested_tier`: `required` if nearly everyone would want it, `default_on` if broadly useful, `optional` if niche.
 `rationale`: one or two sentences: how many people asked, and what it saves them.
+
+Never include personal identifiers in any field: no people's names, GitHub usernames, handles or emails. Replace a
+person with their role ("the requested reviewer", "the PR author"). Do keep the names of tools, bots and repository
+conventions (e.g. Macroscope, douwebot, `SKIP=typecheck`): they are useful context for a company skill.
 """
 
 
@@ -150,17 +155,81 @@ def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
     return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
 
 
+_GENERIC_DOMAINS = {'gmail', 'googlemail', 'outlook', 'hotmail', 'yahoo', 'icloud', 'proton', 'protonmail', 'pydantic'}
+
+
+_HOST_OWNER = re.compile(r"^([A-Za-z]+?)'?s-(?:MacBook|MBP|Mac|iMac|Laptop|PC|Desktop)", re.IGNORECASE)
+_HANDLE_PATTERNS = (
+    re.compile(r'(?<![\w.])@([A-Za-z0-9](?:[A-Za-z0-9-]{1,37}[A-Za-z0-9])?)\b'),
+    re.compile(r'\bassign(?:ed|ee)?(?: it| the PR| this)? to @?([A-Za-z0-9-]{3,39})\b', re.IGNORECASE),
+    re.compile(r'/(?:Users|home)/([A-Za-z0-9._-]{3,})/'),
+)
+_NOT_HANDLES = {
+    *('main', 'master', 'yourself', 'me', 'the', 'them', 'reviewer', 'author'),
+    # Products and bots that get @-mentioned or assigned to, which skills should keep naming.
+    *('github', 'gitlab', 'claude', 'codex', 'copilot', 'devin', 'coderabbit', 'macroscope', 'douwebot', 'logfire'),
+    *('pydantic', 'anthropic', 'openai', 'gemini'),
+}
+
+
+def personal_identifiers(prompts: list[UserPrompt]) -> set[str]:
+    """Emails, their local parts and personal domains, and machine names of the people behind `prompts`."""
+    found: set[str] = set()
+    for p in prompts:
+        user = (p.user or '').removeprefix('host:')
+        if '@' in user:
+            local, domain = user.split('@', 1)
+            found |= {user, local, *local.replace('_', '.').split('.')}
+            if (label := domain.split('.')[0]) not in _GENERIC_DOMAINS:
+                found.add(label)
+        elif match := _HOST_OWNER.match(user):
+            found.add(match[1])  # "Janes-MacBook-Air.local" names Jane; "pydantic-ai" names nobody
+        # Handles typed in the prompt itself: "@someone", "assign it to someone", "/Users/someone/".
+        found |= {m for pattern in _HANDLE_PATTERNS for m in pattern.findall(p.text)}
+    return {f for f in found if len(f) >= 4 and f.lower() not in _NOT_HANDLES}
+
+
+def leaked_identifiers(draft: _Draft, identifiers: set[str]) -> set[str]:
+    """Which identifiers appear as whole words in any drafted field (so `douwebot` does not count as a name)."""
+    text = '\n'.join([draft.name, draft.description, draft.text, draft.rationale])
+    return {i for i in identifiers if re.search(rf'(?<![\w-]){re.escape(i)}(?![\w-])', text, re.IGNORECASE)}
+
+
+def _redact(value: str, identifiers: set[str]) -> str:
+    for i in sorted(identifiers, key=len, reverse=True):
+        value = re.sub(rf'(?<![\w-]){re.escape(i)}(?![\w-])', 'the requested person', value, flags=re.IGNORECASE)
+    return value
+
+
 async def draft_proposals(patterns: list[Pattern], *, model: str, max_evidence: int = 5) -> list[Proposal]:
-    agent = Agent(model, output_type=_Draft, instructions=DRAFT_INSTRUCTIONS, name='fleet_miner_draft')
+    agent = Agent(
+        model, deps_type=set[str], output_type=_Draft, instructions=DRAFT_INSTRUCTIONS, name='fleet_miner_draft'
+    )
+
+    @agent.output_validator
+    def no_personal_identifiers(ctx: RunContext[set[str]], draft: _Draft) -> _Draft:
+        if leaked := leaked_identifiers(draft, ctx.deps):
+            raise ModelRetry(
+                f'The draft contains personal identifiers ({", ".join(sorted(leaked))}). '
+                'Replace each with the person\'s role, e.g. "the requested reviewer".'
+            )
+        return draft
 
     async def one(pattern: Pattern) -> Proposal:
-        examples = [{'user': p.user, 'prompt': p.text[:2000]} for p in pattern.prompts[:12]]
+        # The drafter never sees who asked: developers are numbered, not named.
+        numbers = {user: n for n, user in enumerate(dict.fromkeys(p.user for p in pattern.prompts), 1)}
+        examples = [{'developer': numbers[p.user], 'prompt': p.text[:2000]} for p in pattern.prompts[:12]]
+        identifiers = personal_identifiers(pattern.prompts)
         result = await agent.run(
             f'Pattern: {pattern.pattern}\n'
             f'Asked by {len(pattern.users)} distinct developers across {len(pattern.sessions)} sessions.\n'
-            f'What they typed:\n{json.dumps(examples, indent=2)}'
+            f'What they typed:\n{json.dumps(examples, indent=2)}',
+            deps=identifiers,
         )
         draft = result.output
+        if leaked := leaked_identifiers(draft, identifiers):  # pragma: no cover - only if retries ran out
+            print(f'warning: redacted {len(leaked)} personal identifier(s) from `{pattern.id}`')
+            draft = _Draft.model_validate({k: _redact(v, leaked) if isinstance(v, str) else v for k, v in draft})
         return Proposal(
             id=pattern.id,
             pattern=pattern.pattern,
