@@ -5,7 +5,7 @@ import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -196,7 +196,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -218,7 +218,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -325,7 +325,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -428,7 +428,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -463,7 +463,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -492,7 +492,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -847,7 +847,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1122,7 +1122,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=UTC),
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -1296,7 +1296,7 @@ search(What is the weather in San Francisco today?)
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=UTC),
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -1951,7 +1951,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1984,7 +1984,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2012,7 +2012,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2139,7 +2139,7 @@ Enjoy your homemade Uruguayan alfajores!\
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3508,7 +3508,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5896,7 +5896,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5946,7 +5946,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',

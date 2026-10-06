@@ -393,10 +393,6 @@ class LiveSimulation(Simulation):
     def truth(self) -> GroundTruth:
         return self.server.truth
 
-    @property
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        return self.server.network.failed_sends
-
     def build_model(self) -> RealtimeModel:
         return OpenAILiveModel('gpt-live-1', provider=OpenAIProvider(api_key='simulated'))
 

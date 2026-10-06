@@ -1,7 +1,8 @@
 ---
 name: pushing-commits-to-the-repo
-description: Open and advance a PR — write a current title and body, label it, review before every
-  push, watch CI, and triage every comment. Use whenever you open a PR or push a commit to one.
+description: Open and advance a PR — write a current title and body, label it, review every push
+  subject to the mechanical-refresh exception, watch CI, and triage every comment. Use whenever you
+  open a PR or push a commit to one.
 ---
 
 # pushing-commits-to-the-repo
@@ -41,21 +42,42 @@ Use one fenced `diff` tree from the public entry point to the changed observable
 - Keep the shared caller prefix unmarked. Mark only diverging nodes, relevant arguments, or results.
 - Target 12 content lines inside the fence. Never exceed 20; collapse secondary branches instead.
 
-Apply a label — the repo triages and filters by them. Fetch the real list first with
-`gh label list --limit 100`, because the set changes and a guessed label silently fails to
-apply. Pick the one naming what the PR *is* (`bug`, `feature`, `docs`, `chore`, `refactor`) and
-add a topic label (`anthropic`, `MCP`, `evals`, …) where one fits:
-`gh pr edit <number> --add-label <label>`.
+### Keep labels current with the title and body
+
+Assign title, body, and label updates to the same subagent. Reconcile labels whenever the title or body changes.
+
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog` and give the subagent the printed file path.
+The checked-in catalog supplies clones and worktrees without label-read requests.
+Run the helper with `--refresh` after creating, renaming, or updating repository labels.
+Commit refreshed catalog changes.
+The helper uses at most two requests and verifies completeness before replacing the catalog.
+Never fetch labels individually or pass raw label API responses.
+
+Keep the category label aligned with the PR's purpose (`bug`, `feature`, `docs`, `chore`, `refactor`).
+Add existing topic labels for every subject materially covered by the final title, body, and diff.
+Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
+Remove topic labels only when the final scope no longer supports those labels.
+Preserve size, package, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
+Apply label additions and removals in a batch with the title/body update. Verify the resulting metadata.
 
 Labelling needs triage permission on the repo (Pydantic team members and their agents). If it
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
 
+## Mechanical text/data refreshes
+
+A small mechanical text/data refresh changes no code, runtime behavior, CI logic, or substantive
+instruction or review policy. A catalog-row refresh is one example.
+
+For this case, skip local `pre-push-review` and any additional substantive review dispatch. Do not
+ask for a second-opinion choice. Automatic configured CI and hosted reviews still run.
+
 ## Before you push
 - Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless
   the user's instructions override this.
-- Run `pre-push-review`. Address every finding, commit the fixes, and repeat the review until it
-  returns no findings. This applies before the first PR push and between every later PR iteration.
+- For all other diffs, run `pre-push-review` before each push. Address every finding, commit the
+  fixes, and repeat the review until it returns no findings. This applies before the first PR push
+  and between every later PR iteration.
 - A `pre-push-review` verdict belongs to the diff it read. Any later commit voids it — re-run against
   the new diff instead of carrying the earlier pass forward, and name the commit range each verdict
   covers when you report it.
@@ -90,6 +112,8 @@ The repo has two standards reviewers, and they are independent:
 
 Applying the label adds a second opinion; it does not suppress or replace `CI Review`.
 
+- Skip additional-review selection for a mechanical text/data refresh defined above.
+
 Once the loop above has terminated — CI green, every comment triaged — decide whether to apply it
 before handing the PR back or requesting merge:
 
@@ -116,9 +140,9 @@ before handing the PR back or requesting merge:
 Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
 
 1. Dispatch a fresh subagent that has not worked on the PR.
-2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, and body.
-3. Ask it to check only the title and body against this section and the root `AGENTS.md`.
-4. Require either `current` or an exact replacement title and body.
-5. Apply every correction. Code changes restart the post-push loop; metadata-only changes do not.
+2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
+3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
+4. Require either `current` or exact corrections: replacement title/body and label additions/removals.
+5. Apply every correction. Committed changes restart the post-push loop; GitHub metadata-only changes do not.
 6. After a replacement, repeat the check with another fresh subagent.
 7. Hand the PR back only after the check reports `current`.

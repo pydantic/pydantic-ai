@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["packaging>=24", "pydantic>=2", "pyyaml>=6.0.2"]
 # ///
 """Validate `gh-aw/pydantic.md` and print the `pydantic-ai-harness` version its engine pins.

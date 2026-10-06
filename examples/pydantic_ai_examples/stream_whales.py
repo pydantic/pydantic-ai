@@ -8,14 +8,14 @@ Run with:
     uv run -m pydantic_ai_examples.stream_whales
 """
 
-from typing import Annotated
+from typing import Annotated, NotRequired
 
 import logfire
 from pydantic import Field
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 

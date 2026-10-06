@@ -8,10 +8,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
+from typing import Any, Literal, assert_never, cast, get_args, overload
 from uuid import uuid4
-
-from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext

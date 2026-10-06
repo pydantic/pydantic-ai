@@ -24,6 +24,7 @@ from typing import (
     Literal,
     TypeAlias,
     TypeGuard,
+    assert_never,
     cast,
     get_args,
     overload,
@@ -35,7 +36,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
 
@@ -72,8 +73,6 @@ _mime_types.read_windows_registry()
 for file in mimetypes.knownfiles:
     if os.path.isfile(file):
         _mime_types.read(file)  # pragma: lax no cover
-# TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
-# https://github.com/python/cpython/blob/3.11/Lib/mimetypes.py
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')

@@ -1,6 +1,5 @@
 """Fail-soft run setup: a plugin capability that rejects its configuration costs itself, not the turn."""
 
-import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,9 +15,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard, raised_here, setup_errors
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup
 
 
 @dataclass

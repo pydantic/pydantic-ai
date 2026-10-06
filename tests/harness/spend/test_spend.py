@@ -7,7 +7,7 @@ import warnings
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
 
@@ -49,7 +49,7 @@ pytestmark = [
 ]
 
 
-_EPOCH = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+_EPOCH = datetime(2026, 7, 26, 12, 0, tzinfo=UTC)
 
 
 class Clock:
