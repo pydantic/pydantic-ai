@@ -33,7 +33,7 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.cli.self_update import Installed, Updates, latest
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.api_keys import delete_key, prompt_api_key, rename_key, save_key
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins.loader import PluginError, PluginSettingsError
@@ -270,8 +270,11 @@ async def test_unexpected_command_errors_are_recorded_under_the_command(content_
     def rate_limited(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, json={'message': 'API rate limit exceeded'})
 
+    def bleeding() -> UpdateChannel:
+        return 'bleeding'
+
     updates = Updates(
-        channel=lambda: 'bleeding',
+        channel=bleeding,
         current=Installed(version='1.0.0', tool=True),
         fetch=partial(latest, transport=httpx.MockTransport(rate_limited)),
     )
