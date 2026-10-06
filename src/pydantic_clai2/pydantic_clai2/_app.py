@@ -483,6 +483,7 @@ def create_shell(
             name='accounts',
             description='Add, rename, reorder, and sign out of accounts; MODEL@* tries them all in order',
             handler=models.accounts,
+            during_turn=True,
         )
     )
     commands.register(
