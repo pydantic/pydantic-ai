@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -304,7 +305,9 @@ def test_existing_branch_is_checked_out(repository: Path, monkeypatch: pytest.Mo
     git(repository, 'commit', '--allow-empty', '-m', 'Advance main')
     monkeypatch.chdir(repository)
     worktree = open_worktree(name='feature')
-    assert worktree == Worktree(path=repository / '.worktrees/feature', branch='clai-feature', created=True)
+    assert worktree == Worktree(
+        path=repository / '.worktrees/feature', branch='clai-feature', head=kept, created=True, new_branch=False
+    )
     assert git(worktree.path, 'rev-parse', 'HEAD') == kept
 
 
@@ -324,8 +327,9 @@ def test_hand_deleted_worktree_is_checked_out_again(repository: Path, monkeypatc
     (first.path / 'work.txt').write_text('committed')
     git(first.path, 'add', 'work.txt')
     git(first.path, 'commit', '-m', 'Work')
+    work = git(first.path, 'rev-parse', 'HEAD')
     shutil.rmtree(first.path)
-    assert open_worktree(name='feature') == first
+    assert open_worktree(name='feature') == replace(first, head=work, new_branch=False)
     assert (first.path / 'work.txt').read_text() == 'committed'
 
 
@@ -345,5 +349,6 @@ def test_git_made_worktree_is_reopened_and_excluded(repository: Path, monkeypatc
     git(repository, 'worktree', 'add', '--detach', str(path))
     assert '.worktrees' in git(repository, 'status', '--porcelain')
     monkeypatch.chdir(repository)
-    assert open_worktree(name='loose') == Worktree(path=path, branch='detached HEAD', created=False)
+    head = git(repository, 'rev-parse', 'HEAD')
+    assert open_worktree(name='loose') == Worktree(path=path, branch='detached HEAD', head=head, created=False)
     assert '.worktrees' not in git(repository, 'status', '--porcelain')
