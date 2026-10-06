@@ -536,8 +536,9 @@ jobs:
       CI: true
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
-      # every applicable test without duplicate coverage.
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
+      # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
+      # collects it on 3.11: `tests/clai2` has pre-3.14 lines and branches that `all-extras` covers otherwise.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.11' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
     steps:
