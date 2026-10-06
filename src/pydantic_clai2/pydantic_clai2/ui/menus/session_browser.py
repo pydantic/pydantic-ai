@@ -10,7 +10,7 @@ import sys
 import textwrap
 import time
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TextIO
 
 from termflow.ansi.utils import visible_length
@@ -37,7 +37,7 @@ def plain(text: str, *, multiline: bool = False) -> str:
 def date_label(moment: datetime, *, now: datetime | None = None) -> str:
     """Local calendar buckets, with a year on older sessions."""
     day = moment.astimezone().date()
-    today = (now or datetime.now(timezone.utc)).astimezone().date()
+    today = (now or datetime.now(UTC)).astimezone().date()
     if day == today:
         return 'TODAY'
     if day == today - timedelta(days=1):

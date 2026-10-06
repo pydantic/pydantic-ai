@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Generic
+from typing import Any, Generic, Never
 
-from typing_extensions import Never, TypeVar
+from typing_extensions import TypeVar
 
 __all__ = 'GraphRunContext', 'BaseNode', 'End', 'Edge', 'DepsT', 'StateT', 'RunEndT'
 

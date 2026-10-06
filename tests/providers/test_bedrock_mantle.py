@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Literal, get_args
+from typing import Literal, assert_never, get_args
 
 import pytest
 from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
-from typing_extensions import assert_never
 
 from pydantic_ai import UserError
 from pydantic_ai.models import infer_model, infer_model_profile

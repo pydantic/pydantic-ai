@@ -15,10 +15,6 @@ resulting `CancelledError` is translated back into
 - If `Task.cancelling()` is still positive afterwards, an *external* cancellation raced in; it
   wins, and the `CancelledError` keeps propagating as itself.
 
-On Python 3.10, `Task.cancelling()`/`Task.uncancel()` don't exist, so the race cannot be
-disambiguated: a requested first-party cancellation is translated to `RunCancelled` even if an
-external cancellation arrived at the same time (documented degraded behavior).
-
 The controller is runtime-only state: it holds a live task reference and is never serialized.
 """
 
@@ -26,7 +22,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import sys
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -138,7 +133,7 @@ class RunCancellation:
         with self._lock:
             self._owner = task
             self._loop = task.get_loop()
-            if sys.version_info >= (3, 11) and task in self._issued:
+            if task in self._issued:
                 # Re-sync our issued count with what's actually pending, in case user code
                 # uncancelled some of it. Because this clamps counts rather than tracking
                 # issuance identity, a user uncancel followed by a matching external cancel can
@@ -224,10 +219,6 @@ class RunCancellation:
         """
         if not self._requested:
             return False
-        if sys.version_info < (3, 11):  # pragma: lax no cover
-            # No `Task.uncancel()`/`Task.cancelling()`: we can't tell whether an external
-            # cancellation raced with ours, so a requested cancellation wins (documented).
-            return True
         try:
             task = asyncio.current_task()
         except RuntimeError:  # pragma: no cover - no running asyncio loop (e.g. a Trio-backed run)
@@ -248,12 +239,11 @@ class RunCancellation:
         task. Releasing them prevents contamination of the tasks' outer cancellation bookkeeping,
         such as `asyncio.timeout()` and AnyIO cancellation scopes.
         """
-        if sys.version_info >= (3, 11):  # pragma: lax no cover
-            for task, count in self._issued.items():
-                if not task.done():
-                    for _ in range(count):
-                        if task.cancelling() > 0:
-                            task.uncancel()
+        for task, count in self._issued.items():
+            if not task.done():
+                for _ in range(count):
+                    if task.cancelling() > 0:
+                        task.uncancel()
         self._issued.clear()
 
 

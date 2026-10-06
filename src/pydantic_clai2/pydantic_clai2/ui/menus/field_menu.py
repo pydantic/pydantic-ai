@@ -1,4 +1,4 @@
-"""A full-screen editor for a set of named, validated fields. `/set`, `/add_model`, and plugin settings use it."""
+"""A full-screen editor for a set of named, validated fields. `/set`, `/model add`, and plugin settings use it."""
 
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence

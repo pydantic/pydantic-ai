@@ -8,12 +8,11 @@ from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Self, cast
 
 import anyio
 from rich.cells import set_cell_size
 from rich.console import Console
-from typing_extensions import Self
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import (

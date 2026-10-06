@@ -4,13 +4,12 @@ import inspect
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
 
 from pydantic_ai import (
     Agent,

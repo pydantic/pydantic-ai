@@ -29,6 +29,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from pydantic_ai.messages import repair_messages
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
@@ -543,7 +544,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             event_stream_handler=partial(self._stream_child, owner=owner, record=record)
             if record is not None
             else self._event_stream_handler,
-            message_history=record.messages if record is not None else None,
+            # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
+            # the resumed run adds a new prompt, so close them out as interrupted first.
+            message_history=repair_messages(record.messages) if record is not None else None,
             conversation_id=record.id if record is not None else None,
             run_id=record.run_id if record is not None else None,
         )
@@ -628,7 +631,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         timeout = sub_agent.timeout_seconds
         try:
             result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             if timeout is None or isinstance(exc, HookTimeoutError):
                 # The child itself timed out: a hook overran its own budget, or no
                 # delegation budget is set at all. That is a child crash, so the

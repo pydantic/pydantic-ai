@@ -7,11 +7,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Self, cast, overload
 
 import anyio
 from pydantic import ValidationError
-from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
 from ._genai_prices import best_effort_price
