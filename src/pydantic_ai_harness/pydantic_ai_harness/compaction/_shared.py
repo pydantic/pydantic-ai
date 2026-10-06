@@ -301,9 +301,9 @@ def estimate_message_tokens(
     underestimates token-dense content. Usage measures both. A response counts at least its
     `output_tokens`. Between two responses that carry usage, the later `input_tokens` minus the
     earlier one is exactly what the earlier response and the requests after it added, so those
-    messages share that difference in proportion to their estimates. Where the history shrank
-    between two such responses, as it does across a compaction, the difference measures nothing
-    and the estimates stand; so do messages before the first such response and after the last.
+    messages share that difference in proportion to their estimates. Where the history did not grow
+    between two such responses, as across a compaction, the difference measures nothing and the
+    estimates stand; so do messages before the first such response and after the last.
 
     Instructions are left out: they are sent with every request, not carried by any one message.
     """
@@ -317,7 +317,7 @@ def estimate_message_tokens(
     anchors = [index for index, message in enumerate(messages) if _reported_input_tokens(message)]
     for start, end in zip(anchors, anchors[1:]):
         span = _reported_input_tokens(messages[end]) - _reported_input_tokens(messages[start])
-        if span < 0:
+        if span <= 0:
             continue
         estimated = max(sum(counts[start:end]), 1)
         shares = [count * span // estimated for count in counts[start:end]]
@@ -335,6 +335,14 @@ def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] 
 def _reported_input_tokens(message: ModelMessage) -> int:
     """The provider-reported input tokens of a response, or 0 for a request or a response without usage."""
     return message.usage.input_tokens if isinstance(message, ModelResponse) else 0
+
+
+def _has_reported_usage(messages: Sequence[ModelMessage]) -> bool:
+    """Whether any response carries provider-reported input or output tokens."""
+    return any(
+        isinstance(message, ModelResponse) and (message.usage.input_tokens or message.usage.output_tokens)
+        for message in messages
+    )
 
 
 def has_context_usage_anchor(messages: Sequence[ModelMessage]) -> bool:
@@ -720,7 +728,7 @@ def find_token_cutoff(
     tail holds *target_tokens* as the provider counts them; one without falls back to the text
     estimate. Adjusts the result so that no tool-call pairs are orphaned.
     """
-    if has_context_usage_anchor(messages):
+    if _has_reported_usage(messages):
         counts = estimate_message_tokens(messages, tokenizer)
 
         def tail_tokens(start: int) -> int:

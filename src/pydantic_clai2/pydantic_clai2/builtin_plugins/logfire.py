@@ -22,7 +22,6 @@ from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXC
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
-from pydantic_ai import Agent
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
@@ -93,10 +92,6 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     _active_httpx: ClassVar[list['LogfirePlugin']] = []
     """Live opt-in instances, ordered so HTTPX instrumentation can move to a remaining instance on unload."""
-    _active_agents: ClassVar[list['LogfirePlugin']] = []
-    """Live instances, ordered so `Agent.instrument_all` can move to a remaining instance on unload."""
-    _outside_agents: ClassVar[InstrumentationSettings | bool] = False
-    """The `Agent.instrument_all` setting from before the first live instance, restored after the last."""
 
     def __init__(self, host: PluginHost[None], settings: LogfireSettings) -> None:
         super().__init__(host, settings)
@@ -158,10 +153,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
-        if not self._active_agents:
-            LogfirePlugin._outside_agents = agent_instrumentation.current()
-        self._active_agents.append(self)
-        Agent.instrument_all(self.instrumentation.settings)
+        agent_instrumentation.claim(self.instrumentation.settings)
         if self.settings.httpx:
             if not self._active_httpx:
                 self._instrument_httpx()
@@ -208,12 +200,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
-        # Like HTTPX: hand agent instrumentation to a remaining instance, unless something else replaced it.
-        if self in self._active_agents:
-            self._active_agents.remove(self)
-            if agent_instrumentation.current() is self.instrumentation.settings:
-                remaining = self._active_agents[-1].instrumentation.settings if self._active_agents else None
-                Agent.instrument_all(remaining or self._outside_agents)
+        agent_instrumentation.release(self.instrumentation.settings)
         self._session_tracing.end(event.reason)
         with CancelScope(shield=True):
             finished = await to_thread.run_sync(_shutdown, self.instance)

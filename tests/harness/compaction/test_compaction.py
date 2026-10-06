@@ -400,6 +400,17 @@ class TestFindTokenCutoff:
         assert estimate_token_count(msgs) <= 100, 'the text estimate alone would keep everything'
         assert find_token_cutoff(msgs, 100) == 2
 
+    def test_output_usage_alone_counts(self):
+        """A provider that reports only output tokens still has its thinking counted."""
+        msgs: list[ModelMessage] = [
+            _user('start'),
+            _reported(input_tokens=0, output_tokens=5000),
+            _user('next'),
+            _reported(input_tokens=0, output_tokens=10),
+            _user('last'),
+        ]
+        assert find_token_cutoff(msgs, 100) == 2
+
 
 def _reported(*, input_tokens: int, output_tokens: int) -> ModelResponse:
     """A response whose thinking came back without text, as some providers return it, with its usage."""
@@ -426,6 +437,15 @@ class TestEstimateMessageTokens:
             _user('w' * 80),  # after the last reported response: estimated
         ]
         assert estimate_message_tokens(msgs) == [10, 751, 250, 200, 10, 50, 20]
+
+    def test_unchanged_input_between_responses_keeps_estimates(self):
+        """Equal input usage says nothing about the messages between, so it does not zero them."""
+        msgs: list[ModelMessage] = [
+            _reported(input_tokens=1000, output_tokens=300),
+            _user('y' * 400),
+            _reported(input_tokens=1000, output_tokens=200),
+        ]
+        assert estimate_message_tokens(msgs) == [300, 100, 200]
 
 
 # ---------------------------------------------------------------------------

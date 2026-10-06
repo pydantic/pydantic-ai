@@ -128,7 +128,7 @@ tokens as the provider counts them. A response counts at least its reported `out
 includes thinking that some providers return as an empty part with only a signature. The messages
 between two responses that carry usage share the difference between their `input_tokens`, which is
 exactly what the provider counted for them. Before the first such response, after the last, and
-where the history shrank between two of them (across an earlier compaction), `tokenizer` or the
+where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
 ~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
 provider usage is measured with the heuristic as before.
 
