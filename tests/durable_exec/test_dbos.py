@@ -78,6 +78,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
@@ -1206,6 +1207,8 @@ async def test_dbos_agent_realtime_signaling_in_workflow():
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
 async def test_dbos_agent_realtime_signaling_in_step():
@@ -1216,6 +1219,8 @@ async def test_dbos_agent_realtime_signaling_in_step():
         realtime = simple_dbos_agent.realtime(_FakeRealtimeModel())
         with pytest.raises(UserError, match='does not support WebRTC'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot end a call from the server'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
 class _FakeRealtimeConnection(RealtimeConnection):

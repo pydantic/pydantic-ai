@@ -726,6 +726,11 @@ from the model's next request, even in a running turn. `r` resets a field; Esc
 or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
+CLAI2 enables Anthropic conversation, static-instruction, and tool-schema caching by default:
+`anthropic:` and `gateway/anthropic:` use a 5-minute TTL, while `claude-code:` uses 1 hour.
+These are CLI defaults only; plain Pydantic AI agents are unchanged. Saved cache settings override
+the defaults. Automatic caching advances to the last cacheable block, including tool results.
+
 First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to

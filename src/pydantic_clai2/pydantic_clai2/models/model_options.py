@@ -15,7 +15,7 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'seed', 'custom_params')}
     if provider in ('openai', 'openai-chat', 'openai-responses', 'openai-codex'):
         options = _openai_options(provider=provider, name=name, family_defaults=family_defaults)
-    elif provider == 'anthropic':
+    elif provider in ('anthropic', 'gateway/anthropic', 'claude-code'):
         options = _anthropic_options(name=name)
     elif provider in ('google', 'google-gla', 'google-vertex'):
         options['top_p'] = ()
@@ -38,6 +38,8 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
 
 def _anthropic_options(*, name: str) -> dict[str, tuple[str, ...]]:
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'top_p', 'custom_params')}
+    for key in ('anthropic_cache', 'anthropic_cache_instructions', 'anthropic_cache_tool_definitions'):
+        options[key] = ()
     claude = anthropic_model_profile(name) or {}
     adaptive = claude.get('anthropic_supports_adaptive_thinking', False)
     options['anthropic_thinking_mode'] = ('adaptive', 'disabled') if adaptive else ('enabled', 'disabled')
