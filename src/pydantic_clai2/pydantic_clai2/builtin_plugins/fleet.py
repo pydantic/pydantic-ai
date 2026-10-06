@@ -137,6 +137,11 @@ def _digest(value: object) -> str:
 _ENV_REF = re.compile(r'\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}')
 
 
+def _declined(state: _UserState, key: str) -> bool:
+    decision = state.consents.get(key)
+    return decision is not None and not decision[1]
+
+
 def _check_env(names: Sequence[str], allowed: Sequence[str]) -> None:
     """Refuse a reference outside the allowlist, or to a variable that is not set."""
     for name in names:
@@ -425,6 +430,14 @@ class Fleet:
             return Consent(item=item, target=str(item.payload.get('factory', '')), env=())
         return None
 
+    def forget_consent(self, key: str) -> str:
+        """Undo a declined consent, so the user is asked again."""
+        state = self._load()
+        user = state.users.setdefault(self.user(), _UserState())
+        user.consents.pop(key, None)
+        self._save(state)
+        return f'{key.partition(":")[2]}: you will be asked again whether to turn it on.'
+
     def decide(self, consent: Consent, *, allow: bool) -> None:
         """Remember the user's answer for exactly this server/plugin, target and env set."""
         state = self._load()
@@ -562,7 +575,8 @@ class Fleet:
                     name=item.name,
                     description=item.description or item.payload.get('instructions', '')[:120],
                     delivery='organization',
-                    on=True,
+                    on=not _declined(state, item.key),
+                    declined=_declined(state, item.key),
                     locked=item.key in snapshot.locked,
                     new=item.key not in state.seen,
                     adoption=None,
@@ -578,7 +592,8 @@ class Fleet:
                     name=entry.name,
                     description=entry.description,
                     delivery='default on' if entry.default == 'on' else 'optional',
-                    on=self._enabled(entry, state, snapshot.locked),
+                    on=self._enabled(entry, state, snapshot.locked) and not _declined(state, key),
+                    declined=self._enabled(entry, state, snapshot.locked) and _declined(state, key),
                     locked=key in snapshot.locked,
                     new=key not in state.seen and key not in state.opted_in and key not in state.opted_out,
                     adoption=entry.adoption,

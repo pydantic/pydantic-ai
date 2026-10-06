@@ -111,6 +111,26 @@ To publish a new version of a variable without the UI, run
   - Every run span carries `clai2.policy.version`, `clai2.catalog.opted_out` and `clai2.policy.locked_ok`.
   - The config hint's `agent_control.client_features` includes `policy`.
 
+## In the terminal
+
+- **Notices:** pushed changes arrive as one "◆ From your organization (config vN)" panel per batch. It lists
+  `+`, `~` and `-` items with their description, plus the item's `why` and `pushed_by` when present, and a link to
+  the agent in Logfire. Changes show while the prompt is idle, checked every 5 s, or every 2 s with
+  `CLAI2_FLEET_DEMO=1`.
+- **Consent:** a pushed MCP server or plugin asks once before it turns on, as soon as it arrives:
+  "Logfire wants to connect MCP server X at URL and send $Y". The answer is remembered per name, target and
+  set of environment variables.
+  - `${env:NAME}` in pushed headers expands only for names matching the local `fleet_env_allow` or the pushed
+    `policy.env_allow`.
+- **`/catalog`:** an interactive picker of "From your organization" items and "Optional add-ons", showing on/off,
+  a lock, "new" and "declined". Enter toggles an add-on. `/catalog why NAME` says where an item came from.
+- **Policy blocks:** a "◆ Policy" panel with the rule's description, its name and a "Learn more" link. The
+  model gets the same text, plus an instruction not to retry and to suggest a safe alternative.
+- **Status row:** `Logfire config vN`, plus how many pushed items await your OK.
+- **Test sessions:** set `CLAI2_TEST=1` (tags every run `clai2.test=true`) and point `agent_control_name` at
+  `clai2_test`, which uses the `agent__clai2_test` and `catalog__clai2_test` variables.
+- **Demo reset:** `hackathon/demo_reset.py` prints its plan and diff, and writes only with `--yes`.
+
 ## Known limitations
 
 - **The cache prefix breaks.** A skill or instruction pushed mid-conversation changes the instructions and the

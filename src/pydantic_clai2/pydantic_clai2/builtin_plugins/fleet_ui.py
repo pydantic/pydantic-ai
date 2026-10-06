@@ -59,7 +59,8 @@ def notice_panel(changes: Sequence[Change], *, version: str | None, link: str | 
 
 def blocked_panel(message: str, *, link: str | None) -> RenderableType:
     """The user-facing side of a policy block; the model gets the plain message as the tool result."""
-    body = Text(message.split('\n', 1)[0])
+    # The user doesn't need the model's instructions ("Do not retry ..."), only what happened and why.
+    body = Text(message.split(' Do not retry', 1)[0])
     if link:
         body.append(f'\nLearn more: {link}', style=theme.color(theme.MUTED))
     return Panel(
@@ -72,7 +73,7 @@ def blocked_panel(message: str, *, link: str | None) -> RenderableType:
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class CatalogRow:
     """One line of the `/catalog` picker."""
 
@@ -85,6 +86,8 @@ class CatalogRow:
     on: bool
     locked: bool
     new: bool
+    declined: bool = False
+    """The user declined the consent prompt for it, so it stays off until they turn it on again."""
     adoption: int | None
     provenance: Provenance
 
@@ -98,7 +101,8 @@ def row_label(row: CatalogRow) -> str:
     state = '●' if row.on else '○'
     lock = ' 🔒' if row.locked else ''
     new = ' • new' if row.new else ''
-    return f'{state} {NOUNS.get(row.kind, row.kind):<10} {row.name}{lock}{new}'
+    declined = ' · declined' if row.declined else ''
+    return f'{state} {NOUNS.get(row.kind, row.kind):<10} {row.name}{lock}{new}{declined}'
 
 
 def row_preview(row: CatalogRow, *, link: str | None) -> str:
@@ -130,7 +134,7 @@ def catalog_menu(rows: Sequence[CatalogRow], *, version: str | None, link: str |
         .initial_index(min(index, max(len(rows) - 1, 0)))
         .preview(lambda item: row_preview(item.value, link=link) if isinstance(item.value, CatalogRow) else '')
     )
-    return slash_search(builder, footer='enter toggle · / search · esc close', key_source=menu_key)
+    return slash_search(builder, footer='enter toggle · esc close', key_source=menu_key)
 
 
 def why_text(row: CatalogRow, *, link: str | None) -> str:

@@ -307,7 +307,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 return '\n'.join(changed) or 'Catalog unchanged.'
             row = result.item.value
             index = rows.index(row)
-            if row.toggleable:
+            if row.declined:
+                changed.append(fleet.forget_consent(row.key))
+            elif row.toggleable:
                 changed.append(fleet.set_opt(row.key, not row.on))
 
     def get_status_segments(self) -> Sequence[Callable[[], str]]:
@@ -320,7 +322,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         if snapshot is None or snapshot.version is None:
             return ''
         pending = f' · {self._pending} awaiting your OK' if self._pending else ''
-        return f'◆ Logfire config v{snapshot.version}{pending}'
+        return f'Logfire config v{snapshot.version}{pending}'
 
     def _link(self) -> str | None:
         """This agent's page in Logfire, when setup recorded the project."""
