@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
-from keyring.errors import InitError, NoKeyringError, PasswordDeleteError
+from keyring.errors import InitError, KeyringError, NoKeyringError, PasswordDeleteError
 
 from pydantic_ai.exceptions import UserError
 
@@ -42,10 +42,30 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
     return root / f'credentials-{account.replace("/", _SLASH)}.json'
 
 
+_NO_OLDER_ENTRY: set[str] = set()
+"""Default accounts already found to have no older per-entry login; this CLAI never writes one."""
+
+
 def has_credentials(*, account: str) -> bool:
-    """Whether a login is saved for `account`, from its file alone; nothing is decrypted or read from the keyring."""
+    """Whether a login is saved for `account`.
+
+    A file answers without decrypting anything or reading the keyring. A default account without one
+    may still have a login an older CLAI saved as its own keyring entry; that entry is moved into its
+    file, as loading it would. Profiles came after per-entry logins, so they are never looked up, and a
+    default account found without an entry is not looked up again this process, so turns read no entry.
+    """
     encrypted, plaintext = _files(account=account, fallback=None)
-    return encrypted.is_file() or plaintext.is_file()
+    if encrypted.is_file() or plaintext.is_file():
+        return True
+    if '@' in account or account in _NO_OLDER_ENTRY:
+        return False
+    try:
+        found = load_codex_credentials(account=account) is not None
+    except (KeyringError, UserError):
+        return False  # A locked keyring or a lost key: look again next time.
+    if not found:
+        _NO_OLDER_ENTRY.add(account)
+    return found
 
 
 def profile_accounts() -> list[str]:

@@ -19,6 +19,7 @@ from pydantic_clai2.config import credential_store
 from pydantic_clai2.config.credential_store import (
     credentials_path,
     delete_credentials,
+    has_credentials,
     load_codex_credentials,
     save_codex_credentials,
 )
@@ -364,3 +365,38 @@ def test_delete_without_keyring_removes_the_file(no_keyring: None, fallback: Pat
     save_codex_credentials(fallback=fallback, value='plain')
     delete_credentials(fallback=fallback)
     assert not fallback.exists()
+
+
+def test_an_older_per_entry_login_counts_as_signed_in_and_moves_into_its_file(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lookups: list[str] = []
+    stored = keyring.get_password
+
+    def get(service: str, account: str) -> str | None:
+        lookups.append(account)
+        return stored(service, account)
+
+    monkeypatch.setattr(keyring, 'get_password', get)
+    vault[LEGACY] = '{"access_token":"legacy"}'
+    assert has_credentials(account='openai-codex')
+    assert list(vault) == [KEY] and credentials_path().with_suffix('.enc').is_file()
+    lookups.clear()
+    assert has_credentials(account='openai-codex'), 'the file answers now'
+    assert not has_credentials(account='openai-codex@work'), 'profiles came after per-entry logins'
+    assert not has_credentials(account='github-copilot')
+    assert not has_credentials(account='github-copilot')
+    assert lookups == ['github-copilot'], 'an account without an older entry is looked up once'
+
+
+def test_a_locked_keyring_is_signed_out_until_it_unlocks(vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
+    stored = keyring.get_password
+
+    def locked(service: str, account: str) -> str | None:
+        raise KeyringLocked('Unlock the keyring first')
+
+    monkeypatch.setattr(keyring, 'get_password', locked)
+    vault[LEGACY] = '{"access_token":"legacy"}'
+    assert not has_credentials(account='openai-codex')
+    monkeypatch.setattr(keyring, 'get_password', stored)
+    assert has_credentials(account='openai-codex'), 'a failed lookup is tried again'
