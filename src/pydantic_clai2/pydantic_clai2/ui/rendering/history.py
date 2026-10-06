@@ -61,10 +61,15 @@ async def render_history(
             style=theme.color(theme.MUTED),
         )
         console.print()
+    seen_runs: set[str] = set()
     for message in messages:
+        # A prompt in a run already shown was a steer, which the transcript never echoed.
+        steered = message.run_id in seen_runs
+        if message.run_id is not None:
+            seen_runs.add(message.run_id)
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, UserPromptPart):
+                if isinstance(part, UserPromptPart) and not steered:
                     await renderer.finish()
                     console.print(f'> {terminal_text(prompt_text(part))}', markup=False, highlight=False)
                     console.print()

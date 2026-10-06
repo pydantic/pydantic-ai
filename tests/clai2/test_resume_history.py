@@ -77,6 +77,24 @@ async def test_only_the_latest_turns_are_shown() -> None:
     assert 'not shown' not in await rendered(messages, turns=4)
 
 
+async def test_steers_are_not_echoed_but_their_tool_results_are_replayed() -> None:
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('start')], run_id='a'),
+        ModelResponse(parts=[ToolCallPart('grep', {'pattern': 'x', 'path': '.'}, tool_call_id='g1')], run_id='a'),
+        ModelRequest(
+            parts=[ToolReturnPart('grep', 'a.py:1:x', tool_call_id='g1'), UserPromptPart('steer now')], run_id='a'
+        ),
+        ModelResponse(parts=[TextPart('steered answer')], run_id='a'),
+    ]
+    output = io.StringIO()
+    console = Console(file=output, width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, show_tool_output=True, smooth=False)
+    await render_history(messages, console=console, renderer=renderer)
+    text = output.getvalue()
+    assert '> start' in text and 'steer now' not in text
+    assert text.index("● grep 'x' in '.'") < text.index('a.py:1:x') < text.index('steered answer')
+
+
 async def test_prompts_answers_thinking_and_tool_calls_render_like_a_live_turn() -> None:
     messages: list[ModelMessage] = [
         ModelRequest(
