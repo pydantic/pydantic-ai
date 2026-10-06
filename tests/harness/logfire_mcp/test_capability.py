@@ -50,8 +50,16 @@ def server() -> FastMCP:
     return server
 
 
+def leaf(capability: LogfireMCP[None]) -> AbstractToolset[None]:
+    """The one toolset under the `logfire_` prefix: the connection, or the per-run toolset that opens one."""
+    leaves: list[AbstractToolset[None]] = []
+    capability.get_toolset().apply(leaves.append)
+    [result] = leaves
+    return result
+
+
 def transport(capability: LogfireMCP[None]) -> StreamableHttpTransport:
-    toolset = capability.get_toolset()
+    toolset = leaf(capability)
     assert isinstance(toolset, MCPToolset)
     result = toolset.client.transport
     assert isinstance(result, StreamableHttpTransport)
@@ -88,8 +96,12 @@ class TestLogfireMCP:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
         [
-            (False, '{"read_resource":"read","write_resource":"written","unmarked_resource":"unmarked"}'),
-            (True, '{"read_resource":"read"}'),
+            (
+                False,
+                '{"logfire_read_resource":"read","logfire_write_resource":"written",'
+                '"logfire_unmarked_resource":"unmarked"}',
+            ),
+            (True, '{"logfire_read_resource":"read"}'),
         ],
     )
     async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
@@ -135,7 +147,7 @@ class TestLogfireMCP:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: LogfireMCP[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-logfire'
+        assert leaf(capability).id == 'tenant-logfire'
 
     @pytest.mark.parametrize(
         ('capability', 'include'),
@@ -149,7 +161,7 @@ class TestLogfireMCP:
         self, capability: LogfireMCP[str | None], include: bool
     ) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
+        toolset = leaf(capability)
         assert isinstance(toolset, MCPToolset)
         assert toolset.include_instructions is include
 
@@ -221,7 +233,10 @@ class TestPerRunAuth:
         alice, bob = await asyncio.gather(
             agent.run('Who am I?', deps='alice-token'), agent.run('Who am I?', deps='bob-token')
         )
-        assert (alice.output, bob.output) == ('{"whoami":"Bearer alice-token"}', '{"whoami":"Bearer bob-token"}')
+        assert (alice.output, bob.output) == (
+            '{"logfire_whoami":"Bearer alice-token"}',
+            '{"logfire_whoami":"Bearer bob-token"}',
+        )
 
     @pytest.mark.parametrize(('token', 'connections'), [('alice-token', 1), (None, 0), ('', 0)])
     async def test_connects_only_with_a_credential(

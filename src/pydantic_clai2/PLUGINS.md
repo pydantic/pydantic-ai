@@ -552,7 +552,8 @@ spans.
 
 The built-in `logfire_mcp` plugin (`pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
 the tools of Logfire's hosted MCP server through harness
-[`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
+[`LogfireMCP`](../../docs/harness/logfire-mcp.md), each named `logfire_` plus the
+server's name for it (`logfire_query_run`). It starts disabled.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
 `/plugins configure logfire_mcp` or `c` in `/plugins`.
