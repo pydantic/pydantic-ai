@@ -187,6 +187,8 @@ class Proposal(BaseModel):
     pattern: str
     distinct_users: int
     sessions: int
+    matching_calls: int | None = None
+    """Policy proposals: tool calls the rule's glob matched (the UI's measured line reads it)."""
     evidence: list[Evidence]
     status: ProposalStatus = 'pending'
     status_reason: str | None = None
