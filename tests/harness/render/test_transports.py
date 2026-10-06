@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
@@ -348,3 +349,20 @@ async def test_worker_context_keeps_availability_validation_and_enqueue_guards()
     context = RecordingTaskContext()
     assert 'context checked' in await run_agent_in_task(agent, runtime, context)
     assert 'worker-context-contract__function_toolset__<agent>.call_tool' in context.task_names
+
+
+async def test_upstream_memory_preserves_namespaces_and_configured_limits(tmp_path: Path) -> None:
+    from .runtime_app import MemoryDeps, memory_agents
+
+    database = str(tmp_path / 'memory.sqlite')
+
+    async def run(tenant: str, prompt: str, limit: int = 64) -> str:
+        memory_agent, memory_runtime = memory_agents[limit]
+        with memory_runtime.activate(RecordingTaskContext()):
+            return (await memory_agent.run(prompt, deps=MemoryDeps(database, tenant, limit))).output
+
+    assert await run('alice', 'write:abcdefghij') == 'abcdefghij\n'
+    assert await run('bob', 'write:other tenant') == 'other tenant\n'
+    assert (await run('alice', 'read', 4)).startswith('abcd\n\n[Truncated:')
+    assert (await run('alice', 'read', 8)).startswith('abcdefgh\n\n[Truncated:')
+    assert await run('bob', 'read') == 'other tenant\n'

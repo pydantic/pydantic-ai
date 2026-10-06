@@ -202,3 +202,26 @@ async def test_reused_capability_registers_each_agents_tasks_once() -> None:
         assert context.task_names == [f'{agent.name}__model.request']
     # Running the bound copies must not register additional operations.
     assert [name for name in app.registered_task_names if '__' in name] == registered_names
+
+
+def test_different_static_tool_options_fail_before_registration() -> None:
+    app = RecordingWorkflows()
+
+    def slow() -> str:
+        return 'slow'
+
+    with pytest.raises(UserError, match='separate named toolsets'):
+        Agent(
+            TestModel(),
+            name='unsupported-per-tool',
+            toolsets=[FunctionToolset([slow], id='lookup')],
+            capabilities=[
+                RenderWorkflows(
+                    app,
+                    resolve_tool_options=lambda op, tool, name: (
+                        Options(timeout_seconds=300) if name == 'slow' else None
+                    ),
+                )
+            ],
+        )
+    assert app.registered_task_names == []

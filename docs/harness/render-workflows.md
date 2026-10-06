@@ -24,7 +24,7 @@ If you only need background execution, a native Render task around `agent.run(..
 The example uses Pydantic AI's `TestModel` and a mock weather tool, so it needs no LLM API key or Render deployment.
 The model generates sample tool arguments and returns fixed text rather than interpreting the prompt.
 
-You need Python 3.10 or later. Install the [Render CLI](https://render.com/docs/cli) 2.28.0 or later separately. The integration requires Render SDK 1.2.0 or later.
+You need Python 3.11 or later. Install the [Render CLI](https://render.com/docs/cli) 2.28.0 or later separately. The integration requires Render SDK 1.2.0 or later.
 
 ## 1. Install dependencies
 
@@ -164,7 +164,7 @@ To set the timeout for the whole agent run, replace `@workflows.task` above `sup
 `@workflows.task(timeout_seconds=600, plan='flex')`. Restart the local server and repeat step 4 to check that the
 updated task still runs. These settings are fixed when tasks register and cannot change between invocations.
 
-For per-tool configuration, see [Task options and tool opt-out](#task-options-and-tool-opt-out).
+For task configuration, see [Task options and tool opt-out](#task-options-and-tool-opt-out).
 
 A failed child task can retry while the entry task waits. Retrying the entry task restarts `agent.run(...)`, so model
 and tool calls that already finished may run again. There is no checkpoint resume or replay of completed steps.
@@ -269,7 +269,7 @@ to trigger the deployed task.
 The capability registers definitions for these operations:
 
 - model requests, buffered stream requests, compaction, and suspended-response cleanup;
-- per function toolset by default, or per statically known function tool when its resolved options differ, argument validation and tool calls;
+- per named function toolset, shared by its tools, argument validation and tool calls;
 - per MCP and dynamic toolset, discovery, instructions, validation, and calls;
 - `event_stream_handler` delivery;
 - each method another capability declares with `@durable_operation`.
@@ -319,7 +319,9 @@ For large artifacts, return bounded JSON containing a key into object storage, a
 
 ## Memory
 
-The `Memory` capability is not supported by this integration yet. Hosted task instances also do not share local memory or files, so tools that persist data need a shared external backend.
+`Memory` can read and write through Render tasks when its store is accessible to every worker. Use a shared external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryStore` and files on an individual worker do not persist across task instances.
+
+Set `max_memory_size` when constructing `Memory`. Changing it in a custom `for_run` override is currently ignored by the shared Memory toolset, including outside Render. Use separate configured agents when different tool read/write size limits are needed.
 
 ## Task options and tool opt-out
 
@@ -328,12 +330,16 @@ Use Render `Options` for the model, tool, event, and capability task definitions
 ```python {names="defined"}
 from render import Options, Retry, Workflows
 
+from pydantic_ai.durable_exec import ToolsetCallToolId, ToolsetValidateToolArgumentsId
 from pydantic_ai_harness import RenderWorkflows
 
 
-def resolve_tool_options(_operation_id, _tool, tool_name):
+def resolve_tool_options(operation_id, _tool, tool_name):
     if tool_name in {'delegate_task', 'read_tool_result', 'read_local_cache'}:
         return False
+    if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
+        if operation_id.toolset_id == 'research_tools':
+            return Options(timeout_seconds=300, plan='2c-4g')
     return None
 
 
@@ -352,12 +358,11 @@ workflows = RenderWorkflows(
 )
 ```
 
-At registration, the resolver first receives `tool=None` and `tool_name=''` to determine the toolset default.
-It then receives each statically known function tool and its name; returning `None` keeps `tool_options`.
+Each named toolset shares its call and validation task definitions. For the example above, create `research_tools = FunctionToolset(id='research_tools')`, add your research functions to it, and pass `toolsets=[research_tools]` when constructing the agent with `capabilities=[workflows]`. Import `FunctionToolset` from `pydantic_ai.toolsets`. The resolver selects that toolset's ID to give its tools different settings. Adding or reordering tools within the toolset does not change its task names.
 
-When every static tool resolves to the shared default, the toolset keeps its existing shared call and validation task definitions. When at least one resolves different `Options` or `False`, each eligible static tool receives definitions named from the agent, toolset, tool, and operation.
+At registration, the resolver receives `tool=None` and `tool_name=''` for the toolset default. It also receives each statically known function tool and its name. Return the same settings for the toolset and its tools; `None` uses `tool_options`. Different per-tool settings are rejected because Render fixes task options when registering each definition.
 
-Returning `False` for a static function tool registers no task for that tool and runs it inside the workflow entry task. `False` is rejected for MCP and dynamic tools because their concrete tools are not known when the Workflow service registers definitions.
+Returning `False` for a function tool runs it inside the calling task instead of starting a child task. The shared toolset definitions remain registered. `False` is rejected for MCP and dynamic tools.
 
 ## Execution limits
 

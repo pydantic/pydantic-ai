@@ -1,12 +1,4 @@
-"""Render Workflows execution capability for Pydantic AI agents.
-
-SDK assumptions verified 2026-09-29 against Render 1.2.0 and CLI 2.28.0:
-public task definitions register before the worker starts, and `TaskContext.run`
-executes child tasks in separate processes. The local runtime does not populate
-`TaskContext.metadata`, so task lineage is not used as an authorization check.
-Recheck with `tests/harness/render/test_local_runtime.py` and the SDK reference:
-https://render.com/docs/workflows-sdk-python
-"""
+"""Render Workflows execution capability for Pydantic AI agents."""
 
 from __future__ import annotations
 
@@ -156,7 +148,8 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
                 `tool=None`; each statically known function tool is then resolved with its
                 concrete tool and name. `None` keeps `tool_options`, and `False` executes that
                 function tool inline. Render fixes task options at registration, so returning
-                different `Options` later raises a `UserError` rather than silently ignoring them.
+                different `Options` for an individual tool raises a `UserError`. Put tools
+                needing different settings in separate named toolsets.
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.app = app

@@ -15,11 +15,12 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, CustomEvent, ModelRetry, RunContext
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import RenderWorkflows
+from pydantic_ai_harness.memory import Memory, SqliteMemoryStore
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
 
@@ -316,6 +317,53 @@ async def run_local_tracing_agent(ctx: TaskContext) -> dict[str, object]:
     evidence = TracingTaskResult.model_validate_json(result.output)
     evidence.root_pid = os.getpid()
     return evidence.model_dump(mode='json')
+
+
+@dataclass
+class MemoryDeps:
+    database: str
+    tenant: str
+    limit: int = 64
+
+
+def memory_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    returned = _tool_returns(messages)
+    if result := returned.get('tenant_read_memory'):
+        return ModelResponse(parts=[TextPart(str(result.content))])
+    prompt = next(part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart))
+    if isinstance(prompt, str) and prompt.startswith('write:') and 'tenant_write_memory' not in returned:
+        return ModelResponse(parts=[ToolCallPart('tenant_write_memory', {'content': prompt.removeprefix('write:')})])
+    return ModelResponse(parts=[ToolCallPart('tenant_read_memory', {'file': 'MEMORY.md'})])
+
+
+def build_memory_agent(limit: int) -> tuple[Agent[MemoryDeps, str], RenderWorkflows[MemoryDeps]]:
+    runtime = RenderWorkflows[MemoryDeps](workflows)
+    agent = Agent(
+        FunctionModel(memory_model, model_name='runtime-memory-model'),
+        name=f'runtime-memory-{limit}',
+        deps_type=MemoryDeps,
+        capabilities=[
+            Memory[MemoryDeps](
+                store_resolver=lambda ctx: SqliteMemoryStore(database=ctx.deps.database),
+                namespace=lambda ctx: ctx.deps.tenant,
+                max_memory_size=limit,
+                inject_memory=False,
+            ).prefix_tools('tenant'),
+            runtime,
+        ],
+    )
+    return agent, runtime
+
+
+memory_agents = {limit: build_memory_agent(limit) for limit in (4, 8, 64)}
+
+
+@memory_agents[64][1].task(name='run-local-memory-agent')
+async def run_local_memory_agent(ctx: TaskContext, database: str, tenant: str, prompt: str, limit: int = 64) -> str:
+    agent, runtime = memory_agents[limit]
+    with runtime.activate(ctx):
+        return (await agent.run(prompt, deps=MemoryDeps(database, tenant, limit))).output
 
 
 if __name__ == '__main__':

@@ -737,6 +737,9 @@ jobs:
       # Everything under `tests/durable_exec` and every test marked `temporal` runs in
       # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
       # the chains they form would otherwise be this job's critical-path floor.
+      - name: Verify Render test dependency
+        run: uv run --all-packages --all-extras --no-extra mcp-tasks python -c "import pydantic_ai_harness.render"
+
       - name: run tests
         shell: bash
         run: |
@@ -971,6 +974,9 @@ jobs:
       # The durable-execution suites and harness `temporal` tests run in `test-durable-exec`
       # (its `lowest` leg covers this resolution), keeping their grouped xdist chains off this
       # job's critical path.
+      - name: Verify Render test dependency
+        run: uv run --no-sync python -c "import pydantic_ai_harness.render"
+
       - name: run tests
         shell: bash
         run: |

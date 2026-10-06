@@ -9,7 +9,9 @@ They do not establish hosted storage sharing, failure recovery, or performance.
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 from pydantic import TypeAdapter
 
@@ -43,7 +45,6 @@ def test_nested_agents_run_as_lineaged_local_render_operations(
     runtime = local_render_runtime
     registered_names = {task.name for task in runtime.list_tasks()}
     assert {ROOT_TASK, *OPERATION_TASKS} <= registered_names
-    assert not [name for name in registered_names if '__function_toolset__sub_agents' in name]
 
     controller_pid = os.getpid()
     started = runtime.start_task(
@@ -99,6 +100,9 @@ def test_nested_agents_run_as_lineaged_local_render_operations(
     assert all(run.status == 'completed' for run in operation_runs)
     assert all(run.root_task_run_id == started.id for run in operation_runs)
     assert all(run.parent_task_run_id == started.id for run in operation_runs)
+    for name in registered_names:
+        if '__function_toolset__sub_agents' in name:
+            assert _runs_for_root(runtime, name, started.id) == []
 
 
 def test_tracer_works_in_a_separate_render_process(local_render_runtime: LocalRenderRuntime) -> None:
@@ -114,3 +118,25 @@ def test_tracer_works_in_a_separate_render_process(local_render_runtime: LocalRe
     tool_calls = _runs_for_root(runtime, 'runtime-tracing__function_toolset__<agent>.call_tool', started.id)
     assert len(tool_calls) == 1
     assert tool_calls[0].status == 'completed'
+
+
+def test_memory_persists_between_separate_workers_with_configured_limits(
+    local_render_runtime: LocalRenderRuntime,
+    tmp_path: Path,
+) -> None:
+    """SQLite is shared across local processes; hosted workers require an external store."""
+    runtime = local_render_runtime
+    database = str(tmp_path / 'memory.sqlite')
+
+    def run(tenant: str, prompt: str, limit: int = 64) -> str:
+        started = runtime.start_task('run-local-memory-agent', json.dumps([database, tenant, prompt, limit]))
+        completed = runtime.wait_for_run(started.id)
+        assert completed.status == 'completed', runtime.logs()
+        assert _runs_for_root(runtime, f'runtime-memory-{limit}__function_toolset__memory.call_tool', started.id)
+        return TypeAdapter(list[str]).validate_python(completed.results)[0]
+
+    assert run('alice', 'write:abcdefghij') == 'abcdefghij\n'
+    assert run('bob', 'write:other tenant') == 'other tenant\n'
+    for limit in (4, 8):
+        assert run('alice', 'read', limit).startswith('abcdefghij'[:limit] + '\n\n[Truncated:')
+    assert run('bob', 'read') == 'other tenant\n'

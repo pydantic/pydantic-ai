@@ -14,10 +14,10 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias, TypeGuard, TypeVar
+from typing import Any, Literal, NotRequired, TypeAlias, TypeGuard, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai.durable_exec import JSON_CODEC
 from pydantic_ai.exceptions import (
@@ -44,7 +44,6 @@ from ._compat import (
 )
 
 PROTOCOL_VERSION = 2
-_SUPPORTED_PROTOCOL_VERSIONS = frozenset({1, PROTOCOL_VERSION})
 MAX_ARGUMENT_BYTES = 4 * 1024 * 1024
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -70,8 +69,7 @@ class OperationSuccess(TypedDict):
     version: int
     status: Literal['ok']
     payload: JsonValue
-    # Absent whenever a task changed nothing its caller has to apply, which keeps the
-    # three-key envelope every existing worker already writes and reads.
+    # Omit effects when a task did not change caller-visible state.
     effects: NotRequired[OperationEffects]
 
 
@@ -206,8 +204,8 @@ async def apply_effects(
     For a capability-owned tool, that context retains the tool definition Pydantic AI
     uses to validate the event's capability attribution.
 
-    The caller applies each result once, so a replayed workflow rebuilds its own usage and
-    event stream from the journaled results rather than counting them twice.
+    The caller applies a returned result once in this invocation. Retrying the entry
+    task starts the agent again and can repeat events.
     """
     if effects is None:
         return
@@ -242,22 +240,19 @@ def success(
     payload: object,
     *,
     effects: OperationEffects | None = None,
-    version: int = PROTOCOL_VERSION,
 ) -> OperationSuccess:
     result: OperationSuccess = {
-        'version': version,
+        'version': PROTOCOL_VERSION,
         'status': 'ok',
         'payload': _as_json_value(payload, label='operation result'),
     }
-    if effects is not None and version >= 2:
+    if effects is not None:
         result['effects'] = effects
     return result
 
 
 def control_flow_error(
     exc: Exception,
-    *,
-    version: int = PROTOCOL_VERSION,
 ) -> OperationControlFlowError | None:
     """Encode expected Pydantic AI control flow as a successful Render task result."""
     error: JsonObject
@@ -283,19 +278,17 @@ def control_flow_error(
         }
     else:
         return None
-    return {'version': version, 'status': 'control-flow', 'error': error}
+    return {'version': PROTOCOL_VERSION, 'status': 'control-flow', 'error': error}
 
 
 def permanent_error(
     kind: Literal['invalid-request', 'invalid-result'],
     exc: Exception,
-    *,
-    version: int = PROTOCOL_VERSION,
 ) -> OperationPermanentError:
     """Finish a task when retrying cannot repair its boundary data."""
     message = str(exc).strip() or type(exc).__name__
     error: JsonObject = {'kind': kind, 'message': message[:500]}
-    return {'version': version, 'status': 'error', 'error': error}
+    return {'version': PROTOCOL_VERSION, 'status': 'error', 'error': error}
 
 
 def read_result(value: object) -> JsonValue:
@@ -309,11 +302,10 @@ def read_outcome(value: object) -> OperationOutcome:
     _check_version(envelope)
     status = envelope.get('status')
     if status == 'ok':
-        version = _protocol_version(envelope)
         _check_keys(
             envelope,
             required={'version', 'status', 'payload'},
-            optional={'effects'} if version >= 2 else None,
+            optional={'effects'},
             label='successful operation result',
         )
         return OperationOutcome(
@@ -494,22 +486,11 @@ def _check_keys(value: dict[str, object], *, required: set[str], label: str, opt
 
 
 def _check_version(value: dict[str, object]) -> None:
-    _protocol_version(value)
-
-
-def _protocol_version(value: dict[str, object]) -> int:
     version = value.get('version')
-    if not isinstance(version, int) or isinstance(version, bool) or version not in _SUPPORTED_PROTOCOL_VERSIONS:
+    if type(version) is not int or version != PROTOCOL_VERSION:
         raise RenderProtocolError(
-            f'Render operation protocol version {version!r} is unsupported; '
-            f'expected one of {sorted(_SUPPORTED_PROTOCOL_VERSIONS)}.'
+            f'Render operation protocol version {version!r} is unsupported; expected {PROTOCOL_VERSION}.'
         )
-    return version
-
-
-def read_protocol_version(value: object) -> int:
-    """Return the supported protocol version named by an operation envelope."""
-    return _protocol_version(_object(value, label='operation envelope'))
 
 
 def _string(value: object, *, label: str) -> str:

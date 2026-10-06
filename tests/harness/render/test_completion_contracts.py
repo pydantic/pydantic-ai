@@ -57,17 +57,17 @@ def three_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 def resolve_lookup_options(
     operation_id: object, tool: object | None, tool_name: str
 ) -> Options | Literal[False] | None:
-    """Assign distinct Options to two tools and opt the third out of a Render task."""
-    del operation_id, tool
-    if tool_name == 'fast_lookup':
+    """Assign Options to named toolsets and opt one function tool out of a Render task."""
+    del tool
+    if getattr(operation_id, 'toolset_id', '') == 'fast':
         return Options(timeout_seconds=30, plan='starter')
-    if tool_name == 'slow_lookup':
+    if getattr(operation_id, 'toolset_id', '') == 'slow':
         return Options(timeout_seconds=300, plan='standard')
     return False if tool_name == 'inline_lookup' else None
 
 
-def build_per_tool_agent() -> tuple[Agent[None, str], RenderWorkflows[None], RecordingWorkflows]:
-    """One named FunctionToolset with two remote tools and one inline opt-out."""
+def build_toolset_options_agent() -> tuple[Agent[None, str], RenderWorkflows[None], RecordingWorkflows]:
+    """Two named toolsets with different policies and one inline opt-out."""
 
     async def fast_lookup() -> str:
         return 'fast'
@@ -84,30 +84,36 @@ def build_per_tool_agent() -> tuple[Agent[None, str], RenderWorkflows[None], Rec
         FunctionModel(three_tools),
         name='per-function',
         deps_type=type(None),
-        toolsets=[FunctionToolset([fast_lookup, slow_lookup, inline_lookup], id='lookups')],
+        toolsets=[
+            FunctionToolset([fast_lookup], id='fast'),
+            FunctionToolset([slow_lookup], id='slow'),
+            FunctionToolset([inline_lookup], id='inline'),
+        ],
         capabilities=[runtime],
     )
     return agent, runtime, app
 
 
-async def test_named_toolset_registers_stable_per_function_tasks_and_inline_opt_out() -> None:
-    agent, runtime, app = build_per_tool_agent()
-    _, _, second_app = build_per_tool_agent()
+async def test_named_toolsets_apply_policies_and_function_opt_out() -> None:
+    agent, runtime, app = build_toolset_options_agent()
+    _, _, second_app = build_toolset_options_agent()
     registered = {
         name: value
         for name, value in app.options.items()
-        if '__function_toolset__lookups' in name and name.endswith('.call_tool')
+        if any(f'__function_toolset__{toolset}.' in name for toolset in ('fast', 'slow'))
+        and name.endswith('.call_tool')
     }
     second = {
         name: value
         for name, value in second_app.options.items()
-        if '__function_toolset__lookups' in name and name.endswith('.call_tool')
+        if any(f'__function_toolset__{toolset}.' in name for toolset in ('fast', 'slow'))
+        and name.endswith('.call_tool')
     }
 
     assert registered == second
     assert len(registered) == 2
-    assert any('fast_lookup' in name for name in registered)
-    assert any('slow_lookup' in name for name in registered)
+    assert 'per-function__function_toolset__fast.call_tool' in registered
+    assert 'per-function__function_toolset__slow.call_tool' in registered
     assert {value.timeout_seconds for value in registered.values()} == {30, 300}
     assert {value.plan for value in registered.values()} == {'starter', 'standard'}
 
@@ -115,7 +121,7 @@ async def test_named_toolset_registers_stable_per_function_tasks_and_inline_opt_
     assert await run_agent_in_task(agent, runtime, context) == 'done'
     invoked = [name for name, _depth in context.calls if name in registered]
     assert sorted(invoked) == sorted(registered)
-    assert not any('inline_lookup' in name for name, _depth in context.calls)
+    assert not any('__function_toolset__inline.' in name for name, _depth in context.calls)
 
 
 def delegate_once(agent_name: str) -> FunctionModel:
@@ -259,8 +265,7 @@ def build_two_level_agents() -> tuple[Agent[None, str], RenderWorkflows[None], R
 
 
 async def test_two_level_explicit_delegation_runs_supported_operations_and_terminates() -> None:
-    parent, runtime, app = build_two_level_agents()
-    assert not [name for name in app.options if '__function_toolset__sub_agents' in name]
+    parent, runtime, _ = build_two_level_agents()
     context = NestedTaskContext()
 
     with anyio.fail_after(5):
@@ -349,7 +354,6 @@ async def test_inline_subagents_charges_concurrent_max_calls_before_awaiting() -
     assert len(returns) == 2
     assert 'worker done' in returns
     assert any("Delegate budget for 'budget-worker' is exhausted" in value for value in returns)
-    assert not [name for name in app.options if '__function_toolset__sub_agents' in name]
     assert not [name for name, _depth in context.calls if '__function_toolset__sub_agents' in name]
 
 
@@ -391,10 +395,8 @@ def call_renamed_tool(model_facing_name: str) -> FunctionModel:
 def resolve_prepared_options(
     operation_id: object, tool: object | None, tool_name: str
 ) -> Options | Literal[False] | None:
-    """Select per-tool Options by the original static name a toolset holds a tool under."""
+    """Opt out a prepared tool by the original name held by its toolset."""
     del operation_id, tool
-    if tool_name == 'slow_report':
-        return Options(timeout_seconds=300, plan='standard')
     if tool_name == 'inline_report':
         return False
     return None
@@ -429,7 +431,7 @@ async def inline_report() -> str:
 
 
 async def test_prepared_rename_routes_registration_and_invocation_to_one_task() -> None:
-    """A renamed tool keeps its original static name as task identity and options."""
+    """Renaming a tool for the model does not change its toolset task identity."""
     agent, runtime, app = build_prepared_agent(
         [renamed_for_model(slow_report, 'report'), Tool[None](quick_report)],
         agent_name='prepared-options',
@@ -441,14 +443,9 @@ async def test_prepared_rename_routes_registration_and_invocation_to_one_task() 
         for name in app.registered_task_names
         if '__function_toolset__prepared' in name and name.endswith('.call_tool')
     ]
-    slow_task = 'prepared-options__function_toolset__prepared.slow_report.call_tool'
+    slow_task = 'prepared-options__function_toolset__prepared.call_tool'
 
-    assert sorted(registered) == sorted(
-        [slow_task, 'prepared-options__function_toolset__prepared.quick_report.call_tool']
-    )
-    assert not [name for name in registered if '.report.' in name]
-    assert app.options[slow_task].timeout_seconds == 300
-    assert app.options[slow_task].plan == 'standard'
+    assert registered == [slow_task]
 
     context = NestedTaskContext()
     with anyio.fail_after(5):
@@ -459,7 +456,7 @@ async def test_prepared_rename_routes_registration_and_invocation_to_one_task() 
 
 
 async def test_prepared_rename_with_resolver_false_stays_inline() -> None:
-    """A renamed tool the resolver opts out of has no task definition and runs inline."""
+    """A renamed opted-out tool uses no child run, even though its toolset has shared tasks."""
     agent, runtime, app = build_prepared_agent(
         [renamed_for_model(inline_report, 'summary'), Tool[None](quick_report)],
         agent_name='prepared-inline',
@@ -469,8 +466,8 @@ async def test_prepared_rename_with_resolver_false_stays_inline() -> None:
     registered = sorted(name for name in app.registered_task_names if '__function_toolset__opted-out' in name)
 
     assert registered == [
-        'prepared-inline__function_toolset__opted-out.quick_report.call_tool',
-        'prepared-inline__function_toolset__opted-out.quick_report.validate_args',
+        'prepared-inline__function_toolset__opted-out.call_tool',
+        'prepared-inline__function_toolset__opted-out.validate_args',
     ]
     assert not [name for name in app.registered_task_names if 'inline_report' in name or 'summary' in name]
 
@@ -482,84 +479,34 @@ async def test_prepared_rename_with_resolver_false_stays_inline() -> None:
     assert not [name for name, _depth in context.calls if '__function_toolset__opted-out' in name]
 
 
-def resolve_collision_options(
-    operation_id: object, tool: object | None, tool_name: str
-) -> Options | Literal[False] | None:
-    """Give one tool of toolset `x` its own Options so it needs its own task."""
-    del operation_id, tool
-    return Options(timeout_seconds=45) if tool_name == 'part' else None
-
-
-def call_part_then_shared(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Call the per-tool task's tool, then the shared task's tool, one step each."""
-    del info
-    returned = returned_tool_names(messages)
-    if 'shared_tool' in returned:
-        return ModelResponse(parts=[TextPart('collide done')])
-    if 'part' in returned:
-        return ModelResponse(parts=[ToolCallPart('shared_tool', {}, tool_call_id='shared')])
-    return ModelResponse(parts=[ToolCallPart('part', {}, tool_call_id='part')])
-
-
-def build_colliding_agent() -> tuple[Agent[None, str], RenderWorkflows[None], RecordingWorkflows]:
-    """Toolset `x` with tool `part` alongside a toolset whose own ID is `x.part`."""
+def test_toolset_task_names_survive_reordering_and_added_tools() -> None:
+    """A tool name matching another toolset ID cannot rename that toolset's task."""
 
     async def part() -> str:
-        return 'per-tool'
+        return 'part'
 
     async def other() -> str:
         return 'other'
 
+    async def added() -> str:
+        return 'added'
+
     async def shared_tool() -> str:
         return 'shared'
 
-    app = RecordingWorkflows()
-    runtime = RenderWorkflows[None](app, deps_type=type(None), resolve_tool_options=resolve_collision_options)
-    agent = Agent[None, str](
-        FunctionModel(call_part_then_shared),
-        name='collide',
-        deps_type=type(None),
-        toolsets=[
-            FunctionToolset[None]([part, other], id='x'),
-            FunctionToolset[None]([shared_tool], id='x.part'),
-        ],
-        capabilities=[runtime],
-    )
-    return agent, runtime, app
-
-
-def test_per_tool_and_shared_task_names_do_not_collide() -> None:
-    """Binding succeeds with unique names and the shared task keeps the name it had."""
-    _, _, app = build_colliding_agent()
-    shared_task = 'collide__function_toolset__x.part.call_tool'
-
-    assert len(app.registered_task_names) == len(set(app.registered_task_names))
-    assert app.registered_task_names.count(shared_task) == 1
-    per_tool = [
-        name
-        for name in app.registered_task_names
-        if name.endswith('.call_tool') and name != shared_task and '__function_toolset__x' in name
-    ]
-    assert len(per_tool) == 2
-    assert any('other' in name for name in per_tool)
-    assert any('part' in name for name in per_tool)
-
-
-async def test_colliding_identities_route_each_tool_to_its_own_task() -> None:
-    """Both tools run, through two different task definitions, with no partial registration."""
-    agent, runtime, app = build_colliding_agent()
-    shared_task = 'collide__function_toolset__x.part.call_tool'
-    context = NestedTaskContext()
-
-    with anyio.fail_after(5):
-        output = await run_agent_in_task(agent, runtime, context)
-
-    assert output == 'collide done'
-    call_tool_runs = [name for name, _depth in context.calls if name.endswith('.call_tool')]
-    assert len(call_tool_runs) == 2
-    part_task, shared_run = call_tool_runs
-    assert shared_run == shared_task
-    assert part_task != shared_task
-    assert 'part' in part_task
-    assert app.options[part_task].timeout_seconds == 45
-    assert app.options[shared_task].timeout_seconds is None
+    expected: set[str] | None = None
+    for tools in ([part, other], [other, part], [added, other, part]):
+        app = RecordingWorkflows()
+        Agent(
+            FunctionModel(three_tools),
+            name='stable',
+            toolsets=[FunctionToolset(tools, id='x'), FunctionToolset([shared_tool], id='x.part')],
+            capabilities=[RenderWorkflows(app)],
+        )
+        names = set(app.registered_task_names)
+        assert len(names) == len(app.registered_task_names)
+        assert {'stable__function_toolset__x.call_tool', 'stable__function_toolset__x.part.call_tool'} <= names
+        if expected is None:
+            expected = names
+        else:
+            assert names == expected

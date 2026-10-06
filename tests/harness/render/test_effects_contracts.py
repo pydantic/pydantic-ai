@@ -201,25 +201,6 @@ class NegativeUsageEffectsTaskContext(JsonRecordingTaskContext):
         return result
 
 
-class V1CompatibilityTaskContext(JsonRecordingTaskContext):
-    """Send v1 requests to the child and record its compatibility responses."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.new_request_versions: list[object] = []
-        self.compatibility_results: list[dict[str, object]] = []
-
-    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-        for argument in args:
-            if _is_json_envelope(argument):
-                self.new_request_versions.append(argument.get('version'))
-                argument['version'] = 1
-        result = await super().run(task, *args, **kwargs)
-        if _is_json_envelope(result):
-            self.compatibility_results.append(_JSON_OBJECT.validate_json(json.dumps(result)))
-        return result
-
-
 def _event_hooks(seen: list[ChildEffectEvent]) -> Hooks[None]:
     hooks = Hooks[None]()
 
@@ -529,33 +510,21 @@ async def test_new_operation_requests_and_results_use_protocol_v2() -> None:
     assert (request_versions, result_versions) == ([2, 2, 2], [2, 2, 2])
 
 
-async def test_new_caller_accepts_effect_free_v1_compatibility_results() -> None:
-    usage = RunUsage(details={'caller_marker': 19})
-    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
-    agent = Agent[None, str](
-        TestModel(call_tools=['account']),
-        name='protocol-v1-compatibility',
-        deps_type=type(None),
-        capabilities=[runtime],
+async def test_nested_agent_model_usage_matches_an_inline_run() -> None:
+    """A model called inside a tool contributes tokens beyond the parent's own responses."""
+    child = Agent(TestModel(call_tools=[], custom_output_text='child result'), name='usage-child')
+    runtime = RenderWorkflows[None](Workflows())
+    parent = Agent(
+        TestModel(call_tools=['delegate']), name='usage-parent', deps_type=type(None), capabilities=[runtime]
     )
 
-    @agent.tool
-    async def account(ctx: RunContext[None]) -> str:
-        ctx.usage.incr(RunUsage(details={'must_not_cross_v1': 5}))
-        return 'accounted'
+    @parent.tool
+    async def delegate(ctx: RunContext[None]) -> str:
+        return (await child.run('child', usage=ctx.usage)).output
 
-    context = V1CompatibilityTaskContext()
-    assert isinstance(await run_agent_in_task(agent, runtime, context, usage=usage), str)
-
-    observed = {
-        'new_request_versions': context.new_request_versions,
-        'compatibility_result_versions': [result.get('version') for result in context.compatibility_results],
-        'compatibility_result_has_effects': ['effects' in result for result in context.compatibility_results],
-        'caller_usage_details': usage.details,
-    }
-    assert observed == {
-        'new_request_versions': [2, 2, 2],
-        'compatibility_result_versions': [1, 1, 1],
-        'compatibility_result_has_effects': [False, False, False],
-        'caller_usage_details': {'caller_marker': 19},
-    }
+    inline = await parent.run('parent')
+    with runtime.activate(JsonRecordingTaskContext()):
+        distributed = await parent.run('parent')
+    assert inline.usage.requests == distributed.usage.requests == 3
+    assert inline.usage.input_tokens == distributed.usage.input_tokens
+    assert inline.usage.output_tokens == distributed.usage.output_tokens

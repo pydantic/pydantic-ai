@@ -253,6 +253,10 @@ def test_explicit_names_are_process_stable_with_helper_opt_outs() -> None:
     assert names == [
         'support__function_toolset__explicit-tools.call_tool',
         'support__function_toolset__explicit-tools.validate_args',
+        'support__function_toolset__sub_agents.call_tool',
+        'support__function_toolset__sub_agents.validate_args',
+        'support__function_toolset__tool_output_limits.call_tool',
+        'support__function_toolset__tool_output_limits.validate_args',
     ]
 
 

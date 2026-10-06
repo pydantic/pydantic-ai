@@ -416,7 +416,6 @@ async def test_delegation_tool_stays_inline_while_explicit_child_operations_use_
     )
 
     assert 'worker__model.request' in app.registered_task_names
-    assert 'support__function_toolset__sub_agents.call_tool' not in app.registered_task_names
 
     @render_workflows.task
     async def run_agent(ctx: TaskContext, prompt: str) -> str:
@@ -430,27 +429,6 @@ async def test_delegation_tool_stays_inline_while_explicit_child_operations_use_
     assert await pending_result == 'all done'
     assert context.task_names.count('worker__model.request') == 1
     assert 'support__function_toolset__sub_agents.call_tool' not in context.task_names
-
-
-def test_tool_output_limits_helper_can_be_explicitly_kept_inline() -> None:
-    """An explicit opt-out keeps the overflow reader in the parent task."""
-    app = RecordingWorkflows()
-    Agent[None, str](
-        TestModel(),
-        name='support',
-        deps_type=type(None),
-        capabilities=[
-            ToolOutputLimits[None](),
-            RenderWorkflows[None](
-                app,
-                deps_type=type(None),
-                resolve_tool_options=lambda _operation, _tool, name: False if name == 'read_tool_result' else None,
-            ),
-        ],
-    )
-
-    assert 'support__model.request' in app.registered_task_names
-    assert 'support__function_toolset__tool_output_limits.call_tool' not in app.registered_task_names
 
 
 def test_a_capability_contributing_operations_without_an_id_is_rejected_before_registration() -> None:
@@ -759,4 +737,3 @@ async def test_explicit_overflow_reader_opt_out_reads_the_parent_tasks_spill(tmp
     assert await run_agent_in_task(agent, runtime, context) == 'read the full document'
     assert 'overflow-reader__function_toolset__<agent>.call_tool' in context.task_names
     assert not [name for name in context.task_names if '__function_toolset__tool_output_limits' in name]
-    assert not [name for name in app.registered_task_names if '__function_toolset__tool_output_limits' in name]

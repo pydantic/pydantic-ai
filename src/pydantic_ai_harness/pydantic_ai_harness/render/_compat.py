@@ -1,7 +1,7 @@
 """Private Pydantic AI contracts used at Render's process boundary.
 
 The backend and operation IDs use public durability APIs. The imports below supply
-contracts not exposed there, checked against upstream on 2026-10-05:
+contracts not exposed there:
 
 * `_operation` and `_operation_backend`: typed operations, parameters and bound
   calls for the JSON transports. Covered by `test_transports.py` and
@@ -428,10 +428,6 @@ _NONE_UNLESS_ATTACHED = (
     '_run_held_toolsets',
 )
 _DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
-_RENAMED_FIELDS: tuple[tuple[str, str], ...] = (
-    ('capability_loaded', 'capability_active'),
-    ('available_capability_ids', 'active_capability_ids'),
-)
 _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_UNLESS_ATTACHED}
 
 
@@ -442,9 +438,6 @@ class RenderRunContext(RunContext[AgentDepsT]):
         self.__dict__ = {**kwargs, 'deps': deps}
         self.__dict__.setdefault('tracer', NoOpTracer())
         self.__dict__.setdefault('workspace', Workspace(NO_WORKSPACE))
-        for old_name, new_name in _RENAMED_FIELDS:
-            if old_name in self.__dict__:
-                self.__dict__.setdefault(new_name, self.__dict__.pop(old_name))
         for name in _NONE_UNLESS_ATTACHED:
             self.__dict__.setdefault(name, None)
         for name, default in _DEFAULTED_UNLESS_CARRIED:
