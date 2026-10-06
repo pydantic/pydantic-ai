@@ -99,7 +99,7 @@ class FleetMCPServer(BaseModel):
     name: str
     url: str
     description: str | None = None
-    env: list[str] = Field(default_factory=list[str])
+    env_allow: list[str] = Field(default_factory=list[str])
     """Environment variables this server may send; every `${env:NAME}` in its headers must be listed here."""
     applies_to: AppliesTo | None = None
     source: str | None = None
@@ -169,7 +169,9 @@ _ENV_REF = re.compile(r'\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}')
 def _full_text(kind: str, payload: Mapping[str, Any]) -> str:
     """What an item would actually do, for the `/catalog` preview: the text, or the URL and env it sends."""
     if kind == 'mcp_server':
-        env = sorted(set(payload.get('env') or ()) | set(_ENV_REF.findall(json.dumps(payload.get('headers') or {}))))
+        env = sorted(
+            set(payload.get('env_allow') or ()) | set(_ENV_REF.findall(json.dumps(payload.get('headers') or {})))
+        )
         return f'URL: {payload.get("url", "")}' + (f'\nSends: {", ".join(f"${name}" for name in env)}' if env else '')
     if kind == 'plugin':
         return f'Factory: {payload.get("factory", "")}\nSettings: {json.dumps(payload.get("settings") or {})}'
@@ -185,7 +187,7 @@ def _check_env(names: Sequence[str], *, declared: Sequence[str], local: Sequence
     """Refuse a reference the server doesn't declare in `env`, one outside a local allowlist, or an unset one."""
     for name in names:
         if name not in declared:
-            raise ValueError(f"Logfire config references ${name}, which isn't in this server's env list")
+            raise ValueError(f"Logfire config references ${name}, which isn't in this server's env_allow list")
         if local and not any(fnmatch.fnmatchcase(name, pattern) for pattern in local):
             raise ValueError(f"Logfire config references ${name}, which isn't allowed by your fleet_env_allow")
         if name not in os.environ:
@@ -287,9 +289,9 @@ class Consent:
         return _digest([self.item.kind, self.item.name, self.target, list(self.env)])
 
     def question(self) -> str:
-        sends = f' and send {", ".join(f"${name}" for name in self.env)}' if self.env else ''
+        sends = f' Sends: {", ".join(f"${name}" for name in self.env)}.' if self.env else ''
         if self.item.kind == 'mcp_server':
-            return f'Logfire wants to connect MCP server `{self.item.name}` at {self.target}{sends}.'
+            return f'Logfire wants to connect MCP server `{self.item.name}` at {self.target}.{sends}'
         return f'Logfire wants to enable plugin `{self.item.name}` ({self.target}){sends}.'
 
 
@@ -492,8 +494,8 @@ class Fleet:
         if item.kind == 'mcp_server':
             server = FleetMCPServer.model_validate({'name': item.name, **item.payload})
             names = sorted({name for value in server.headers.values() for name in _ENV_REF.findall(value)})
-            _check_env(names, declared=server.env, local=self.env_allow)
-            return Consent(item=item, target=server.url, env=tuple(sorted(set(server.env) | set(names))))
+            _check_env(names, declared=server.env_allow, local=self.env_allow)
+            return Consent(item=item, target=server.url, env=tuple(sorted(set(server.env_allow) | set(names))))
         if item.kind == 'plugin':
             return Consent(item=item, target=str(item.payload.get('factory', '')), env=())
         return None
