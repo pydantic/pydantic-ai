@@ -521,20 +521,11 @@ diffs two or more runs when given more than one id. For the raw step output, inc
 engine's own lines, `gh run view <run-id> --log` (add `--attempt N` for an earlier attempt)
 is often quicker.
 
-When the gh-aw runtime includes `parse_pydantic_log.cjs`, the engine uses its canonical
-Pydantic log parser when it recognizes the CLI output. gh-aw then publishes canonical
-events in `agent-session.jsonl` and usage in the conclusion artifact `aw_session.jsonl`.
-If the module is absent or returns no log entries, the engine uses its compatibility parser.
-Update the workflow's gh-aw runtime to a published version that includes the upstream
-parser, then recompile the workflow. Both paths can only report data available in readable
-`pai` stdout; real tool IDs, arguments, outcomes and usage are unavailable unless the agent
-logs them.
-
-The lock's `Parse agent logs for step summary` step writes an engine-specific summary on
-the Actions run's Summary page. Its conversation, observed tool activity and usage depend
-on what the parser emits. Newer `gh aw logs --parse` and `gh aw audit --parse` CLI versions
-can render downloaded sessions when their catalog resolves the imported `pydantic-ai`
-engine. Older CLI versions skip imported engines; their raw artifacts remain available.
+The engine's own step summary is written by the lock's `Parse agent logs for step summary`
+step and appears on the Actions run's Summary page, carrying the turn, tool-call and token
+counts. `gh aw logs --parse` and `gh aw audit --parse` do not re-render it locally: they
+resolve engines through gh-aw's built-in registry (claude, codex, copilot, gemini, pi) and
+skip anything else, which is every import-based engine, this one included.
 
 ### What a working run looks like
 

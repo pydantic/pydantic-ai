@@ -270,16 +270,6 @@ Existing workflows must be recompiled with a compatible gh-aw pin and have their
 generated lockfile committed. Installing a newer `gh aw` CLI locally does not alter
 an already committed lockfile or the action/runtime it pins.
 
-When the gh-aw runtime includes `parse_pydantic_log.cjs`, this definition uses its
-canonical Pydantic log parser if it recognizes the CLI output. Recognized output
-lets gh-aw publish canonical events in `agent-session.jsonl` and the conclusion usage
-artifact `aw_session.jsonl`.
-If the module is absent or returns no log entries, the definition uses its
-compatibility parser. Update the workflow's gh-aw runtime to a published version
-that includes the upstream parser, then recompile the workflow. Both paths can only
-report data available in readable `pai` stdout; real tool IDs, arguments, outcomes
-and usage are unavailable unless the agent logs them.
-
 ## Pointing the engine at your own endpoint
 
 `PAI_BASE_URL` in `engine.env` sends requests to any endpoint that speaks the
