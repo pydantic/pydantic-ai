@@ -413,8 +413,12 @@ async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
     saved = await store.get(conversation_id=conversation_id)
     assert (saved.summary.revision, saved.summary.tags) == (1, ('codex',))
     assert saved.messages == codex_sessions.messages(path)
+    assert await store.name(source=saved.summary, title='My rename', subtitle='Mine', tags=('flags',), manual=True)
     assert await save_import(store, imported) == conversation_id
-    assert (await store.get(conversation_id=conversation_id)).summary.revision == 1
+    renamed = (await store.get(conversation_id=conversation_id)).summary
+    # A refresh keeps the copy's name.
+    assert (renamed.revision, renamed.title, renamed.subtitle, renamed.tags) == (1, 'My rename', 'Mine', ('flags',))
+    assert (renamed.title_source, renamed.naming_version) == ('user', 1)
     # Codex continued the session, even after this listing read it and the copy was saved: the
     # untouched copy still follows it, whatever the file's time says.
     content = [{'type': 'output_text', 'text': 'And more'}]

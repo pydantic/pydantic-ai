@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -195,9 +195,21 @@ async def save_import(store: SqliteConversationStore, imported: ImportedSession)
     messages = await run_sync(imported.messages)
     if not messages:
         raise ValueError(f'{imported.summary.subtitle} has no conversation to import')
+    summary = imported.summary
     if saved is not None:
+        # Keep the names the user or the namer gave the copy.
+        summary = replace(
+            summary,
+            title=saved.title,
+            subtitle=saved.subtitle,
+            tags=saved.tags,
+            title_source=saved.title_source,
+            naming_version=saved.naming_version,
+            named_revision=saved.named_revision,
+            naming_tokens=saved.naming_tokens,
+        )
         # Only once the new transcript has been read, so a failed refresh keeps the previous copy.
         await store.delete(source=saved)
-    await store.save(summary=imported.summary, messages=messages)
+    await store.save(summary=summary, messages=messages)
     telemetry.record('conversation imported', source=imported.source, messages=len(messages))
     return imported.summary.id
