@@ -13,10 +13,11 @@ next run uses it. Its first row runs the project setup in `logfire_setup`.
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Annotated, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 import logfire
 from anyio import CancelScope, to_thread
+from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXClientInstrumentor
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
@@ -73,6 +74,10 @@ class LogfireSettings(BaseModel):
         description='The Logfire to send to, as the setup menu saves it: a host, its URL, or its MCP URL, saved as '
         'its https origin. Unset, the SDK uses LOGFIRE_BASE_URL, else the region the token names.',
     )
+    httpx: bool = Field(
+        default=False,
+        description='Also trace HTTP requests made with httpx or httpx2. With message content included, capture headers and request and response bodies.',
+    )
     ui_events: bool = Field(
         default=True,
         description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions. '
@@ -83,9 +88,13 @@ class LogfireSettings(BaseModel):
 class LogfirePlugin(Plugin[LogfireSettings]):
     """Core instrumentation, without changing the supplied agent or global OTel providers."""
 
+    _active_httpx: ClassVar[list['LogfirePlugin']] = []
+    """Live opt-in instances, ordered so HTTPX instrumentation can move to a remaining instance on unload."""
+
     def __init__(self, host: PluginHost[None], settings: LogfireSettings) -> None:
         super().__init__(host, settings)
         self._unsubscribe: Callable[[], None] | None = None
+        self._httpx_instrumentors: list[HTTPXClientInstrumentor | HTTPX2ClientInstrumentor] = []
         token, send_to_logfire = _destination(settings, host)
         private_dir = logfire_dir()
         propagator = get_global_textmap()
@@ -124,7 +133,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
         """Tag the identity settings so older builds sharing the database can ignore them."""
-        requires = {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        requires = {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag'], 'httpx': ['logfire-httpx']}
         return cls(host, host.settings(LogfireSettings, requires=requires))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
@@ -142,6 +151,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
+        if self.settings.httpx:
+            if not self._active_httpx:
+                self._instrument_httpx()
+            self._active_httpx.append(self)
         if self.settings.ui_events:
             self._unsubscribe = telemetry.subscribe(
                 self._clai2, root=self._session_tracing.root, include_content=self.settings.include_content
@@ -149,6 +162,16 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
                 self._clai2.log('info', 'session started', attributes={'model': model})
+
+    def _instrument_httpx(self) -> None:
+        instrumentors = (HTTPXClientInstrumentor(), HTTPX2ClientInstrumentor())
+        available = [
+            instrumentor for instrumentor in instrumentors if not instrumentor.is_instrumented_by_opentelemetry
+        ]
+        self.instance.instrument_httpx(capture_all=self.settings.include_content)
+        self._httpx_instrumentors = [
+            instrumentor for instrumentor in available if instrumentor.is_instrumented_by_opentelemetry
+        ]
 
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         with telemetry.parent_span(self._session_tracing.root()):
@@ -162,7 +185,15 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
-        # Stop receiving UI events before the instance shuts down.
+        # HTTPX instrumentors are global: if another plugin instance remains, point them at its live provider.
+        if self in self._active_httpx:
+            self._active_httpx.remove(self)
+        if self._httpx_instrumentors:
+            for instrumentor in self._httpx_instrumentors:
+                instrumentor.uninstrument()
+            self._httpx_instrumentors.clear()
+            if self._active_httpx:
+                self._active_httpx[-1]._instrument_httpx()
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
@@ -265,6 +296,15 @@ _ROWS = (
         default='logfire-account',
         choices=('logfire-account', 'git-email', 'false'),
         choice_labels={'logfire-account': 'Logfire sign-in email', 'git-email': 'Git email', 'false': 'off'},
+        allow_custom=False,
+    ),
+    FieldRow(
+        key='httpx',
+        label='HTTP requests',
+        description=LogfireSettings.model_fields['httpx'].description or '',
+        default='false',
+        choices=_BOOLEAN,
+        choice_labels={'true': 'recorded', 'false': 'off'},
         allow_custom=False,
     ),
     FieldRow(

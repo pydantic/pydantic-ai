@@ -4,10 +4,11 @@ from collections.abc import Callable
 
 from pydantic_ai.models import known_model_names
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.config import SETTING_FIELDS, UPDATE_CHANNELS, Settings
+from pydantic_clai2.config import SETTING_FIELDS, TOOL_CALL_DISPLAYS, UPDATE_CHANNELS, Settings
 from pydantic_clai2.config.api_keys import set_api_key
-from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
+from pydantic_clai2.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, run_flow, shown
 from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.ui.menus.tool_calls_preview import tool_calls_preview
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names
 
@@ -26,6 +27,7 @@ class SettingsSource:
         rows: list[FieldRow] = []
         for key, field in SETTING_FIELDS.items():
             info = Settings.model_fields[field]
+            preview: ChoicePreview | None = None
             if info.annotation is bool:
                 choices: tuple[str, ...] = ('true', 'false')
             elif key == 'display.theme':
@@ -34,6 +36,9 @@ class SettingsSource:
                 choices = tuple(BUILTIN_SPINNERS)
             elif key == 'model':
                 choices = tuple(known_model_names())
+            elif key == 'display.tool_calls':
+                choices = TOOL_CALL_DISPLAYS
+                preview = tool_calls_preview
             elif key == 'updates.channel':
                 choices = UPDATE_CHANNELS
             else:
@@ -45,6 +50,7 @@ class SettingsSource:
                     default=shown(info.default),
                     choices=choices,
                     note='project' if self._context.from_project(key) else '',
+                    preview=preview,
                 )
             )
         return rows

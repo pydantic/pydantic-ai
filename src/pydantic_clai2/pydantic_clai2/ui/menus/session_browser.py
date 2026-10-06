@@ -67,6 +67,7 @@ class SessionBrowser:
         preview: Callable[[str], str],
         delete: Callable[[ConversationSummary], None],
         rename: Callable[[ConversationSummary, str], None],
+        importing: Callable[[ConversationSummary], bool] = lambda entry: False,
         output: TextIO | None = None,
         key_source: Callable[[], str] = menu_key,
         size: Callable[[], tuple[int, int]] = terminal_size,
@@ -79,6 +80,8 @@ class SessionBrowser:
         self.preview = preview
         self.delete = delete
         self.rename = rename
+        self.importing = importing
+        """Whether an entry is a Claude Code or Codex session that resuming copies into the store."""
         self.output = output or sys.stdout
         self.key_source = key_source
         self.size = size
@@ -262,6 +265,8 @@ class SessionBrowser:
             counts = f'{entry.message_count} msgs / {entry.total_tokens:,} tok'
             if len(counts) > width // 2:
                 counts = f'{entry.message_count} msgs'
+            if self.importing(entry):
+                counts = 'to import'
             title = truncate(plain(title), max(1, width - len(counts) - 1))
             if entry == selected and self.mode == 'sessions':
                 title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
@@ -355,6 +360,8 @@ class SessionBrowser:
             elif key in (Key.RIGHT, 'e'):
                 self.preview_text = self.preview(entry.id)
                 self.preview_offset, self.mode = 0, 'preview'
+            elif key in ('d', 'r') and self.importing(entry):
+                self.notice = 'Not imported yet. Enter imports and resumes it; then it can be renamed or deleted.'
             elif key == 'd':
                 if entry.id == self.active_id:
                     self.notice = 'Cannot delete the active session. Use /new first.'

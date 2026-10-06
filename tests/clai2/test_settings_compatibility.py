@@ -52,6 +52,7 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         assert loaded is not None
         settings = loaded.plugin.host.settings(LogfireSettings)
         assert (settings.user_tag, settings.account) == ('logfire-account', None)  # No identity to tag with.
+        assert settings.httpx is False
         assert store.plugins() == [previous]  # Loading an old declaration does not rewrite it.
         source = LogfireSource(loaded.plugin.host)
         rows = {row.key: row for row in source.rows()}
@@ -65,12 +66,16 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         )
         assert saved.settings['account'] is None
         requirements = store.plugin_requirements('observability')
-        assert requirements == {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        assert requirements == {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'httpx': ['logfire-httpx'],
+        }
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account')
+            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account', 'httpx')
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -83,6 +88,34 @@ async def test_logfire_user_tag_settings_survive_older_builds(
     finally:
         await loader.close('exit')
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
+async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder: Recorder) -> None:
+    loader, store = observability_loader(tmp_path)
+    try:
+        await loader.load_all()
+        host = _observability_host(loader)
+        source = LogfireSource(host)
+        row = next(row for row in source.rows() if row.key == 'httpx')
+        source.apply(row, 'true')
+        [saved] = store.plugins()
+        assert saved.settings['httpx'] is True
+        requirements = store.plugin_requirements('observability')
+        assert requirements == {
+            'httpx': ['logfire-httpx'],
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+        }
+        old_view = apply_requirements(
+            saved.settings,
+            stored_requirements(requirements, saved.settings),
+            defaults={'httpx': False},
+            supported=frozenset({'logfire-user-tag'}),
+        )
+        assert old_view.settings['httpx'] is False
+        assert store.plugins() == [saved]
+    finally:
+        await loader.close('exit')
 
 
 @pytest.mark.parametrize('ui_events', [None, False, True])
@@ -188,6 +221,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().spinner == 'working'
     # Databases from before `/update` follow stable releases.
     assert store.load().update_channel == 'stable'
+    # Databases from before grouped tool calls keep one line per call.
+    assert store.load().tool_calls == 'detailed'
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -327,6 +362,35 @@ def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_p
     with closing(sqlite3.connect(path)) as connection:
         assert dict(connection.execute('SELECT key, value_json FROM settings')) == {
             'model': '"claude-code@work:opus"',
+            'display.thinking': 'false',
+            'future.setting': '1',
+        }
+
+
+def test_update_channel_main_keeps_its_former_name_on_disk(tmp_path: Path) -> None:
+    """`main` was called `bleeding`: older builds' rows read as `main`, and `main` is saved as `bleeding` for them."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    # Literal rows an earlier build wrote.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.executemany(
+            'INSERT INTO settings VALUES (?, ?)',
+            [('updates.channel', '"bleeding"'), ('display.thinking', 'false'), ('future.setting', '1')],
+        )
+    settings = SettingsStore(path).load()
+    assert (settings.update_channel, settings.thinking) == ('main', False)
+    assert config_command(store, ['get', 'updates.channel']) == '"main"'
+    config_command(store, ['set', 'updates.channel', 'stable'])
+    assert SettingsStore(path).load().update_channel == 'stable'
+    config_command(store, ['set', 'updates.channel', 'main'])
+    assert SettingsStore(path).load() == settings
+    snapshot = path.read_bytes()
+    with pytest.raises(ValidationError):
+        store.set('updates.channel', 'nightly')
+    assert path.read_bytes() == snapshot
+    with closing(sqlite3.connect(path)) as connection:
+        assert dict(connection.execute('SELECT key, value_json FROM settings')) == {
+            'updates.channel': '"bleeding"',
             'display.thinking': 'false',
             'future.setting': '1',
         }

@@ -12,18 +12,20 @@ from typing import IO
 from termflow.live import Rect, ScreenBuffer, render_diff
 from termflow.tui.layout import truncate
 
+from pydantic_clai2.ui.prompt.prompt_selection import WHEEL_DOWN, WHEEL_UP, Selection, mouse_report
 from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
+from pydantic_clai2.ui.prompt.text_clipboard import copy_text
 from pydantic_clai2.ui.prompt.transcript_view import TranscriptView
 
 ENTER = '\x1b[?1049h\x1b[?25l\x1b[?7l'
 """Alternate screen, hidden cursor, and no autowrap, which `render_diff` assumes."""
 LEAVE = '\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l'
-MODES_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u\x1b[?1000h\x1b[?1006h'
-"""Bracketed paste, xterm modified keys, Kitty disambiguation with alternate keys, and SGR mouse buttons.
+MODES_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u\x1b[?1000h\x1b[?1002h\x1b[?1006h'
+"""Bracketed paste, xterm modified keys, Kitty disambiguation with alternate keys, and SGR mouse buttons and drags.
 
 Kitty keeps a flag stack per screen, so these are pushed after `ENTER` and popped before `LEAVE`.
 """
-MODES_OFF = '\x1b[?1006l\x1b[?1000l\x1b[<u\x1b[>4;0m\x1b[?2004l'
+MODES_OFF = '\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[<u\x1b[>4;0m\x1b[?2004l'
 FRAME_INTERVAL = 1 / 60
 """Writes repaint at most this often; the editor's refresh loop paints what is left."""
 # Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
@@ -32,10 +34,9 @@ _UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
 """An OSC, or a lone ESC that may start one, still waiting for its terminator at the end of a write."""
 MAX_HELD_OSC = 4096
 """An unterminated control longer than this is malformed and dropped, as the transcript does."""
-SCROLL_KEYS = frozenset({'pageup', 'pagedown', 'mouse'})
-"""Decoded keys that move the transcript rather than whatever widget is pinned under it."""
+TRANSCRIPT_KEYS = frozenset({'pageup', 'pagedown', 'mouse'})
+"""Decoded keys that scroll or select the transcript rather than reach the widget pinned under it."""
 WHEEL_ROWS = 3
-_WHEEL = re.compile(r'\x1b\[<(\d+);\d+;\d+[mM]')
 
 
 class PromptSurface(io.StringIO):
@@ -75,6 +76,11 @@ class PromptSurface(io.StringIO):
         self._partial = False
         self._held = ''
         """The start of a control split across writes, kept until its terminator arrives."""
+        self.selection = Selection()
+        self._frame: ScreenBuffer | None = None
+        """The cells last painted, which a selection copies from."""
+        self._transcript_rows = 0
+        """How many of the frame's top rows show the transcript, the only ones a selection covers."""
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -83,6 +89,7 @@ class PromptSurface(io.StringIO):
     def resize_notice(self) -> None:
         """Repaint every cell next frame; signal handlers must not draw."""
         self._previous = None
+        self.selection.clear()
 
     @contextmanager
     def held(self, *, leave_screen: bool = True) -> Generator[None]:
@@ -158,25 +165,48 @@ class PromptSurface(io.StringIO):
         with self._lock:
             return self.transcript.markdown(render=render, width=width, changed=self.changed)
 
+    def clear(self, *, keep_current: bool = False) -> None:
+        """Forget the transcript and repaint every cell next frame; see `TranscriptBuffer.clear`."""
+        with self._lock:
+            self.transcript.clear(keep_current=keep_current)
+            self.view.follow()
+            self._partial = self._partial and keep_current
+            self._previous = None
+            self.selection.clear()
+            self._dirty = True
+
     def scroll(self, rows: int) -> None:
         """Scroll the transcript back (positive) or forward (negative)."""
         with self._lock:
             self.view.scroll(rows)
+            self.selection.clear()
             if self._live and not self._holds:
                 self._paint()
 
-    def scroll_key(self, key: str, data: str = '') -> None:
-        """Page or wheel through the transcript for one of `SCROLL_KEYS`; clicks scroll nothing."""
-        if key == 'mouse':
-            wheel = _WHEEL.fullmatch(data)
-            # Shift, Alt, and Ctrl add 4, 8, and 16 to the button; anything else is a click.
-            button = int(wheel[1]) & ~(4 | 8 | 16) if wheel else None
-            if button not in (64, 65):
-                return
-            rows = WHEEL_ROWS if button == 64 else -WHEEL_ROWS
-        else:
-            rows = self.page if key == 'pageup' else -self.page
-        self.scroll(rows)
+    def transcript_key(self, key: str, data: str = '') -> str | None:
+        """Page, wheel, or drag-select for one of `TRANSCRIPT_KEYS`; return the text a drag copied.
+
+        Reporting the wheel stops most terminals from selecting text themselves, so a left-button
+        drag highlights cells here and its release copies them to the clipboard.
+        """
+        if key != 'mouse':
+            self.scroll(self.page if key == 'pageup' else -self.page)
+            return None
+        report = mouse_report(data)
+        if report is None:
+            return None
+        if report.button in (WHEEL_UP, WHEEL_DOWN):
+            self.scroll(WHEEL_ROWS if report.button == WHEEL_UP else -WHEEL_ROWS)
+            return None
+        with self._lock:
+            if self.selection.feed(report) and self._frame is not None:
+                text = self.selection.text(self._frame, rows=self._transcript_rows)
+                if text.strip():
+                    copy_text(text, output=self.output)
+                    return text
+            elif self._live and not self._holds:
+                self._paint()
+        return None
 
     @property
     def page(self) -> int:
@@ -212,8 +242,10 @@ class PromptSurface(io.StringIO):
         self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
         for index, row in enumerate(rows):
             frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
+        self.selection.highlight(frame, rows=bottom, previous=self._frame)
         parts.append(render_diff(self._previous, frame))
-        self._previous = frame
+        self._previous = self._frame = frame
+        self._transcript_rows = bottom
         self._dirty = False
         self._painted_at = self.clock()
         if text := ''.join(parts):
@@ -242,6 +274,8 @@ class PromptSurface(io.StringIO):
             if self._partial:
                 self.transcript.write('\n')
                 self._partial = False
+            if self.selection.clear():
+                self._dirty = True
             if self._modes:
                 self.output.write(MODES_OFF)
                 self.output.flush()

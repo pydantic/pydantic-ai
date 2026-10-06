@@ -39,11 +39,13 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
 )
+from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent, SandboxCallOrder
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.grep_output import GrepOutput
+from pydantic_clai2.ui.rendering.tool_group import ToolCallGroup
 from pydantic_clai2.ui.rendering.tool_output import ToolOutput, print_tool_header, terminal_text, tool_arguments_text
 
 
@@ -260,15 +262,22 @@ class StreamRenderer:
         shell_lines: int = 20,
         grep_lines: int = 20,
         tool_arg_chars: int = 40,
+        tool_calls: ToolCallDisplay = 'detailed',
         renderers: Sequence[Callable[[AgentStreamEvent], RenderableType | None]] = (),
+        smooth: bool = True,
     ) -> None:
+        """`smooth=False` writes each part at once, for history that has already streamed."""
         self.console = console
+        self.smooth = smooth
         self._renderers = tuple(renderers)
         self._sandbox_calls = SandboxCallOrder()
         self.show_tool_output = show_tool_output
         self.tool_arg_chars = tool_arg_chars
-        self._tool_output = ToolOutput(console, shell_lines=shell_lines, show_output=show_tool_output)
+        self._tool_output = ToolOutput(
+            console, shell_lines=shell_lines, show_output=show_tool_output, tool_calls=tool_calls
+        )
         self._grep_output = GrepOutput(console, lines=grep_lines, show_output=show_tool_output)
+        self._group = ToolCallGroup(console, colors=color_system(console)) if tool_calls == 'grouped' else None
         self.smooth_seconds = smooth_seconds
         self._thinking = False
         self._heading_printed = False
@@ -293,12 +302,10 @@ class StreamRenderer:
                 if isinstance(event.part, TextPart):
                     self.rendered_text = True
             return
-        if isinstance(event, CapabilityEvent):
-            await self.finish()
-            if self._tool_output.render(event):
-                return
+        if isinstance(event, CapabilityEvent) and await self._render_capability(event):
+            return
         if isinstance(event, PartStartEvent) and isinstance(event.part, (TextPart, ThinkingPart)):
-            await self.finish()
+            await self._drain()
             self.stop_loading()
             thinking = isinstance(event.part, ThinkingPart)
             if thinking and not self.show_thinking:
@@ -315,9 +322,16 @@ class StreamRenderer:
             elif isinstance(event.delta, ThinkingPartDelta):
                 self._feed(event.delta.content_delta or '')
         elif isinstance(event, PartStartEvent) or isinstance(event, PartEndEvent) and event.index == self._index:
-            await self.finish()
+            await self._drain()
         elif isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent)):
             await self._render_tool(event)
+
+    async def _render_capability(self, event: CapabilityEvent) -> bool:
+        """Return whether the event was handled. A diff ends the tool-call group."""
+        await self._drain()
+        if self._group is not None and self._tool_output.prints_diff(event):
+            self._group.close()
+        return self._tool_output.render(event)
 
     async def _render_sandbox_call(self, event: AgentStreamEvent) -> bool:
         """Render a call from inside `run_code` like a direct one, under its `run_code` header."""
@@ -330,7 +344,7 @@ class StreamRenderer:
         return True
 
     async def _render_tool(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
-        await self.finish()
+        await self._drain()
         self.stop_loading()
         self._render_tool_event(event)
 
@@ -339,6 +353,14 @@ class StreamRenderer:
             return
         if isinstance(event, FunctionToolResultEvent):
             self._tool_output.discard_call(event.part.tool_call_id)
+        if self._group is not None:
+            if not isinstance(event, FunctionToolCallEvent):
+                return
+            if not self._tool_output.prints_diff(event):
+                self._group.add(event.part.tool_name)
+                return
+            # A count would repeat the header its diff prints under.
+            self._group.close()
         if self._grep_output.render(event):
             return
         if isinstance(event, FunctionToolCallEvent) and not self._tool_output.render_call(event):
@@ -368,7 +390,7 @@ class StreamRenderer:
             else None
         )
         output = self._block or self.console.file
-        if self.console.is_terminal:
+        if self.console.is_terminal and self.smooth:
             self._writer = self._make_writer(output)
             self._writer.start()
         self._markdown = MarkdownPipeline(
@@ -387,6 +409,9 @@ class StreamRenderer:
 
     def _feed(self, content: str) -> None:
         content = terminal_text(content)
+        if content and not self._heading_printed:
+            # Only a part that shows something ends the group; reasoning can arrive with no text.
+            self._close_group()
         if self._block is not None:
             self._block.extend(content)
         if content and not self._heading_printed:
@@ -404,7 +429,16 @@ class StreamRenderer:
         self._markdown.line(line)
 
     async def finish(self) -> None:
-        """Drain rendered Markdown before the next part, tool, or prompt appears."""
+        """Drain rendered Markdown and end any tool-call group before a plugin rendering, a widget, or the prompt appears."""
+        await self._drain()
+        self._close_group()
+
+    def _close_group(self) -> None:
+        if self._group is not None:
+            self._group.close()
+
+    async def _drain(self) -> None:
+        """Flush the open Markdown part. Tool calls keep counting into their group around it."""
         if self._buffer:
             self._line(self._buffer)
         if self._markdown is not None:
@@ -421,6 +455,7 @@ class StreamRenderer:
     async def abort(self) -> None:
         """Discard pending output on cancellation and let the drainer terminate."""
         self._tool_output.abort()
+        self._close_group()
         if self._block is not None:
             self._block.freeze()
         writer, self._writer = self._writer, None
