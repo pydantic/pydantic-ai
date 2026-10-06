@@ -217,7 +217,7 @@ async def test_live_prompt_output_printed_during_a_group_lands_after_its_line() 
     console.print('> /set')  # A command typed mid-turn echoes while the group is open.
     await feed(renderer, 'shell')
     await renderer.finish()
-    assert _rows(surface, width=80)[:3] == ['● shell 3', '> /set', '']
+    assert _rows(surface, width=80)[:3] == ['● shell 3', '', '> /set']
 
 
 async def test_live_prompt_wraps_the_group_again_for_a_new_width() -> None:
@@ -228,7 +228,7 @@ async def test_live_prompt_wraps_the_group_again_for_a_new_width() -> None:
     await feed(renderer, 'shell shell grep read_file')
     await renderer.finish()
     assert _rows(surface, width=20)[:3] == ['● shell 2, grep 1', '● read_file 1', '']
-    assert _rows(surface, width=80)[:2] == ['● shell 2, grep 1, read_file 1', '']
+    assert _rows(surface, width=80)[:3] == ['● shell 2, grep 1, read_file 1', '', '']
 
 
 async def test_abort_ends_the_line() -> None:

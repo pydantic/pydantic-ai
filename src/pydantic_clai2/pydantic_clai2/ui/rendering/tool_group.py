@@ -68,7 +68,12 @@ class ToolCallGroup:
         """End the line and leave a blank one, like any other tool output. Does nothing when empty."""
         if self._rows[-1]:
             self._end_line(self._rows[-1])
-            self.console.print()
+            if self._block is None:
+                self.console.print()
+            else:
+                # The blank line stays part of the group, above anything printed while it was open.
+                self._block.extend('\n')
+                self._write('\n')
             self._rows = [[]]
             self._block = None
 
@@ -93,5 +98,8 @@ class ToolCallGroup:
         """The whole group again, for a width or theme it was not drawn at; `source` holds one name per call."""
         rows: list[list[Run]] = [[]]
         for name in source.splitlines():
-            _count(rows, name, width=width)
-        return ''.join(self._ansi(row, width=width) for row in rows)
+            if name:
+                _count(rows, name, width=width)
+        # `close` ends the source with an empty line for the group's blank one.
+        blank = '\n' if source.endswith('\n\n') else ''
+        return ''.join(self._ansi(row, width=width) for row in rows) + blank
