@@ -62,9 +62,10 @@ import-based engine like this one, so it is not part of the configuration below.
 
 ## Start from `Coder`, `Researcher`, or your own
 
-**Use `Coder` by default.** Omit `PAI_AGENT` to use [`Coder`](coder.md),
-with filesystem access and unrestricted shell commands inside the sandbox.
-No agent module is needed:
+**Use `Coder` by default.** Omit `PAI_AGENT` to use [`Coder`](coder.md) in a
+[`LocalWorkspace`](../workspace.md) on the checkout, with filesystem access and unrestricted
+shell commands inside the sandbox. Commands get the step's environment minus provider
+credential variables (`OPENAI_*`, `ANTHROPIC_*` and the like). No agent module is needed:
 
 ```yaml
 ---
@@ -75,7 +76,7 @@ permissions:
   contents: read
   issues: read
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: openai/gpt-5
@@ -101,11 +102,14 @@ steps:
 [`Researcher`](researcher.md) needs its own extra for the local search and fetch
 fallbacks, which is what the `steps:` block installs, and its searches need the hosts it
 reaches on the workflow's `network:` allowlist. `pydantic_ai_harness.coder:coder_agent` is
-the same shape for the coder agent, and is worth naming explicitly when a workflow wants
-the default composition but also wants `PAI_AGENT` set for clarity.
+the same shape for the coder agent. It differs from the default composition in one way: its
+`LocalWorkspace` passes commands only `PATH`, `HOME` and the locale variables, not the step's
+environment.
 
 **Your own agent.** The rest of this page. Reach for it when the agent needs its own tools,
-its own instructions, or a composition the harness does not ship.
+its own instructions, or a composition the harness does not ship. A harness capability that
+reads files or runs commands, such as `Coder`, needs a workspace: add `LocalWorkspace('.')`
+next to it for the checkout.
 
 ## The agent module
 
@@ -233,7 +237,7 @@ permissions:
   contents: read
   issues: read
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: openai/gpt-5
@@ -294,15 +298,16 @@ Key by key:
 
 The compile error you get from a missing `imports:` line carries a tip naming
 `github/gh-aw/.github/workflows/shared/pydantic.md@<version>`. That is gh-aw's own older
-copy of the definition. Ignore it and write the `pydantic/pydantic-ai-harness` line above;
+copy of the definition. Ignore it and write the `pydantic/pydantic-ai` line above;
 the definition in this repository is the one that is maintained.
 
 **Freezing the definition.** `@main` is re-resolved on every compile, so a change to the
 definition reaches you the next time you run `gh aw compile`. To hold a fixed version,
-import a commit SHA that contains `gh-aw/pydantic.md`, or a release tag cut after the
-definition landed on `main`; tags older than the file return a 404 at compile time. That
-ref pins the definition. The harness package version is pinned separately, by
-`engine: version:` in the definition, and a workflow's own `engine: version:` overrides it.
+import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, or a release
+tag cut after the harness moved into this repository; older tags do not carry the file and
+return a 404 at compile time. That ref pins the definition. The harness package version
+is pinned separately, by `engine: version:` in the definition, and a workflow's own
+`engine: version:` overrides it.
 
 ## Compile and commit
 
@@ -314,7 +319,7 @@ The compiler writes:
 
 - `.github/workflows/triage.lock.yml`, the GitHub Actions workflow that actually runs.
 - `.github/aw/actions-lock.json`, the SHA pins for every action the lock uses.
-- `.github/aw/imports/pydantic/pydantic-ai-harness/<sha>/gh-aw_pydantic.md`, a
+- `.github/aw/imports/pydantic/pydantic-ai/<sha>/src_pydantic_ai_harness_gh-aw_pydantic.md`, a
   byte-identical cache of the imported definition at the resolved SHA.
 - `.github/aw/imports/.gitattributes` and a top-level `.gitattributes` marking generated
   files.
@@ -713,7 +718,7 @@ Things to know before you do:
 
 **`error: invalid engine: pydantic-ai. Valid engines are: claude, codex, copilot, gemini,
 pi.`** The `imports:` line is missing. Add
-`pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
+`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
 suggests.
 
 **`error: invalid engine.model for engine 'pydantic-ai': for universal consumer engines,

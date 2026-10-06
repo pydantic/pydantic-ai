@@ -5,18 +5,27 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import TYPE_CHECKING, Literal
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
+from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
+from pydantic_ai_harness._workspace import raise_tool_failure
 from pydantic_ai_harness.memory._store import (
+    FileStore,
     MemoryConflictError,
     MemoryMutation,
     MemoryOperation,
+    MemoryPathEscapeError,
     MemorySearchMatch,
     MemorySearchResult,
     MemoryStore,
@@ -272,21 +281,82 @@ def _apply_write(existing: str | None, content: str, old_text: str | None, name:
     return existing.replace(old_text, content, 1), 'updated'
 
 
+_T = TypeVar('_T')
+
+_IN_OPERATION: ContextVar[bool] = ContextVar('pydantic_ai_harness.memory.in_operation', default=False)
+"""Whether a memory tool is running as `Memory`'s durable operation, so it runs its body directly."""
+
+
+async def run_as_operation(call: Awaitable[_T]) -> _T | RetryRequest:
+    """Run a memory tool's body as the durable operation it routes through."""
+    token = _IN_OPERATION.set(True)
+    try:
+        return await retry_as_result(call)
+    finally:
+        _IN_OPERATION.reset(token)
+
+
+@dataclass(frozen=True)
+class MemoryToolOperations(Generic[AgentDepsT]):
+    """The durable operations a `Memory` capability runs each memory tool call through."""
+
+    write_memory: Callable[[RunContext[AgentDepsT], str, str, str | None], Awaitable[MemoryWriteResult | RetryRequest]]
+    read_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[str | RetryRequest]]
+    delete_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[MemoryDeleteResult | RetryRequest]]
+    search_memory: Callable[[RunContext[AgentDepsT], str], Awaitable[MemorySearchResponse | RetryRequest]]
+
+
 class MemoryToolset(FunctionToolset[AgentDepsT]):
     """Scoped read/write/delete/search tools with CAS and durable idempotency.
 
     The stable `memory` ID lets Temporal and Prefect wrap this static toolset.
-    DBOS does not currently turn an ordinary `FunctionToolset` into a durable
-    step, so applications requiring DBOS durability must provide that wrapper.
+    `Memory` passes `operations` so that each tool call runs as one of its
+    durable operations, whose result durable execution records instead of
+    repeating the call on recovery, including on DBOS, which runs function
+    tools in workflow code. A `MemoryToolset` built without `operations` runs
+    its tools directly.
     """
 
-    def __init__(self, capability: Memory[AgentDepsT]) -> None:
+    def __init__(
+        self, capability: Memory[AgentDepsT], *, operations: MemoryToolOperations[AgentDepsT] | None = None
+    ) -> None:
         super().__init__(id='memory')
         self._capability = capability
+        self._operations = operations
         self.add_function(self.write_memory, name='write_memory')
         self.add_function(self.read_memory, name='read_memory')
         self.add_function(self.delete_memory, name='delete_memory')
         self.add_function(self.search_memory, name='search_memory')
+
+    def _resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
+        """Resolve the scope through the run's copy of the capability, which shares this toolset.
+
+        The copy holds the scope `for_run` resolved once for the run. A durable worker's tree holds
+        the construction-time capability instead, which resolves the scope from `ctx`.
+        """
+        from pydantic_ai_harness.memory._capability import Memory
+
+        run_capability = self._capability
+
+        def select(capability: AbstractCapability[AgentDepsT]) -> None:
+            nonlocal run_capability
+            # A wrapper such as `prefix_tools()` may be visited in place of the `Memory` it wraps.
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, Memory) and capability.get_toolset() is self:
+                run_capability = capability
+
+        if ctx.root_capability is not None:
+            ctx.root_capability.apply(select)
+        return run_capability.resolve_scope(ctx)
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools = await super().get_tools(ctx)
+        store, _ = self._resolve_scope(ctx)
+        # A store with its own workspace need not inherit the run's read-only policy.
+        if isinstance(store, FileStore) and store.workspace is None and ctx.workspace.read_only:
+            return {name: tool for name, tool in tools.items() if name not in {'write_memory', 'delete_memory'}}
+        return tools
 
     async def write_memory(
         self,
@@ -309,11 +379,13 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             file: Memory filename; defaults to `MEMORY.md`.
             old_text: Exact passage to replace, which must occur once.
         """
+        if self._operations is not None and not _IN_OPERATION.get():
+            return raise_retry(await self._operations.write_memory(ctx, content, file, old_text))
         capability = self._capability
         name = normalize_filename(file)
         if old_text is None and not content.strip():
             raise ModelRetry('Nothing to write -- pass the text to append, or `old_text` to replace.')
-        store, scope = capability.resolve_scope(ctx)
+        store, scope = self._resolve_scope(ctx)
         path = f'{scope}/{name}'
         operation = _operation(ctx, scope, 'write', path, {'content': content, 'file': file, 'old_text': old_text})
         scope_hash = _scope_hash(scope)
@@ -361,6 +433,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     _set_span_result(span, 'ok', chars=len(updated), replayed=mutation.replayed)
                     return result
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
+            except WorkspaceError as exc:
+                _set_span_error(span, exc)
+                raise_tool_failure(exc)
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -375,8 +453,10 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             ctx: Framework-provided run context.
             file: Memory filename returned by injection or search.
         """
+        if self._operations is not None and not _IN_OPERATION.get():
+            return raise_retry(await self._operations.read_memory(ctx, file))
         name = normalize_filename(file)
-        store, scope = self._capability.resolve_scope(ctx)
+        store, scope = self._resolve_scope(ctx)
         with ctx.tracer.start_as_current_span(
             'memory.read', record_exception=False, set_status_on_exception=False
         ) as span:
@@ -390,6 +470,9 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     )
                 _set_span_result(span, 'ok', chars=len(memory_file.content))
                 return memory_file.content + (_READ_TRUNCATION_MARKER if memory_file.truncated else '')
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -404,10 +487,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             ctx: Framework-provided run context.
             file: Memory filename to delete.
         """
+        if self._operations is not None and not _IN_OPERATION.get():
+            return raise_retry(await self._operations.delete_memory(ctx, file))
         name = normalize_filename(file)
         if name == MAIN_FILENAME:
             raise ModelRetry(f'{MAIN_FILENAME} is the main notebook; edit it with `write_memory` instead.')
-        store, scope = self._capability.resolve_scope(ctx)
+        store, scope = self._resolve_scope(ctx)
         path = f'{scope}/{name}'
         operation = _operation(ctx, scope, 'delete', path, {'file': file})
         with ctx.tracer.start_as_current_span(
@@ -437,6 +522,12 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     _set_span_result(span, result['status'], replayed=mutation.replayed)
                     return result
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
+            except WorkspaceError as exc:
+                _set_span_error(span, exc)
+                raise_tool_failure(exc)
+            except MemoryPathEscapeError as exc:
+                _set_span_error(span, exc)
+                raise ModelRetry(str(exc)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -451,9 +542,11 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             ctx: Framework-provided run context.
             query: Terms to find in memory filenames and content.
         """
+        if self._operations is not None and not _IN_OPERATION.get():
+            return raise_retry(await self._operations.search_memory(ctx, query))
         query = _normalize_search_query(query)
         capability = self._capability
-        store, scope = capability.resolve_scope(ctx)
+        store, scope = self._resolve_scope(ctx)
         prefix = f'{scope}/'
         with ctx.tracer.start_as_current_span(
             'memory.search', record_exception=False, set_status_on_exception=False

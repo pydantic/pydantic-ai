@@ -22,25 +22,18 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2._app import create_shell
-from pydantic_clai2._session import Session
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.forks import USAGE, Forks, parse_fork_args
-from pydantic_clai2.image_input import ImageInput
-from pydantic_clai2.interrupts import Interrupts
-from pydantic_clai2.live_prompt import LivePrompt
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
-
-pytestmark = pytest.mark.anyio
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER
 
 PromptT = TypeVar('PromptT')
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def last_prompt(messages: list[ModelMessage]) -> str:
@@ -496,13 +489,14 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
         await model.started.wait()
         return '!make test'
 
-    async def run_shell_command(command: str, *, console: Console, interrupts: object) -> None:
+    async def run_shell_command(command: str, *, console: Console, interrupts: object) -> str:
         # The fork finishes while the command owns the terminal; its output must wait.
         model.release.set()
         for _ in range(20):
             await asyncio.sleep(0.01)
         assert 'FORK #1' not in output.getvalue()
         console.print(f'ran {command}')
+        return f'ran {command}'
 
     monkeypatch.setattr('pydantic_clai2._app.run_shell_command', run_shell_command)
 

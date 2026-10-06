@@ -17,13 +17,6 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, T
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import CodeMode
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
     return [part for message in messages for part in message.parts if isinstance(part, part_type)]

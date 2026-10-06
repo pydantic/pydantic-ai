@@ -23,15 +23,14 @@ from pydantic_ai.providers.github_copilot import (
     GitHubCopilotDeviceAuthorization,
     GitHubCopilotOAuthFlow,
 )
-from pydantic_clai2 import chat, github_copilot
-from pydantic_clai2.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.model_catalog import github_copilot_models
-from pydantic_clai2.model_menu import ModelMenu, open_add_model_menu
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2 import chat
+from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models import github_copilot
+from pydantic_clai2.models.model_catalog import github_copilot_models
+from pydantic_clai2.ui.menus.model_menu import ModelMenu, open_add_model_menu
 from tests.clai2.menu_script import Script, make_context, pick, typed
 from tests.clai2.test_app_edges import inputs
-
-pytestmark = pytest.mark.anyio
 
 CREDENTIALS = GitHubCopilotCredentials(access_token='fake-access', token_type='bearer', scope='')
 

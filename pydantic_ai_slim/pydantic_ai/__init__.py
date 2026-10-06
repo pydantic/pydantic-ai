@@ -22,6 +22,7 @@ from .concurrency import (
     ConcurrencyLimit,
     ConcurrencyLimiter,
 )
+from .conversation import Conversation, ConversationTypeAdapter
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -49,6 +50,7 @@ from .exceptions import (
     ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
+    UsageExtractionFailedWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -244,6 +246,7 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
+    'UsageExtractionFailedWarning',
     'ModelRetry',
     'ToolFailed',
     'ModelAPIError',
@@ -418,6 +421,8 @@ __all__ = (
     'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'Conversation',
+    'ConversationTypeAdapter',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
 

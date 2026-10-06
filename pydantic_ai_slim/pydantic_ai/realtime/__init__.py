@@ -42,7 +42,7 @@ from .model import (
     WebRTCSession,
     infer_realtime_model,
 )
-from .profiles import RealtimeModelProfile, RealtimeModelProfileSpec
+from .profiles import AsyncToolCallMode, RealtimeModelProfile, RealtimeModelProfileSpec
 from .settings import (
     AudioRetention,
     KnownRealtimeTranscriptionModelName,
@@ -59,6 +59,7 @@ __all__ = (
     # root `pydantic_ai`.
     # The lower-level codec vocabulary (`RealtimeConnection`, codec events, turn-control verbs, and the
     # profile helpers) lives in [`pydantic_ai.realtime.codec`][pydantic_ai.realtime.codec].
+    'AsyncToolCallMode',
     'AudioRetention',
     'RealtimeInputSpeechStartEvent',
     'RealtimeInputSpeechEndEvent',

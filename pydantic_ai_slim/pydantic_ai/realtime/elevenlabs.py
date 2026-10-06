@@ -135,8 +135,8 @@ class ElevenLabsRealtimeModelSettings(RealtimeModelSettings, total=False):
     `tool_choice` is unsupported and raises for any value other than `'auto'`: the agent's client
     tools are workspace state rather than a per-conversation set, so a restriction could not be
     enforced on the wire; restrict the run's tools with a filtered toolset instead. `max_tokens`,
-    `parallel_tool_calls`, and `thinking` have no per-conversation surface on the agent WebSocket and
-    are silently ignored, per the shared settings contract. `turn_detection` cannot be configured
+    `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation surface on the
+    agent WebSocket and are silently ignored, per the shared settings contract. `turn_detection` cannot be configured
     (ElevenLabs' server-side turn model is always on), `input_transcription_model=None` cannot be
     honored (ASR cannot be disabled per-conversation), and `reconnect` is unsupported (the WebSocket
     has no session resumption), so each of those raises rather than silently under-delivering.

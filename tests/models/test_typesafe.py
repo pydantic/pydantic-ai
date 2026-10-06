@@ -70,7 +70,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='typesafe-sdk not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -2410,7 +2409,7 @@ async def test_native_tools_rejected(allow_model_requests: None, typesafe_model:
 
 
 async def test_output_validator_retry_gets_the_same_answer(allow_model_requests: None):
-    """Jev cannot revise: a `ModelRetry` goes out as history and the same question gets the same answer."""
+    """Jev cannot revise: a `ModelRetry` goes out under `done` and the same question gets the same answer."""
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
@@ -2431,8 +2430,8 @@ async def test_output_validator_retry_gets_the_same_answer(allow_model_requests:
     assert len(seen) == 2
     assert seen[1]['state'] == snapshot(
         {
-            'history': [
-                {'user': 'Delete everything.'},
+            'text': 'Delete everything.',
+            'done': [
                 {'tool_call': {'name': 'final_result', 'args': {'response': True}}},
                 {
                     'retry': """\
@@ -2441,7 +2440,7 @@ Be sure.
 Fix the errors and try again.\
 """
                 },
-            ]
+            ],
         }
     )
 

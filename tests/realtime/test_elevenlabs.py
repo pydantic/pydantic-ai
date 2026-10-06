@@ -70,7 +70,7 @@ with try_import() as imports_successful:
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='websockets not installed')
 
 AGENT_ID = 'agent_0101test'
 
@@ -306,6 +306,7 @@ def test_profile() -> None:
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_thinking=False,
+        async_tool_call_mode='never',
         supports_async_tool_calls=False,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,

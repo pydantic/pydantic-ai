@@ -22,20 +22,13 @@ from pydantic_ai import Agent, AgentStreamEvent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugins import PluginHost, TurnEnd, TurnStart
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.splash import Splash
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import Plugin, TurnEnd, TurnStart
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_clai2.ui.rendering.splash import Splash
 
 
 async def test_existing_handler_and_structured_output() -> None:
@@ -67,7 +60,7 @@ async def test_set_without_initial_model(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
         pipe.send_text(
-            'hello\n/set model test\n/set display.thinking false\n/set run.request_limit 123\nhello\n/exit\n'
+            'hello\r/set model test\r/set display.thinking false\r/set run.request_limit 123\rhello\r/exit\r'
         )
         await chat(Agent(), deps=None, console=Console(file=output), store=store)
     assert 'Choose a model first' in output.getvalue()
@@ -83,26 +76,23 @@ async def test_drop_in_plugin_commands_and_hooks(tmp_path: Path) -> None:
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'greeter.py').write_text(
         'from pydantic_clai2.commands import Command\n'
-        'from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart\n'
-        'def activate(host: PluginHost) -> None:\n'
-        "    host.commands.register(Command(name='greet', description='Plugin greeting', "
-        "handler=lambda args: f'Hello {args[0]}'))\n"
-        "    @host.on('session_start')\n"
-        '    async def started(event: SessionStart) -> None:\n'
-        "        host.console.print(f'started with model {event.settings.model}')\n"
-        "    @host.on('turn_start')\n"
-        '    async def rewrite(event: TurnStart) -> None:\n'
+        'from pydantic_clai2.plugins import Plugin, SessionEnd, SessionStart, TurnEnd, TurnStart\n'
+        'class Greeter(Plugin):\n'
+        '    def get_commands(self):\n'
+        "        return [Command(name='greet', description='Plugin greeting', "
+        "handler=lambda args: f'Hello {args[0]}')]\n"
+        '    async def on_session_start(self, event: SessionStart) -> None:\n'
+        "        self.host.console.print(f'started with model {event.settings.model}')\n"
+        '    async def on_turn_start(self, event: TurnStart) -> None:\n'
         '        event.text = event.text.upper()\n'
-        "    @host.on('turn_end')\n"
-        '    async def ended(event: TurnEnd) -> None:\n'
-        "        host.console.print(f'turn {event.outcome}: {event.text}')\n"
-        "    @host.on('session_end')\n"
-        '    async def stopped(event: SessionEnd) -> None:\n'
-        "        host.console.print(f'stopped: {event.reason}')\n"
+        '    async def on_turn_end(self, event: TurnEnd) -> None:\n'
+        "        self.host.console.print(f'turn {event.outcome}: {event.text}')\n"
+        '    async def on_session_end(self, event: SessionEnd) -> None:\n'
+        "        self.host.console.print(f'stopped: {event.reason}')\n"
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/help\n/greet Mike\nhello\n/plugins list\n/exit\n')
+        pipe.send_text('/help\r/greet Mike\rhello\r/plugins list\r/exit\r')
         await chat(
             Agent(TestModel(custom_output_text='hi')),
             deps=None,
@@ -130,7 +120,7 @@ async def test_coder_is_a_builtin_plugin(tmp_path: Path) -> None:
 
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/plugins list\nhello\n/plugins disable coder\nhello\n/plugins remove coder\n/exit\n')
+        pipe.send_text('/plugins list\rhello\r/plugins disable coder\rhello\r/plugins remove coder\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='hi'), deps_type=type(None)),
             deps=None,
@@ -140,7 +130,7 @@ async def test_coder_is_a_builtin_plugin(tmp_path: Path) -> None:
             builtin_plugins=DEFAULT_PLUGINS,
         )
     text = output.getvalue()
-    assert 'coder: pydantic_ai_harness.coder:Coder (built-in) (enabled, loaded)' in text
+    assert 'coder: pydantic_clai2.builtin_plugins.coder (built-in) (enabled, loaded)' in text
     assert 'Disabled coder.' in text
     assert 'coder is built in; restored its defaults.' in text
     assert store.plugins() == []
@@ -152,10 +142,9 @@ async def test_plugin_can_cancel_a_turn(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'gate.py').write_text(
-        'from pydantic_clai2.plugins import PluginHost, TurnStart\n'
-        'def activate(host: PluginHost) -> None:\n'
-        "    @host.on('turn_start')\n"
-        '    async def gate(event: TurnStart) -> None:\n'
+        'from pydantic_clai2.plugins import Plugin, TurnStart\n'
+        'class Gate(Plugin):\n'
+        '    async def on_turn_start(self, event: TurnStart) -> None:\n'
         "        if event.text == 'stop':\n"
         "            event.cancel('not today')\n"
         "        elif event.text == 'boom':\n"
@@ -163,7 +152,7 @@ async def test_plugin_can_cancel_a_turn(tmp_path: Path) -> None:
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('stop\nboom\n/exit\n')
+        pipe.send_text('stop\rboom\r/exit\r')
         await chat(Agent(TestModel(custom_output_text='never')), deps=None, console=Console(file=output), store=store)
     text = output.getvalue()
     assert 'Turn cancelled by a plugin: not today' in text
@@ -208,6 +197,7 @@ def test_set_autocomplete() -> None:
     codex = list(commands.get_completions(Document('/set model openai-codex'), CompleteEvent()))
     assert {item.text for item in codex} >= {
         'openai-codex:',
+        'openai-codex:gpt-6.1-sol',
         'openai-codex:gpt-6-astra',
         'openai-codex:gpt-6-sol',
         'openai-codex:gpt-6-luna',
@@ -234,13 +224,7 @@ async def test_prompt_frame_stays_visible_during_tools(
     finish = anyio.Event()
     done = anyio.Event()
 
-    transcript: list[str] = []
-
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            transcript.append(text)
-            return super().write(text)
-
         def paint(self, rows: tuple[str, ...]) -> None:
             nonlocal frame
             super().paint(rows)
@@ -256,7 +240,7 @@ async def test_prompt_frame_stays_visible_during_tools(
                 if any(text in line for line in frame):
                     event.set()
 
-    monkeypatch.setattr('pydantic_clai2.live_prompt.PromptSurface', Surface)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     output = io.StringIO()
     store = SettingsStore(tmp_path / 'config.db')
     terminal = DummyOutput()
@@ -316,12 +300,12 @@ async def test_prompt_frame_stays_visible_during_tools(
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             bottom = max(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             assert bottom - top == 3
-            pipe.send_text('\n')
+            pipe.send_text('\r')
             await working.wait()
             pipe.send_text('next message')
             await drafted.wait()
             assert any(line.startswith('next message') for line in frame)
-            pipe.send_text('\n/set display.thinking false\nretained draft')
+            pipe.send_text('\r/set display.thinking false\rretained draft')
             await queued.wait()
             follow_up = next(row for row, line in enumerate(frame) if 'Follow-up: next message' in line)
             command = next(row for row, line in enumerate(frame) if 'Command: /set display.thinking false' in line)
@@ -336,20 +320,20 @@ async def test_prompt_frame_stays_visible_during_tools(
             finish.set()
             await second.wait()
             assert any('retained draft' in line for line in frame)
-            pipe.send_text('\x15/exit\n')
+            pipe.send_text('\x15/exit\r')
             await done.wait()
     assert 'Goodbye.' in output.getvalue()
     assert 'Turn not saved' not in output.getvalue()
     assert calls == 1
     assert not store.load().thinking
-    text = ''.join(transcript)
-    assert text.index('Finished work') < text.index('> next message\n')
+    printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    assert printed.index('Finished work') < printed.index('> next message\n')
 
 
 async def test_prompt_loop_commands(tmp_path: Path) -> None:
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/help\nhello\n/new\n/exit\n')
+        pipe.send_text('/help\rhello\r/new\r/exit\r')
         await chat(
             Agent(TestModel(custom_output_text='hello back')),
             deps=None,
@@ -428,15 +412,15 @@ def test_config_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert SettingsStore().path == tmp_path / 'pydantic-clai2/config.db'
 
 
-async def test_add_model_and_select_saved_model(tmp_path: Path) -> None:
+async def test_model_adds_and_selects_any_model(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/model unknown\n/add_model test\n/model test\nhello\n/exit\n')
+        pipe.send_text('/model unknown\r/add_model test\r/model test\rhello\r/exit\r')
         await chat(Agent(), deps=None, console=Console(file=output, width=200), store=store)
-    assert 'Model not added: unknown. Use /add_model unknown first.' in output.getvalue()
+    assert 'Model not added' not in output.getvalue()
     assert 'success' in output.getvalue()
-    assert store.models() == ['test']
+    assert store.models() == ['test', 'unknown']
     assert store.load().model == 'test'
 
 
@@ -457,18 +441,17 @@ async def test_live_editor_interrupts_slow_turn_hooks(
         finally:
             cleaned.set()
 
-    def activate(host: PluginHost[None]) -> None:
-        @host.on('turn_start')
-        async def before(event: TurnStart) -> None:
+    class Slow(Plugin):
+        async def on_turn_start(self, event: TurnStart) -> None:
             if phase == 'start':
                 await wait()
 
-        @host.on('turn_end')
-        async def after(event: TurnEnd) -> None:
+        async def on_turn_end(self, event: TurnEnd) -> None:
             if phase == 'end':
                 await wait()
 
-    module.__dict__['activate'] = activate
+    Slow.__module__ = module.__name__
+    module.__dict__['Slow'] = Slow
     monkeypatch.setitem(sys.modules, module.__name__, module)
     store = SettingsStore(tmp_path / 'config.db')
     store.save_plugin(PluginSettings(id='slow', factory=module.__name__))
@@ -486,11 +469,11 @@ async def test_live_editor_interrupts_slow_turn_hooks(
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(run)
-            pipe.send_text('hello\n')
+            pipe.send_text('hello\r')
             await started.wait()
             pipe.send_text('draft' + key)
             await cleaned.wait()
-            pipe.send_text('\x15/exit\n')
+            pipe.send_text('\x15/exit\r')
             await done.wait()
     assert 'Goodbye.' in output.getvalue()
     if phase == 'start':
@@ -526,7 +509,7 @@ async def test_absolute_screenshot_paths_are_prompts(tmp_path: Path, terminal: b
 
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text(f'\x1b[200~{text}\x1b[201~\n/missing-command\n/exit\n')
+        pipe.send_text(f'\x1b[200~{text}\x1b[201~\r/missing-command\r/exit\r')
         await chat(
             Agent(TestModel(custom_output_text='received screenshot path'), deps_type=type(None), capabilities=[hooks]),
             deps=None,

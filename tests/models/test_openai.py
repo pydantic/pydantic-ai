@@ -63,6 +63,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -85,7 +86,7 @@ from .mock_openai import (
 )
 
 with try_import() as imports_successful:
-    from openai import APIConnectionError, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
+    from openai import APIConnectionError, APIError, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion import ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
@@ -121,7 +122,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -319,6 +319,23 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
             ),
         ]
     )
+
+
+async def test_response_without_id_created_or_finish_reason(allow_model_requests: None):
+    """OpenAI-compatible providers may send an empty `id`, a zero `created`, and no `finish_reason`.
+
+    These build the same response as a stream without them does: none of them is reported as a provider value.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    c.id = ''
+    c.created = 0
+    c.choices[0].finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+
+    response = await direct_model_request(model, [ModelRequest.user_text_prompt('hello')])
+    assert response.provider_response_id is None
+    assert response.provider_details is None
+    assert response.finish_reason == 'stop'
 
 
 async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: None):
@@ -1831,10 +1848,48 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/xml') is True
     assert _is_text_like_media_type('application/yaml') is True
     assert _is_text_like_media_type('application/x-yaml') is True
+    assert _is_text_like_media_type('application/toml') is True
     assert _is_text_like_media_type('application/ld+json') is True
     assert _is_text_like_media_type('application/soap+xml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
+
+
+async def test_toml_document_as_binary_content_input(allow_model_requests: None):
+    """TOML `BinaryContent` is inlined as text, like YAML is.
+
+    Unit test, not VCR: `BinaryContent.from_path` infers `application/toml` (RFC 9519) for `.toml`
+    files, and before it counted as text-like the mapping raised `Unsupported binary content type`
+    before any request was made, so this pins the request shape the mock client receives.
+    """
+    toml_content = BinaryContent(data=b'[project]\nname = "demo"', media_type='application/toml')
+
+    c = completion_message(ChatCompletionMessage(content='A pyproject file.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', toml_content])
+    assert result.output == snapshot('A pyproject file.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="312a73" type="application/toml"-----
+[project]
+name = "demo"
+-----END FILE id="312a73"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
 
 
 async def test_video_url_not_supported(allow_model_requests: None):
@@ -2046,6 +2101,78 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'o3-mini'
     assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
+
+
+_STREAM_ERROR_SSE_CHUNK = (
+    b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"gpt-4o",'
+    b'"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
+)
+_STREAM_ERROR_SSE_ERROR = b'data: {"error":{"message":"upstream model failed","type":"server_error","code":500}}\n\n'
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(_STREAM_ERROR_SSE_ERROR, id='first-chunk'),
+        pytest.param(_STREAM_ERROR_SSE_CHUNK + _STREAM_ERROR_SSE_ERROR, id='mid-stream'),
+    ],
+)
+async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, content: bytes) -> None:
+    """An error object inside a 200 SSE stream surfaces as `ModelAPIError`, with no status code invented for it.
+
+    A mock transport stands in for a cassette because no real provider returns such a stream on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8722
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'gpt-4o', provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client)
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with Agent(model).run_stream('hello') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'upstream model failed'
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, APIError)
+    assert cause.body == snapshot({'message': 'upstream model failed', 'type': 'server_error', 'code': 500})
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_stream_error_object_falls_back(allow_model_requests: None) -> None:
+    """`FallbackModel`'s default `fallback_on` covers an error object that opens a 200 SSE stream.
+
+    https://github.com/pydantic/pydantic-ai/issues/8722
+    """
+    requests_made = {'primary': 0, 'fallback': 0}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        model_name = json.loads(request.content)['model']
+        if model_name == 'primary':
+            requests_made['primary'] += 1
+            return httpx2.Response(200, content=_STREAM_ERROR_SSE_ERROR, headers={'content-type': 'text/event-stream'})
+        requests_made['fallback'] += 1
+        return httpx2.Response(
+            200,
+            content=_STREAM_ERROR_SSE_CHUNK + b'data: [DONE]\n\n',
+            headers={'content-type': 'text/event-stream'},
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        provider = OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client)
+        model = FallbackModel(
+            OpenAIChatModel('primary', provider=provider), OpenAIChatModel('fallback', provider=provider)
+        )
+        async with Agent(model).run_stream('hello') as result:
+            output = await result.get_output()
+
+    assert output == 'Hello'
+    assert requests_made == {'primary': 1, 'fallback': 1}
 
 
 @pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
@@ -5058,9 +5185,7 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
-    profile = merge_profile(
-        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
-    )
+    profile = merge_profile(OpenAIModelProfile(supports_forced_tool_choice=False), openai_model_profile('stub'))
 
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -5079,9 +5204,7 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
     """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
-    profile = merge_profile(
-        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
-    )
+    profile = merge_profile(OpenAIModelProfile(supports_forced_tool_choice=False), openai_model_profile('stub'))
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -5708,6 +5831,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -6190,7 +6314,7 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
@@ -6215,13 +6339,13 @@ async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model
     Regression for https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r3127128012 — the tuple
     branch in `_get_tool_choice` previously sent the forced tool choice without consulting the model
     profile, which would push an unsupported parameter to the API for models that have
-    `openai_supports_tool_choice_required=False`. Registers two tools so `resolve_tool_choice` returns
+    `supports_forced_tool_choice=False`. Registers two tools so `resolve_tool_choice` returns
     `('required', {chosen})` rather than collapsing to scalar `'required'`.
     """
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     tools = [
@@ -6639,3 +6763,51 @@ async def test_openai_enum_member_docstrings_reach_the_wire(
             },
         }
     )
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('stream', 'content', 'content_type', 'cause'),
+    [
+        pytest.param(False, b'   ', 'application/json', json.JSONDecodeError, id='response'),
+        pytest.param(False, b'{"a":"\xe2\x82', 'application/json', UnicodeDecodeError, id='non-utf8'),
+        pytest.param(
+            True,
+            b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"gpt-4o",'
+            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}\n\n'
+            b'data: {not json\n\n',
+            'text/event-stream',
+            json.JSONDecodeError,
+            id='stream',
+        ),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, content_type: str, cause: type[ValueError]
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model)
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('Hello')
+
+    assert isinstance(exc_info.value.__cause__, cause)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

@@ -14,13 +14,12 @@ from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai_codex import CredentialsPersistenceError, CredentialsRefreshError
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import chat, headless
+from pydantic_clai2 import chat
+from pydantic_clai2.cli import headless
 from pydantic_clai2.config import Settings
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from tests.clai2.test_app_edges import inputs
-
-pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize('mode', ['interactive', 'headless'])
@@ -57,7 +56,7 @@ async def test_provider_error_message(
     store = SettingsStore(tmp_path / 'config.db')
     if mode == 'headless':
         monkeypatch.setattr(headless, 'create_agent', lambda: agent)
-        monkeypatch.setattr(headless, 'DEFAULT_PLUGINS', ())
+        monkeypatch.setattr(headless, 'STOCK_PLUGINS', ())
         assert (
             await headless.run_headless(
                 text='hi there', settings=Settings(model='test'), store=store, project=ProjectSettings()

@@ -40,14 +40,6 @@ from pydantic_ai_harness.exa import (
     agent_run_result,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
 
 def _text(result: ToolReturn[str]) -> str:
     """The model-facing text of a tool result."""
@@ -155,6 +147,20 @@ def _retry_parts(messages: list[ModelMessage]) -> list[RetryPromptPart]:
 
 
 class TestExaAgentToolset:
+    async def test_standalone_toolset_creates_the_run_itself(self) -> None:
+        toolset = ExaAgentToolset[None](
+            runs=_FakeRuns(created=_run('queued', run_id='run_7')),
+            effort=None,
+            output_schema=None,
+            system_prompt=None,
+            owner_id='owner',
+        )
+        with pytest.raises(CallDeferred) as exc_info:
+            await toolset.exa_agent('research task')
+        metadata = exc_info.value.metadata
+        assert metadata is not None
+        assert metadata[RUN_ID_METADATA_KEY] == 'run_7'
+
     async def test_creates_run_and_defers(self) -> None:
         runs = _FakeRuns(created=_run('queued', run_id='run_42'))
         toolset = ExaAgent[None](runs=runs, effort='high', system_prompt='Be thorough.').get_toolset()
@@ -321,7 +327,7 @@ class TestExaAgent:
         ]
         assert [part.content for part in parts] == [_text(agent_run_result(runs.finished))]
 
-    async def test_other_instances_calls_left_unresolved(self) -> None:
+    async def test_other_capabilitys_calls_left_unresolved(self) -> None:
         creator = ExaAgent[None](runs=_FakeRuns(created=_run('queued', run_id='run_a')))
         with pytest.raises(CallDeferred) as exc_info:
             await creator.get_toolset().exa_agent('task')
@@ -329,7 +335,7 @@ class TestExaAgent:
         assert metadata is not None
 
         other_runs = _FakeRuns()
-        other = ExaAgent[None](runs=other_runs)
+        other = ExaAgent[None](runs=other_runs, id='other_exa_agent')
         requests = DeferredToolRequests(
             calls=[ToolCallPart(tool_name='exa_agent', tool_call_id='c1')],
             metadata={'c1': metadata},
@@ -338,6 +344,42 @@ class TestExaAgent:
         result = await other.handle_deferred_tool_calls(ctx, requests=requests)
         assert result is None
         assert other_runs.poll_calls == []
+
+    async def test_a_new_instance_with_the_same_id_claims_the_calls(self) -> None:
+        """A process that recovers a durable run builds a new instance, which must claim the calls the original did."""
+        creator = ExaAgent[None](runs=_FakeRuns(created=_run('queued', run_id='run_a')))
+        with pytest.raises(CallDeferred) as exc_info:
+            await creator.get_toolset().exa_agent('task')
+        metadata = exc_info.value.metadata
+        assert metadata is not None
+
+        recovered_runs = _FakeRuns(finished=_run(text='Done.', run_id='run_a'))
+        recovered = ExaAgent[None](runs=recovered_runs)
+        requests = DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='exa_agent', tool_call_id='c1')],
+            metadata={'c1': metadata},
+        )
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+        result = await recovered.handle_deferred_tool_calls(ctx, requests=requests)
+        assert result is not None
+        assert [call['run_id'] for call in recovered_runs.poll_calls] == ['run_a']
+
+    async def test_an_instance_without_an_id_only_claims_its_own_calls(self) -> None:
+        creator = ExaAgent[None](runs=_FakeRuns(created=_run('queued', run_id='run_a')), id=None)
+        with pytest.raises(CallDeferred) as exc_info:
+            await creator.get_toolset().exa_agent('task')
+        metadata = exc_info.value.metadata
+        assert metadata is not None
+
+        other_runs = _FakeRuns()
+        other = ExaAgent[None](runs=other_runs, id=None)
+        requests = DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='exa_agent', tool_call_id='c1')],
+            metadata={'c1': metadata},
+        )
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+        assert await other.handle_deferred_tool_calls(ctx, requests=requests) is None
+        assert await creator.handle_deferred_tool_calls(ctx, requests=requests) is not None
 
     async def test_structured_mismatch_becomes_retry_prompt_and_run_continues(self) -> None:
         runs = _FakeRuns(
@@ -453,6 +495,9 @@ class TestAgentSpec:
         assert capability.timeout_ms == 120_000
         assert capability.guidance == 'Delegate.'
         assert capability.runs is None
+
+    def test_from_spec_sets_a_distinct_id(self) -> None:
+        assert ExaAgent[None].from_spec(effort='low', id='low_effort_agent').id == 'low_effort_agent'
 
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')

@@ -114,8 +114,8 @@ Of the shared settings:
 - `input_transcription_model=None` raises: ASR drives the agent pipeline and cannot be disabled.
 - `reconnect` raises: conversations cannot be resumed, so a reconnect policy would silently start a
   conversation that remembers nothing.
-- `max_tokens`, `parallel_tool_calls`, and `thinking` have no per-conversation surface and are
-  ignored, matching the [shared settings contract](overview.md#shared-settings).
+- `max_tokens`, `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation
+  surface and are ignored, matching the [shared settings contract](overview.md#shared-settings).
 
 ## Tool synchronization
 

@@ -67,7 +67,6 @@ from tests.harness.conftest import agent_run_names
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
-pytestmark = pytest.mark.anyio
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -125,11 +124,6 @@ async def _run(cap: ToolOutputLimits[object], result: Any, *, ctx: Any = None, t
         args={},
         result=result,
     )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +216,72 @@ class TestStore:
 
     def test_default_root(self):
         store = LocalFileStore()
-        assert store._root.name == 'pyai_harness_overflow'  # pyright: ignore[reportPrivateUsage]
+        assert store._root.name.startswith('pyai_harness_overflow')  # pyright: ignore[reportPrivateUsage]
+
+    def test_default_root_is_per_user(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(os, 'geteuid', lambda: 1001, raising=False)
+        first = LocalFileStore()._root  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.setattr(os, 'geteuid', lambda: 1002, raising=False)
+        second = LocalFileStore()._root  # pyright: ignore[reportPrivateUsage]
+        assert first.name == 'pyai_harness_overflow-1001'
+        assert second.name == 'pyai_harness_overflow-1002'
+
+    def test_default_root_without_uid(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delattr(os, 'geteuid', raising=False)
+        assert LocalFileStore()._root.name == 'pyai_harness_overflow'  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
+    async def test_new_root_created_0700_regardless_of_umask(self, tmp_path: Path):
+        root = tmp_path / 'store'
+        store = LocalFileStore(base_dir=root)
+        old_umask = os.umask(0)
+        try:
+            with patch.object(Path, 'chmod', side_effect=AssertionError('root was not created 0700')):
+                await store.write('run/c.0', b'x')
+        finally:
+            os.umask(old_umask)
+        assert oct(root.stat().st_mode & 0o777) == '0o700'
+
+    @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
+    async def test_preexisting_open_root_is_tightened(self, tmp_path: Path):
+        root = tmp_path / 'store'
+        root.mkdir()
+        root.chmod(0o777)
+        store = LocalFileStore(base_dir=root)
+        await store.write('run/c.0', b'x')
+        assert oct(root.stat().st_mode & 0o777) == '0o700'
+
+    @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
+    async def test_root_owned_by_another_user_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        root = tmp_path / 'store'
+        root.mkdir()
+        root.chmod(0o777)
+        other_uid = root.stat().st_uid + 1
+        monkeypatch.setattr(os, 'geteuid', lambda: other_uid)
+        store = LocalFileStore(base_dir=root)
+        with pytest.raises(PermissionError, match='not owned by the current user'):
+            await store.write('run/c.0', b'secret')
+        assert list(root.iterdir()) == []
+
+    async def test_symlink_root_is_refused_for_write_and_read(self, tmp_path: Path):
+        target = tmp_path / 'target'
+        target.mkdir()
+        (target / 'secret').write_bytes(b'secret')
+        root = tmp_path / 'store'
+        root.symlink_to(target, target_is_directory=True)
+        store = LocalFileStore(base_dir=root)
+
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            await store.write('run/c.0', b'spilled')
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            await store.read('secret')
+        assert list(target.iterdir()) == [target / 'secret']
+
+    async def test_root_check_skipped_without_uid(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delattr(os, 'geteuid', raising=False)
+        store = LocalFileStore(base_dir=tmp_path / 'store')
+        handle = await store.write('run/c.0', b'x')
+        assert await store.read(handle) == b'x'
 
     async def test_write_read_roundtrip(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path / 'store')
@@ -285,6 +344,22 @@ class TestCleanup:
 
         assert not old.exists()
         assert new.exists()
+
+    def test_prune_refuses_symlink_root(self, tmp_path: Path):
+        target = tmp_path / 'target'
+        target.mkdir()
+        old = target / 'old.bin'
+        old.write_bytes(b'x')
+        past = time.time() - 100
+        os.utime(old, (past, past))
+        root = tmp_path / 'store'
+        root.symlink_to(target, target_is_directory=True)
+        store = LocalFileStore(base_dir=root, cleanup_after=timedelta(seconds=1))
+
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            store._prune_sync()  # pyright: ignore[reportPrivateUsage]
+
+        assert old.exists()
 
     def test_run_prune_swallows_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         store = LocalFileStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
@@ -630,6 +705,19 @@ class TestSpill:
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out
 
+    async def test_spill_failure_logs_warning(self, caplog: pytest.LogCaptureFixture):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=10, action=Spill(then=Truncate(max_chars=95)))], store=_BrokenStore()
+        )
+        with caplog.at_level('WARNING', logger='pydantic_ai_harness.tool_output_limits'):
+            out = await _run(cap, 'a' * 100)
+        assert isinstance(out, str) and 'truncated' in out
+        [record] = caplog.records
+        assert record.levelname == 'WARNING'
+        assert 'OSError' in record.getMessage()
+        assert 'big_tool' in record.getMessage()
+        assert record.exc_info is not None
+
     async def test_spill_failure_no_fallback_returns_original(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Spill())], store=_BrokenStore())
         out = await _run(cap, 'a' * 100)
@@ -915,6 +1003,20 @@ class TestSummarize:
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out
 
+    async def test_summarize_failure_logs_warning(self, caplog: pytest.LogCaptureFixture):
+        def boom(name: str, text: str) -> str:
+            raise RuntimeError('model down')
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=95)))]
+        )
+        with caplog.at_level('WARNING', logger='pydantic_ai_harness.tool_output_limits'):
+            await _run(cap, 'a' * 100)
+        [record] = caplog.records
+        assert 'RuntimeError' in record.getMessage()
+        assert 'big_tool' in record.getMessage()
+        assert record.exc_info is not None
+
     async def test_nested_per_tool_model_summarizer(self):
         summarize = Summarize(model=_fixed_model('NESTED SUMMARY'))
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -1000,50 +1102,50 @@ class TestReadBack:
     async def test_read_slice_basic(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'line {i}' for i in range(50)).encode('utf-8'))
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=3, from_end=False, pattern=None)
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=3, from_end=False, pattern=None)
         assert 'line 0' in out and 'line 2' in out and 'line 3' not in out
 
     async def test_read_slice_from_end(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'line {i}' for i in range(50)).encode('utf-8'))
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
         assert 'line 49' in out and 'line 48' in out
 
     async def test_read_slice_literal_pattern(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'apple\nbanana\navocado\ncherry')
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=200, from_end=False, pattern='av')
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=200, from_end=False, pattern='av')
         assert 'avocado' in out and 'apple' not in out and 'banana' not in out
 
     async def test_read_slice_pattern_is_literal_not_regex(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'plain line\n^anchored')
         # A regex metacharacter is matched literally, so it cannot trigger backtracking.
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=200, from_end=False, pattern='^a')
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=200, from_end=False, pattern='^a')
         assert 'anchored' in out and 'plain line' not in out
 
     async def test_read_slice_offset_negative(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'data')
         with pytest.raises(ModelRetry, match='offset'):
-            await _read_slice(store, 'h/1.0', offset=-1, limit=10, from_end=False, pattern=None)
+            await _read_slice(store.read, 'h/1.0', offset=-1, limit=10, from_end=False, pattern=None)
 
     async def test_read_slice_limit_too_small(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'data')
         with pytest.raises(ModelRetry, match='limit'):
-            await _read_slice(store, 'h/1.0', offset=0, limit=0, from_end=False, pattern=None)
+            await _read_slice(store.read, 'h/1.0', offset=0, limit=0, from_end=False, pattern=None)
 
     async def test_read_slice_limit_clamped(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'l{i}' for i in range(2000)).encode('utf-8'))
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=10_000, from_end=False, pattern=None)
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=10_000, from_end=False, pattern=None)
         assert out.count('\n') <= 1_000  # clamped to the line cap
 
     async def test_read_slice_output_capped(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', ('x' * 60_000).encode('utf-8'))
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=10, from_end=False, pattern=None)
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=10, from_end=False, pattern=None)
         assert 'output capped' in out
         assert len(out) < 60_000
 
@@ -1051,7 +1153,7 @@ class TestReadBack:
         # A missing/wrong handle returns a guiding message (it does NOT raise): a bad
         # handle must not consume a retry and escalate to a fatal UnexpectedModelBehavior.
         store = LocalFileStore(base_dir=tmp_path)
-        out = await _read_slice(store, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
+        out = await _read_slice(store.read, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
         assert 'No stored tool result' in out
         assert 're-run the original tool' in out
         # The store's error (which can carry the resolved filesystem path) is not leaked.

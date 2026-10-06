@@ -6,12 +6,17 @@ import json
 import os
 import re
 from collections.abc import Generator, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from cassetter import RawRequest, RawResponse
 
+from pydantic_ai.realtime import _session as realtime_session  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._core import SessionCore
+
+from .. import cassette_hooks
 from ..conftest import sanitize_filename, try_import
 from .ws_cassettes import ProviderName, RealtimeCassette, patched_ws_connect, realtime_cassette_plan
 
@@ -95,22 +100,19 @@ a=setup:actpass""".strip().splitlines()
 )
 
 
-def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
+def _scrub_ephemeral_secret(response: RawResponse) -> RawResponse:
     """Redact the short-lived WebRTC client secret from recorded `/realtime/client_secrets` responses.
 
     The mint response body carries `{"value": "ek_..."}` — the ephemeral browser token. It expires in
     seconds and is useless offline, but replacing it keeps recorded cassettes free of anything
-    secret-shaped. (The api-key / Entra bearer used to mint it are filtered out via `filter_headers`.)
+    secret-shaped. (The api-key / Entra bearer used to mint it are filtered out by the repo-wide hooks.)
     """
-    try:
-        raw = response['body']['string']
-    except (KeyError, TypeError):  # non-body responses
-        return response
-    if not raw:  # empty body
+    response = cassette_hooks.before_record_response(response)
+    if not response.body:  # empty body
         return response
     try:
-        data = json.loads(raw)
-    except (ValueError, TypeError):  # non-JSON body
+        data = json.loads(response.body)
+    except ValueError:  # non-JSON body
         return response
     if not isinstance(data, dict):  # non-object JSON body
         return response
@@ -118,8 +120,7 @@ def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
     value = body_data.get('value')
     if isinstance(value, str) and value.startswith('ek_'):
         body_data['value'] = 'ek_scrubbed'
-        body = json.dumps(body_data)
-        response['body']['string'] = body.encode() if isinstance(raw, bytes) else body
+        response.body = json.dumps(body_data).encode()
     return response
 
 
@@ -128,7 +129,7 @@ def _scrub_ephemeral_secret(response: dict[str, Any]) -> dict[str, Any]:
 _SDP_ADDRESS_RE = re.compile(rb'^(?P<prefix>c=IN IP[46] |a=candidate:\S+ \d+ \S+ \d+ )(?P<address>\S+)', re.MULTILINE)
 
 
-def _zero_sdp_addresses(request: Any) -> Any:
+def _zero_sdp_addresses(request: RawRequest) -> RawRequest:
     """Zero out the network addresses in a recorded SDP offer.
 
     A cassette recorded against a *live* WebRTC peer (see `_webrtc_media_peer` — the only way to get
@@ -136,32 +137,63 @@ def _zero_sdp_addresses(request: Any) -> Any:
     replays or matches on a recorded request body, so blanking them costs nothing, and it keeps
     hand-zeroing them (as `REAL_SDP_OFFER` above was) from being a step someone has to remember.
     """
-    body = request.body
-    if isinstance(body, bytes):
+    request = cassette_hooks.before_record_request(request)
+    if request.body is not None:
         # Zero every address the regex finds, not just when an ICE candidate is present: an SDP whose
         # only address is the `c=IN IP4/IP6` connection line (no `a=candidate:` lines) would otherwise
         # be recorded with the recorder's real address intact.
-        request.body = _SDP_ADDRESS_RE.sub(
-            lambda match: match['prefix'] + (b'0.0.0.0' if b'.' in match['address'] else b'::'), body
-        )
+        request.body = _zero_addresses(request.body)
+        # GPT-Live takes the offer inside a JSON body, where its line breaks are escaped.
+        with suppress(ValueError):
+            payload: Any = json.loads(request.body)
+            transport: Any = cast(dict[str, Any], payload).get('transport') if isinstance(payload, dict) else None
+            if isinstance(transport, dict) and isinstance(sdp := cast(dict[str, Any], transport).get('sdp'), str):
+                transport['sdp'] = _zero_addresses(sdp.encode()).decode()
+                request.body = json.dumps(payload).encode()
     return request
 
 
-@pytest.fixture(scope='module')
-def vcr_config() -> dict[str, Any]:
-    """VCR config for realtime HTTP (WebRTC signaling) cassettes.
+def _zero_addresses(sdp: bytes) -> bytes:
+    return _SDP_ADDRESS_RE.sub(lambda match: match['prefix'] + (b'0.0.0.0' if b'.' in match['address'] else b'::'), sdp)
 
-    Extends the repo default with Azure's `api-key` header (the WebSocket cassettes never record HTTP,
-    so the default set omits it), scrubs the minted ephemeral client secret from response bodies, and
-    zeroes the network addresses in a recorded SDP offer.
+
+@pytest.fixture(scope='module')
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    """Cassette config for realtime HTTP (WebRTC signaling) cassettes.
+
+    Extends the repo default to scrub the minted ephemeral client secret from response bodies and zero
+    the network addresses in a recorded SDP offer.
     """
     return {
-        'ignore_localhost': True,
-        'filter_headers': ['authorization', 'x-api-key', 'api-key', 'cookie'],
-        'decode_compressed_response': True,
+        **vcr_config,
         'before_record_request': _zero_sdp_addresses,
         'before_record_response': _scrub_ephemeral_secret,
     }
+
+
+@pytest.fixture(autouse=True)
+def _shadow_core(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Run the new session core in shadow of the current one, and fail on anything the two disagree about.
+
+    Every session over a connection that identifies its responses, turns, and inputs (the OpenAI protocol)
+    builds its history twice; they must match when it closes. A test whose trace the current core gets
+    wrong in a way the new one fixes says so with `@pytest.mark.shadow_divergence(reason)`.
+    """
+    monkeypatch.setattr(realtime_session, '_CORE_MODE', 'shadow')
+    divergences: list[str] = []
+    compare = realtime_session.RealtimeSession._compare_shadow  # pyright: ignore[reportPrivateUsage]
+
+    def recorded(session: realtime_session.RealtimeSession, core: SessionCore) -> None:
+        compare(session, core)
+        divergences.extend(session._shadow_divergences)  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(realtime_session.RealtimeSession, '_compare_shadow', recorded)
+    yield
+    node = cast('pytest.Item', request.node)  # pyright: ignore[reportUnknownMemberType]
+    if node.get_closest_marker('shadow_divergence') is None:
+        assert not divergences, '\n'.join(divergences)
+    else:
+        assert divergences, 'the session cores agree on this trace now: drop its `shadow_divergence` mark'
 
 
 @pytest.fixture(autouse=True)
@@ -191,7 +223,7 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 def _record_mode(request: pytest.FixtureRequest) -> str | None:
     try:
         return cast('Any', request.config).getoption('record_mode')
-    # Depends on pytest-recording being active.
+    # Depends on cassetter's pytest plugin being active.
     except (ValueError, AttributeError):  # pragma: no cover
         return None
 
@@ -257,6 +289,36 @@ def openai_live_ws_cassette(
 
 
 @pytest.fixture
+def openai_live_ws_and_http_cassette(
+    request: pytest.FixtureRequest, openai_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """Like `openai_live_ws_cassette`, for a test that also records an HTTP VCR cassette.
+
+    The WebSocket cassette gets its own subdirectory, as for `openai_ws_sideband_cassette`, so the two
+    don't collide.
+    """
+    if not openai_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'openai_live', subdir='test_openai_live_ws_and_http') as cassette:
+        yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
+def openai_live_ws_sideband_cassette(
+    request: pytest.FixtureRequest, openai_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """An `OpenAIProvider` whose GPT-Live sideband WebSocket is cassette-backed.
+
+    Stored under its own subdirectory, like `openai_ws_sideband_cassette`, so it doesn't collide with the
+    HTTP VCR cassette of the offer the session was started with.
+    """
+    if not openai_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'openai_live', subdir='test_openai_live_ws_sideband') as cassette:
+        yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
 def openai_ws_sideband_cassette(
     request: pytest.FixtureRequest, openai_api_key: str
 ) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
@@ -301,14 +363,13 @@ def elevenlabs_ws_cassette(
 ) -> Iterator[tuple[ElevenLabsProvider, RealtimeCassette]]:
     """An `ElevenLabsProvider` whose agent WebSocket is backed by a cassette.
 
-    The REST preflight around the WebSocket records through ordinary HTTP VCR (`pytest.mark.vcr`),
-    which uses the module-named cassette subdirectory, so the WebSocket frames live under their own
-    subdirectory to avoid the filename collision, the same split the WebRTC sideband fixtures use.
-    The WebSocket is the primary transport here, not a sideband, hence the name.
+    The REST preflight around the WebSocket records an HTTP VCR cassette (`pytest.mark.vcr`) under the
+    module-named cassette subdirectory, so the WebSocket cassette gets its own subdirectory, as for
+    `openai_live_ws_and_http_cassette`, so the two don't collide.
     """
     if not elevenlabs_imports_successful():  # pragma: no cover
         pytest.skip('websockets not installed')
-    with _ws_cassette(request, 'elevenlabs', subdir='test_elevenlabs_ws_frames') as cassette:
+    with _ws_cassette(request, 'elevenlabs', subdir='test_elevenlabs_ws_and_http') as cassette:
         yield ElevenLabsProvider(api_key=elevenlabs_api_key), cassette
 
 
@@ -485,9 +546,9 @@ def parity_ws_cassette(
             pytest.skip('websockets not installed')
         provider = ElevenLabsProvider(api_key=elevenlabs_api_key)
         provider_name = 'elevenlabs'
-        # The REST preflight records through HTTP VCR under the module-named subdirectory, so the
-        # WebSocket frames take their own, as in `elevenlabs_ws_cassette`.
-        subdir = 'test_parity_ws_frames'
+        # The REST preflight records an HTTP VCR cassette under the module-named subdirectory, so the
+        # WebSocket cassette takes its own, as in `elevenlabs_ws_cassette`.
+        subdir = 'test_parity_ws_and_http'
     else:
         assert route == 'gateway-google'
         provider = _gateway_realtime_provider('google', gateway_api_key)

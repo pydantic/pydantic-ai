@@ -63,13 +63,6 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _run_context(conversation_id: str | None = None) -> RunContext[None]:
     return RunContext[None](
@@ -701,6 +694,7 @@ class TestSearchScope:
         message = str(record[0].message)
         assert "scope='all'" in message
         assert "scope='conversation'" in message
+        assert 'warning will be removed in the next breaking release' in message
 
     def test_unset_scope_warns_once_per_instance(self) -> None:
         """Per instance, not per search: warning on every tool invocation would be noise."""

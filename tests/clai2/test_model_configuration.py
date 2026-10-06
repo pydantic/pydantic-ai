@@ -1,5 +1,6 @@
 """Model-aware choices, native request settings, and custom parameter editing."""
 
+import json
 from pathlib import Path
 
 import httpx2 as httpx
@@ -15,19 +16,13 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_clai2.custom_params import CustomParamsMenu, DeleteParam, expand_params, parse_pair
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command, run_model_settings
-from pydantic_clai2.model_options import model_options, validate_model_options
-from pydantic_clai2.model_settings import ModelSettingsForm, model_defaults, model_settings_from_json
+from pydantic_clai2.models.custom_params import expand_params
+from pydantic_clai2.models.model_options import model_options, validate_model_options
+from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults, model_settings_from_json
+from pydantic_clai2.ui.menus.custom_params import CustomParamsMenu, DeleteParam, parse_pair
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, run_model_settings
 from tests.clai2.menu_script import Script, make_context, pick, typed
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @pytest.mark.parametrize(
@@ -116,7 +111,6 @@ def test_native_settings_conversion() -> None:
         form = ModelSettingsForm(anthropic_thinking_mode='enabled', anthropic_thinking_budget=budget)
         assert form.to_model_settings() == {
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': budget or 10000},
-            'max_tokens': (budget or 10000) + 4096,
         }
         validate_model_options(model='anthropic:claude-sonnet-4-5', form=form)
 
@@ -238,7 +232,7 @@ def test_custom_editor_validates_before_commit(tmp_path: Path, monkeypatch: pyte
     context, _ = make_context(tmp_path)
     custom = CustomParamsMenu(store=context.store, model='test')
     keys = iter(['enter', 'a', ' ', '=', ' ', '2', 'enter'])
-    monkeypatch.setattr('pydantic_clai2.custom_params.menu_key', lambda: next(keys))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.custom_params.menu_key', lambda: next(keys))
     assert custom.editor(key=None).run().value == 'a = 2'
 
 
@@ -313,7 +307,7 @@ def test_settings_search_does_not_reset_on_lowercase_r(tmp_path: Path, monkeypat
     source = ModelSettingsSource(context.store, 'openai:gpt-5.6')
     menu = FieldMenu(source)
     keys = iter([*'reasoning', 'enter', 'R'])
-    monkeypatch.setattr('pydantic_clai2.field_menu.menu_key', lambda: next(keys))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(keys))
     widget = menu.build()
     result = widget.run()
     assert result.item is not None and result.item.value == 'openai_reasoning_effort'
@@ -326,18 +320,32 @@ async def test_claude_native_thinking_reaches_request(name: str, mode: str) -> N
     adapter = TypeAdapter(dict[str, JsonValue])
 
     def respond(request: httpx.Request) -> httpx.Response:
-        bodies.append(adapter.validate_json(request.content))
+        body = adapter.validate_json(request.content)
+        bodies.append(body)
+        # The default `max_tokens` is the model's maximum output, above the SDK's non-streaming limit, so the
+        # request streams.
+        assert body['stream'] is True
+        message: dict[str, JsonValue] = {
+            'id': 'msg_test',
+            'type': 'message',
+            'role': 'assistant',
+            'model': name,
+            'content': [],
+            'stop_reason': None,
+            'usage': {'input_tokens': 1, 'output_tokens': 0},
+        }
+        events: list[dict[str, JsonValue]] = [
+            {'type': 'message_start', 'message': message},
+            {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+            {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'done'}},
+            {'type': 'content_block_stop', 'index': 0},
+            {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}},
+            {'type': 'message_stop'},
+        ]
         return httpx.Response(
             200,
-            json={
-                'id': 'msg_test',
-                'type': 'message',
-                'role': 'assistant',
-                'model': name,
-                'content': [{'type': 'text', 'text': 'done'}],
-                'stop_reason': 'end_turn',
-                'usage': {'input_tokens': 1, 'output_tokens': 1},
-            },
+            headers={'content-type': 'text/event-stream'},
+            content=''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events),
         )
 
     form = model_settings_from_json({'anthropic_thinking_mode': mode})
@@ -349,4 +357,4 @@ async def test_claude_native_thinking_reaches_request(name: str, mode: str) -> N
         {'type': 'adaptive'} if mode == 'adaptive' else {'type': 'enabled', 'budget_tokens': 10000}
     )
     if mode == 'enabled':
-        assert bodies[0]['max_tokens'] == 14096
+        assert bodies[0]['max_tokens'] == 64000

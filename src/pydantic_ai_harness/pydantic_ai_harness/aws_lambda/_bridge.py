@@ -173,7 +173,7 @@ class _AgentLoop:
 
                 # Let callbacks queued by the run's finalizers create any follow-up cleanup tasks
                 # before taking the snapshot that will be drained.
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
                 current = asyncio.current_task()
                 pending = [pending for pending in asyncio.all_tasks(loop) if pending is not current]
                 if task is None:
@@ -282,7 +282,7 @@ class StepBridge:
                 raise AgentLoopGone(
                     f'The {ENGINE_NAME} agent event loop stopped before durable step {name!r} could be '
                     'scheduled, so its result can never arrive. This should not happen; please report '
-                    'it at https://github.com/pydantic/pydantic-ai-harness/issues.'
+                    'it at https://github.com/pydantic/pydantic-ai/issues.'
                 ) from None
             while True:
                 try:
@@ -297,7 +297,7 @@ class StepBridge:
                     raise AgentLoopGone(
                         f'The {ENGINE_NAME} agent event loop stopped while durable step {name!r} was in '
                         'flight, so its result can never arrive. This should not happen; please report '
-                        'it at https://github.com/pydantic/pydantic-ai-harness/issues.'
+                        'it at https://github.com/pydantic/pydantic-ai/issues.'
                     ) from None
 
         async with self._order:

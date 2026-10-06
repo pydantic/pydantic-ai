@@ -2,13 +2,16 @@
 
 from typing import TYPE_CHECKING
 
+from ._mcp import MCPReadOnlyNoToolsWarning
 from ._warn import HarnessDeprecationWarning
 
 if TYPE_CHECKING:
+    from .absurd import AbsurdDurability
     from .advisor import Advisor
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
     from .browser_use import BrowserUse
+    from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
     from .coder import Coder
@@ -26,6 +29,7 @@ if TYPE_CHECKING:
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
     from .dynamic_workflow import DynamicWorkflow
+    from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
     from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
     from .grain import Grain
@@ -44,7 +48,7 @@ if TYPE_CHECKING:
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
     from .memory import Memory
-    from .modal_sandbox import ModalSandbox
+    from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
     from .planning import Planning
     from .posthog import PostHog
@@ -56,20 +60,26 @@ if TYPE_CHECKING:
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
     from .spend import SpendLimits
+    from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
+    from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
     from .stackone import StackOne
     from .step_persistence import StepPersistence
     from .subagents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
     from .warn_on_cache_busts import WarnOnCacheBusts
     from .youdotcom import YouResearch, YouSearch
 
 __all__ = [
+    'AbsurdDurability',
     'Advisor',
     'AskUser',
     'BackgroundTools',
     'BrowserUse',
+    'BubblewrapSandbox',
+    'BubblewrapWorkspace',
     'CapabilityCreation',
     'ClampOversizedMessages',
     'ClearToolResults',
@@ -80,6 +90,8 @@ __all__ = [
     'DayAI',
     'DeduplicateFileReads',
     'DynamicWorkflow',
+    'E2BSandbox',
+    'E2BSandboxBackend',
     'ExaAgent',
     'ExaSearch',
     'FallbackCompaction',
@@ -93,10 +105,12 @@ __all__ = [
     'InputGuardrailFunc',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
+    'MCPReadOnlyNoToolsWarning',
     'Macroscope',
     'ManagedPrompt',
     'Memory',
     'ModalSandbox',
+    'ModalSandboxBackend',
     'Ordinal',
     'OutputBlocked',
     'OutputGuardrail',
@@ -110,10 +124,14 @@ __all__ = [
     'ReportContextUsage',
     'RepoContext',
     'Researcher',
+    'SSHWorkspace',
+    'SSHWorkspaceBackend',
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
     'SpendLimits',
+    'SpritesSandbox',
+    'SpritesSandboxBackend',
     'StackOne',
     'StepPersistence',
     'SubAgent',
@@ -121,6 +139,7 @@ __all__ = [
     'SummarizingCompaction',
     'SystemReminders',
     'TieredCompaction',
+    'ToolCallJudge',
     'ToolGuardrail',
     'ToolOutputLimits',
     'TrajectoryJudge',
@@ -131,10 +150,12 @@ __all__ = [
 ]
 
 _CAPABILITY_EXPORTS = {
+    'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
     'BrowserUse': 'browser_use',
+    'BubblewrapSandbox': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
@@ -144,6 +165,7 @@ _CAPABILITY_EXPORTS = {
     'DayAI': 'day_ai',
     'DeduplicateFileReads': 'compaction',
     'DynamicWorkflow': 'dynamic_workflow',
+    'E2BSandbox': 'e2b_sandbox',
     'ExaAgent': 'exa',
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
@@ -167,12 +189,15 @@ _CAPABILITY_EXPORTS = {
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
     'SpendLimits': 'spend',
+    'SpritesSandbox': 'sprites_sandbox',
+    'SSHWorkspace': 'ssh_workspace',
     'StackOne': 'stackone',
     'StepPersistence': 'step_persistence',
     'SubAgents': 'subagents',
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
     'TieredCompaction': 'compaction',
+    'ToolCallJudge': 'tool_call_judge',
     'ToolGuardrail': 'guardrails',
     'ToolOutputLimits': 'tool_output_limits',
     'TrajectoryJudge': 'trajectory_judge',
@@ -183,9 +208,14 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
+    'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'SpritesSandboxBackend': 'sprites_sandbox',
+    'SSHWorkspaceBackend': 'ssh_workspace',
     'SubAgent': 'subagents',
 }
 

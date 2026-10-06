@@ -9,9 +9,8 @@ from rich.text import Text
 from termflow.themes import PALETTES
 
 from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
-from pydantic_clai2 import StreamRenderer, theme
-
-pytestmark = pytest.mark.anyio
+from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.ui.rendering import theme
 
 
 @pytest.mark.parametrize('chunk_size', [1, 1000])

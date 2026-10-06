@@ -20,9 +20,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import MCPReadOnlyNoToolsWarning
 from pydantic_ai_harness.pylon import Pylon
-
-pytestmark = pytest.mark.anyio
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
 # combinations. Rebuild it before warnings are escalated by the test suite.
@@ -65,7 +64,6 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 
 class TestPylon:
-    @pytest.mark.anyio
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
         [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
@@ -88,7 +86,27 @@ class TestPylon:
         agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=read_only)])
         assert (await agent.run('Use the tools')).output == expected
 
-    @pytest.mark.anyio
+    async def test_read_only_warns_when_it_removes_every_tool(self) -> None:
+        server = FastMCP('pylon-fake')
+
+        @server.tool()
+        def unmarked() -> str:
+            return 'unmarked'
+
+        unfiltered_agent = Agent(TestModel(), capabilities=[Pylon(client=server)])
+        assert (await unfiltered_agent.run('Use the tools')).output == '{"unmarked":"unmarked"}'
+
+        agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
+        with pytest.warns(
+            MCPReadOnlyNoToolsWarning, match=r"`read_only=True` removed every tool from MCPToolset 'pylon'"
+        ):
+            await agent.run('Use the tools')
+
+    async def test_read_only_does_not_warn_for_an_empty_server(self) -> None:
+        server = FastMCP('pylon-fake')
+        agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
+        await agent.run('Use the tools')
+
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
         server = FastMCP('pylon-fake', instructions='Pylon instructions.')
@@ -160,14 +178,12 @@ class TestPylon:
 
 
 class TestPerRunAuth:
-    @pytest.mark.anyio
     async def test_each_run_connects_with_its_own_credential(self) -> None:
         capability = Pylon[str | None](auth=per_user_token)
         [alice] = await connections_for(capability, 'alice-token')
         [bob] = await connections_for(capability, 'bob-token')
         assert (bearer(alice), bearer(bob)) == ('Bearer alice-token', 'Bearer bob-token')
 
-    @pytest.mark.anyio
     @pytest.mark.parametrize('missing', [None, ''])
     async def test_no_credential_means_no_tools(self, missing: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
         # The environment token is set to show a function never falls back to it.
@@ -175,7 +191,6 @@ class TestPerRunAuth:
         capability = Pylon[str | None](auth=per_user_token)
         assert await connections_for(capability, missing) == []
 
-    @pytest.mark.anyio
     async def test_function_returning_oauth_raises(self) -> None:
         capability = Pylon[str | None](auth=per_user_token)
         with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):

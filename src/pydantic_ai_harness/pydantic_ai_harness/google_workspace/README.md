@@ -2,7 +2,7 @@
 
 Let an agent use Gmail, Calendar, Drive, and other Google Workspace products. `GoogleWorkspace` gives the agent every tool Google's hosted MCP servers offer for the products you select, including tools that send, change, and delete. The token you connect with decides what those tools can reach.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 ## Install and connect
 
@@ -80,7 +80,7 @@ Register a Google OAuth client yourself and request the scopes the selected prod
 
 ## Tool selection and approval
 
-`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, this can leave none. The token is still what controls access.
+`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, the agent gets none and emits an `MCPReadOnlyNoToolsWarning`. The token is still what controls access.
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/). For example, this asks for approval before every tool call:
 

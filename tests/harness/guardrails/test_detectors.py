@@ -40,14 +40,6 @@ from pydantic_ai_harness.guardrails.detectors import (
     secret_data,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 _OPENAI_KEY = 'sk-abcdefghijklmnopqrstuvwxyz01'
 
 

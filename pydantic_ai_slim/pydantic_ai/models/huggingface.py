@@ -8,7 +8,7 @@ from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -54,6 +54,7 @@ from . import (
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
+from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -71,7 +72,7 @@ try:
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
-    from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.errors import HfHubHTTPError, TextGenerationError
 
 except ImportError as _import_error:
     raise ImportError(
@@ -91,6 +92,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             body=e.response.content,
             headers=dict(e.response.headers),
         ) from e
+    except TextGenerationError as e:
+        # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
+        # status code to report.
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
 __all__ = (
@@ -262,7 +267,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name), map_decode_errors(self.model_name):
             return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
                 model=self._model_name,
                 messages=hf_messages,  # pyright: ignore[reportArgumentType]
@@ -322,7 +327,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         peekable_response: _utils.PeekableAsyncStream[
             ChatCompletionStreamOutput, AsyncIterable[ChatCompletionStreamOutput]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -559,7 +564,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
-            async for chunk in self._response:
+            async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
                 self._usage += _map_usage(chunk)
 
                 if chunk.id:  # pragma: no branch

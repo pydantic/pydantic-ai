@@ -1,7 +1,7 @@
 """WebSocket cassette utilities for realtime provider tests.
 
 Realtime providers talk over a persistent WebSocket rather than the request/response HTTP that
-`pytest-recording` / VCR captures, so VCR can't record their traffic. These helpers record and
+the HTTP cassettes capture, so those can't record their traffic. These helpers record and
 replay the actual JSON frames exchanged with the provider, letting cassette-backed tests exercise
 the *real* protocol offline:
 
@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest import mock
+
+from pydantic_ai._utils import is_str_dict
 
 from ..conftest import try_import
 
@@ -79,6 +81,14 @@ def _gemini_realtime_audio(frame: dict[str, Any]) -> dict[str, Any] | None:
         return None
     audio = cast('dict[str, Any]', realtime_input).get('audio')
     return cast('dict[str, Any]', audio) if isinstance(audio, dict) else None
+
+
+def _transcription_model(frame: dict[str, Any]) -> object:
+    """The input transcription model an OpenAI GA `session.update` frame sets, if any."""
+    value: object = frame
+    for key in ('session', 'audio', 'input', 'transcription', 'model'):
+        value = value.get(key) if is_str_dict(value) else None
+    return value
 
 
 def _is_audio_send(frame: dict[str, Any]) -> bool:
@@ -243,7 +253,7 @@ CassettePlan = Literal['replay', 'record', 'error_missing']
 
 
 def realtime_cassette_plan(*, cassette_exists: bool, record_mode: str | None) -> CassettePlan:
-    """Decide replay vs. record, mirroring the repo's `pytest-recording` record modes."""
+    """Decide replay vs. record, mirroring the repo's `--record-mode` values."""
     mode = (record_mode or 'none').strip().lower()
     if mode in {'rewrite', 'all'}:
         return 'record'
@@ -417,6 +427,22 @@ class ReplayWebSocket:
             # Recorded before OpenAI-protocol client frames carried an `event_id` (the id a refusal
             # echoes, see `client_event_id`); the rest of the frame is still pinned.
             actual.pop('event_id', None)
+        if actual.get('type') == 'conversation.item.create' and 'id' not in (expected.get('item') or {}):
+            # Recorded before a user message item was created under an id naming its input (see
+            # `client_item_id`); only that id is let through, and the rest of the item is still pinned.
+            item: dict[str, Any] = actual.get('item') or {}
+            if str(item.get('id', '')).startswith('pydantic_ai_item_'):
+                del item['id']
+        if actual.get('type') == 'response.create' and 'response' not in expected:
+            # Recorded before a `response.create` carried the `metadata` naming the inputs it answers (see
+            # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
+            if (response := actual.get('response')) is not None and set(response) == {'metadata'}:
+                del actual['response']
+        if actual.get('type') == 'session.update' and _transcription_model(expected) == 'gpt-realtime-whisper':
+            # Recorded before OpenAI's `input_transcription_model='auto'` resolved to `gpt-live-transcribe`;
+            # only that model is let through, and the rest of the frame is still pinned.
+            if _transcription_model(actual) == 'gpt-live-transcribe':
+                actual['session']['audio']['input']['transcription']['model'] = 'gpt-realtime-whisper'
         assert actual == expected, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
             f'expected={expected!r}\nactual={actual!r}'

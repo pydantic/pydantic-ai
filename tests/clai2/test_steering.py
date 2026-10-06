@@ -15,13 +15,11 @@ from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2._app import create_shell
-from pydantic_clai2._session import Session
-from pydantic_clai2.live_prompt import LivePrompt
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.test_live_prompt import editor
-
-pytestmark = pytest.mark.anyio
 
 
 @pytest.mark.parametrize('supplied_handler', [False, True])
@@ -58,11 +56,6 @@ async def test_enter_during_run_teardown_queues_follow_up(supplied_handler: bool
         assert not session.steer('finished')
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('sequence', ['\x1b\r', '\x1b[13;3u', '\x1b[27;3;13~'])
 async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
     accepted: list[str] = []
@@ -83,12 +76,10 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         assert live.buffer.text == ''
         live.buffer.replace('follow up')
         live.feed('enter')
-        live.buffer.replace('unfinished draft')
         pipe.send_text(sequence)
         await delivered.wait()
         assert accepted == ['change direction']
         assert live.queued_messages == ('follow up',)
-        assert live.buffer.text == 'unfinished draft'
         assert await live.read() == 'follow up'
         live.buffer.replace('/help')
         live.feed('enter')
@@ -103,6 +94,75 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         live.buffer.replace('idle prompt')
         live.feed('enter')
         assert await live.read() == 'idle prompt'
+
+
+@pytest.mark.parametrize('sequence', ['\x1b\r', '\x1b[13;3u', '\x1b[27;3;13~'])
+async def test_alt_enter_steers_the_typed_draft_ahead_of_the_queue(sequence: str) -> None:
+    accepted: list[str] = []
+    delivered = anyio.Event()
+
+    def steer(text: str) -> bool:
+        accepted.append(text)
+        delivered.set()
+        return True
+
+    async with editor() as (live, pipe, _):
+        live.steer = steer
+        queue(live, 'queued follow up')
+        live.buffer.replace('  change direction  ')
+        pipe.send_text(sequence)
+        await delivered.wait()
+        assert accepted == ['change direction']
+        assert live.buffer.text == ''
+        assert live.buffer.history[-1] == live.history.get_strings()[-1] == 'change direction'
+        assert live.queued_messages == ('queued follow up',)
+        assert await live.read() == 'queued follow up'
+
+
+async def test_steering_an_edited_queued_prompt_takes_it_out_of_the_queue() -> None:
+    accepted: list[str] = []
+
+    def steer(text: str) -> bool:
+        accepted.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        queue(live, 'first', 'second')
+        live.feed('up')
+        live.buffer.insert(' now')
+        live.feed('alt-enter')
+        assert accepted == ['second now']
+        assert live.queued_messages == ('first',)
+        live.feed('up')
+        assert await live.read() == 'first'
+        live.buffer.insert(' again')
+        live.feed('alt-enter')
+        # The run already took the recalled prompt, so the edit steers without touching the queue.
+        assert accepted == ['second now', 'first again']
+        assert live.queued_messages == ()
+
+
+@pytest.mark.parametrize('draft', ['/help', '!git status', 'clear', 'idle prompt'])
+async def test_alt_enter_on_a_draft_that_cannot_steer_acts_as_enter(draft: str) -> None:
+    attempted: list[str] = []
+
+    def idle(text: str) -> bool:
+        attempted.append(text)
+        return False
+
+    async with editor() as (live, _, _):
+        live.steer = idle
+        live.buffer.replace(draft)
+        live.feed('alt-enter')
+        assert live.buffer.text == ''
+        assert await live.read() == ('/clear' if draft == 'clear' else draft)
+        live.steer = None
+        live.buffer.replace('no run')
+        live.feed('alt-enter')
+        assert await live.read() == 'no run'
+    # Only plain prompts reach the run; commands and shell lines take their turn like Enter.
+    assert attempted == (['idle prompt'] if draft == 'idle prompt' else [])
 
 
 async def test_bare_clear_queues_as_a_command_that_steering_skips() -> None:
@@ -136,10 +196,8 @@ async def test_unavailable_steering_preserves_queue(head: str | KeyboardInterrup
         live.feed('alt-enter')
         live.submit(head)
         live.submit('second')
-        live.buffer.replace('draft')
         live.feed('alt-enter')
         assert attempted == (['follow up'] if available and head == 'follow up' else [])
-        assert live.buffer.text == 'draft'
         if isinstance(head, str):
             assert await live.read() == head
         else:
@@ -148,21 +206,24 @@ async def test_unavailable_steering_preserves_queue(head: str | KeyboardInterrup
         assert await live.read() == 'second'
 
 
-async def test_steering_last_message_clears_queue_and_preserves_draft() -> None:
+async def test_steering_last_message_clears_queue_and_whitespace_draft() -> None:
+    accepted: list[str] = []
+
     def steer(text: str) -> bool:
+        accepted.append(text)
         return True
 
     async with editor() as (live, _, _):
         live.steer = steer
         live.buffer.replace('queued')
         live.feed('enter')
-        live.buffer.replace('draft')
+        # A blank draft has nothing of its own to send, so the queue is steered instead.
+        live.buffer.replace('   ')
         live.feed('alt-enter')
         assert live.queued_messages == ()
-        assert live.buffer.text == 'draft'
         live.feed('alt-enter')
-        live.feed('enter')
-        assert await live.read() == 'draft'
+        assert accepted == ['queued']
+        assert live.buffer.text == '   '
 
 
 async def test_steering_reaches_running_agent_and_is_cleared() -> None:

@@ -14,8 +14,11 @@ These pin two failure classes the suite's behavioral tests do not reach:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
+import threading
+import warnings
 from collections.abc import AsyncIterator
 
 import anyio
@@ -30,20 +33,13 @@ from pydantic_ai.messages import (
     PartStartEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.code_mode import CodeMode, SpeculativeCallLaunchedEvent
-from pydantic_ai_harness.code_mode._streaming import decode_partial_args
+from pydantic_ai_harness.code_mode._streaming import closed_statements, decode_partial_args, parse_code
 
 from .test_speculation import observe, prepared_toolset
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
 
 
 def _branch_code(taken: str, other: str) -> str:
@@ -156,6 +152,88 @@ class TestMalformedStreamArgs:
             assert ctx._event_stream_buffer is not None  # pyright: ignore[reportPrivateUsage]
             launches = [e for e in ctx._event_stream_buffer if isinstance(e, SpeculativeCallLaunchedEvent)]  # pyright: ignore[reportPrivateUsage]
             assert not launches
+
+
+@pytest.mark.parametrize('eager', [False, True])
+@pytest.mark.parametrize('literal', [r'"\("', r'r"\("', r'"\\("'])
+async def test_streamed_backslashes_do_not_warn(eager: bool, literal: str) -> None:
+    """Repeated analysis of regex literals stays quiet and preserves the tool argument."""
+    calls: list[str] = []
+    returns: list[object] = []
+
+    async def search(query: str) -> str:
+        """Return the query unchanged."""
+        calls.append(query)
+        return query
+
+    code = f'first = await search(query={literal})\nsecond = await search(query={literal})\n[first, second]\n'
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
+                    returns.append(part.content)
+        if returns:
+            yield 'done'
+            return
+        yield {0: DeltaToolCall(name='run_code')}
+        for char in json.dumps({'code': code}):
+            yield {0: DeltaToolCall(json_args=char)}
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        deps_type=type(None),
+        capabilities=[CodeMode[None](speculate=['search'], eager=eager)],
+        tools=[search],
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        result = await agent.run('go')
+    assert not caught
+    assert result.output == 'done'
+    assert calls == [r'\(', r'\(']
+    assert returns == [[r'\(', r'\(']]
+
+
+def test_analysis_warning_filter_is_narrow_and_restored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Analysis ignores invalid escapes only; unrelated diagnostics and normal Python remain intact."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert len(closed_statements('value = "\\("\nnext_value = 1\n')) == 1
+        assert closed_statements('value = "\\("\nnext_value = (\n') == []
+        assert isinstance(parse_code(r'"\("', mode='eval'), ast.Expression)
+        with pytest.raises(SyntaxError):
+            parse_code('value = (')
+        with pytest.warns((SyntaxWarning, DeprecationWarning), match='invalid escape sequence'):
+            ast.parse(r'"\("')
+
+        def diagnostic_parse(code: str, *, filename: str = '<unknown>', mode: str) -> ast.Module:
+            warnings.warn('unrelated parser diagnostic', SyntaxWarning)
+            return ast.Module(body=[], type_ignores=[])
+
+        with pytest.warns(SyntaxWarning, match='unrelated parser diagnostic'):
+            with monkeypatch.context() as patch:
+                patch.setattr(ast, 'parse', diagnostic_parse)
+                parse_code('value = 1')
+
+
+def test_analysis_does_not_hide_other_threads_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Older Python warning filters are process-global, so restrict them to the analysis filename."""
+
+    def warn_elsewhere() -> None:
+        warnings.warn_explicit('invalid escape sequence', SyntaxWarning, filename='user_code.py', lineno=1)
+
+    def concurrent_parse(code: str, *, filename: str = '<unknown>', mode: str) -> ast.Module:
+        thread = threading.Thread(target=warn_elsewhere)
+        thread.start()
+        thread.join()
+        return ast.Module(body=[], type_ignores=[])
+
+    with pytest.warns(SyntaxWarning, match='invalid escape sequence') as caught:
+        with monkeypatch.context() as patch:
+            patch.setattr(ast, 'parse', concurrent_parse)
+            parse_code('value = 1')
+    assert caught[0].filename == 'user_code.py'
 
 
 class TestPartialArgsDecoding:

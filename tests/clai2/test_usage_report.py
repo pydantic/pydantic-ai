@@ -23,18 +23,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_clai2 import Session, chat
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.status import Status
-from pydantic_clai2.usage_report import cost_line, format_cost, session_usage, usage_command
-
-pytestmark = pytest.mark.anyio
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.rendering.status import Status
+from pydantic_clai2.ui.rendering.usage_report import cost_line, format_cost, session_usage, usage_command
 
 PromptT = TypeVar('PromptT')
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def priced_history() -> list[ModelMessage]:

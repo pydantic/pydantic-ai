@@ -8,8 +8,6 @@ from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
 
 from ..conftest import TestEnv
 
-pytestmark = pytest.mark.anyio
-
 
 def test_elevenlabs_provider(env: TestEnv):
     env.set('ELEVENLABS_API_KEY', 'env-api-key')

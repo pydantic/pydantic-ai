@@ -87,8 +87,7 @@ The `code-mode` extra is also supported as an alias.
 
 By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools,
 undiscovered deferred tools, native fallbacks, and other code-execution tools remain native. Shell
-surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command`, and
-`ModalSandbox`'s `run_command`, sit beside `run_code` rather than inside it, so the model never has
+surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has
 to quote a shell command inside a generated Python string. `CapabilityCreation`'s
 `author_capability` stays native for the same reason: its argument is a complete Python module.
 Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like
@@ -596,6 +595,11 @@ a dataset you've dropped in a folder and writing a report back, editing a checko
 batch of documents. Sandboxed `pathlib` code reads and writes under the mounted path. (For
 environment variables or the clock, use `os_access` instead.)
 
+Mounts are directories on the machine running the agent, not the run's workspace. With a remote
+sandbox such as `ModalSandbox`, `Shell` and `FileSystem` act in the sandbox while mounted `pathlib`
+code still reads and writes the host. Use the workspace tools for files the model shares with its
+commands.
+
 ```python
 from pydantic_monty import MountDir
 
@@ -672,6 +676,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an `os_access` handler
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema: `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them
+- A tool without a return schema is still callable, but its generated signature shows `-> Any`, so the model has to guess the result's shape. `CodeMode` names such tools in one `CodeModeReturnSchemaWarning` (a `UserWarning` subclass) per run. Give a function tool a return annotation, or have your MCP server declare an `outputSchema`; when the server is not yours, silence just this category with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`
 
 ## API
 

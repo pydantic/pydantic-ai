@@ -51,7 +51,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -60,9 +59,8 @@ async def test_github_copilot_model_simple(allow_model_requests: None, github_co
     """A GPT id round-trips even though its envelope carries neither `created` nor `object`.
 
     The recorded body's top-level keys are `choices`, `copilot_usage`, `id`, `model`, `service_tier`
-    and `usage` — the two OpenAI-required fields are simply absent. `created` is filled by
-    `OpenAIChatModel._process_response` with the receive time, which is why the timestamp below is
-    `IsDatetime()` rather than a value from the recording. Its choices do carry `index`, which the
+    and `usage` — the two OpenAI-required fields are simply absent. Without `created`, there's no
+    provider timestamp in `provider_details`. Its choices do carry `index`, which the
     Anthropic ids drop; the two together cover both sides of that repair.
     """
     model = GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=github_copilot_api_key))
@@ -92,7 +90,7 @@ async def test_github_copilot_model_simple(allow_model_requests: None, github_co
                 timestamp=IsDatetime(),
                 provider_name='github-copilot',
                 provider_url='https://api.githubcopilot.com',
-                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),

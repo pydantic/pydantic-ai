@@ -1,56 +1,66 @@
 ---
-description: "See every LLM provider Pydantic AI supports, how models, providers and profiles relate, and how to add fallback models, concurrency limits or a custom model."
+description: "Find supported model developers, cloud platforms, inference services, gateways and local servers, with setup guides, model selection and fallback configuration."
 ---
 
-# Model Providers
+# Models and Providers
 
-Pydantic AI is model-agnostic and has built-in support for multiple model providers:
+Pydantic AI supports model developers, cloud platforms, inference services, gateways, and local model servers. Find your service below and follow its setup guide for installation, authentication, and supported features.
 
-* [OpenAI](openai.md)
-* [Anthropic](anthropic.md)
-* [Gemini](google.md) (via two different APIs: Gemini API and Google Cloud, formerly known as Vertex AI)
-* [xAI](xai.md)
-* [Bedrock](bedrock.md)
-* [Cerebras](cerebras.md)
-* [Cohere](cohere.md)
-* [Crusoe](crusoe.md)
-* [GitHub Copilot](github-copilot.md)
-* [Groq](groq.md)
-* [Hugging Face](huggingface.md)
-* [Mistral](mistral.md)
-* [OpenAI Codex](openai-codex.md) (via your ChatGPT/Codex subscription)
-* [OpenRouter](openrouter.md)
-* [Snowflake Cortex](snowflake.md)
-* [TypeSafe (Jev)](typesafe.md), a [decision model](decision.md)
-* [Z.AI](zai.md)
+## Provider directory
 
-## OpenAI-compatible Providers
+Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to select a provider by its prefix. Some routes require an explicit model or client instead; each setup guide shows the available options.
 
-In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
+| Provider and setup | Service | Model selection |
+| --- | --- | --- |
+| [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
+| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
+| [Anthropic](anthropic.md) | Model developer | `anthropic:` |
+| [Google / Gemini API](google.md) | Model developer | `google:` |
+| [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
+| [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
+| [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
+| [Alibaba Cloud / Qwen (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope) | Cloud platform; model developer | `alibaba:` |
+| [Cerebras](cerebras.md) | Inference platform | `cerebras:` |
+| [Cohere](cohere.md) | Model developer | `cohere:` |
+| [Crusoe](crusoe.md) | Inference platform | `crusoe:` |
+| [DeepSeek](deepseek.md) | Model developer | `deepseek:`; explicit Responses model |
+| [Fireworks AI](compatible-apis.md#fireworks-ai) | Inference platform | `fireworks:` |
+| [GitHub Copilot](github-copilot.md) | Subscription access | `github-copilot:` |
+| [Groq](groq.md) | Inference platform | `groq:` |
+| [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
+| [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
+| [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
+| [Mistral](mistral.md) | Model developer | `mistral:` |
+| [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
+| [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
+| [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
+| [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
+| [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
+| [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
+| [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
+| [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
+| [System One API](system-one.md) | [Decision models](decision.md) such as CLM, Laya, and Ollama's | `system-one:` |
+| [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
+| [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |
+| [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |
+| [vLLM](compatible-apis.md#vllm) | Self-hosted inference | `vllm:` |
+| [xAI](xai.md) | Model developer | `xai:` |
+| [Z.AI](zai.md) | Model developer | `zai:` |
 
-- [Alibaba Cloud Model Studio (DashScope)](openai.md#alibaba-cloud-model-studio-dashscope)
-- [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [DeepSeek](openai.md#deepseek)
-- [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models) (retired, deprecated — see [GitHub Copilot](github-copilot.md))
-- [Heroku](openai.md#heroku-ai)
-- [LiteLLM](openai.md#litellm)
-- [Nebius AI Studio](openai.md#nebius-ai-studio)
-- [Ollama](openai.md#ollama)
-- [OVHcloud AI Endpoints](openai.md#ovhcloud-ai-endpoints)
-- [Perplexity](openai.md#perplexity)
-- [SambaNova](openai.md#sambanova)
-- [Together AI](openai.md#together-ai)
-- [Vercel AI Gateway](openai.md#vercel-ai-gateway)
-- [vLLM](openai.md#vllm)
+!!! tip "One key for every model"
+    The easiest way to try models from several providers is the [Pydantic AI Gateway](../gateway.md): one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring in [Pydantic Logfire](../logfire.md). Set `PYDANTIC_AI_GATEWAY_API_KEY` and add the `gateway/` prefix to the model string, for example `Agent('gateway/anthropic:claude-fable-5-1')`. The [Gateway quick start](../gateway.md#quick-start) shows how to create a key.
 
-Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
-for testing and development.
+The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
 
-To use each model provider, you need to configure your local environment and make sure you have the right
-packages installed. If you try to use the model without having done so, you'll be told what to install.
+For an OpenAI-compatible endpoint not listed here, see [Other endpoints](compatible-apis.md#other-endpoints); for any other API, implement a [custom model](#custom-models).
 
-## Models and Providers
+For testing and development, use [`TestModel`](../api/models/test.md) or [`FunctionModel`](../api/models/function.md).
+
+### OpenAI-compatible Providers {#openai-compatible-providers}
+
+Many entries in the directory use OpenAI-compatible APIs. Their setup guides cover which model class to use; [Other compatible APIs](compatible-apis.md) explains custom endpoints and model profiles.
+
+## Models, providers, and profiles {#models-and-providers}
 
 Pydantic AI uses a few key terms to describe how it interacts with different LLMs:
 
@@ -105,7 +115,7 @@ The profile also carries the model's [`context_window`][pydantic_ai.profiles.Mod
 
 ## HTTP Client Lifecycle
 
-When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager ensures the HTTP client is closed cleanly on exit:
+When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager keeps the HTTP client open across every run inside the block, so the runs reuse its connections, and closes it cleanly on exit:
 
 ```python
 from pydantic_ai import Agent
@@ -121,12 +131,43 @@ async def main():
 
 You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
 
-If you provide your own `http_client`, you are responsible for closing it yourself.
+An agent you don't enter this way enters its model for the duration of each run instead. The provider then closes its HTTP client when the run ends and creates a new one for the next run, so no connections are reused between runs. A model name passed to a run, as in `agent.run(..., model='openai:gpt-5.2')`, goes further: it creates a new provider, and with it a new HTTP client, for every run. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block, and to switch models per run, pass `Model` instances you created and entered (`async with model:`) once, rather than model names.
+
+Pydantic AI only ever closes an HTTP client it created itself. A client you pass in is yours to close, whether it's an `http_client` or a provider SDK client, such as `openai_client`, `anthropic_client` (including `AsyncAnthropicVertex`), Google's `client`, or `xai_client`.
+
+### Configuring the HTTP client
+
+The HTTP clients Pydantic AI creates have a 600-second timeout with a 5-second connect timeout, and a connection pool of up to 1000 connections, of which up to 100 are kept alive while idle. These are the defaults of the OpenAI and Anthropic SDKs' own clients. To change them, create a client with [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], which keeps the remaining defaults and Pydantic AI's `User-Agent`, and pass it to the provider as `http_client`:
+
+```python {title="configure_http_client.py"}
+import httpx2
+
+from pydantic_ai import Agent
+from pydantic_ai.models import create_async_httpx2_client
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+async def main():
+    async with create_async_httpx2_client(
+        timeout=httpx2.Timeout(120, connect=5, pool=10),
+        limits=httpx2.Limits(max_connections=200, max_keepalive_connections=50),
+    ) as http_client:
+        model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=http_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+Because you created the client, you close it, here by leaving the `async with` block. Passing the same client to several providers makes them share its connection pool.
+
+The Groq, Cohere and GitHub providers take a legacy `httpx.AsyncClient` instead, which you build yourself with the same arguments, for example `httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))`.
 
 ## Custom Models
 
 !!! note
-    If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](openai.md#openai-compatible-models) instead.
+    If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](compatible-apis.md) instead.
 
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
@@ -199,6 +240,17 @@ async def main():
     print(len(results))
     #> 20
 ```
+
+An agent and the `ConcurrencyLimitedModel` used for its own model request must use separate
+`ConcurrencyLimiter` instances. If you set `Agent(max_concurrency=...)` as well as
+`ConcurrencyLimitedModel(limiter=...)`, using the same instance raises
+[`UserError`][pydantic_ai.exceptions.UserError].
+Nested `ConcurrencyLimitedModel` wrappers also need different limiter instances.
+
+Re-entering a `ConcurrencyLimiter` through an agent on the same task raises `RuntimeError`; use a separate limiter
+for the nested run. When an agent delegates to another agent through a tool, each run or model
+request acquires its own slot. A shared pool must have enough capacity for the parent and nested
+operation to run at the same time.
 
 When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
 attributes showing the queue depth and configured limits. The `name` parameter on
@@ -472,8 +524,8 @@ print(result.output)
     The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
     output. A `'length'` finish reason on an empty or thinking-only response raises
     [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
-    the token limit mid-thinking), and an empty response with a `'content_filter'` finish reason raises
-    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
+    the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
+    reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
     regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as

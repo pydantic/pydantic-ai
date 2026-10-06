@@ -52,7 +52,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.xai import XaiRealtimeModel
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 
@@ -135,7 +134,8 @@ REALTIME_PARITY_CASES = [
         supports_image_input=False,
         supports_manual_turn_control=False,
         supports_interruption=False,
-        supports_native_tools=False,
+        # Web search, run by the delegated backend.
+        supports_native_tools=True,
         supports_text_output=False,
         drives_turns_with_text=False,
         synthesizes_turn_boundary=True,
@@ -181,7 +181,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
-        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
+        supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
@@ -193,7 +193,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
-        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
+        supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
@@ -215,7 +215,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
-        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
+        # The Vertex half-cascade model is the one Gemini Live model that answers in text.
         audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
@@ -362,13 +362,15 @@ async def test_text_tool_round_parity(
         events = await _collect_complete_turn(session, after_tool_result=True)
 
     assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
     assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     messages = session.all_messages()
     assert [type(message) for message in messages[:3]] == [ModelRequest, ModelResponse, ModelRequest]
-    # One tool round is exactly four messages on every provider and route. Gemini closes the turn once
-    # when it takes the tool result and again when it has spoken; the first boundary carries usage but
-    # no output, and is folded into the answer rather than recorded as an empty response.
+    # One tool round is exactly four messages, and one turn boundary, on every provider and route.
+    # Vertex's `gemini-live-2.5-flash` closes the turn once when the tool-call generation ends and again
+    # when it has spoken; the first boundary carries usage but no output, and is folded into the answer
+    # rather than recorded as an empty response or reported as the end of the exchange.
     answer_responses = messages[3:]
     assert len(answer_responses) == 1
     final = answer_responses[-1]
@@ -424,6 +426,7 @@ async def test_audio_tool_round_parity(
     parity_ws_cassette: tuple[RealtimeParityCase, Provider[Any], RealtimeCassette],
     assets_path: Path,
     realtime_recording: bool,
+    request: pytest.FixtureRequest,
 ) -> None:
     """A spoken turn executes a local tool and records the same normalized four-message round.
 
@@ -432,6 +435,11 @@ async def test_audio_tool_round_parity(
     model like GPT-Live can run at all. Both must produce the same history.
     """
     case, provider, cassette = parity_ws_cassette
+    if case.model_kind == 'openai':
+        # OpenAI's server VAD cancels an empty reply when the user goes on speaking, and commits the
+        # second turn after that reply ended. The shadow core files the turn after it, in the provider's
+        # order; the current core files it where the user started speaking (SIM-11).
+        request.applymarker(pytest.mark.shadow_divergence(reason='SIM-11: spoken turn in provider order'))
     model = _model(case, provider)
     profile = model.profile
     assert profile.get('synthesizes_turn_boundary', False) is case.synthesizes_turn_boundary

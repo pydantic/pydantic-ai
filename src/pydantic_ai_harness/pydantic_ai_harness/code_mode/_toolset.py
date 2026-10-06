@@ -37,11 +37,6 @@ from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 
 try:
-    from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
-except ImportError:  # pragma: no cover
-    _SEARCH_TOOLS_NAME = 'search_tools'  # pyright: ignore[reportConstantRedefinition]
-
-try:
     from pydantic_monty import (
         AbstractOS,
         MontyCrashedError,
@@ -505,11 +500,14 @@ _SEARCH_TOOLS_MODIFIER = (
     ' Note: discovered tools become callable as functions inside the run_code sandbox in subsequent invocations.'
 )
 
-_TOOL_SEARCH_ADDENDUM = (
-    f'\n\nNot all functions may be available initially.'
-    f' Use the `{_SEARCH_TOOLS_NAME}` tool to discover additional functions'
-    f' that will become callable in subsequent `run_code` invocations.'
-)
+
+def _tool_search_addendum(search_tool_name: str) -> str:
+    return (
+        f'\n\nNot all functions may be available initially.'
+        f' Use the `{search_tool_name}` tool to discover additional functions'
+        f' that will become callable in subsequent `run_code` invocations.'
+    )
+
 
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 
@@ -520,7 +518,7 @@ def _is_code_execution_tool(tool_def: ToolDefinition) -> bool:
     Such tools carry `code_arg_name` metadata -- the same marker instrumentation reads to render
     the argument as code. It covers script sandboxes (this `run_code`, DynamicWorkflow's
     `run_workflow`), shell surfaces that hand the argument to a shell (`Shell`'s
-    `run_command`/`start_command`, ModalSandbox's `run_command`), and tools that import the
+    `run_command`/`start_command`), and tools that import the
     argument as Python (`CapabilityCreation`'s `author_capability`). They must not be folded
     into `run_code`: nesting one code surface inside another would make the model write a script
     that passes a second script as a string literal. They stay native so the two code surfaces
@@ -542,6 +540,37 @@ def _sanitize_tool_name(name: str) -> str:
     if keyword.iskeyword(sanitized):
         sanitized = f'{sanitized}_'
     return sanitized or '_'
+
+
+class CodeModeReturnSchemaWarning(UserWarning):
+    """A sandboxed tool has no return schema, so its generated signature shows `-> Any`.
+
+    The model then writes code against a result shape it has to guess. A function tool gets a
+    return schema from its return annotation; an MCP tool gets one when its server declares an
+    `outputSchema`. When the tools come from a server you do not control, silence this category
+    alone with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.
+    """
+
+
+def _warn_missing_return_schemas(names: Sequence[str]) -> None:
+    """Warn once for every tool whose sandbox signature will show `-> Any`.
+
+    MCP servers commonly omit output schemas, so the tools are named in one warning rather
+    than one warning each.
+    """
+    if not names:
+        return
+    if len(names) == 1:
+        message = f'CodeMode: tool {names[0]!r} has no return schema; its signature will show `-> Any`'
+    else:
+        listed = ', '.join(repr(name) for name in names)
+        message = f'CodeMode: {len(names)} tools have no return schema ({listed}); their signatures will show `-> Any`'
+    warnings.warn(
+        f'{message}, which may reduce code mode effectiveness. Add a return annotation to a function tool, '
+        'or an `outputSchema` to an MCP tool; to silence this, filter `CodeModeReturnSchemaWarning`.',
+        CodeModeReturnSchemaWarning,
+        stacklevel=3,
+    )
 
 
 def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
@@ -947,19 +976,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_RUN_CODE_TOOL_NAME}' is reserved for code mode. Rename your tool to avoid conflicts."
             )
 
-        # When search_tools is present, append context about run_code to its
-        # description and add a discovery note to the run_code description.
-        has_search_tools = _SEARCH_TOOLS_NAME in native_tools
-        if has_search_tools:
-            search_tool = native_tools[_SEARCH_TOOLS_NAME]
-            native_tools[_SEARCH_TOOLS_NAME] = replace(
+        # When the tool search tool is present, append context about run_code to its
+        # description and add a discovery note to the run_code description. It is found by its
+        # `tool_kind`, since its name can be prefixed.
+        search_tool_name = next(
+            (name for name, tool in native_tools.items() if tool.tool_def.tool_kind == 'tool-search'), None
+        )
+        if search_tool_name is not None:
+            search_tool = native_tools[search_tool_name]
+            native_tools[search_tool_name] = replace(
                 search_tool,
                 tool_def=replace(
                     search_tool.tool_def,
                     description=(search_tool.tool_def.description or '') + _SEARCH_TOOLS_MODIFIER,
                 ),
             )
-            description += _TOOL_SEARCH_ADDENDUM
+            description += _tool_search_addendum(search_tool_name)
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(native_tools)
         result[_RUN_CODE_TOOL_NAME] = _RunCodeTool(
@@ -1278,6 +1310,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """
         callable_defs: dict[str, ToolDefinition] = {}
         sanitized_to_original: dict[str, str] = {}
+        missing_return_schema: list[str] = []
         for name, tool in wrapped_tools.items():
             td = tool.tool_def
 
@@ -1296,23 +1329,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     stacklevel=2,
                 )
                 continue
-            # Warn when a sandboxed tool has no return schema -- the generated
-            # signature will show `-> Any`, giving the model no type information
-            # about the return shape, which limits code mode effectiveness.
             if td.return_schema is None and name not in self._warned_deferred:
-                self._warned_deferred.add(name)
-                warnings.warn(
-                    f'CodeMode: tool {name!r} has no return schema; '
-                    f'its signature will show `-> Any`, which may reduce code mode effectiveness.',
-                    UserWarning,
-                    stacklevel=2,
-                )
+                missing_return_schema.append(name)
 
             if safe_name != name:
                 sanitized_to_original[safe_name] = name
                 td = replace(td, name=safe_name)
 
             callable_defs[safe_name] = td
+        _warn_missing_return_schemas(missing_return_schema)
+        # Recorded only once warned, so a warning escalated to an error is raised again next time.
+        self._warned_deferred.update(missing_return_schema)
         return callable_defs, sanitized_to_original
 
     @staticmethod

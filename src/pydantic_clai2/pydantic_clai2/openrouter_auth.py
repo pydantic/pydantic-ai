@@ -12,15 +12,15 @@ import webbrowser
 from collections.abc import Callable
 from urllib.parse import parse_qs, urlencode, urlparse
 
+import anyio
 import httpx
 from anyio import fail_after
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
-
-from . import theme
-from .auth import ReadLine, read_line
+from pydantic_clai2.auth import ReadLine, read_line
+from pydantic_clai2.ui.rendering import theme
 
 
 class KeyResponse(BaseModel):
@@ -100,7 +100,7 @@ class OpenRouterAuth:
                     )
                     self.console.print(url, markup=False, highlight=False)
                     try:
-                        opened = await asyncio.to_thread(self.open_browser, url)
+                        opened = await anyio.to_thread.run_sync(self.open_browser, url, abandon_on_cancel=True)
                     except webbrowser.Error:
                         opened = False
                     if not opened:
@@ -110,7 +110,7 @@ class OpenRouterAuth:
                     received = code.result() if code in done else paste.result()
                     return await self.exchange(code=received, verifier=verifier)
         except TimeoutError:
-            raise UserError('OpenRouter login timed out. Connect again through /add_model > openrouter.') from None
+            raise UserError('OpenRouter login timed out. Connect again through /model add > openrouter.') from None
         finally:
             code.cancel()
             tasks: list[asyncio.Task[None] | asyncio.Task[str]] = [*handlers]
@@ -181,5 +181,5 @@ class OpenRouterAuth:
                 return KeyResponse.model_validate_json(response.content).key
             except (httpx.HTTPError, ValidationError):
                 raise UserError(
-                    'OpenRouter key exchange failed. Connect again through /add_model > openrouter.'
+                    'OpenRouter key exchange failed. Connect again through /model add > openrouter.'
                 ) from None

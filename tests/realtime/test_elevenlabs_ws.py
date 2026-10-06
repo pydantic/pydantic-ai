@@ -33,12 +33,12 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import anyio
 import pytest
+from cassetter import Cassette
 from inline_snapshot import snapshot
-from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -69,7 +69,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel, ElevenLabsRealtimeModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.skipif(not imports_successful(), reason='websockets not installed'),
 ]
@@ -574,19 +573,15 @@ def _assert_weather_round(events: list[Any], messages: list[Any], cassette: Real
 def _rest_calls(vcr: Cassette) -> list[str]:
     """The REST preflight as recorded: method and path, ids replaced so the order is the assertion."""
     calls: list[str] = []
-    for request in _requests(vcr):
+    for request in vcr.requests:
         path = re.sub(r'/(agent|tool)_[0-9a-z]+', r'/<\1_id>', request.path)
         calls.append(f'{request.method} {path}')
     return calls
 
 
-def _requests(vcr: Cassette) -> list[Any]:
-    return cast('list[Any]', vcr.requests)  # pyright: ignore[reportUnknownMemberType]
-
-
 def _rest_body(vcr: Cassette, index: int) -> dict[str, Any]:
-    body = _requests(vcr)[index].body
-    assert isinstance(body, bytes)
+    body = vcr.requests[index].body
+    assert body is not None
     return json.loads(body)
 
 

@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -42,7 +42,6 @@ if TYPE_CHECKING:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -890,6 +889,11 @@ async def test_openrouter_cache_streaming_e2e(
                     'timestamp': IsDatetime(),
                     'downstream_provider': 'Amazon Bedrock',
                     'finish_reason': 'stop',
+                    'cost': 0.000837,
+                    'upstream_inference_cost': 0.000837,
+                    'upstream_inference_prompt_cost': 0.000762,
+                    'upstream_inference_completions_cost': 7.5e-05,
+                    'is_byok': False,
                 },
                 provider_response_id='gen-1773012759-4u9w7As08eMtL75bWtu8',
                 finish_reason='stop',
