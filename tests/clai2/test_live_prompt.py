@@ -262,7 +262,8 @@ async def test_completion_acceptance_and_cycling() -> None:
         live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
         pipe.send_text('/he')
         await ready.wait()
-        pipe.send_text('\t\t\r\r')
+        # `/help` starts highlighted, so one Tab moves to `/hello`.
+        pipe.send_text('\t\r\r')
         assert await live.read() == '/hello'
         ready = anyio.Event()
         pipe.send_text('/ell')
@@ -375,7 +376,6 @@ async def test_completion_refresh_keeps_popup_without_selecting_stale_results(
             assert not any('/help' in row for row in live.frame())
         else:
             assert len(live.frame()) == height
-            live.feed('tab')
             live.feed('enter')
             assert live.buffer.text == '/help'
 
@@ -402,9 +402,10 @@ async def test_suggestions_expand_the_prompt_box() -> None:
         assert inside[2].startswith('/hello Hello command')
         assert all('│' not in row and not row.startswith('>') for row in inside)
         assert all('help' not in row for row in plain[bottom + 1 :])
+        assert highlighted(live) == ['/help Help']
         live.feed('down')
         frame = live.frame()
-        selected = next(row for row in frame if 'help' in row and '\x1b[7m' in row)
+        selected = next(row for row in frame if 'hello' in row and '\x1b[7m' in row)
         assert selected.startswith('\x1b[7m') and selected.endswith('\x1b[0m')
 
 
@@ -462,6 +463,47 @@ async def popup_shows(live: LivePrompt, text: str) -> None:
     """Wait for the completion worker to publish a popup row containing `text`."""
     while text not in Text.from_ansi('\n'.join(live.frame())).plain:
         await anyio.sleep(0.01)
+
+
+def highlighted(live: LivePrompt) -> list[str]:
+    """The plain text of highlighted suggestion rows."""
+    return [Text.from_ansi(row).plain.strip() for row in live.frame() if row.startswith('\x1b[7m')]
+
+
+async def best_match_shows(live: LivePrompt, text: str) -> None:
+    """Wait for the completion worker to highlight the suggestion `text`."""
+    while not any(row.startswith(text) for row in highlighted(live)):
+        await anyio.sleep(0.01)
+
+
+async def test_typing_a_command_name_highlights_its_best_match() -> None:
+    async with editor() as (live, pipe, _):
+        live.commands.register(
+            Command(name='shelp', description='Substring', handler=lambda args: '', complete=lambda args: ('one',))
+        )
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        pipe.send_text('/hel')
+        # Names starting with the fragment rank above a substring match registered earlier.
+        await popup_shows(live, 'Substring')
+        rows = [Text.from_ansi(row).plain for row in live.frame()]
+        assert [row.split()[0] for row in rows if row.startswith(('/help', '/hello', '/shelp'))] == [
+            '/help',
+            '/hello',
+            '/shelp',
+        ]
+        await best_match_shows(live, '/help ')
+        # Enter takes the highlighted match without Tab; once it is typed in full, Enter runs it.
+        live.feed('enter')
+        assert live.buffer.text == '/help'
+        await best_match_shows(live, '/help ')
+        live.feed('enter')
+        assert await live.read() == '/help'
+        # Argument suggestions keep their provider's order, so none is highlighted and Enter submits.
+        pipe.send_text('/shelp ')
+        await popup_shows(live, 'one')
+        assert highlighted(live) == []
+        live.feed('enter')
+        assert await live.read() == '/shelp'
 
 
 async def test_history_walk_keeps_arrows_through_recalled_commands() -> None:
