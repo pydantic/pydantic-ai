@@ -1,5 +1,6 @@
 """OAuth tokens for MCP servers survive a restart through the keyring, and `/mcp auth` manages them."""
 
+import importlib.metadata
 import json
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import keyring
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.auth.oauth import TokenStorageAdapter
+from fastmcp.client.oauth_callback import create_oauth_callback_server
 from keyring.errors import KeyringLocked
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl, HttpUrl
@@ -22,6 +24,18 @@ Vault = dict[tuple[str, str], str]
 
 def token() -> OAuthToken:
     return OAuthToken(access_token='access', token_type='Bearer', refresh_token='refresh', expires_in=3600)
+
+
+def test_browser_sign_in_callback_server_loads() -> None:
+    """FastMCP's callback server imports `websockets`, which `fastmcp-slim[client]` does not declare."""
+    requires = importlib.metadata.metadata('pydantic-clai2').get_all('Requires-Dist') or []
+    websockets = [req for req in requires if req.startswith('websockets')]
+    assert websockets, 'websockets must be a pydantic-clai2 dependency'
+    assert all('extra ==' not in req for req in websockets)
+
+    server = create_oauth_callback_server(port=0, server_url=URL)
+    server.config.load()
+    assert server.config.ws_protocol_class is not None
 
 
 async def test_tokens_survive_a_restart_in_the_keyring(vault: Vault) -> None:

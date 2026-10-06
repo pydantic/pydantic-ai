@@ -15,7 +15,13 @@ from termflow.tui.completion import (
 )
 
 from pydantic_ai.models import known_model_names
-from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, UPDATE_CHANNELS, PluginSettings
+from pydantic_clai2.config import (
+    SETTING_FIELDS,
+    STRING_SETTINGS,
+    TOOL_CALL_DISPLAYS,
+    UPDATE_CHANNELS,
+    PluginSettings,
+)
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
@@ -170,8 +176,13 @@ class Commands(Completer):
         words = text[1:].split()
         if len(words) <= 1 and not text.endswith(' '):
             prefix = text[1:]
-            for command in list(self._commands.values()):
-                if prefix in command.name and command.available():
+            # Best match first: the exact name, then names starting with the fragment, then the rest.
+            matches = sorted(
+                (command for command in list(self._commands.values()) if prefix in command.name),
+                key=lambda command: (command.name != prefix, not command.name.startswith(prefix)),
+            )
+            for command in matches:
+                if command.available():
                     yield Completion(
                         command.name,
                         start_position=-len(prefix),
@@ -238,6 +249,8 @@ def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> It
         return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
     if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):
         return ('true', 'false')
+    if len(args) == 2 and args[0] == 'display.tool_calls':
+        return TOOL_CALL_DISPLAYS
     if len(args) == 2 and args[0] == 'updates.channel':
         return UPDATE_CHANNELS
     return ()

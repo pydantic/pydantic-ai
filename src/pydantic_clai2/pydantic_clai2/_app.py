@@ -2,20 +2,22 @@
 
 import asyncio
 import math
+import os
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from anyio import Lock, create_memory_object_stream, create_task_group, to_thread
+from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import History
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentStreamEvent
@@ -28,6 +30,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
+from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
@@ -46,7 +49,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
-from pydantic_clai2.models.chains import chain_command, chain_completions, settings_model as chain_settings_model
+from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, provider_of
 from pydantic_clai2.plugins import (
     ModelProvider,
@@ -59,14 +62,24 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.runtime._session import Session, StockAgent, current_session_id
+from pydantic_clai2.runtime._session import (
+    ModelDefaults,
+    Session,
+    SessionModels,
+    StockAgent,
+    current_session_id,
+    local_workspace,
+    resolve_model_name,
+)
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES, ImportSource
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
+from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
@@ -86,6 +99,7 @@ from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._branding import print_banner
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.history import render_history
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -160,6 +174,84 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
     return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()])
 
 
+@asynccontextmanager
+async def open_stock_agent(
+    *,
+    workspace: str | Path,
+    model: Model | str | None = None,
+    capabilities: Sequence[AgentCapability[None]] = (),
+    plugin_settings: Mapping[str, Mapping[str, JsonValue]] | None = None,
+) -> AsyncGenerator[Agent[None, str]]:
+    """Open CLAI's stock coding agent for runs from code, without the terminal.
+
+    The agent has the `coder`, `repo_context`, and `compaction` built-ins as the CLI configures them,
+    then `capabilities`, all bound at construction so delegated tasks carry them too. It works in
+    `workspace` on this machine unless one of `capabilities` supplies a workspace, such as a sandbox.
+    Commands get this process's environment minus LLM provider API keys. Model names, the agent's own
+    and any a run passes, resolve as in the CLI and get CLAI's per-model defaults. Without `model`,
+    each run must pass one.
+
+    `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
+    `{'coder': {'sub_agents': False}}`. Nothing saved for the `clai2` CLI applies: no saved or drop-in
+    plugins, no project `.clai/settings.json`, no saved model settings or `chain:` fallback chains.
+    Raises `UserError` when `plugin_settings` names another plugin, and `PluginSettingsError` when a
+    built-in rejects its merged settings.
+
+    The agent and its plugins close when the context exits.
+    """
+    from pydantic_clai2.models.model_settings import default_model_settings
+
+    stock = {plugin.id: plugin for plugin in STOCK_PLUGINS if plugin.id in ('coder', 'repo_context', 'compaction')}
+    overrides = plugin_settings or {}
+    if unknown := sorted(overrides.keys() - stock.keys()):
+        raise UserError(
+            f'`plugin_settings` configures only {", ".join(map(repr, stock))}, not {", ".join(map(repr, unknown))}.'
+        )
+    declarations = [
+        plugin.model_copy(update={'settings': {**plugin.settings, **overrides.get(plugin.id, {})}})
+        for plugin in stock.values()
+    ]
+    # Unlike `create_stock_agent`, no guide to customizing the terminal app, whose plugins never load here.
+    template = StockAgent(
+        model if isinstance(model, Model) else None, deps_type=type(None), output_type=str, capabilities=[]
+    )
+    reason: SessionEndReason = 'error'
+    # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
+    with TemporaryDirectory(prefix='clai2-') as config, open(os.devnull, 'w', encoding='utf-8') as sink:
+        console = Console(file=sink, force_terminal=False)
+        store = SettingsStore(Path(config) / 'config.db')
+        loader = PluginLoader[None](
+            store=store,
+            console=console,
+            commands=Commands(),
+            session_start=lambda: SessionStart(
+                agent=template, settings=Settings(model=model if isinstance(model, str) else None)
+            ),
+            builtin=declarations,
+        )
+        models = _ModelResolver(console=console, store=store, plugins=loader.model_providers)
+        try:
+            for declaration in declarations:
+                await loader.load(declaration.id)
+            bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
+            if (local := local_workspace(bound, workspace)) is not None:
+                bound.append(local)
+            agent = template.with_plugins(
+                [
+                    *bound,
+                    SessionModels[None](lambda _, name: resolve_model_name(models.resolve, name)),
+                    ModelDefaults[None](lambda name: default_model_settings(model=name, saved={})),
+                ],
+                model=model if isinstance(model, str) else None,
+            )
+            async with agent:
+                yield agent
+            reason = 'exit'
+        finally:
+            with CancelScope(shield=True):
+                await loader.close(reason)
+
+
 async def chat(
     agent: AbstractAgent[DepsT, OutputT],
     *,
@@ -172,22 +264,26 @@ async def chat(
     builtin_plugins: Sequence[PluginSettings] = (),
     project: ProjectSettings | None = None,
     resume: str | None = None,
+    resume_from: ImportSource | None = None,
     load_plugins: bool = True,
+    worktree: Worktree | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
     Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
+    `resume_from` imports `resume` from Claude Code or Codex instead; an empty `resume` browses its sessions.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
+    `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
     """
     console = console or Console()
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
         project = project or ProjectSettings()
-        _print_welcome(project, console)
+        _print_welcome(project, console, worktree=worktree)
         use_defaults = builtin_plugins is DEFAULT_PLUGINS
         use_stock_defaults = builtin_plugins is STOCK_PLUGINS
         shell = create_shell(
@@ -220,8 +316,10 @@ async def chat(
                                 await shell.loader.load_all(fresh=fresh)
                                 _report_project_plugins(shell.loader, console)
                                 if resume is not None:
+                                    source = [resume_from] if resume_from else []
                                     console.print(
-                                        await shell.sessions.command([resume] if resume else []), markup=False
+                                        await shell.sessions.command([*source, resume] if resume else source),
+                                        markup=False,
                                     )
                                     resume = None
                             warming = warming or warm_imports.start()
@@ -371,7 +469,7 @@ class _ModelResolver:
 
         models = self.store.chains().get(chain) if self.store is not None else None
         if not models:
-            raise UserError(f'No chain named {chain}. Save one with /chain {chain} MODEL MODEL...')
+            raise UserError(f'No chain named {chain}. Create one with /model chains.')
         first, *rest = [await self.resolve(model) for model in models]
         return FallbackModel(first, *rest)
 
@@ -487,6 +585,14 @@ def create_shell(
     commands = Commands()
     commands.register(
         Command(
+            name='effort',
+            description='View or set reasoning effort: /effort [VALUE|reset]',
+            handler=lambda args: effort_command(context, args, model=session.model or _model_label(agent)),
+            complete=lambda args: effort_completions(context, args, model=session.model or _model_label(agent)),
+        )
+    )
+    commands.register(
+        Command(
             name='fast',
             description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
             handler=fast,
@@ -498,7 +604,11 @@ def create_shell(
     )
     commands.register(
         Command(
-            name='resume', description='Browse or restore a saved session', handler=sessions.command, during_turn=True
+            name='resume',
+            description='Browse or restore a saved session; claude or codex imports theirs',
+            handler=sessions.command,
+            complete=lambda args: IMPORT_SOURCES if len(args) <= 1 else (),
+            during_turn=True,
         )
     )
     commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
@@ -510,15 +620,6 @@ def create_shell(
             ),
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
-            during_turn=True,
-        )
-    )
-    commands.register(
-        Command(
-            name='chain',
-            description='Save fallback chains of models, then select one with /model chain:NAME',
-            handler=lambda args: chain_command(store, args),
-            complete=lambda args: chain_completions(store, args),
             during_turn=True,
         )
     )
@@ -551,14 +652,17 @@ def create_shell(
     commands.register(
         Command(
             name='model',
-            description='Select any model, or open the picker; also /model add [NAME] and /model settings [NAME]',
+            description=(
+                'Select any model or fallback chain, or open the picker; also /model add [NAME], '
+                '/model settings [NAME], and /model chains'
+            ),
             handler=lambda args: model_command(context, args),
             complete=lambda args: model_completions(context, args),
             during_turn=True,
             during_turn_subcommands=MODEL_SUBCOMMANDS,
         )
     )
-    # Deprecated spellings of `/model add` and `/model settings`, kept working for existing habits.
+    # Deprecated spellings of `/model add`, `/model settings`, and `/model chains`, kept working for existing habits.
     commands.register(
         Command(
             name='add_model',
@@ -578,15 +682,26 @@ def create_shell(
         )
     )
     commands.register(
+        Command(
+            name='chain',
+            description='Alias of /model chains: fallback chains live in the /model picker',
+            handler=lambda args: model_command(context, ['chains', *args]),
+            during_turn=True,
+        )
+    )
+    commands.register(
         Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
     )
 
-    def clear(_: list[str]) -> str:
-        session.clear()
+    def reset_screen() -> None:
         console.clear()
         # Forget the old output too, or a resize or the exit printout would show it again.
         transcript.clear()
         _print_welcome(project, console)
+
+    def clear(_: list[str]) -> str:
+        session.clear()
+        reset_screen()
         return ''
 
     clear_ = Command(
@@ -615,7 +730,7 @@ def create_shell(
     commands.register(
         Command(
             name='update',
-            description='Install the newest CLAI from the updates.channel setting (stable or bleeding)',
+            description='Install the newest CLAI from the updates.channel setting (stable or main)',
             handler=updates.command,
         )
     )
@@ -732,6 +847,15 @@ def create_shell(
         )
     )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
+
+    async def show_resumed(messages: Sequence[ModelMessage]) -> None:
+        # The live panel swaps to the restored conversation; startup output above it stays.
+        if shell.editor is not None:
+            reset_screen()
+        renderer = _stream_renderer(console, settings=context.settings, renderers=loader.renderers(), smooth=False)
+        await render_history(messages, console=console, renderer=renderer)
+
+    sessions.on_resume = show_resumed
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     TranscriptBuffer.rebind(transcript)
     return shell
@@ -791,6 +915,7 @@ class _Shell(Generic[DepsT, OutputT]):
             else Path(str(self.sessions.store.database) + '.tasks'),
             step_store=self.session.step_store,
         )
+        self.status.subagent = self.tasks.focused
         self.forks = Forks(
             console=self.console,
             history=lambda: self.session.messages,
@@ -1152,10 +1277,13 @@ class _Shell(Generic[DepsT, OutputT]):
         return ended
 
 
-def _print_welcome(project: ProjectSettings, console: Console) -> None:
-    """The banner and hints a fresh launch shows, which `/clear` returns to."""
+def _print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
+    """The banner and hints a fresh launch shows, which `/clear` returns to without the launch's worktree notice."""
     console.print()
     print_banner(console)
+    if worktree is not None:
+        # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
+        console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
     console.print(
         '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
         style=theme.color(theme.MUTED),
@@ -1217,6 +1345,25 @@ def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
     return model.model_name if model else 'agent default'
 
 
+def _stream_renderer(
+    console: Console, *, settings: Settings, renderers: Sequence[Renderer], smooth: bool = True
+) -> StreamRenderer:
+    """The renderer for a turn's events, configured by the display settings."""
+    return StreamRenderer(
+        console,
+        stop_loading=lambda: None,
+        show_thinking=settings.thinking,
+        smooth_seconds=settings.smooth_seconds,
+        show_tool_output=settings.tool_output,
+        shell_lines=settings.shell_lines,
+        grep_lines=settings.grep_lines,
+        tool_arg_chars=settings.tool_arg_chars,
+        tool_calls=settings.tool_calls,
+        renderers=renderers,
+        smooth=smooth,
+    )
+
+
 async def _run_prompt(
     session: Session[DepsT, OutputT],
     text: str | None,
@@ -1230,16 +1377,8 @@ async def _run_prompt(
     images: Sequence[BinaryContent] = (),
     tasks: Tasks | None = None,
 ) -> TurnEnd:
-    renderer = StreamRenderer(
-        console,
-        stop_loading=lambda: None,
-        show_thinking=settings.thinking,
-        smooth_seconds=settings.smooth_seconds,
-        show_tool_output=settings.tool_output,
-        shell_lines=settings.shell_lines,
-        grep_lines=settings.grep_lines,
-        tool_arg_chars=settings.tool_arg_chars,
-        renderers=[*renderers, task_row] if tasks is not None else renderers,
+    renderer = _stream_renderer(
+        console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
     )
     status.streamed_chars = 0
     status.output_tokens = None
