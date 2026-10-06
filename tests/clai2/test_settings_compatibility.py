@@ -331,6 +331,35 @@ def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_p
         }
 
 
+def test_update_channel_main_keeps_its_former_name_on_disk(tmp_path: Path) -> None:
+    """`main` was called `bleeding`: older builds' rows read as `main`, and `main` is saved as `bleeding` for them."""
+    path = tmp_path / 'config.db'
+    store = SettingsStore(path)
+    # Literal rows an earlier build wrote.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.executemany(
+            'INSERT INTO settings VALUES (?, ?)',
+            [('updates.channel', '"bleeding"'), ('display.thinking', 'false'), ('future.setting', '1')],
+        )
+    settings = SettingsStore(path).load()
+    assert (settings.update_channel, settings.thinking) == ('main', False)
+    assert config_command(store, ['get', 'updates.channel']) == '"main"'
+    config_command(store, ['set', 'updates.channel', 'stable'])
+    assert SettingsStore(path).load().update_channel == 'stable'
+    config_command(store, ['set', 'updates.channel', 'main'])
+    assert SettingsStore(path).load() == settings
+    snapshot = path.read_bytes()
+    with pytest.raises(ValidationError):
+        store.set('updates.channel', 'nightly')
+    assert path.read_bytes() == snapshot
+    with closing(sqlite3.connect(path)) as connection:
+        assert dict(connection.execute('SELECT key, value_json FROM settings')) == {
+            'updates.channel': '"bleeding"',
+            'display.thinking': 'false',
+            'future.setting': '1',
+        }
+
+
 def test_incompatible_schema_is_not_modified(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     store.set('model', 'test')

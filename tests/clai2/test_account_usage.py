@@ -3,7 +3,7 @@
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import anyio
@@ -35,7 +35,7 @@ from pydantic_clai2.ui.menus.accounts_menu import AccountsMenu, open_accounts_me
 from tests.clai2.menu_script import pick
 from tests.clai2.test_accounts import CODEX, menu_script, plugin_login, signed, store_at
 
-NOW = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
 RESPONSE = Callable[[httpx2.Request], httpx2.Response]
 
 
@@ -69,7 +69,7 @@ async def test_codex_usage_reads_the_plan_windows_as_the_signed_in_account() -> 
     provider = codex_provider(respond)
     assert await codex_usage(provider) == AccountUsage(
         windows=(
-            UsageWindow(label='5h', used_percent=92, resets_at=datetime.fromtimestamp(1791240000, timezone.utc)),
+            UsageWindow(label='5h', used_percent=92, resets_at=datetime.fromtimestamp(1791240000, UTC)),
             UsageWindow(label='7d', used_percent=43.5),
         ),
         plan='pro',
@@ -109,7 +109,7 @@ async def test_copilot_usage_reports_metered_quotas_until_they_reset() -> None:
         return httpx2.Response(200, json=body)
 
     usage = await copilot_usage('github-copilot', transport=httpx2.MockTransport(respond))
-    first_of_month = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    first_of_month = datetime(2026, 11, 1, tzinfo=UTC)
     assert usage == AccountUsage(
         windows=(UsageWindow(label='premium', used_percent=25.0, resets_at=first_of_month),), plan='individual'
     )

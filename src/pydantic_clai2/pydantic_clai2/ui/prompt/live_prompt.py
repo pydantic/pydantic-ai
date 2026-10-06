@@ -1,7 +1,6 @@
 """Pinned editor and scrollback ownership, without a PromptSession renderer."""
 
 import asyncio
-import re
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
@@ -28,7 +27,7 @@ from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -182,8 +181,11 @@ class LivePrompt:
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
-        if key in ('pageup', 'pagedown', 'mouse'):
-            self.scroll(key, data)
+        if key in TRANSCRIPT_KEYS:
+            # Leave the draft alone, and the notice unless a drag copied text.
+            if self.output.transcript_key(key, data):
+                self.notice = 'Copied the selection to the clipboard.'
+                self.paint()
             return
         self.notice = ''
         if key != 'escape':
@@ -203,6 +205,9 @@ class LivePrompt:
                 self.buffer.edit('delete')
             else:
                 self.submit(EOFError())
+        elif key == 'ctrl-l':
+            # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
+            self.output.clear(keep_current=self.interrupts.active)
         elif key in ('paste', 'ctrl-v', 'alt-v'):
             self.paste(data if key == 'paste' else None)
         elif key == 'ctrl-r' or self.buffer.search is not None:
@@ -223,19 +228,6 @@ class LivePrompt:
             self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
-
-    def scroll(self, key: str, data: str) -> None:
-        """Page or wheel through the transcript, leaving the draft and the notice alone."""
-        if key == 'mouse':
-            wheel = _WHEEL.fullmatch(data)
-            # Shift, Alt, and Ctrl add 4, 8, and 16 to the button; anything else is a click.
-            button = int(wheel[1]) & ~(4 | 8 | 16) if wheel else None
-            if button not in (64, 65):
-                return
-            rows = WHEEL_ROWS if button == 64 else -WHEEL_ROWS
-        else:
-            rows = self.output.page if key == 'pageup' else -self.output.page
-        self.output.scroll(rows)
 
     def escape(self) -> None:
         """Cancel or dismiss first; only consecutive idle presses request a rewind."""
@@ -307,10 +299,14 @@ class LivePrompt:
         return False
 
     def accept(self) -> None:
-        """Accept a completion or queue the nonempty draft."""
+        """Accept a completion that changes the draft, or else queue the nonempty draft."""
         if self._selection >= 0:
-            self.accept_completion()
-            return
+            item = self._completions[self._selection]
+            if self.buffer.text[self._completion_start(item) : self.buffer.cursor] != item.text:
+                self.accept_completion()
+                return
+            # The highlighted command is already typed in full, so Enter runs it.
+            self.dismiss_completions()
         text = self.buffer.text.strip()
         target, self._editing = self._editing, None
         if target is not None and target not in self._submissions:
@@ -429,9 +425,12 @@ class LivePrompt:
             source='command' if is_command_input(self.buffer.text) else 'path',
             candidates=len(self._completions),
         )
-        start = max(0, self.buffer.cursor + item.start_position)
-        self.buffer.replace_range(start, self.buffer.cursor, item.text)
+        self.buffer.replace_range(self._completion_start(item), self.buffer.cursor, item.text)
         self.dismiss_completions()
+
+    def _completion_start(self, item: Completion) -> int:
+        """Where the fragment `item` replaces begins in the draft."""
+        return max(0, self.buffer.cursor + item.start_position)
 
     def dismiss_completions(self) -> None:
         """Close the popup and invalidate any in-flight lookup."""
@@ -488,7 +487,19 @@ class LivePrompt:
                 self._completion_pending = False
                 self._completion_error = error
                 self._completions = items
+                self._selection = 0 if items and self._highlights_best_match(text[:cursor]) else -1
                 self.paint()
+
+    def _highlights_best_match(self, typed: str) -> bool:
+        """Whether the first suggestion starts highlighted, as if Tab had picked it.
+
+        Only while a command name is typed, where the registry ranks the best match first.
+        Argument candidates keep their provider's order, so Enter still submits a typed
+        argument, and a history walk keeps the arrows (see `_arrows_cycle_completions`).
+        """
+        return (
+            self.buffer.history_index is None and is_command_input(typed) and not any(char.isspace() for char in typed)
+        )
 
     def frame(self) -> tuple[str, ...]:
         """Build the reserved rows; transcript contents are deliberately absent."""
@@ -627,10 +638,6 @@ class LivePrompt:
             self._completion_worker.close()
             self.console.file = original
             self.output.restore()
-
-
-WHEEL_ROWS = 3
-_WHEEL = re.compile(r'\x1b\[<(\d+);\d+;\d+[mM]')
 
 
 def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:

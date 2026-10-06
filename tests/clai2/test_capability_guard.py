@@ -86,7 +86,7 @@ async def test_simultaneous_setup_errors_report_every_failing_capability(tmp_pat
         PluginGuard[None](RefusesForRun(), plugin='two'),
     )
     conversation.on_setup_error = reported.append
-    with pytest.raises(ExceptionGroup):  # noqa: F821
+    with pytest.raises(ExceptionGroup):
         await conversation.prompt('hello')
     assert sorted(error.plugin for error in reported) == ['one', 'two']
 
@@ -94,7 +94,7 @@ async def test_simultaneous_setup_errors_report_every_failing_capability(tmp_pat
 async def test_simultaneous_foreign_setup_errors_still_fail(tmp_path: Path) -> None:
     guards = [PluginGuard[None](RefusesForRun(), plugin=name) for name in ('one', 'two')]
     bound = Agent(TestModel(), deps_type=type(None), capabilities=guards)
-    with pytest.raises(ExceptionGroup):  # noqa: F821
+    with pytest.raises(ExceptionGroup):
         await session(bound, tmp_path).prompt('hello')
 
 
@@ -102,8 +102,8 @@ def test_setup_errors_only_when_every_failure_is_one() -> None:
     error = CapabilitySetupError(plugin='x', capability=object(), error=UserError('x'))
     assert setup_errors(error) == [error]
     assert setup_errors(ValueError('x')) is None
-    assert setup_errors(ExceptionGroup('x', [error, ExceptionGroup('y', [error])])) == [error, error]  # noqa: F821
-    assert setup_errors(ExceptionGroup('x', [error, ValueError('x')])) is None  # noqa: F821
+    assert setup_errors(ExceptionGroup('x', [error, ExceptionGroup('y', [error])])) == [error, error]
+    assert setup_errors(ExceptionGroup('x', [error, ValueError('x')])) is None
 
 
 async def test_errors_after_setup_propagate(tmp_path: Path) -> None:

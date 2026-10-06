@@ -899,12 +899,14 @@ repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
 [Project settings](README.md#project-settings).
 
-Some plugins already include others. `coder` includes context management and
-task delegation, so while `coder` is on, `compaction` stays off, and so does a
-harness `SubAgents` row (such as `subagents`) unless `coder` has `sub_agents`
-turned off: `/plugins` shows them greyed out with
-`in coder`, `/plugins list` says `included in coder`, and enabling one says to
+Some plugins already include others. `coder` includes task delegation, so while
+`coder` is on, a harness `SubAgents` row (such as `subagents`) stays off unless
+`coder` has `sub_agents` turned off: `/plugins` shows it greyed out with
+`in coder`, `/plugins list` says `included in coder`, and enabling it says to
 disable `coder` first. Turning `coder` off loads any of them you had enabled.
+`coder` only clears old tool results, so `compaction` runs beside it. Were `coder`
+to bind its own history compaction, `compaction` would be greyed out the same way,
+so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
@@ -915,8 +917,8 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the README) and reloads it for the next turn; it refuses
-while `coder` includes the plugin. A declaration under the same name changes them too:
+`summarization_model`; see the README) and reloads it for the next turn. A
+declaration under the same name changes them too:
 
 ```text
 /plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "context_window": 200000}'
@@ -932,7 +934,8 @@ visible. Up/Down moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
-The picker uses `host.full_screen()` only to flush streaming output and suspend
+The plugin's `render` replaces the tool's argument dump with a header that lists
+the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
 is restored on exit, and your picks are printed to the transcript afterwards.
 `/plugins disable ask_user` takes the tool away.
@@ -1224,9 +1227,12 @@ Tokens are kept out of plugin settings, which are stored in plaintext:
   `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so later sessions
   reuse and refresh them. Choosing it saves `{"auth": "oauth"}`, which keeps
   using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. If you are not
-  signed in yet, the browser opens when the menu closes. A failed sign-in fails
-  the load, so nothing is added. A headless run that is not signed in fails to
-  load rather than opening a browser.
+  signed in yet, the browser opens right away, behind a waiting screen. Esc
+  cancels it, and a failed sign-in is reported in the menu. Either way Day AI
+  stays signed out and CLAI keeps working. Loading never opens the browser.
+  While browser sign-in is chosen but not finished, the plugin loads without
+  Day AI tools and prints how to sign in, so a sign-in you cannot finish never
+  holds up a session.
 
 Until you choose one, with no `DAY_AI_ACCESS_TOKEN` and no earlier sign-in,
 the plugin loads without Day AI tools and prints how to connect. A key named
@@ -1853,6 +1859,9 @@ list when there is none); `/fork` does this so prompts keep their apostrophes.
 It may be `async`. Add `complete=` to offer Tab suggestions. The registry filters
 command names and returned candidates by case-sensitive substring, replacing the
 whole typed fragment when selected. Return full candidates, not just suffixes.
+Command names are listed exact match first, then names that start with the typed
+fragment; the first is highlighted as you type. Candidates keep the order
+`complete=` returns them in, and none is highlighted until Tab or Up/down picks one.
 Set `available=` to a zero-argument callable returning a boolean to gate dispatch,
 help, and completion on live session state. It defaults to always available.
 Unavailable commands retain their registered names and ownership, so they still
@@ -1935,6 +1944,11 @@ class Writes(Plugin):
 CLAI flushes any streaming text before it prints what you return, so your output
 never lands in the middle of a paragraph.
 
+`/resume` shows the restored conversation through the same renderers. It sends
+`FunctionToolCallEvent` and `FunctionToolResultEvent` built from the saved
+messages, so a renderer for those also draws resumed turns. Events that only
+streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
+
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,
@@ -1974,10 +1988,13 @@ background task, and is hidden while a full-screen interface owns the terminal.
 The editor and transcript share a Termflow live cell buffer on the alternate
 screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
 output without changing the draft. New output does not move a scrolled view.
+A mouse drag selects painted cells, and releasing it copies them to the clipboard.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme; tool and command
-output rewraps with its original colours. The transcript includes startup and
+output rewraps, and a theme change repaints its colours role by role. Output
+coloured with `theme.color(...)` or the theme's diff and syntax colours follows
+`/theme`; other colours stay as printed. The transcript includes startup and
 plugin lifecycle output. `/reload` preserves it, including when a running session
 upgrades from the older scrollback implementation. It keeps styling, not arbitrary
 terminal controls.
@@ -2395,7 +2412,7 @@ offer them without adding them first. A failed sign-in adds nothing.
 
 Users can sign in to more than one account per provider. An account other than
 the default is a profile: `/login NAME@PROFILE` signs in to it, and
-`PREFIX@PROFILE:MODEL` runs on it. A fallback chain (`/chain`) can then pool
+`PREFIX@PROFILE:MODEL` runs on it. A fallback chain (made in `/model`) can then pool
 accounts, moving to the next one when a request fails. To support profiles, set
 both optional fields:
 

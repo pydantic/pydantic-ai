@@ -24,6 +24,7 @@ from typing import (
     Literal,
     TypeAlias,
     TypeGuard,
+    assert_never,
     cast,
     get_args,
     overload,
@@ -35,7 +36,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
 

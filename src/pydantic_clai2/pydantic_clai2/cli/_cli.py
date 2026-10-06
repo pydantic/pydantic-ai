@@ -12,9 +12,7 @@ from pydantic_clai2.ui.rendering.splash import Splash
 def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
     parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
-    parser.add_argument(
-        '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
-    )
+    _add_resume_flags(parser)
     parser.add_argument(
         '--worktree',
         '-w',
@@ -41,6 +39,7 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    _resume_source(args)
     _validate_args(args, parser)
     if args.database is not None:
         # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
@@ -58,6 +57,7 @@ def run(*, splash: Splash | None = None) -> None:
     finally:
         if splash is not None:
             splash.stop()
+    worktree = None
     try:
         store = SettingsStore(args.database)
         store.path = store.path.resolve()
@@ -68,11 +68,9 @@ def run(*, splash: Splash | None = None) -> None:
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
             worktree = open_worktree(name=args.worktree)
-            print(
-                f'{"Worktree" if worktree.created else "Reopened worktree"}: {worktree.path} '
-                f'(branch: {worktree.branch}). Kept unless removal is confirmed on exit.',
-                file=sys.stderr if args.prompt is not None else sys.stdout,
-            )
+            if args.prompt is not None:
+                # Headless stdout carries only the answer; the shell shows the notice under its banner instead.
+                print(worktree.notice, file=sys.stderr)
             os.chdir(worktree.path)
         project = load_project_settings(Path.cwd())
         overrides = store.overrides() | project.overrides
@@ -95,6 +93,7 @@ def run(*, splash: Splash | None = None) -> None:
                         store=store,
                         project=project,
                         resume=args.resume,
+                        resume_from=args.resume_from,
                         agent=agent,
                     )
                 )
@@ -109,7 +108,9 @@ def run(*, splash: Splash | None = None) -> None:
                 builtin_plugins=DEFAULT_PLUGINS if args.agent else STOCK_PLUGINS,
                 project=project,
                 resume=args.resume,
+                resume_from=args.resume_from,
                 load_plugins=agent is None,
+                worktree=worktree,
             )
         )
         offer_worktree_cleanup()
@@ -119,6 +120,9 @@ def run(*, splash: Splash | None = None) -> None:
         sys.stdout.flush()
         os.execv(relaunch.executable, argv)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
+        if worktree is not None:
+            # A startup error can come before the banner, so name the checkout this launch leaves behind.
+            print(f'Worktree kept at {worktree.path} (branch: {worktree.branch}).', file=sys.stderr)
         parser.error(str(exc))
     except KeyboardInterrupt:
         if args.prompt is not None:
@@ -139,6 +143,30 @@ def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str 
     if session_id is not None:
         argv += ['--resume', session_id]
     return argv
+
+
+def _add_resume_flags(parser: argparse.ArgumentParser) -> None:
+    """`--resume` and its Claude Code and Codex counterparts, of which one may be given."""
+    flags = parser.add_mutually_exclusive_group()
+    flags.add_argument(
+        '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
+    )
+    for flag, name in (('--resume-claude', 'Claude Code'), ('--resume-codex', 'Codex')):
+        flags.add_argument(
+            flag,
+            nargs='?',
+            const='',
+            metavar='SESSION-ID',
+            help=f'Import and restore a {name} session; no ID browses {name} sessions',
+        )
+
+
+def _resume_source(args: argparse.Namespace) -> None:
+    """Fold `--resume-claude` and `--resume-codex` into `resume`, so the same rules check all three."""
+    args.resume_from = None
+    for source, session_id in (('claude', args.resume_claude), ('codex', args.resume_codex)):
+        if session_id is not None:
+            args.resume_from, args.resume = source, session_id
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:

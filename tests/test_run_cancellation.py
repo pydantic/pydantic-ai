@@ -21,11 +21,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import pickle
-import sys
 import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator
 from contextlib import contextmanager
-from datetime import timezone
+from datetime import UTC
 from typing import Any
 
 import anyio
@@ -68,24 +67,15 @@ from .conftest import IsNow, IsStr
 
 READINESS_WAIT_TIMEOUT = 5
 
-requires_task_cancelling = pytest.mark.skipif(
-    sys.version_info < (3, 11), reason='the backstop needs `Task.cancelling()` (Python 3.11+)'
-)
-
 
 def _task_cancelling(task: asyncio.Task[Any]) -> int:
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return 0
     return task.cancelling()
 
 
 def _task_uncancel(task: asyncio.Task[Any]) -> None:
-    if sys.version_info < (3, 11):  # pragma: lax no cover
-        return
     task.uncancel()
 
 
-@requires_task_cancelling
 async def test_swallowing_event_stream_handler_run_still_cancels():
     """An `event_stream_handler` that catches `CancelledError` must not absorb the run's cancellation.
 
@@ -117,7 +107,6 @@ async def test_swallowing_event_stream_handler_run_still_cancels():
     assert [type(m).__name__ for m in messages] == ['ModelRequest', 'ModelResponse']
 
 
-@requires_task_cancelling
 async def test_after_run_hook_cannot_convert_external_cancel_to_success():
     """An `after_run` hook that absorbs the cancellation must not let the run finalize as a
     success: the backstop fires before the result is stored."""
@@ -420,8 +409,8 @@ async def test_tool_cancels_run_and_history_is_resumable():
     assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -432,7 +421,7 @@ async def test_tool_cancels_run_and_history_is_resumable():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:model_func:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -442,10 +431,10 @@ async def test_tool_cancels_run_and_history_is_resumable():
                         tool_name='fast_tool',
                         content='fast result',
                         tool_call_id='call_fast',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -466,19 +455,19 @@ async def test_tool_cancels_run_and_history_is_resumable():
                     tool_name='fast_tool',
                     content='fast result',
                     tool_call_id='call_fast',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                 ),
                 ToolReturnPart(
                     tool_name='cancelling_tool',
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_slow',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 ),
-                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=UTC)),
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
         )
     )
 
@@ -531,8 +520,8 @@ async def test_cancel_during_only_tool_call_is_resumable():
     assert messages == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -540,13 +529,13 @@ async def test_cancel_during_only_tool_call_is_resumable():
                 parts=[ToolCallPart(tool_name='in_flight_tool', args={}, tool_call_id='call_only')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:model_func:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -564,12 +553,12 @@ async def test_cancel_during_only_tool_call_is_resumable():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_only',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 ),
-                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='never mind, wrap up', timestamp=IsNow(tz=UTC)),
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
         )
     )
 
@@ -596,11 +585,11 @@ async def test_cancel_during_only_tool_call_is_resumable_without_a_new_prompt():
                     content='The tool call was interrupted before a result was produced.',
                     tool_call_id='call_only',
                     metadata={'pydantic_ai_synthesized_tool_return': True},
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     outcome='interrupted',
                 )
             ],
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             run_id=IsStr(),
             conversation_id=IsStr(),
         )
@@ -653,7 +642,6 @@ async def test_iter_cancellation_is_typed_only_after_context_exit():
     assert seen_inside
 
 
-@requires_task_cancelling
 async def test_iter_swallowed_cancellation_is_quiet_abandonment():
     """Leaving `agent.iter()` normally after swallowing its cancellation cleans task state."""
     agent = Agent(TestModel())
@@ -671,7 +659,6 @@ async def test_iter_swallowed_cancellation_is_quiet_abandonment():
     assert _task_cancelling(task) == 0
 
 
-@requires_task_cancelling
 async def test_cancel_followed_by_other_error_releases_cancellation():
     """A run that ends with a non-cancellation error after `cancel()` was issued must release the
     issued cancellation: leaking it would spuriously cancel unrelated later work on the task."""
@@ -690,7 +677,6 @@ async def test_cancel_followed_by_other_error_releases_cancellation():
     assert _task_cancelling(task) == 0
 
 
-@requires_task_cancelling
 async def test_iter_reasserts_swallowed_cancellation_before_next_node():
     """A swallowed first-party cancellation stops iteration before another model call."""
     model_calls: list[None] = []
@@ -714,7 +700,6 @@ async def test_iter_reasserts_swallowed_cancellation_before_next_node():
     assert len(model_calls) == 1
 
 
-@requires_task_cancelling
 async def test_external_cancel_uncancelled_by_caller_completes_run():
     """A caller that catches an external cancellation inside the `async for` body and calls
     `Task.uncancel()` — asyncio's sanctioned suppression — gets a completed run, without the
@@ -745,7 +730,6 @@ async def test_external_cancel_uncancelled_by_caller_completes_run():
     assert model_calls == [None]
 
 
-@requires_task_cancelling
 async def test_run_cancellation_tracks_issuances_per_task():
     """A controller unit test pins the task-rebind window that the public API cannot trigger
     deterministically."""
@@ -812,7 +796,6 @@ async def test_run_cancellation_tracks_issuances_per_task():
     assert a_state == [(True, 0), (False, 1)]
 
 
-@requires_task_cancelling
 async def test_threadsafe_cancel_delivery_after_finish_is_noop():
     """A `cancel()` marshalled from another thread whose queued delivery lands after `finish()`
     must not cancel the (former) owner task."""
@@ -856,7 +839,6 @@ async def test_release_issued_on_finished_task_is_noop():
     done_cancellation.release_issued()  # clearing an already-empty controller is a no-op
 
 
-@requires_task_cancelling
 async def test_cancel_before_bind_delivers_on_bind():
     """A cancellation requested before any task is bound is delivered as soon as one binds — a controller
     unit test because the public API can't trigger it deterministically."""
@@ -879,7 +861,6 @@ async def test_cancel_before_bind_delivers_on_bind():
     await rebound_task
 
 
-@requires_task_cancelling
 async def test_swallowed_and_uncancelled_request_redelivers_on_rebind():
     """A request whose cancellation was swallowed and `uncancel()`ed is redelivered when the task rebinds — a
     controller unit test because the public API can't trigger it deterministically."""
@@ -975,8 +956,8 @@ async def test_task_cancel_of_run_carries_run_cancelled():
     assert cancelled.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -984,14 +965,14 @@ async def test_task_cancel_of_run_carries_run_cancelled():
                 parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='pyd_ai_tool_call_id__slow_tool')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1219,8 +1200,8 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
     assert cancelled.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1228,7 +1209,7 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
                 parts=[ToolCallPart(tool_name='fast_tool', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=50),
                 model_name='function::stream_text_after_tool',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1238,10 +1219,10 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
                         tool_name='fast_tool',
                         content='fast done',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1249,7 +1230,7 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
                 parts=[TextPart(content='partial ')],
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function::stream_text_after_tool',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1385,7 +1366,6 @@ async def test_iter_external_cancel_carries_run_cancelled():
     assert cancelled.usage.requests == 1
 
 
-@requires_task_cancelling
 async def test_external_cancellation_wins_race_with_first_party_cancel():
     """When `cancel()` and an external `task.cancel()` race, the external cancellation wins and
     propagates as `CancelledError`."""
@@ -1416,7 +1396,6 @@ async def test_external_cancellation_wins_race_with_first_party_cancel():
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
 
 
-@requires_task_cancelling
 async def test_external_cancellation_wins_when_it_arrives_first():
     """An external cancellation delivered before `cancel()` still wins the race."""
     started = asyncio.Event()
@@ -1503,9 +1482,6 @@ async def test_run_stream_events_cancel_from_sibling_task():
             await asyncio.wait_for(consumer, timeout=READINESS_WAIT_TIMEOUT)
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11), reason='`CancelledError` instance preservation across `await task` needs Python 3.11+'
-)
 async def test_run_stream_events_external_cancel_of_consumer():
     """Externally cancelling the consumer task keeps standard `CancelledError` semantics, but the
     run state rides along for `from_cancellation()` and the handle stays accessible post-cancel."""
@@ -1980,7 +1956,6 @@ async def test_cancel_during_blocked_before_run_is_delivered():
     assert exc_info.value.all_messages() == []  # cancelled before any model request
 
 
-@requires_task_cancelling
 async def test_first_party_cancel_swallowed_by_after_run_is_typed():
     """A first-party cancellation absorbed by `after_run` is typed at the outer funnel."""
 

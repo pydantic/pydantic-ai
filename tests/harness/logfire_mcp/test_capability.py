@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -191,25 +191,25 @@ class TestLogfireMCP:
 
     @pytest.mark.parametrize('year', [2020, 2100])
     async def test_current_time_ignores_message_history(self, server: FastMCP, year: int) -> None:
-        stamp = datetime(year, 1, 1, tzinfo=timezone.utc)
+        stamp = datetime(year, 1, 1, tzinfo=UTC)
         history = [
             ModelRequest(parts=[UserPromptPart('Recent errors', timestamp=stamp)], timestamp=stamp),
             ModelResponse(parts=[TextPart('None.')], timestamp=stamp),
         ]
-        before = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        before = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
         result = await Agent(TestModel(call_tools=[]), capabilities=[LogfireMCP(client=server)]).run(
             message_history=history
         )
         request = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
         instructions = request.instructions or ''
         timestamp = instructions.split('within the hour starting `')[1].split('`')[0]
-        assert before <= datetime.fromisoformat(timestamp) <= datetime.now(timezone.utc)
+        assert before <= datetime.fromisoformat(timestamp) <= datetime.now(UTC)
 
     def test_current_time_is_stable_within_the_hour(self) -> None:
         """Instructions precede the history, so they must not change from one request to the next."""
 
         def current_utc(minute: int, second: int) -> str | None:
-            stamp = datetime(2026, 9, 29, 14, minute, second, 123456, tzinfo=timezone.utc)
+            stamp = datetime(2026, 9, 29, 14, minute, second, 123456, tzinfo=UTC)
             ctx = RunContext[None](
                 deps=None, model=TestModel(), usage=RunUsage(), messages=[ModelRequest(parts=[], timestamp=stamp)]
             )

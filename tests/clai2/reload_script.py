@@ -37,7 +37,7 @@ async def main(root: Path, mode: str) -> None:
     app = package / '_app.py'
     original = app.read_text()
     updated = original.replace("prompt_async('> ')", "prompt_async('updated> ')")
-    updated = updated.replace('New session started.', 'Updated session started.')
+    updated = updated.replace("'Goodbye.'", "'Updated goodbye.'")
     commands = package / 'commands.py'
     commands.write_text(commands.read_text().replace('Use /help.', 'Use updated /help.'))
     if mode == 'new_imports':
@@ -192,7 +192,7 @@ async def main(root: Path, mode: str) -> None:
     text = output.getvalue()
     assert '/reload: Reload CLAI2 code without restarting' in text, text
     assert 'Usage: /reload' in text, text
-    assert ('New session started.' if mode == 'unchanged' else 'Updated session started.') in text, text
+    assert ('Goodbye.' if mode == 'unchanged' else 'Updated goodbye.') in text, text
     assert text.count('plugin end') == 3, text
     assert text.count('plugin start test False') == 2, text
     assert all(f'plugin turn {prompt}' in text for prompt in ('first', 'second', 'third')), text

@@ -422,9 +422,7 @@ Override [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] 
 
 ```python {title="agent_bound_capability.py"}
 from dataclasses import dataclass, replace
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import AbstractAgent

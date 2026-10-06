@@ -303,7 +303,7 @@ exclude = ["/tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
@@ -378,7 +378,6 @@ convention = "google"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
-"typing.assert_never".msg = "Use typing_extensions.assert_never instead."
 "asyncio.Lock".msg = "Use anyio.Lock instead."
 
 [tool.ruff.format]

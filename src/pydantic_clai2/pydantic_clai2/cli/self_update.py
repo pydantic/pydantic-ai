@@ -1,6 +1,6 @@
 """`/update`: find a newer CLAI on the chosen channel and reinstall the `uv tool` environment with it.
 
-`stable` follows PyPI releases. `bleeding` follows the `clai2-bleeding` GitHub release, which CI refreshes with
+`stable` follows PyPI releases. `main` follows the `clai2-bleeding` GitHub release, which CI refreshes with
 sdists built from each `main` commit that changes CLAI or a package it pins. It installs CLAI with the harness
 and core sdists from the same commit, whose exact dev pins are not on PyPI. Release downloads are not GitHub
 API requests, so neither the check nor the install needs `git` or meets the unauthenticated API rate limit. A
@@ -44,11 +44,11 @@ PACKAGES = (
 BLEEDING_URL = 'https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding'
 """The release the `clai2-bleeding` workflow publishes: one sdist per package and the manifest."""
 BLEEDING_URL_VARIABLE = 'CLAI_BLEEDING_URL'
-"""Points `bleeding` at another copy of the release, such as a fork's or a local folder served over HTTP."""
+"""Points `main` at another copy of the release, such as a fork's or a local folder served over HTTP."""
 MANIFEST = 'clai2-bleeding.json'
 """Names the commit the release's sdists were built from."""
 _COMMIT_ARCHIVE = re.compile(r'.*[/-]([0-9a-f]{40})\.tar\.gz')
-"""A bleeding sdist, or the commit archive earlier builds installed: the full commit ends the file name."""
+"""A `main` sdist, or the commit archive earlier builds installed: the full commit ends the file name."""
 PYPI_URL = 'https://pypi.org/pypi/pydantic-clai2/json'
 TIMEOUT = 10.0
 """Seconds a release lookup may take."""
@@ -81,7 +81,7 @@ _MANIFEST = TypeAdapter(_Manifest)
 
 
 def bleeding_url(*, environ: Mapping[str, str] = os.environ) -> str:
-    """The bleeding release's download folder: `CLAI_BLEEDING_URL` when set, otherwise CLAI's own release."""
+    """The `clai2-bleeding` release's download folder: `CLAI_BLEEDING_URL` when set, otherwise CLAI's own release."""
     return environ.get(BLEEDING_URL_VARIABLE, '').rstrip('/') or BLEEDING_URL
 
 
@@ -95,14 +95,14 @@ class Installed:
 
     @property
     def label(self) -> str:
-        """The short commit for a bleeding install, otherwise the version."""
+        """The short commit for a `main` install, otherwise the version."""
         return self.version if self.commit is None else self.commit[:9]
 
 
 def installed() -> Installed:
     """Read the running distribution's metadata; `uv tool install` leaves a receipt in the environment.
 
-    The commit comes from a bleeding sdist or archive URL, or from a `git+` install made by hand.
+    The commit comes from a `main` sdist or archive URL, or from a `git+` install made by hand.
     """
     distribution = metadata.distribution(DISTRIBUTION)
     text = distribution.read_text('direct_url.json')
@@ -117,7 +117,7 @@ def installed() -> Installed:
 
 
 def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = None) -> str:
-    """The newest PyPI version for `stable`, or the commit the bleeding release was built from for `bleeding`."""
+    """The newest PyPI version for `stable`, or the commit the `clai2-bleeding` release was built from for `main`."""
     import httpx
 
     with httpx.Client(transport=transport, timeout=TIMEOUT, follow_redirects=True) as client:
@@ -130,7 +130,7 @@ def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = 
 
 @dataclass(frozen=True, kw_only=True)
 class Update:
-    """A newer CLAI: a PyPI version for `stable`, a full commit SHA for `bleeding`."""
+    """A newer CLAI: a PyPI version for `stable`, a full commit SHA for `main`."""
 
     channel: UpdateChannel
     target: str
@@ -141,7 +141,7 @@ class Update:
         return self.target if self.channel == 'stable' else self.target[:9]
 
     def requirement(self, name: str) -> str:
-        """`name` from this commit's sdist in the bleeding release, named as `scripts/build_bleeding.sh` names it."""
+        """`name` from this commit's sdist in the `clai2-bleeding` release, named as `scripts/build_bleeding.sh` names it."""
         stem = name.partition('[')[0].replace('-', '_')
         return f'{name} @ {bleeding_url()}/{stem}-{self.target}.tar.gz'
 
@@ -150,16 +150,16 @@ class Update:
         return ''.join(f'{self.requirement(name)}\n' for name in PACKAGES)
 
     def command(self, *, uv: str, overrides: Path | None) -> list[str]:
-        """The `uv tool install` that replaces the current install; bleeding reads `overrides`."""
+        """The `uv tool install` that replaces the current install; `main` reads `overrides`."""
         if self.channel == 'stable':
             return [uv, 'tool', 'install', '--force', f'{DISTRIBUTION}=={self.target}']
-        assert overrides is not None, 'a bleeding install needs the overrides file'
+        assert overrides is not None, 'a main install needs the overrides file'
         return [uv, 'tool', 'install', '--force', '--overrides', str(overrides), DISTRIBUTION]
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
     """Offer `target` unless it is what runs; a Git install on `stable` is offered the release."""
-    if channel == 'bleeding':
+    if channel == 'main':
         return None if current.commit == target else Update(channel=channel, target=target)
     return None if current.commit is None and current.version == target else Update(channel=channel, target=target)
 
@@ -313,13 +313,13 @@ class Updates:
     async def command(self, args: list[str]) -> str:
         """Install the newest CLAI on the current channel with `uv tool install`, then restart into it."""
         if args:
-            raise ValueError('Usage: /update. Pick the channel with /set updates.channel stable|bleeding.')
+            raise ValueError('Usage: /update. Pick the channel with /set updates.channel stable|main.')
         channel = self.channel()
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
             return f'CLAI {self.current.label} is the newest on the {channel} channel.'
         uv = self.find_uv()
-        overrides = _write_overrides(update.overrides()) if channel == 'bleeding' else None
+        overrides = _write_overrides(update.overrides()) if channel == 'main' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         if uv is None:
             # Keep the overrides file: the printed command reads it.

@@ -118,7 +118,7 @@ def retry_readonly(function: Callable[[str], object], path: str, error: BaseExce
 def retry_readonly_legacy(
     function: Callable[[str], object], path: str, error: tuple[type[BaseException], BaseException, TracebackType]
 ) -> None:
-    """Adapt Python 3.10/3.11's `rmtree` callback to the exception-based one."""
+    """Adapt Python 3.11's `rmtree` callback to the exception-based one."""
     retry_readonly(function, path, error[1])
 
 

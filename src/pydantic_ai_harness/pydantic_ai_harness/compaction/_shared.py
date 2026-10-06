@@ -10,9 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
-
-from typing_extensions import Self, assert_never
+from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
 from pydantic_ai.messages import (
     CompactionPart,

@@ -8,10 +8,9 @@ see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-`coder` includes its own context management: it clears old tool results as the
-context fills. The fuller built-in `compaction` plugin,
-[described below](#compacting-the-conversation), stays greyed out in `/plugins`
-while `coder` is on, since the two overlap, and takes over when you disable `coder`.
+`coder` clears old tool results as the context fills. The built-in `compaction`
+plugin, [described below](#compacting-the-conversation), is on by default beside it:
+it summarises older messages before the context runs out and adds `/compact`.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
@@ -233,7 +232,7 @@ Follow-up: Add tests for the change
 Command: /usage
 ─ Working ⠋ ────────────────────────────────────
 /
-/resume Browse or restore a saved session
+/resume Browse or restore a saved session; claude or codex imports theirs
 /set Change settings; no arguments opens menu
 ────────────────────────────────────────────────
 model | context: ... | running: shell
@@ -256,9 +255,18 @@ of your draft or submitted message. The editor sits below a Termflow live transc
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Hold Shift or Option to select
-text with the mouse, depending on your terminal. On exit, CLAI prints the retained
-transcript into native terminal scrollback. Typing updates the draft row; a
+bottom or submitting follows new output again. Ctrl+L clears the screen, as in
+Claude Code: the transcript is forgotten, but the conversation, your draft, and
+queued messages stay. During a turn, the response still streaming keeps showing.
+Use `/clear` to start a new conversation instead. Drag with the mouse to select
+text; releasing the button copies it to the clipboard and the footer says so.
+Locally CLAI copies with `pbcopy` on macOS, PowerShell on Windows, and `wl-copy`,
+`xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
+terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
+*Applications in terminal may access clipboard*; tmux: `set-clipboard on`).
+Holding Shift (Option in iTerm2) still uses the terminal's own selection in most
+terminals. On exit, CLAI prints the retained
+transcript into native terminal scrollback, without output cleared by Ctrl+L. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
@@ -320,8 +328,9 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 `~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
-`/new` starts a new saved conversation, without deleting the previous one or
-input recall. `/clear`, or bare `clear`, does the same and also clears the screen back to the startup banner. Model responses and tool results are not saved to this file.
+`/clear` (alias `/new`), or bare `clear`, starts a new saved conversation, without
+deleting the previous one or input recall, and clears the screen back to the startup
+banner. Model responses and tool results are not saved to this file.
 
 ## CI coverage
 
@@ -365,7 +374,7 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 `updates.channel` picks where it looks:
 
 - `stable` (default): the newest release on PyPI.
-- `bleeding`: the newest build from `main`. For each `main` commit that changes
+- `main`: the newest build from the `main` branch. For each `main` commit that changes
   CLAI, harness, or core, CI builds an sdist of each and publishes them to the
   [`clai2-bleeding`](https://github.com/pydantic/pydantic-ai/releases/tag/clai2-bleeding)
   prerelease, whose tag moves with them. CLAI reads `clai2-bleeding.json` there
@@ -373,9 +382,11 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
   from that commit's sdists with their required extras. These are plain release
   downloads, so they need no `git` and no GitHub API calls, which are rate
   limited without a token. The status row names the build by its short commit.
+  This channel used to be called `bleeding`. That name still selects it, and
+  CLAI saves it under that name so older versions sharing your settings can read it.
 
 ```text
-/set updates.channel bleeding
+/set updates.channel main
 /update
 ```
 
@@ -409,7 +420,7 @@ again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
 again afterwards. Without uv on `PATH`, `/update` prints the complete command to
-run yourself, in PowerShell syntax on Windows. For bleeding installs, it also
+run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
 ## Environment variables
@@ -497,8 +508,9 @@ Uncommitted changes, ignored files, and untracked files are not copied. Project 
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the path and branch. A directory at that path that is not a Git
-worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
+CLAI prints the path and branch below its logo; a headless `--prompt` run prints
+them on stderr instead. A startup error names the kept checkout. A directory at
+that path that is not a Git worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery.
 
@@ -682,17 +694,19 @@ account without a profile, and `/login NAME@default` signs in to it. Each profil
 credentials are stored separately, the same way as the default login.
 
 A fallback chain does the same across different models or providers, such as Codex
-first and Claude after it. It tries its models in order:
+first and Claude after it. It tries its models in order. Chains live in the `/model`
+picker, under **Fallback chains** below your models (`/model chains` opens it there):
 
-```text
-/chain best openai-codex@*:gpt-6-astra anthropic:claude-sonnet-4-5
-/model chain:best
-/chain                    # list chains
-/chain best               # show one
-/chain remove best
-```
+- **New fallback chain...** asks for a name, then for its models: **a** adds a saved
+  model or a typed `PROVIDER[@PROFILE]:MODEL` (including `PROVIDER@*:MODEL`), **d**
+  removes one, **[** and **]** move one earlier or later, and **Save chain** saves it.
+  Esc leaves without saving.
+- **Enter** on `chain:NAME` selects it, like any model; `/model chain:NAME` does too.
+- **Ctrl+E** changes a chain's models, **Ctrl+R** renames it, and **Ctrl+D** deletes
+  it, after asking. The model you are using, or your saved default, cannot be renamed
+  or deleted.
 
-Saving a chain adds `chain:NAME` to `/model`. A chain uses its first model's
+A chain uses its first model's
 `/model settings` controls and defaults, and saves overrides under
 `chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
 `openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
@@ -734,7 +748,7 @@ edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
 While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
-`/accounts`, `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
+`/model chains`, `/accounts`, `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
 `/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
 arguments open right away instead of queueing.
 The turn keeps running: its output is held while the menu is open
@@ -762,28 +776,31 @@ not change output-validation or HTTP transport retries.
 
 ## Models and their settings
 
-`/model` selects from models you have already added. Choose **Add a model...**
-to browse providers and select a new model without leaving the command. This
-option is available even when no models have been added.
+`/model` selects from models you have already added, and from your
+[fallback chains](#several-accounts-and-fallback-chains), listed after them.
+Choose **Add a model...** to browse providers and select a new model without
+leaving the command. This option is available even when no models have been
+added. **New fallback chain...** creates a chain in the same picker.
 
 `/model PROVIDER:NAME` switches directly to any model. A model not yet in your
 list is added and selected; CLAI does not check that it exists, so a mistyped
 name fails on the next prompt with the provider's error. Tab completes the saved
-list and the `add` and `settings` subcommands. Model names normally start with a
-provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
+list and the `add`, `settings`, and `chains` subcommands. Model names normally start with a
+provider (`openai:gpt-5`), so no real model is called `add`, `settings`, or `chains`.
 The currently configured model is kept in the list when upgrading.
 
 | Command | What it does |
 | --- | --- |
-| `/model` | Pick a saved model, add one, or delete one |
+| `/model` | Pick a saved model or chain, add one, or edit or delete one |
 | `/model NAME` | Select `NAME`, adding it first if needed |
 | `/model add` | Browse providers and their models |
 | `/model add NAME` | The same as `/model NAME` |
 | `/model settings` | Choose a saved model to configure |
 | `/model settings NAME` | Configure `NAME` |
+| `/model chains` | Open the picker on its fallback chains |
 
-`/model add` and `/model settings` still work as deprecated spellings of
-`/model add` and `/model settings`.
+`/add_model`, `/model_settings`, and `/chain` still work as deprecated spellings of
+`/model add`, `/model settings`, and `/model chains`.
 
 To remove a model you no longer use, highlight it and press **Ctrl+D** or
 **Delete**, then confirm **Delete model**. This removes it from the saved list and
@@ -1030,10 +1047,14 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
-and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
+and paths after `@`. Suggestions match any substring, case-sensitively. While
+you type a command name, the best match comes first and is highlighted without
+pressing Tab: the exact name, then names that start with what you typed. Enter
+fills in the highlighted command, or runs it when it is already typed in full;
+Tab and Up/down move the highlight. For paths,
 matching applies to the filename within the typed directory. Path completion inserts
 a path; it does not attach file contents.
 Unknown command-shaped input such as `/missing` still reports an error instead
@@ -1189,6 +1210,14 @@ or execute pending tools. Background naming may make a separate, tool-free model
 request. Your current model, working directory, credentials, and approved plugins
 remain in effect. The saved model name is shown for reference.
 
+Resuming shows the restored conversation in the terminal: the last 10 prompts
+with their answers, reasoning, and tool calls, drawn the way they streamed.
+Older turns are summarized in one line; the model still receives the whole
+history. Inside CLAI, `/resume` replaces the visible conversation, as `/clear`
+does: the previous one stays saved but is not shown again. Output that
+only streamed, such as shell previews and diffs, is not saved, so those tools
+show their call line.
+
 The browser follows Code Puppy's project/session design:
 
 - Projects on the left, with session counts. The current directory is preselected.
@@ -1218,6 +1247,46 @@ reasoning, or content removed by compaction.
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
 case-insensitive and includes text instructions in multimodal prompts.
+
+### Claude Code and Codex sessions
+
+CLAI can continue a session you started in Claude Code or Codex. It reads their
+saved transcripts: Claude Code's under `~/.claude/projects` (or
+`$CLAUDE_CONFIG_DIR/projects`), and Codex's under `~/.codex/sessions` (or
+`$CODEX_HOME/sessions`).
+
+```bash
+clai2 --resume-claude              # browse Claude Code sessions
+clai2 --resume-claude SESSION-ID   # import and restore one
+clai2 --resume-codex               # browse Codex sessions
+clai2 --resume-codex SESSION-ID    # import and restore one
+```
+
+The session ID is the one Claude Code or Codex shows, such as the ID in
+`claude --resume ID` or `codex resume ID`. Inside CLAI, `/resume claude` and
+`/resume codex` work the same way, with or without an ID. `-p` accepts both flags
+with an ID. Only one of `--resume`, `--resume-claude`, and `--resume-codex` can be
+given.
+
+Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
+were started in. A card that says **to import** has not been imported yet:
+Enter imports and resumes it, and Right previews it. Rename or delete it after
+importing it.
+
+Importing copies the conversation into CLAI's saved sessions. The originals are
+only read, never changed. CLAI keeps what the model saw: prompts, answers,
+reasoning summaries, tool calls, and their results. It skips context the other
+agent added itself, such as Claude Code's command notices and Codex's environment
+and `AGENTS.md` messages; CLAI adds its own. After compaction, it keeps the
+compacted history, and after a Claude Code rewind, it keeps the branch you ended
+on. A tool call with no recorded result gets one saying it was interrupted. The
+tools in the old calls belong to the other agent; the model sees them as history,
+and CLAI's own tools handle what comes next.
+
+Resuming the same session again opens the same copy. Until you continue it in
+CLAI, each resume reads the original again, so later turns in Claude Code or
+Codex come along. Once you send a prompt in CLAI, the copy is CLAI's own and
+later turns in Claude Code or Codex are not merged into it.
 
 ### Background names
 
@@ -1294,10 +1363,12 @@ for that.
 
 ## Compacting the conversation
 
-The built-in `compaction` plugin runs while `coder` is off (`/plugins disable coder`).
+The built-in `compaction` plugin is on by default, with or without `coder`.
 It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
-It protects the most recent 50,000 tokens. `ModelAPIError`,
+It protects the most recent 50,000 tokens (`protected_tokens`) from summarising and
+truncation. `coder`'s own tool-result clearing is separate: above 70% of the window it
+still empties tool results older than its last three tool calls. `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall
 back to truncation; other exceptions propagate. The summary request is billed
 to the current model unless `summarization_model` selects another.
@@ -1316,9 +1387,8 @@ context sizes from. A model it does not list (`test`, a local endpoint) is
 assumed to have 200,000 tokens, the harness default. To change any of this,
 run `/plugins configure compaction` (or press `c` on its `/plugins` row): each
 edit is validated and saved as you make it, and the plugin reloads so the next
-turn uses the new settings. A turn already running keeps the old ones. While `coder`
-is on, `compaction` is greyed out and cannot be configured, since its settings would
-have no effect. You can also redeclare the plugin with your own settings;
+turn uses the new settings. A turn already running keeps the old ones.
+You can also redeclare the plugin with your own settings;
 `/plugins disable compaction` turns it off, `/compact` included:
 
 ```text
@@ -1336,8 +1406,7 @@ have no effect. You can also redeclare the plugin with your own settings;
 The status row shows compact used/max context tokens, such as `128k/1m`.
 The maximum comes from the request's model or the `context_window` override.
 It stays `?` until the first request of the session or after a model change, and for
-a model with no known window. With `compaction` off, for example while `coder` is on,
-the shell reads the window from the request's model itself. An unknown model's fallback
+a model with no known window. With `compaction` off, the shell reads the window from the request's model itself. An unknown model's fallback
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 
@@ -1800,15 +1869,17 @@ terminal grows. Resizing repaints the panel at the new size and preserves the
 draft and scroll position. It never erases terminal scrollback.
 
 Assistant text and thinking retain their Markdown source and render again when
-the width or theme changes. Tool and command output rewrap with their original
-colours. Full-screen menus temporarily leave the panel and detach its keyboard
-reader. Output arriving during a menu stays in the transcript and appears when
+the width or theme changes. Tool and command output rewrap at the new width,
+and a `/theme` change repaints their colours role by role: muted text, errors,
+diff lines, and code take the new palette's shades. Colours no theme assigns
+keep their original values, and so does the CLAI logo. Full-screen menus
+temporarily leave the panel and detach its keyboard reader. Output arriving during a menu stays in the transcript and appears when
 the menu closes. Inline questions borrow the panel. The transcript includes
 startup and plugin lifecycle notices and is carried across shell reloads.
 It retains up to 10,000 items and four million characters, plus a bounded partial
 line. Old output is dropped at those limits; oversized Markdown parts keep their
-rendered tail instead of their source. `/clear` hides earlier output from the
-panel but retains it for the exit printout within these limits. Hyperlinks are
+rendered tail instead of their source. `/clear` and `/new` forget earlier output,
+so neither the panel nor the exit printout shows it again. Hyperlinks are
 preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
@@ -1910,7 +1981,8 @@ compact numbered picker. Use Up/Down and Enter, or press an option's number to
 select it. For multiple selections, Enter or a number toggles a choice; select
 `Done` to submit. At least one choice is required. Esc or Ctrl-C declines the
 whole request, which the model is told so it can make a stated choice and carry
-on. Several questions show progress in the title. The editor's draft is
+on. Several questions show progress in the title. The tool's transcript line
+names the questions by header, not their raw JSON. The editor's draft is
 preserved, and your picks are printed to the transcript afterwards.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.

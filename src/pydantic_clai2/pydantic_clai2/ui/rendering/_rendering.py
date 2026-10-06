@@ -261,8 +261,11 @@ class StreamRenderer:
         grep_lines: int = 20,
         tool_arg_chars: int = 40,
         renderers: Sequence[Callable[[AgentStreamEvent], RenderableType | None]] = (),
+        smooth: bool = True,
     ) -> None:
+        """`smooth=False` writes each part at once, for history that has already streamed."""
         self.console = console
+        self.smooth = smooth
         self._renderers = tuple(renderers)
         self._sandbox_calls = SandboxCallOrder()
         self.show_tool_output = show_tool_output
@@ -368,7 +371,7 @@ class StreamRenderer:
             else None
         )
         output = self._block or self.console.file
-        if self.console.is_terminal:
+        if self.console.is_terminal and self.smooth:
             self._writer = self._make_writer(output)
             self._writer.start()
         self._markdown = MarkdownPipeline(

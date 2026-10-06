@@ -127,7 +127,7 @@ print(result.usage)
 ### Dependency Injection
 
 ```python
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic_ai import Agent, RunContext
 
@@ -146,7 +146,7 @@ def add_the_users_name(ctx: RunContext[str]) -> str:
 
 @agent.instructions
 def add_the_date() -> str:
-    return f'The date is {datetime.now(timezone.utc).date()}.'
+    return f'The date is {datetime.now(UTC).date()}.'
 
 
 result = agent.run_sync('What is the date?', deps='Frank')
