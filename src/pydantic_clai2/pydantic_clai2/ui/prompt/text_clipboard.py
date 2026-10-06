@@ -67,6 +67,43 @@ def run_copy(*, command: ClipboardCommand, text: str) -> None:
         pass
 
 
+class LatestCopy:
+    """Run one clipboard command at a time, and only the newest copy that is waiting.
+
+    Copies made while one runs replace each other, so the clipboard ends with the last selection
+    even when a slow command finishes late, and quick drags never pile up threads or processes.
+    """
+
+    def __init__(self) -> None:
+        """Start idle."""
+        self._lock = threading.Lock()
+        self._pending: tuple[ClipboardCommand, str] | None = None
+        self._running = False
+
+    def submit(self, *, command: ClipboardCommand, text: str) -> None:
+        """Copy `text` after the running copy, replacing any copy still waiting."""
+        with self._lock:
+            self._pending = (command, text)
+            if self._running:
+                return
+            self._running = True
+        # Not a daemon: exiting right after a copy waits for it, at most `COPY_TIMEOUT`, rather than losing it.
+        threading.Thread(target=self._drain, name='clai-copy', daemon=False).start()
+
+    def _drain(self) -> None:
+        while True:
+            with self._lock:
+                job, self._pending = self._pending, None
+                if job is None:
+                    self._running = False
+                    return
+            command, text = job
+            run_copy(command=command, text=text)
+
+
+_COPIES = LatestCopy()
+
+
 def copy_text(text: str, *, output: IO[str]) -> None:
     """Put `text` on the clipboard of the machine the user is sitting at.
 
@@ -80,5 +117,4 @@ def copy_text(text: str, *, output: IO[str]) -> None:
         output.write(make_clipboard_copy(text))
         output.flush()
         return
-    # Not a daemon: exiting right after a copy waits for it, at most `COPY_TIMEOUT`, rather than losing it.
-    threading.Thread(target=run_copy, kwargs={'command': command, 'text': text}, name='clai-copy', daemon=False).start()
+    _COPIES.submit(command=command, text=text)

@@ -72,25 +72,31 @@ class Selection:
             self.head = report.cell
         return False
 
-    def span(self, *, width: int, height: int) -> range:
-        """Frame indexes from the earlier end to the later one, inclusive."""
+    def span(self, *, width: int, rows: int) -> range:
+        """Frame indexes from the earlier end to the later one, inclusive, within the top `rows`.
+
+        Only the transcript is selectable: a drag into the editor or footer below it stops at its
+        last row, so a copy never picks up the draft, borders, or status.
+        """
         if self.anchor is None or self.head is None:
             return range(0)
         start, end = sorted((self.anchor, self.head))
 
         def index(cell: Cell) -> int:
             row, column = cell
-            return min(max(row, 0), height - 1) * width + min(max(column, 0), width - 1)
+            if row >= rows:
+                return rows * width - 1
+            return max(row, 0) * width + min(max(column, 0), width - 1)
 
         return range(index(start), index(end) + 1)
 
-    def highlight(self, frame: ScreenBuffer, *, previous: ScreenBuffer | None) -> None:
+    def highlight(self, frame: ScreenBuffer, *, rows: int, previous: ScreenBuffer | None) -> None:
         """Show the selected cells in reverse video, or drop the selection if output moved them.
 
         The selection holds screen cells, not transcript rows, so new output that scrolls the
         view, or a widget that redraws, must not leave it over text the user never dragged across.
         """
-        span = self.span(width=frame.width, height=frame.height)
+        span = self.span(width=frame.width, rows=rows)
         if previous is not None and (
             previous.size != frame.size or previous.chars[span.start : span.stop] != frame.chars[span.start : span.stop]
         ):
@@ -100,12 +106,11 @@ class Selection:
             # Set, not toggled: a cell that is already reverse video, such as the cursor, still looks selected.
             frame.attrs[index] |= REVERSE
 
-    def text(self, frame: ScreenBuffer) -> str:
-        """The selected characters, one line per row, without trailing blanks."""
-        span = self.span(width=frame.width, height=frame.height)
+    def text(self, frame: ScreenBuffer, *, rows: int) -> str:
+        """The selected characters, one line per row, without trailing blanks or blank rows after them."""
+        span = self.span(width=frame.width, rows=rows)
         width = frame.width
-        rows = range(span.start // width, (span.stop - 1) // width + 1)
         return '\n'.join(
             ''.join(frame.chars[max(span.start, row * width) : min(span.stop, (row + 1) * width)]).rstrip()
-            for row in rows
-        )
+            for row in range(span.start // width, (span.stop - 1) // width + 1)
+        ).rstrip('\n')

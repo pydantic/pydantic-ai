@@ -633,15 +633,26 @@ def test_a_release_before_any_frame_copies_nothing() -> None:
 def test_cells_already_in_reverse_video_still_look_selected() -> None:
     frame = ScreenBuffer(4, 1)
     frame.attrs[1] = REVERSE  # The editor's painted cursor, for example.
-    Selection(anchor=(0, 0), head=(0, 2)).highlight(frame, previous=None)
+    Selection(anchor=(0, 0), head=(0, 2)).highlight(frame, rows=1, previous=None)
     assert [attrs & REVERSE for attrs in frame.attrs] == [REVERSE, REVERSE, REVERSE, 0]
 
 
 def test_selection_spans_clamp_to_the_frame() -> None:
     selection = Selection(anchor=(-1, -5), head=(99, 99))
-    assert selection.span(width=4, height=3) == range(0, 12)
-    assert Selection(anchor=(0, 0)).span(width=4, height=3) == range(0)
-    assert Selection(anchor=(0, 0)).text(ScreenBuffer(4, 3)) == '', 'a click selects nothing'
+    assert selection.span(width=4, rows=3) == range(0, 12)
+    assert selection.span(width=4, rows=2) == range(0, 8), 'rows below the transcript are not selectable'
+    assert Selection(anchor=(0, 0)).span(width=4, rows=3) == range(0)
+    assert Selection(anchor=(0, 0)).text(ScreenBuffer(4, 3), rows=3) == '', 'a click selects nothing'
+
+
+def test_a_drag_into_the_editor_copies_only_the_transcript() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('answer\n')
+    for report in (press(1, 1), drag(5, 9)):  # Row 9 is the editor's `BOTTOM` row.
+        screen.surface.transcript_key('mouse', report)
+    assert not any(row in highlighted(screen.surface) for row in ROWS)
+    assert screen.surface.transcript_key('mouse', release(5, 9)) == 'answer'
 
 
 def test_the_wheel_scrolls_both_ways_with_or_without_modifiers() -> None:

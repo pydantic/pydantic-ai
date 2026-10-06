@@ -13,7 +13,7 @@ import pytest
 from termflow.ansi import make_clipboard_copy
 
 from pydantic_clai2.ui.prompt import text_clipboard
-from pydantic_clai2.ui.prompt.text_clipboard import ClipboardCommand, copy_command, copy_text, run_copy
+from pydantic_clai2.ui.prompt.text_clipboard import ClipboardCommand, LatestCopy, copy_command, copy_text, run_copy
 
 
 @pytest.fixture
@@ -102,6 +102,35 @@ def test_locally_the_clipboard_command_copies_in_the_background(monkeypatch: pyt
     assert done.wait(5)
     assert copied == [(command, 'copied', False)], 'not a daemon: exiting right after a copy must not lose it'
     assert output.getvalue() == '', 'no OSC 52 as well: some terminals ask before honouring it'
+
+
+def test_copies_run_one_at_a_time_and_the_newest_waiting_one_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slow clipboard command must not leave an older selection on the clipboard, or pile up threads."""
+    command = ClipboardCommand(argv=('/bin/pbcopy',))
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    copied: list[str] = []
+    workers: set[int] = set()
+
+    def slow(*, command: ClipboardCommand, text: str) -> None:
+        copied.append(text)
+        workers.add(threading.get_ident())
+        started.set()
+        assert release.wait(5)
+        if text == 'third':
+            finished.set()
+
+    monkeypatch.setattr(text_clipboard, 'run_copy', slow)
+    copies = LatestCopy()
+    copies.submit(command=command, text='first')
+    assert started.wait(5)
+    copies.submit(command=command, text='second')
+    copies.submit(command=command, text='third')
+    release.set()
+    assert finished.wait(5)
+    assert copied == ['first', 'third']
+    assert len(workers) == 1, 'one worker thread ran every copy'
 
 
 @pytest.mark.parametrize('variable', ['SSH_CONNECTION', 'SSH_TTY'])

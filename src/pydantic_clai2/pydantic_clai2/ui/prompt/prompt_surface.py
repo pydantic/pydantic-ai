@@ -79,6 +79,8 @@ class PromptSurface(io.StringIO):
         self.selection = Selection()
         self._frame: ScreenBuffer | None = None
         """The cells last painted, which a selection copies from."""
+        self._transcript_rows = 0
+        """How many of the frame's top rows show the transcript, the only ones a selection covers."""
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -198,7 +200,7 @@ class PromptSurface(io.StringIO):
             return None
         with self._lock:
             if self.selection.feed(report) and self._frame is not None:
-                text = self.selection.text(self._frame)
+                text = self.selection.text(self._frame, rows=self._transcript_rows)
                 if text.strip():
                     copy_text(text, output=self.output)
                     return text
@@ -240,9 +242,10 @@ class PromptSurface(io.StringIO):
         self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
         for index, row in enumerate(rows):
             frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
-        self.selection.highlight(frame, previous=self._frame)
+        self.selection.highlight(frame, rows=bottom, previous=self._frame)
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
+        self._transcript_rows = bottom
         self._dirty = False
         self._painted_at = self.clock()
         if text := ''.join(parts):
