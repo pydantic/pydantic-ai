@@ -2,25 +2,27 @@
 
 import asyncio
 import math
+import os
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from anyio import Lock, create_memory_object_stream, create_task_group, to_thread
+from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import History
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AgentCapability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
@@ -59,7 +61,15 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.runtime._session import Session, StockAgent, current_session_id
+from pydantic_clai2.runtime._session import (
+    ModelDefaults,
+    Session,
+    SessionModels,
+    StockAgent,
+    command_env,
+    current_session_id,
+    resolve_model_name,
+)
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
@@ -159,6 +169,76 @@ def create_agent(model: str | None = None) -> Agent[None, str]:
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
     """Build the CLI-owned template; caller-supplied agents are never reconstructed."""
     return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()])
+
+
+@asynccontextmanager
+async def open_stock_agent(
+    *,
+    workspace: str | Path,
+    model: Model | str | None = None,
+    capabilities: Sequence[AgentCapability[None]] = (),
+    plugin_settings: Mapping[str, Mapping[str, JsonValue]] | None = None,
+) -> AsyncGenerator[Agent[None, str]]:
+    """Open CLAI's stock coding agent for runs from code, without the terminal.
+
+    The agent has the `coder`, `repo_context`, and `compaction` built-ins as the CLI configures them,
+    then `capabilities`, all bound at construction so delegated tasks carry them too. It works in
+    `workspace` on this machine; commands get this process's environment minus LLM provider API keys.
+    Model names, its own and any a run passes, resolve as in the CLI and get CLAI's per-model defaults.
+
+    `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
+    `{'coder': {'sub_agents': False}}`. Nothing saved for the `clai2` CLI applies: no saved or drop-in
+    plugins, no project `.clai/settings.json`, no saved model settings.
+
+    The agent and its plugins close when the context exits.
+    """
+    from pydantic_clai2.models.model_settings import default_model_settings
+
+    stock = {plugin.id: plugin for plugin in STOCK_PLUGINS if plugin.id in ('coder', 'repo_context', 'compaction')}
+    overrides = plugin_settings or {}
+    if unknown := sorted(overrides.keys() - stock.keys()):
+        raise UserError(
+            f'`plugin_settings` configures only {", ".join(map(repr, stock))}, not {", ".join(map(repr, unknown))}.'
+        )
+    declarations = [
+        plugin.model_copy(update={'settings': {**plugin.settings, **overrides.get(plugin.id, {})}})
+        for plugin in stock.values()
+    ]
+    template = create_stock_agent(model if isinstance(model, Model) else None)
+    reason: SessionEndReason = 'error'
+    # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
+    with TemporaryDirectory(prefix='clai2-') as config, open(os.devnull, 'w', encoding='utf-8') as sink:
+        console = Console(file=sink, force_terminal=False)
+        store = SettingsStore(Path(config) / 'config.db')
+        loader = PluginLoader[None](
+            store=store,
+            console=console,
+            commands=Commands(),
+            session_start=lambda: SessionStart(
+                agent=template, settings=Settings(model=model if isinstance(model, str) else None)
+            ),
+            builtin=declarations,
+        )
+        models = _ModelResolver(console=console, store=store, plugins=loader.model_providers)
+        try:
+            for declaration in declarations:
+                await loader.load(declaration.id)
+            agent = template.with_plugins(
+                [
+                    LocalWorkspace[None](workspace, env=command_env()),
+                    *loader.run_capabilities(),
+                    *capabilities,
+                    SessionModels[None](lambda _, name: resolve_model_name(models.resolve, name)),
+                    ModelDefaults[None](lambda name: default_model_settings(model=name, saved={})),
+                ],
+                model=model if isinstance(model, str) else None,
+            )
+            async with agent:
+                yield agent
+            reason = 'exit'
+        finally:
+            with CancelScope(shield=True):
+                await loader.close(reason)
 
 
 async def chat(

@@ -142,7 +142,7 @@ def _requested_model(ctx: RunContext[DepsT]) -> str:
 
 
 @dataclass
-class _ModelDefaults(AbstractCapability[DepsT]):
+class ModelDefaults(AbstractCapability[DepsT]):
     """CLAI's default settings for the model each request uses, beneath other capabilities' settings.
 
     Merged first among capabilities, wrapping every other one, even another `outermost` one, so
@@ -162,7 +162,7 @@ class _ModelDefaults(AbstractCapability[DepsT]):
 
 
 @dataclass
-class _SessionModels(ResolveModelId[DepsT]):
+class SessionModels(ResolveModelId[DepsT]):
     """Resolve model names through CLAI first, as when CLAI resolved the selected model before each run.
 
     Outermost, so it is tried before a resolver on the agent or a plugin, unless that one is outermost
@@ -171,6 +171,24 @@ class _SessionModels(ResolveModelId[DepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
+
+
+ModelNameResolver = Callable[[str], Model | str | Awaitable[Model | str]]
+"""Builds the model a name selects, or returns a name for core to infer."""
+
+
+async def resolve_model_name(resolve: ModelNameResolver, model_id: str) -> Model | None:
+    """What `resolve` makes of `model_id`, as a `SessionModels` resolver returns it.
+
+    A name it maps to another name is inferred by core. `None` when it returns `model_id` unchanged,
+    leaving the name to the run's other resolvers.
+    """
+    model = resolve(model_id)
+    if isinstance(model, Awaitable):
+        model = await model
+    if isinstance(model, Model):
+        return model
+    return infer_model(model) if model != model_id else None
 
 
 def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
@@ -184,7 +202,7 @@ def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapab
         return []
 
 
-def _command_env() -> dict[str, str]:
+def command_env() -> dict[str, str]:
     """The environment clai's commands get: this process's, minus LLM API keys.
 
     clai is a local coding CLI, so the model's commands see the user's shell environment the way
@@ -282,7 +300,7 @@ class Session(Generic[DepsT, OutputT]):
         self.model_defaults: FamilyDefaults | None = None
         """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
-        self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name
+        self.resolve_model: ModelNameResolver = lambda name: name
         self.agent = agent
         self._base_agent = agent
         self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
@@ -433,18 +451,13 @@ class Session(Generic[DepsT, OutputT]):
             # Already bound to the stock agent, including delegation and guardrails.
             capabilities = []
         if self.model is not None:
-            capabilities.append(_SessionModels[DepsT](self._resolve_model_id))
+            capabilities.append(SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:
-            capabilities.append(_ModelDefaults[DepsT](self.model_defaults))
+            capabilities.append(ModelDefaults[DepsT](self.model_defaults))
         return run_model, capabilities
 
     async def _resolve_model_id(self, ctx: ModelResolutionContext[DepsT], model_id: str) -> Model | None:
-        model = self.resolve_model(model_id)
-        if isinstance(model, Awaitable):
-            model = await model
-        if isinstance(model, Model):
-            return model
-        return infer_model(model) if model != model_id else None
+        return await resolve_model_name(self.resolve_model, model_id)
 
     def steer(self, text: str, *, images: Sequence[BinaryContent] = ()) -> bool:
         """Deliver input to the active run, or decline when no run is accepting input."""
@@ -501,10 +514,10 @@ class Session(Generic[DepsT, OutputT]):
                         if _supports_local_workspace() and not _supplies_workspace(configured, include_dynamic=False):
                             if _supplies_workspace(configured):
                                 # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
-                                fallback = _LocalFallback[DepsT](self.workspace, env=_command_env(), id=None)
+                                fallback = _LocalFallback[DepsT](self.workspace, env=command_env(), id=None)
                                 capabilities.append(DynamicCapability[DepsT](lambda ctx: fallback))
                             else:
-                                capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
+                                capabilities.append(LocalWorkspace[DepsT](self.workspace, env=command_env()))
                             if _stale_local_workspace(previous, self.workspace):
                                 # A conversation resumed from another directory: work in this session's.
                                 workspace = 'new'

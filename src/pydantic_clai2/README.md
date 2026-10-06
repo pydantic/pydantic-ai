@@ -479,6 +479,92 @@ Trusted third-party plugins must not read input or print directly to stdout;
 CLAI cannot enforce that contract on arbitrary Python code. Plugin load failures
 abort headless runs. Background session naming is not started.
 
+## The stock agent in your own code
+
+`open_stock_agent` opens the agent `clai2` runs, without the terminal. Use it with
+`agent.run`, `run_stream_events`, `iter`, or anything else that takes an agent:
+
+```python
+import asyncio
+from pathlib import Path
+
+from pydantic_clai2 import open_stock_agent
+
+
+async def main() -> None:
+    async with open_stock_agent(workspace=Path.cwd(), model='anthropic:claude-sonnet-4-6') as agent:
+        result = await agent.run('Summarize this repository in one paragraph.')
+        print(result.output)
+
+
+asyncio.run(main())
+```
+
+The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
+in `clai2`. The file and shell tools work in `workspace`, and `AGENTS.md` or `CLAUDE.md`
+is read from it. A run's own `workspace=` replaces it for that run. Commands get this
+process's environment minus LLM provider API keys. Model names resolve as in `clai2`,
+the agent's own and any a run passes, so `openai-codex:` and `github-copilot:` use
+the sign-ins saved with `/login`. CLAI's per-model defaults apply too, such as
+Anthropic prompt caching.
+
+Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
+`.clai/settings.json`, and no `/model settings`. `ask_user` and the other terminal
+plugins stay out, as do `observability` and `mcp`, which read your CLAI configuration.
+Plugins close when the `async with` block exits.
+
+`plugin_settings` changes a built-in's settings, merged over the stock ones. This
+keeps the file tools inside the workspace and loads no agents from disk:
+
+```python
+plugin_settings = {'coder': {'unrestricted_filesystem': False, 'agent_folders': []}}
+```
+
+`capabilities` adds your own capabilities. They are bound beside the built-ins, so
+delegated tasks carry them too.
+
+### Serving it over ACP
+
+Harness [`run_acp_stdio`](../../docs/harness/acp.md) serves the agent to an ACP
+client, such as an editor. This script asks the client before every shell command
+and file change:
+
+```python
+import asyncio
+from pathlib import Path
+
+from pydantic_ai_harness.experimental.acp import run_acp_stdio
+from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
+from pydantic_clai2 import open_stock_agent
+
+
+def ask_first(call: ToolCallInfo) -> GuardrailResult:
+    if call.name in ('shell', 'write_file', 'edit_file'):
+        return GuardrailResult.approve()
+    return GuardrailResult.allow()
+
+
+async def main() -> None:
+    async with open_stock_agent(
+        workspace=Path.cwd(),
+        model='anthropic:claude-sonnet-4-6',
+        capabilities=[ToolGuardrail(guard=ask_first)],
+        plugin_settings={'coder': {'sub_agents': False}},
+    ) as agent:
+        await run_acp_stdio(agent)
+
+
+asyncio.run(main())
+```
+
+Install `pydantic-ai-harness[acp]` for `run_acp_stdio`. Each approval becomes an ACP
+permission request. `sub_agents` is off because a delegated task cannot yet pass an
+approval up to the client, so its run would fail
+([#4302](https://github.com/pydantic/pydantic-ai/issues/4302)). Where approvals are
+answered in your own process, a
+[`HandleDeferredToolCalls`](../../docs/deferred-tools.md#resolving-deferred-calls-with-a-handler)
+capability in `capabilities` answers them for delegated tasks too.
+
 ## Git worktrees
 
 ```bash

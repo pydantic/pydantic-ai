@@ -114,6 +114,10 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   the model twice. When a built-in takes the id of a row the former harness
   catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugins/loader.py`, so a
   user's saved toggle of it maps to the built-in instead of outranking it.
+- **`open_stock_agent` loads `coder`, `repo_context`, and `compaction` only.** Add a
+  built-in to that list only when it needs no terminal and reads nothing from the
+  user's CLAI configuration directory. Hosts rely on a configuration that the user's
+  saved settings cannot change.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
@@ -267,7 +271,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force` |
-| `_app.py` | the prompt loop and built-in `/commands` |
+| `_app.py` | the prompt loop, built-in `/commands`, and `open_stock_agent`, the stock agent for code outside the terminal |
 | `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
 | `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker |
