@@ -1,6 +1,6 @@
 # Input and History
 
-Read this file when the user wants multimodal input, message history, `run_id` / `conversation_id` correlation, or context trimming.
+Read this file for multimodal input, message history, OpenAI Responses WebSockets, run correlation, or context trimming.
 
 ## Send Images, Audio, Video, or Documents to the Model
 
@@ -48,6 +48,18 @@ Important distinctions:
 - a run that ends with `DeferredToolRequests` output leaves them on `result.conversation.deferred_tool_requests` (they can't be rebuilt from the messages: approval vs external and per-call metadata aren't recorded there). Resume later with `agent.run(conversation=conv, deferred_tool_results=conv.deferred_tool_requests.build_results(...))`
 - interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), including one whose args were cut off mid-stream; an orphaned tool result (result with no matching call) is dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
 - to cancel a whole run: pass a `CancellationToken` to any run method and call `token.cancel()` (thread-safe), call `agent_run.cancel()` on the `agent.iter()` handle, cancel via `async with agent.run_stream_events(...) as events: ... events.cancel()`, or call `ctx.cancel()` from a tool, `event_stream_handler`, or capability hook. Inside the `agent.iter()` block this surfaces as `CancelledError`; once the context exits it raises `RunCancelled`. `RunCancelled.all_messages()` returns a complete snapshot of the history (completed tool results included) and can be passed as `message_history` to a new run to resume — dangling calls are repaired per the previous bullet. Cancellation is terminal: capability hooks may clean up but cannot recover the run to success. External `asyncio.Task.cancel()` keeps raising `CancelledError` (never translated; wins if both race); catch it and call `RunCancelled.from_cancellation(exc)` to access the attached run state. `StreamedRunResult.cancel()` is different: it only stops the current model response, the run continues.
+
+## Reuse an OpenAI Responses WebSocket
+
+Open `async with model.connect() as connected` on an `OpenAIResponsesModel`. Pass `connected` to an ordinary `Agent` or a run's `model` argument. Keep passing the conversation between runs. Set `OpenAIResponsesModelSettings(openai_previous_response_id='auto')` to send only new input, including internal tool results.
+
+Keep the connection context open for the whole tool loop. Run one response at a time per connected model. Open separate contexts for concurrency. The original model continues to use HTTP.
+
+Use `openai_responses_service_tier='ultrafast'` for Ultrafast on supported models. The setting applies to HTTP and WebSocket requests.
+
+A cancelled or incompletely consumed response closes the socket. Open a new connection after interruption; there is no automatic retry. With `openai_store=False`, a previous response may exist only in the old socket's cache. Restart with full history and omit `openai_previous_response_id` when that state is unavailable.
+
+Set handshake headers before connecting. Do not persist a connected model across durable execution steps. Ordinary tools, structured output, and capability hooks continue through the standard agent loop.
 
 ## Correlate Runs with `run_id` and `conversation_id`
 

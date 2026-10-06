@@ -249,6 +249,63 @@ With [`OpenAIChatModel`](#chat-completions-api), use [`OpenAIChatModelSettings`]
 
 The features below are specific to the Responses API and only available on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] (the default). For background on how the Responses API differs from Chat Completions, see the [OpenAI API docs](https://platform.openai.com/docs/guides/migrate-to-responses).
 
+### WebSocket mode
+
+Use [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] to reuse one WebSocket across model requests. This can reduce transport overhead in runs with repeated tool calls. Install the optional WebSocket dependency with `pip install 'pydantic-ai-slim[openai,realtime]'` and use an asyncio event loop.
+
+The context yields an independent model for ordinary agent runs. Tools, structured output, capabilities, and streaming use the same agent execution path as HTTP. Pass the connected model to `Agent` or to a run's `model` argument:
+
+```python {title="openai_websocket.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-6-astra')
+settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+agent = Agent(model, model_settings=settings)
+
+
+@agent.tool_plain
+def get_temperature(city: str) -> int:
+    """Look up the temperature in Celsius."""
+    return {'Paris': 18, 'London': 15}[city]
+
+
+async def main():
+    async with model.connect() as connected:
+        first = await agent.run('What is the temperature in Paris?', model=connected)
+        second = await agent.run(
+            'How does London compare?',
+            model=connected,
+            conversation=first.conversation,
+        )
+        print(second.output)
+```
+
+[`openai_previous_response_id='auto'`](#referencing-earlier-responses) makes each continuation send only new input items, including tool results within a single run. Without that setting, the connected model sends the full mapped message history on each request. Keep passing the conversation or message history between runs in either case.
+
+Each connected model supports **one active response at a time**. Use separate `connect()` contexts for concurrent runs. Finishing a response leaves the socket open; cancelling a request, leaving a stream before completion, or losing the transport closes it. The connected model raises an error after closure, including after its context exits. Opening or closing an `Agent` context inside `connect()` does not close the socket.
+
+The model does not reconnect, retry an interrupted generation, or switch generation to HTTP automatically. Open another connection to recover. OpenAI's connection-local cache allows `previous_response_id` with `openai_store=False` or Zero Data Retention on the same socket. If a previous response is no longer available, restart with the full history and the `openai_previous_response_id` setting omitted. See [OpenAI's WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode/) for connection and retention limits.
+
+Set handshake headers through the model's default `extra_headers` or `connect(extra_headers=...)`. Per-request headers must match the connection's headers. The model's default `timeout` controls the handshake; each request's `timeout` controls its send and receive operations. Otherwise, the SDK client's timeouts apply. `websocket_connection_options` accepts the OpenAI SDK's typed socket options, such as `max_size`.
+
+Background responses, multiplexing, native mid-turn steering, and persistence of a socket across durable execution steps are outside this connection API. Token counting and standalone compaction continue to use their HTTP endpoints. The source model remains available for HTTP requests.
+
+#### Ultrafast
+
+Select [`openai_responses_service_tier='ultrafast'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_responses_service_tier] on supported models when the lower latency justifies its price premium:
+
+```python
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+settings = OpenAIResponsesModelSettings(
+    openai_responses_service_tier='ultrafast',
+    openai_previous_response_id='auto',
+)
+```
+
+The setting overrides `openai_service_tier` and `service_tier` for Responses requests. It is sent on every model request over either HTTP or WebSocket. Check [OpenAI's Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode/) for supported models and availability.
+
 ### Reasoning mode
 
 The GPT-5.6 and GPT-6 families can use OpenAI's [`standard` and `pro` reasoning modes](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode). `standard` is the default; `pro` performs more model work to improve reliability on difficult tasks, at the cost of higher latency and token usage. The mode is independent of the reasoning effort: any combination of mode and effort is valid, and the unified [`thinking`](../capabilities/thinking.md) setting only ever influences the effort, so `pro` is used only when you set it explicitly.
@@ -368,7 +425,7 @@ print(result.output)
 ```
 
 !!! note
-    Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.
+    Over HTTP, referencing a response requires it to have been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, send the full history. [WebSocket mode](#websocket-mode) can continue a response from OpenAI's connection-local cache while that socket remains open.
 
 #### Using durable conversations
 
