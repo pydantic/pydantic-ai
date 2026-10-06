@@ -17,7 +17,9 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.trace import ProxyTracerProvider
 
+    from pydantic_evals._task_run import CURRENT_TASK_RUN, run_task
     from pydantic_evals.otel._context_in_memory_span_exporter import (
         _add_context_span_exporter,  # pyright: ignore[reportPrivateUsage]
         _context_in_memory_providers,  # pyright: ignore[reportPrivateUsage]
@@ -1118,8 +1120,6 @@ async def test_context_subtree_custom_tracer_provider_without_add_span_processor
 
 async def test_context_subtree_not_configured(mocker: MockerFixture):
     """A tracer provider that cannot take a span processor yields an error, not a tree."""
-    from opentelemetry.trace import ProxyTracerProvider
-
     mocker.patch(
         'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
     )
@@ -1139,10 +1139,6 @@ async def test_run_task_without_span_capture_when_task_raises(mocker: MockerFixt
     Without a span-capturing tracer provider `context_subtree()` yields a `SpanTreeRecordingError`
     rather than a `SpanTree`, so there is nothing to extract and the original error still propagates.
     """
-    from opentelemetry.trace import ProxyTracerProvider
-
-    from pydantic_evals._task_run import CURRENT_TASK_RUN, run_task
-
     mocker.patch(
         'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
     )
