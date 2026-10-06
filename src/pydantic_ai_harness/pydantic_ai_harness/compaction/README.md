@@ -156,11 +156,13 @@ With a usage anchor, everything the provider billed for the anchored request cou
 tool definitions and `FilePart` payloads, which no character estimate can see. For the messages
 after the anchor (and for whole histories with no reported usage), the estimator counts every part
 that is sent: prompts, system prompts, tool calls and their results, retry prompts,
-extended-thinking blocks, provider-side tool results, and the instructions, once (or again after
-the anchor only when they changed since it). That estimated portion is a ~4-characters-per-token
+extended-thinking blocks, provider-side tool results, and the instructions, once. When the
+instructions changed since the anchor, the new set replaces the old one in the estimate rather than
+adding to it, since a request sends only one. That estimated portion is a ~4-characters-per-token
 approximation, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one.
-`FilePart` is not counted there -- its payload is binary, and its length in characters would mean
-nothing. Newly revealed tool schemas pending in the current request are conservatively estimated
+`FilePart` and the files a tool returns (an image, a document) are not counted there -- their payload
+is binary, and its length in characters would mean nothing. Tool results count as the text the
+provider receives, structured ones as their JSON. Newly revealed tool schemas pending in the current request are conservatively estimated
 by the implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user
