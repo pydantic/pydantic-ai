@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from pydantic import field_validator
 from typing_extensions import TypedDict, override
 
+from .. import _utils
 from ..messages import FinishReason, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -153,19 +154,18 @@ class _SnowflakeChatCompletionChunk(_ChatCompletionChunk):
 
 
 def _drop_empty_moderation_stub(data: dict[str, Any]) -> dict[str, Any]:
-    """Remove the empty `moderation` placeholder that Cortex sends on responses where moderation wasn't requested.
+    """Remove the empty `moderation` placeholder that Cortex sends when moderation wasn't requested.
 
-    The stub looks like `{'input': {'type': '', 'results': None, ...}, 'output': {...}}`, which matches neither
-    variant of the OpenAI SDK's strict `moderation` union. It is only dropped when a side is that placeholder
-    (`type` is `''` and `results` is `None`), so real moderation results still reach `provider_details` and any other
-    malformed field is still rejected.
+    Both `input` and `output` contain `{'type': '', 'results': None, ...}`, which matches neither
+    variant of the OpenAI SDK's strict `moderation` union. Drop the entire field only when both
+    sides are placeholders, so valid results are retained and other malformed moderation is rejected.
     """
     moderation = data.get('moderation')
-    if not isinstance(moderation, dict):
-        return data
-    for side in cast(dict[str, Any], moderation).values():
-        if isinstance(side, dict) and side.get('type') == '' and side.get('results') is None:  # pyright: ignore[reportUnknownMemberType]
-            return {key: value for key, value in data.items() if key != 'moderation'}
+    if _utils.is_str_dict(moderation) and all(
+        _utils.is_str_dict(side) and side.get('type') == '' and side.get('results') is None
+        for side in (moderation.get('input'), moderation.get('output'))
+    ):
+        return {key: value for key, value in data.items() if key != 'moderation'}
     return data
 
 
