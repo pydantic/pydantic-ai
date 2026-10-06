@@ -255,7 +255,10 @@ of your draft or submitted message. The editor sits below a Termflow live transc
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Drag with the mouse to select
+bottom or submitting follows new output again. Ctrl+L clears the screen, as in
+Claude Code: the transcript is forgotten, but the conversation, your draft, and
+queued messages stay. During a turn, the response still streaming keeps showing.
+Use `/clear` to start a new conversation instead. Drag with the mouse to select
 text; releasing the button copies it to the clipboard and the footer says so.
 Locally CLAI copies with `pbcopy` on macOS, `clip` on Windows, and `wl-copy`,
 `xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
@@ -263,7 +266,7 @@ terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
 *Applications in terminal may access clipboard*; tmux: `set-clipboard on`).
 Holding Shift (Option in iTerm2) still uses the terminal's own selection in most
 terminals. On exit, CLAI prints the retained
-transcript into native terminal scrollback. Typing updates the draft row; a
+transcript into native terminal scrollback, without output cleared by Ctrl+L. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
@@ -504,8 +507,9 @@ Uncommitted changes, ignored files, and untracked files are not copied. Project 
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the path and branch. A directory at that path that is not a Git
-worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
+CLAI prints the path and branch below its logo; a headless `--prompt` run prints
+them on stderr instead. A startup error names the kept checkout. A directory at
+that path that is not a Git worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery.
 
@@ -1045,7 +1049,11 @@ every later session; `/plugins enable repo_context` brings it back. See
 Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
-and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
+and paths after `@`. Suggestions match any substring, case-sensitively. While
+you type a command name, the best match comes first and is highlighted without
+pressing Tab: the exact name, then names that start with what you typed. Enter
+fills in the highlighted command, or runs it when it is already typed in full;
+Tab and Up/down move the highlight. For paths,
 matching applies to the filename within the typed directory. Path completion inserts
 a path; it does not attach file contents.
 Unknown command-shaped input such as `/missing` still reports an error instead

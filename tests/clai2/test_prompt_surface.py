@@ -214,6 +214,54 @@ def test_close_leaves_lines_forgotten_by_clear_out_of_scrollback() -> None:
     assert output.getvalue() == 'after clear\n'
 
 
+def test_clear_blanks_the_panel_and_follows_new_output() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(ROWS)
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    screen.write('partial')
+    screen.surface.scroll(3)
+    start = len(screen.terminal.getvalue())
+    screen.surface.clear()
+    screen.surface.paint(ROWS)
+    assert '\x1b[2J' in screen.terminal.getvalue()[start:], 'every cell repaints'
+    assert '\x1b[3J' not in screen.terminal.getvalue(), 'the terminal scrollback is left alone'
+    assert screen.surface.view.anchor is None
+    assert screen.lines() == [''] * 6 + list(ROWS)
+    screen.write('after\n')
+    screen.surface.refresh()
+    assert screen.lines()[:2] == ['after', '']
+    screen.surface.restore()
+    assert not screen.terminal.alternate
+    assert screen.lines()[0] == 'after', 'cleared output does not reach the scrollback on exit'
+
+
+def test_clear_keeping_current_output_lets_a_running_turn_finish_its_line_or_part() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('earlier\n')
+    screen.write('\x1b[1mbold ')
+    screen.surface.clear(keep_current=True)
+    screen.write('line\n')
+    assert screen.lines()[:2] == ['bold line', '']
+
+    def render(*, source: str, width: int) -> str:
+        # The width and theme never change, so the streamed rows show and nothing renders again.
+        raise NotImplementedError
+
+    block = screen.surface.markdown(render=render, width=80)
+    block.write('streamed ')
+    screen.surface.clear(keep_current=True)
+    block.write('answer\n')
+    screen.surface.refresh()
+    assert screen.lines()[:2] == ['streamed answer', '']
+
+    screen.write('tool output\n')
+    screen.surface.clear(keep_current=True)
+    screen.surface.paint(ROWS)
+    assert not any(screen.lines()[:-4]), 'a part followed by other output is finished'
+
+
 @pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])
 def test_palette_controls_reach_the_terminal_and_repaint(terminator: str) -> None:
     screen = Screen()
@@ -530,6 +578,11 @@ def test_scrolling_resizing_and_releasing_the_panel_clear_the_highlight() -> Non
     screen.surface.resize_notice()
     screen.surface.paint(ROWS)
     assert highlighted(screen.surface) == []
+    select()
+    screen.surface.clear()  # Ctrl+L.
+    assert screen.surface.selection.anchor is None
+    for index in range(20):
+        screen.write(f'line {index}\n')
     select()
     screen.surface.release()
     assert highlighted(screen.surface) == [], 'a menu or command never shows a stale highlight'

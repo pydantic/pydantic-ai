@@ -17,6 +17,12 @@ class Worktree:
     branch: str
     created: bool
 
+    @property
+    def notice(self) -> str:
+        """The launch line naming the checkout and its branch."""
+        opened = 'Worktree' if self.created else 'Reopened worktree'
+        return f'{opened}: {self.path} (branch: {self.branch}). Kept unless removal is confirmed on exit.'
+
 
 def open_worktree(*, name: str) -> Worktree:
     """Reopen `.worktrees/NAME`, or check it out on `clai-NAME`, reusing that branch if it exists."""

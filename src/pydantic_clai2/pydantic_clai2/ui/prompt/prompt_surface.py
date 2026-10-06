@@ -163,6 +163,16 @@ class PromptSurface(io.StringIO):
         with self._lock:
             return self.transcript.markdown(render=render, width=width, changed=self.changed)
 
+    def clear(self, *, keep_current: bool = False) -> None:
+        """Forget the transcript and repaint every cell next frame; see `TranscriptBuffer.clear`."""
+        with self._lock:
+            self.transcript.clear(keep_current=keep_current)
+            self.view.follow()
+            self._partial = self._partial and keep_current
+            self._previous = None
+            self.selection.clear()
+            self._dirty = True
+
     def scroll(self, rows: int) -> None:
         """Scroll the transcript back (positive) or forward (negative)."""
         with self._lock:
