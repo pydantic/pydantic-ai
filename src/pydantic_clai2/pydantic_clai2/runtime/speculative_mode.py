@@ -96,7 +96,9 @@ The sandbox also has direct capabilities, no function call needed:
 - There is NO network in the sandbox: anything remote goes through a
   function like `shell` (e.g. `curl`).
 
-Use raw Python strings for regex patterns so backslashes are not invalid escapes.
+Use raw Python strings for regex patterns so backslashes are not invalid escapes,
+and always use raw triple-quoted strings (e.g. r'''...''') for multiline shell
+commands to prevent Python syntax or quote-mismatch errors.
 
 How to work. The runtime watches your code AS YOU WRITE IT and starts
 eligible calls before the snippet is finished, so the SHAPE of your code
