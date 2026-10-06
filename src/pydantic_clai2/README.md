@@ -52,11 +52,11 @@ launch directory, set **Unrestricted filesystem** to `false` in
 
 Tool calls show a single-line summary followed by a blank line by default.
 Tool and argument names are pink; argument values and bullet markers are muted grey.
-Successful file writes and edits also show their diffs, including in compact mode.
+Successful file writes and edits also show their diffs, even with `display.tool_output` off.
 Shell output, exit details and log paths, and grep results stay out of the terminal;
 the model still receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
-`/set display.tool_output false` to hide those details without hiding file diffs. In detailed mode,
+`/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
@@ -1201,6 +1201,14 @@ or execute pending tools. Background naming may make a separate, tool-free model
 request. Your current model, working directory, credentials, and approved plugins
 remain in effect. The saved model name is shown for reference.
 
+Resuming shows the restored conversation in the terminal: the last 10 prompts
+with their answers, reasoning, and tool calls, drawn the way they streamed.
+Older turns are summarized in one line; the model still receives the whole
+history. Inside CLAI, `/resume` replaces the visible conversation, as `/clear`
+does: the previous one stays saved but is not shown again. Output that
+only streamed, such as shell previews and diffs, is not saved, so those tools
+show their call line.
+
 The browser follows Code Puppy's project/session design:
 
 - Projects on the left, with session counts. The current directory is preselected.
@@ -1641,7 +1649,7 @@ as each call arrives, so the last count is final only once another tool, visible
 In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
 mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
 Grouped mode ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
-`edit_file` and `write_file` calls are not counted: they print their summary and diff as in detailed mode.
+`edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 The setting applies to the next turn.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.

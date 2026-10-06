@@ -4,12 +4,13 @@ Shell integration for persisted conversations, the browser, and auxiliary naming
 """
 
 import asyncio
-from collections.abc import Awaitable, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from typing import Generic, TypeVar
 
 from rich.console import Console
 
 from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
@@ -43,6 +44,15 @@ class Sessions(Generic[DepsT, OutputT]):
         self.namer = SessionNamer(
             store=store, generate=self.generate, enabled=lambda: self.context.settings.session_namer
         )
+        self.on_resume: Callable[[Sequence[ModelMessage]], Awaitable[None]] | None = None
+        """Told the restored history after each resume, so the shell can show it."""
+
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
+        """Restore a saved session, then show its history."""
+        notice = await self.session.resume(conversation_id, allow_other_workspace=allow_other_workspace)
+        if self.on_resume is not None:
+            await self.on_resume(self.session.messages)
+        return notice
 
     async def generate(self, prompt: str) -> NamingResult | None:
         """Resolve credentials on the owning loop, without loading any coding plugins."""
@@ -70,7 +80,7 @@ class Sessions(Generic[DepsT, OutputT]):
         if len(args) > 1:
             raise ValueError('Usage: /resume [SESSION-ID]')
         if args:
-            return await self.session.resume(args[0])
+            return await self.resume(args[0])
         entries = await self.store.listing()
         self.namer.backfill(entries)
         loop = asyncio.get_running_loop()
@@ -124,7 +134,7 @@ class Sessions(Generic[DepsT, OutputT]):
         if self.session.running:
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
-        return await self.session.resume(selected, allow_other_workspace=True)
+        return await self.resume(selected, allow_other_workspace=True)
 
 
 class PersistencePlugin(Plugin):

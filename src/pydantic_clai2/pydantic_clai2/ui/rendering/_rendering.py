@@ -264,8 +264,11 @@ class StreamRenderer:
         tool_arg_chars: int = 40,
         tool_calls: ToolCallDisplay = 'detailed',
         renderers: Sequence[Callable[[AgentStreamEvent], RenderableType | None]] = (),
+        smooth: bool = True,
     ) -> None:
+        """`smooth=False` writes each part at once, for history that has already streamed."""
         self.console = console
+        self.smooth = smooth
         self._renderers = tuple(renderers)
         self._sandbox_calls = SandboxCallOrder()
         self.show_tool_output = show_tool_output
@@ -387,7 +390,7 @@ class StreamRenderer:
             else None
         )
         output = self._block or self.console.file
-        if self.console.is_terminal:
+        if self.console.is_terminal and self.smooth:
             self._writer = self._make_writer(output)
             self._writer.start()
         self._markdown = MarkdownPipeline(
@@ -426,7 +429,7 @@ class StreamRenderer:
         self._markdown.line(line)
 
     async def finish(self) -> None:
-        """Drain rendered Markdown and end any tool-call group before the next part, widget, or prompt appears."""
+        """Drain rendered Markdown and end any tool-call group before a plugin rendering, a widget, or the prompt appears."""
         await self._drain()
         self._close_group()
 

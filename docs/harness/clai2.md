@@ -454,7 +454,7 @@ as each call arrives, so the last count is final only once another tool, visible
 In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
 mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
 Grouped mode ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
-`edit_file` and `write_file` calls are not counted: they print their summary and diff as in detailed mode.
+`edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 `/set` previews both styles when you pick one. The setting applies to the next turn; the default is `detailed`.
 
 ## Grep previews

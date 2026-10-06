@@ -1909,12 +1909,13 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 Built-in tool rendering shows one summary line per call by default, clipped to
 the terminal width and followed by a blank line. Tool names are pink; arguments
 and bullet markers are muted grey. Successful file writes and edits show their
-diffs even in compact mode. Shell output and completion details and grep results
+diffs even with `display.tool_output` off. Shell output and completion details and grep results
 are hidden from the terminal, not from the model. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
 diffs, plugin renderers, or interactive questions. With `/set display.tool_calls grouped`,
-calls no renderer claims are counted by tool on one line instead, `display.tool_output`
+calls no renderer claims are counted by tool on one line instead, except `edit_file` and
+`write_file`, which still print their summary and diff; `display.tool_output`
 has no effect, and anything a renderer draws ends that line.
 
 CLAI shows unknown tool calls as `● tool_name`, with the name in pink. To show something
@@ -1938,6 +1939,11 @@ class Writes(Plugin):
 
 CLAI flushes any streaming text before it prints what you return, so your output
 never lands in the middle of a paragraph.
+
+`/resume` shows the restored conversation through the same renderers. It sends
+`FunctionToolCallEvent` and `FunctionToolResultEvent` built from the saved
+messages, so a renderer for those also draws resumed turns. Events that only
+streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
