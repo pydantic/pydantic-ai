@@ -18,9 +18,20 @@ class Worktree:
     head: str
     """The commit checked out at launch; a different one on exit counts as a change."""
     created: bool
-    """Whether this launch added the checkout, so exit removes it when nothing changed."""
+    """Whether this launch added the checkout."""
     new_branch: bool = False
     """Whether this launch also created `branch`, so exit deletes it with an unchanged checkout."""
+    remove_if_unchanged: bool = False
+    """Whether an interactive exit removes the checkout without asking when nothing changed."""
+
+    @property
+    def notice(self) -> str:
+        """The launch line naming the checkout and its branch."""
+        opened = 'Worktree' if self.created else 'Reopened worktree'
+        on_exit = (
+            'Removed on exit if unchanged.' if self.remove_if_unchanged else 'Kept unless removal is confirmed on exit.'
+        )
+        return f'{opened}: {self.path} (branch: {self.branch}). {on_exit}'
 
 
 def open_worktree(*, name: str) -> Worktree:
@@ -105,7 +116,7 @@ def current_worktree() -> Worktree | None:
 
 
 def offer_worktree_cleanup(*, worktree: Worktree | None) -> None:
-    """After interactive shutdown, remove an unchanged checkout this launch created, or offer to remove a changed one.
+    """After interactive shutdown, remove an unchanged checkout marked `remove_if_unchanged`, or offer to remove a changed one.
 
     Uncommitted or untracked files, or a commit other than the one at launch, count as changes. Other
     unchanged checkouts are kept without asking. A confirmed removal keeps the branch and dirty files.
@@ -120,7 +131,7 @@ def offer_worktree_cleanup(*, worktree: Worktree | None) -> None:
     except (OSError, subprocess.CalledProcessError):
         return
     if not changed:
-        if worktree.created:
+        if worktree.remove_if_unchanged:
             _remove(worktree, unchanged=True)
         return
     try:

@@ -170,8 +170,13 @@ class Commands(Completer):
         words = text[1:].split()
         if len(words) <= 1 and not text.endswith(' '):
             prefix = text[1:]
-            for command in list(self._commands.values()):
-                if prefix in command.name and command.available():
+            # Best match first: the exact name, then names starting with the fragment, then the rest.
+            matches = sorted(
+                (command for command in list(self._commands.values()) if prefix in command.name),
+                key=lambda command: (command.name != prefix, not command.name.startswith(prefix)),
+            )
+            for command in matches:
+                if command.available():
                     yield Completion(
                         command.name,
                         start_position=-len(prefix),

@@ -83,10 +83,11 @@ def test_launches_in_new_worktree(repository: Path, args: list[str]) -> None:
         if len(args) == 1 and args[0] in ('-w', '--worktree')
         else workspace.name == 'feature'
     )
-    assert (
-        f'Worktree: {workspace} (branch: clai-{workspace.name}). Kept unless removal is confirmed on exit.'
-        in result.stdout
-    )
+    notice = f'Worktree: {workspace} (branch: clai-{workspace.name}). Kept unless removal is confirmed on exit.'
+    banner, _, after = result.stdout.partition(notice)
+    assert after, result.stdout
+    assert banner.strip(), 'the notice comes below the logo, not on the first line'
+    assert after.lstrip('\n').startswith('/new starts a session')
     assert git(workspace, 'branch', '--show-current') == f'clai-{workspace.name}'
     assert git(workspace, 'rev-parse', 'HEAD') == original_head
     assert (workspace / 'tracked.txt').read_text() == 'committed'
@@ -166,10 +167,18 @@ def test_startup_error_keeps_created_worktree(repository: Path) -> None:
     result = launch(repository, '-w', 'retained', '--request-limit', '0')
     assert result.returncode == 2
     workspace = repository / '.worktrees/retained'
-    assert f'Worktree: {workspace}' in result.stdout
-    assert 'Kept unless removal is confirmed on exit.' in result.stdout
+    assert f'Worktree kept at {workspace} (branch: clai-retained).' in result.stderr
     assert (workspace / 'tracked.txt').read_text() == 'committed'
     assert git(workspace, 'branch', '--show-current') == 'clai-retained'
+
+
+def test_headless_worktree_notice_stays_off_stdout(repository: Path) -> None:
+    # The exit code is not asserted: `TestModel` calls every default tool, which the notice does not depend on.
+    result = launch(repository, '-w', 'headless', '-p', 'hello', prompt='')
+    workspace = repository / '.worktrees/headless'
+    notice = f'Worktree: {workspace} (branch: clai-headless). Kept unless removal is confirmed on exit.'
+    assert notice in result.stderr
+    assert 'Worktree' not in result.stdout
 
 
 def test_named_worktree_is_reopened(repository: Path) -> None:

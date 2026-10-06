@@ -1,6 +1,7 @@
 """Worktree shutdown removes an unchanged checkout CLAI created, and keeps changed work unless removal is confirmed."""
 
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -55,7 +56,20 @@ def created(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Worktree:
     worktree = open_worktree(name='task')
     assert worktree.created and worktree.new_branch
     monkeypatch.chdir(worktree.path)
-    return worktree
+    return replace(worktree, remove_if_unchanged=True)
+
+
+def test_notice_names_what_exit_does(created: Worktree) -> None:
+    assert created.notice == f'Worktree: {created.path} (branch: clai-task). Removed on exit if unchanged.'
+    kept = replace(created, remove_if_unchanged=False)
+    assert kept.notice == f'Worktree: {created.path} (branch: clai-task). Kept unless removal is confirmed on exit.'
+
+
+def test_unchanged_checkout_is_kept_unless_marked(created: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A checkout the CLI did not mark, as with piped input when it was opened, is kept without asking."""
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=replace(created, remove_if_unchanged=False))
+    assert created.path.exists()
 
 
 @pytest.mark.parametrize('answer', ['', 'n', 'no', 'perhaps'])
@@ -198,7 +212,7 @@ def test_unchanged_created_checkout_keeps_a_reused_branch(repo: Path, monkeypatc
     worktree = open_worktree(name='task')
     assert worktree.created and not worktree.new_branch
     monkeypatch.chdir(worktree.path)
-    offer_worktree_cleanup(worktree=worktree)
+    offer_worktree_cleanup(worktree=replace(worktree, remove_if_unchanged=True))
     assert not worktree.path.exists()
     assert git(repo, 'branch', '--list', 'clai-task')
 

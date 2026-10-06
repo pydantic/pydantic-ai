@@ -4,9 +4,14 @@ import argparse
 import asyncio
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic_clai2.ui.rendering.splash import Splash
+
+if TYPE_CHECKING:
+    from pydantic_clai2.runtime.worktrees import Worktree
 
 
 def run(*, splash: Splash | None = None) -> None:
@@ -54,10 +59,11 @@ def run(*, splash: Splash | None = None) -> None:
         from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
-        from pydantic_clai2.runtime.worktrees import current_worktree, offer_worktree_cleanup, open_worktree
+        from pydantic_clai2.runtime.worktrees import current_worktree, offer_worktree_cleanup
     finally:
         if splash is not None:
             splash.stop()
+    worktree = None
     try:
         store = SettingsStore(args.database)
         store.path = store.path.resolve()
@@ -66,18 +72,8 @@ def run(*, splash: Splash | None = None) -> None:
             print(handler(store, args.arguments))
             return
         agent = import_agent(args.agent) if args.agent is not None else None
-        worktree = None
         if args.worktree is not None:
-            worktree = open_worktree(name=args.worktree)
-            # Only an interactive exit cleans up; headless runs and piped input keep the checkout.
-            removable = worktree.created and args.prompt is None and sys.stdin.isatty()
-            print(
-                f'{"Worktree" if worktree.created else "Reopened worktree"}: {worktree.path} '
-                f'(branch: {worktree.branch}). '
-                + ('Removed on exit if unchanged.' if removable else 'Kept unless removal is confirmed on exit.'),
-                file=sys.stderr if args.prompt is not None else sys.stdout,
-            )
-            os.chdir(worktree.path)
+            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None)
         project = load_project_settings(Path.cwd())
         overrides = store.overrides() | project.overrides
         if model := args.model or os.getenv('CLAI_MODEL'):
@@ -103,8 +99,6 @@ def run(*, splash: Splash | None = None) -> None:
                     )
                 )
             )
-        if worktree is None:
-            worktree = current_worktree()
         asyncio.run(
             chat(
                 create_agent() if agent is None else agent,
@@ -116,19 +110,38 @@ def run(*, splash: Splash | None = None) -> None:
                 project=project,
                 resume=args.resume,
                 load_plugins=agent is None,
+                worktree=worktree,
             )
         )
-        offer_worktree_cleanup(worktree=worktree)
+        offer_worktree_cleanup(worktree=worktree or current_worktree())
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
         argv = relaunch_argv(args, executable=relaunch.executable, session_id=relaunch.session_id)
         sys.stdout.flush()
         os.execv(relaunch.executable, argv)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
+        if worktree is not None:
+            # A startup error can come before the banner, so name the checkout this launch leaves behind.
+            print(f'Worktree kept at {worktree.path} (branch: {worktree.branch}).', file=sys.stderr)
         parser.error(str(exc))
     except KeyboardInterrupt:
         if args.prompt is not None:
             raise SystemExit(130) from None
+
+
+def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
+    """Open the `--worktree` checkout and change into it, marking it for exit cleanup when that will run."""
+    from pydantic_clai2.runtime.worktrees import open_worktree
+
+    worktree = open_worktree(name=name)
+    if headless:
+        # Headless stdout carries only the answer; the shell shows the notice under its banner instead.
+        print(worktree.notice, file=sys.stderr)
+    else:
+        # Exit cleanup needs a terminal; piped input keeps even an unchanged checkout.
+        worktree = replace(worktree, remove_if_unchanged=worktree.created and sys.stdin.isatty())
+    os.chdir(worktree.path)
+    return worktree
 
 
 def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str | None) -> list[str]:
