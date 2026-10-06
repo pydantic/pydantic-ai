@@ -36,7 +36,7 @@ from tests.clai2.menu_script import make_context
 
 
 @dataclass(kw_only=True)
-class Notice(CapabilityEvent, namespace='test'):
+class Notice(CapabilityEvent, namespace='test', name='tool_group_notice'):
     pass
 
 
@@ -145,6 +145,15 @@ def test_a_tool_too_wide_for_its_row_keeps_its_count() -> None:
         group.add('mcp_github__list_review_comments')
     group.close()
     assert output.getvalue() == '● mcp_github__list_r… 12\n\n'
+
+
+def test_a_count_past_the_room_left_for_it_cuts_the_name_instead() -> None:
+    output = io.StringIO()
+    group = ToolCallGroup(Console(file=output, width=20), colors=None)
+    for name in ['shell'] * 2 + ['grep'] * 10_000:
+        group.add(name)
+    group.close()
+    assert output.getvalue() == '● shell 2, gr… 10000\n\n'
 
 
 async def test_tool_part_starts_and_results_do_not_end_or_count() -> None:

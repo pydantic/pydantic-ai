@@ -102,12 +102,12 @@ class ToolCallGroup:
         output = io.StringIO()
         console = Console(file=output, force_terminal=True, color_system=self.colors, width=width)
         line = _line(row)
-        if len(row) == 1 and line.cell_len > width:
-            # A tool alone on its row is cut in its name, keeping the count.
-            name, count = row[0]
+        if line.cell_len > width:
+            # Only the last streak can outgrow the row; cut its name, never its count.
+            *rest, (name, count) = row
             short = Text(name)
-            short.truncate(width - _line([('', count)]).cell_len, overflow='ellipsis')
-            line = _line([(short.plain, count)])
+            short.truncate(width - _line([*rest, ('', count)]).cell_len, overflow='ellipsis')
+            line = _line([*rest, (short.plain, count)])
         console.print(line, end=end, overflow='ellipsis', no_wrap=True)
         return output.getvalue()
 
