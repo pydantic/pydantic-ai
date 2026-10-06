@@ -190,6 +190,8 @@ def remember(destination: Destination) -> None:
     """
     try:
         logfire_dir().mkdir(parents=True, exist_ok=True)
-        (logfire_dir() / _REMEMBERED).write_text(_Remembered(base_url=destination.base_url).model_dump_json())
+        (logfire_dir() / _REMEMBERED).write_text(
+            _Remembered(base_url=destination.base_url).model_dump_json(), encoding='utf-8'
+        )
     except OSError:
         pass
