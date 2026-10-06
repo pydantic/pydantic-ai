@@ -864,7 +864,7 @@ through this module and are not rewritten.
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
 changes are refused while managed children run. Exit/reload drains them before
-`session_end`. Child questions use `host.full_screen()` and identify the child.
+`session_end`. Child questions use `host.full_screen()` and name the child in the picker's title.
 Typed delegation lifecycle events supply compact transcript rows; raw child events
 update the task inspector rather than entering the parent's transcript. Core hooks
 and guardrails bound to the stock agent still run on general-purpose children.
@@ -930,14 +930,15 @@ The second built-in, `ask_user` (`pydantic_clai2.builtin_plugins.ask_user_menu`)
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
 question appears inline above a compact numbered picker, keeping the conversation
-visible. Up/Down moves the highlight; Enter or an option's number selects it.
+visible. The question is pinned with its choices, so output streamed meanwhile (a
+delegated task's, say) lands above it instead of between it and the picker. Up/Down moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
 The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
-is restored on exit, and your picks are printed to the transcript afterwards.
+is restored on exit, and the question and your picks are printed to the transcript afterwards.
 `/plugins disable ask_user` takes the tool away.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.

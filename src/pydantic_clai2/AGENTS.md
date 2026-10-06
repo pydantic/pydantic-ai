@@ -444,7 +444,8 @@ Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
-with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source,
+with `run_worker(inline=True)` and pin the question text in their rows, not the
+transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
 and a tool-call group its call names, for width/theme repaint; tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`
