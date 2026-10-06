@@ -405,11 +405,8 @@ def _painted(text: str) -> TranscriptBuffer:
 
 
 def _printed(styles: list[Style]) -> str:
-    output = io.StringIO()
-    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
-    for index, style in enumerate(styles):
-        console.print(f'line {index}', style=style)
-    return output.getvalue()
+    """Truecolor output, not `console.print`: Rich reuses an SGR another test cached on a shared style."""
+    return ''.join(render_ansi(text=f'line {index}', style=style) + '\n' for index, style in enumerate(styles))
 
 
 def _colours(rows: Iterable[str]) -> list[tuple[str | None, str | None]]:
@@ -529,9 +526,13 @@ def test_branding_keeps_its_colours_when_the_theme_changes() -> None:
     console = Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=20)
     with buffer.capture(console):
         print_banner(console)
-        console.print('accent', style=theme.color(theme.ACCENT))
+    with theme.branded():
+        buffer.write(render_ansi(text='logo', style=Style(color=theme.LITHIUM)) + '\n')
+    buffer.write(render_ansi(text='accent', style=Style.parse(theme.color(theme.ACCENT))) + '\n')
+    banner = _colours(buffer.frame(width=20, height=24).rows)[0]
     with theme.use(lambda: 'tokyo_night'):
         assert _colours(buffer.frame(width=20, height=24).rows) == [
+            banner,
             (theme.LITHIUM.lower(), None),
             (PALETTES['tokyo_night'].ansi[12], None),
         ]
