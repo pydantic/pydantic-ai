@@ -1229,8 +1229,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
-        # OpenAI caches prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
-        return False
+        # OpenAI's models cache prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
+        # Subclasses serving other model families (OpenRouter's Anthropic routes) still report it.
+        if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            return False
+        return super()._caching_not_enabled(model_settings)
 
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
         if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
@@ -2327,8 +2330,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
-        # OpenAI caches prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
-        return False
+        # OpenAI's models cache prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
+        # Subclasses serving other model families (OpenRouter's Anthropic routes) still report it.
+        if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            return False
+        return super()._caching_not_enabled(model_settings)
 
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
         if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):

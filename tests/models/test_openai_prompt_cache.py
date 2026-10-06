@@ -2276,6 +2276,8 @@ def test_openai_cache_settings_resolution():
     never reported as having caching not enabled, since it caches implicitly without any configuration."""
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
     assert not model._caching_not_enabled(None)  # pyright: ignore[reportPrivateUsage]
+    earlier = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    assert not earlier._caching_not_enabled(None)  # pyright: ignore[reportPrivateUsage]
     assert model.resolve_cache_retention(OpenAIResponsesModelSettings(openai_cache_instructions=False)) == timedelta(
         minutes=30
     )
