@@ -31,8 +31,11 @@ def copy_command(*, platform: str = sys.platform) -> ClipboardCommand | None:
         # Without a UTF-8 locale, `pbcopy` reads its input as Mac Roman.
         candidates.append(ClipboardCommand(argv=('pbcopy',), env={'LC_CTYPE': 'UTF-8'}))
     elif platform == 'win32':
-        # `clip` reads the console code page unless the input starts with a UTF-16 byte order mark.
-        candidates.append(ClipboardCommand(argv=('clip',), encoding='utf-16'))
+        # The system's own `clip.exe`: a `PATH` search on Windows looks in the working directory
+        # first, which may be a repository that planted its own. `clip` reads the console code page
+        # unless the input starts with a UTF-16 byte order mark.
+        clip = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'clip.exe')
+        return ClipboardCommand(argv=(clip,), encoding='utf-16') if os.path.isfile(clip) else None
     else:
         if os.environ.get('WAYLAND_DISPLAY'):
             candidates.append(ClipboardCommand(argv=('wl-copy',)))

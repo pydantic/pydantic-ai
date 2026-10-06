@@ -84,9 +84,19 @@ class Selection:
 
         return range(index(start), index(end) + 1)
 
-    def highlight(self, frame: ScreenBuffer) -> None:
-        """Show the selected cells in reverse video."""
-        for index in self.span(width=frame.width, height=frame.height):
+    def highlight(self, frame: ScreenBuffer, *, previous: ScreenBuffer | None) -> None:
+        """Show the selected cells in reverse video, or drop the selection if output moved them.
+
+        The selection holds screen cells, not transcript rows, so new output that scrolls the
+        view, or a widget that redraws, must not leave it over text the user never dragged across.
+        """
+        span = self.span(width=frame.width, height=frame.height)
+        if previous is not None and (
+            previous.size != frame.size or previous.chars[span.start : span.stop] != frame.chars[span.start : span.stop]
+        ):
+            self.clear()
+            return
+        for index in span:
             frame.attrs[index] ^= REVERSE
 
     def text(self, frame: ScreenBuffer) -> str:

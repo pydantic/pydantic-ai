@@ -536,6 +536,25 @@ def test_scrolling_resizing_and_releasing_the_panel_clear_the_highlight() -> Non
     screen.surface.release()
 
 
+def test_output_that_moves_the_selected_text_drops_the_selection() -> None:
+    """Screen cells, not transcript rows: a release must never copy text the user did not drag over."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    for index in range(4):
+        screen.write(f'line {index}\n')
+    for report in (press(1, 1), drag(6, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert highlighted(screen.surface) == ['line 0']
+    screen.write('line 4\n')  # Below the selection: the selected cells still show the same text.
+    assert highlighted(screen.surface) == ['line 0']
+    screen.write('line 5\nline 6\n')  # Following the newest output scrolls `line 0` away.
+    assert screen.lines()[0] != 'line 0'
+    assert highlighted(screen.surface) == []
+    assert screen.surface.transcript_key('mouse', drag(6, 1)) is None, 'the drag ended with the selection'
+    assert screen.surface.transcript_key('mouse', release(6, 1)) is None
+    assert '\x1b]52;' not in screen.terminal.getvalue()
+
+
 def test_a_drag_during_a_hold_highlights_on_the_next_frame() -> None:
     """An inline question repaints the panel itself after each report."""
     screen = Screen(width=40, height=10)

@@ -230,7 +230,7 @@ class PromptSurface(io.StringIO):
         self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
         for index, row in enumerate(rows):
             frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
-        self.selection.highlight(frame)
+        self.selection.highlight(frame, previous=self._frame)
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
         self._dirty = False

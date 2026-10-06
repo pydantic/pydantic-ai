@@ -30,11 +30,23 @@ def installed(monkeypatch: pytest.MonkeyPatch) -> set[str]:
     return names
 
 
-def test_macos_and_windows_use_their_own_clipboard_commands(installed: set[str]) -> None:
+def test_macos_uses_pbcopy_in_a_utf8_locale(installed: set[str]) -> None:
     assert copy_command(platform='darwin') is None
-    installed.update({'pbcopy', 'clip'})
+    installed.add('pbcopy')
     assert copy_command(platform='darwin') == ClipboardCommand(argv=('/bin/pbcopy',), env={'LC_CTYPE': 'UTF-8'})
-    assert copy_command(platform='win32') == ClipboardCommand(argv=('/bin/clip',), encoding='utf-16')
+
+
+def test_windows_uses_the_system_clip_never_one_found_on_path(
+    installed: set[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A `PATH` search on Windows tries the working directory first, where a repository could plant `clip.exe`."""
+    installed.add('clip')
+    monkeypatch.setenv('SystemRoot', str(tmp_path))
+    assert copy_command(platform='win32') is None
+    clip = tmp_path / 'System32' / 'clip.exe'
+    clip.parent.mkdir()
+    clip.write_bytes(b'')
+    assert copy_command(platform='win32') == ClipboardCommand(argv=(str(clip),), encoding='utf-16')
 
 
 def test_linux_prefers_wayland_then_x11_tools(installed: set[str], monkeypatch: pytest.MonkeyPatch) -> None:
