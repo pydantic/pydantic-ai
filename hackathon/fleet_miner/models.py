@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from collections.abc import Iterable
+from datetime import date, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -122,6 +123,50 @@ class McpAllow(BaseModel):
     allow: list[str]
 
 
+class TrendPoint(BaseModel):
+    """One day of a pattern: matching prompts (or, for policy, matching tool calls) and distinct developers."""
+
+    date: date
+    count: int
+    users: int
+
+
+def daily_trend(events: Iterable[tuple[datetime, str]], start: datetime, end: datetime) -> list[TrendPoint]:
+    """Per-day counts over [start, end], zero-filled so a sparkline has every day."""
+    days: dict[date, list[str]] = {}
+    for timestamp, user in events:
+        days.setdefault(timestamp.date(), []).append(user)
+    points: list[TrendPoint] = []
+    day = start.date()
+    while day <= end.date():
+        users = days.get(day, [])
+        points.append(TrendPoint(date=day, count=len(users), users=len(set(users))))
+        day += timedelta(days=1)
+    return points
+
+
+class Impact(BaseModel):
+    """What changed since a proposal was accepted. Counts first: with a handful of developers, ratios mislead."""
+
+    computed_at: datetime
+    accepted_at: datetime
+    days_before: float
+    """Days of the mining window before acceptance."""
+    days_after: float
+    before_count: int
+    """Skill/instruction: prompts matching the pattern before acceptance. Policy: tool calls matching the rule."""
+    after_count: int
+    before_per_day: float | None
+    after_per_day: float | None
+    users_with_item: int | None = None
+    """Skill/instruction: distinct developers whose runs had it active (`clai2.fleet.active`) since acceptance."""
+    follow_up_prompts_avoided_estimate: int | None = None
+    """Skill/instruction: (before_per_day - after_per_day) * days_after, floored at 0. An estimate, not a count."""
+    decisions: dict[str, int] | None = None
+    """Policy: `policy decision` records for this rule since acceptance, by `clai2.policy.outcome`."""
+    decision_users: int | None = None
+
+
 class Proposal(BaseModel):
     id: str
     kind: ProposalKind
@@ -145,6 +190,10 @@ class Proposal(BaseModel):
     """Miner version and drafting model, e.g. `fleet-miner 0.2 / gateway/anthropic:claude-sonnet-5-5`."""
     score: float | None = None
     """Hackathon extra: LLM confidence times the distinct-user spread factor (braindump's scoring)."""
+    trend: list[TrendPoint] | None = None
+    """Pending proposals: per day over the window, for a sparkline."""
+    impact: Impact | None = None
+    """Accepted proposals: before vs after acceptance."""
     rule: PolicyRule | None = None
     """Set on `kind: 'policy'` proposals; always `mode: 'observe'` from the miner."""
     mcp: McpAllow | None = None

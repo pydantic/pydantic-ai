@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import json
+import keyword
 import re
 import statistics
 from dataclasses import dataclass, field
@@ -15,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
+from .llm_cache import run_cached
 from .models import Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, strip_markup
 
 CLUSTER_INSTRUCTIONS = """\
@@ -111,12 +114,14 @@ async def find_patterns(
         return []
     earlier = [{'id': p.id, 'pattern': p.pattern, 'status': p.status} for p in existing]
     agent = Agent(model, output_type=_Groups, instructions=CLUSTER_INSTRUCTIONS, name='fleet_miner_cluster')
-    result = await agent.run(
-        f'Earlier proposals:\n{json.dumps(earlier, indent=2)}\n\nIntents:\n{json.dumps(items, indent=2)}'
+    output = await run_cached(
+        agent,
+        f'Earlier proposals:\n{json.dumps(earlier, indent=2)}\n\nIntents:\n{json.dumps(items, indent=2)}',
+        output_type=_Groups,
     )
     known_ids = {p.id for p in existing}
     patterns: list[Pattern] = []
-    for group in result.output.groups:
+    for group in output.groups:
         # Only reuse an id the model was actually shown; anything else is a mangled or invented one.
         existing_id = group.existing_id if group.existing_id in known_ids else None
         group_prompts = [by_span[s] for s in dict.fromkeys(group.span_ids) if s in by_span]
@@ -165,8 +170,21 @@ def assign_stable_ids(
         taken.add(pattern.id)
 
 
-def load_prior_spans(path: Path) -> dict[str, set[str]]:
-    return {item['id']: set(item['span_ids']) for item in json.loads(path.read_text())} if path.exists() else {}
+SPANS_PATH = Path(__file__).parent / '.cache' / 'pattern_spans.json'
+"""Every prompt span ever assigned to each proposal id, across runs (clusters.json only has the latest run)."""
+
+
+def load_prior_spans(path: Path = SPANS_PATH) -> dict[str, set[str]]:
+    return {pid: set(spans) for pid, spans in json.loads(path.read_text()).items()} if path.exists() else {}
+
+
+def record_pattern_spans(patterns: list[Pattern], path: Path = SPANS_PATH) -> dict[str, set[str]]:
+    spans = load_prior_spans(path)
+    for p in patterns:
+        spans.setdefault(p.id, set()).update(u.span_id for u in p.prompts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({pid: sorted(s) for pid, s in spans.items()}))
+    return spans
 
 
 def save_patterns(path: Path, patterns: list[Pattern]) -> None:
@@ -221,8 +239,22 @@ _GENERIC_DOMAINS = {
 
 
 _HOST_OWNER = re.compile(r"^([A-Za-z]+?)'?s-(?:MacBook|MBP|Mac|iMac|Laptop|PC|Desktop)", re.IGNORECASE)
+# Ordinary words that the handle patterns can pick up ("commits or code history" must never become "<person>").
+_COMMON_WORDS = frozenset(
+    """
+    about above after again against also always another anything around back because before being below between both
+    branch build change changes check code commit commits config context could data default diff does done down each
+    error everything file files first from have help here history issue issues just keep know last like line lines
+    look make many more most much must need never next note only other over please project pull push read really
+    repo review same should since some something still such sure task tell than that their then there these thing
+    things this those through time today update used using very want what when where which while will with without
+    work would write your
+    """.split()
+)
+
 _HANDLE_PATTERNS = (
-    re.compile(r'(?<![\w.])@([A-Za-z0-9](?:[A-Za-z0-9-]{1,37}[A-Za-z0-9])?)\b'),
+    # "@someone" in prose, not a decorator (`@dataclass` on its own line) or an attribute (`@app.get(`).
+    re.compile(r'(?<![\w.])@([A-Za-z0-9](?:[A-Za-z0-9-]{1,37}[A-Za-z0-9])?)(?![\w(-]|\.\w)'),
     re.compile(r'\bassign(?:ed|ee)?(?: it| the PR| this)? to @?([A-Za-z0-9-]{3,39})\b', re.IGNORECASE),
     re.compile(r'/(?:Users|home)/([A-Za-z0-9._-]{3,})/'),
     re.compile(r"\b([A-Z][a-z]{2,})'s (?:coding )?agent\b"),  # attribution lines like "(Claude, X's coding agent)"
@@ -236,7 +268,22 @@ _NOT_HANDLES = {
     # Words that fill the "name" slot of the handle patterns without being anyone's name (branch prefixes etc.).
     *('agent', 'agents', 'feature', 'feat', 'fix', 'bugfix', 'hotfix', 'release', 'test', 'tests', 'chore', 'docs'),
     *('claude-code', 'origin', 'fork', 'upstream', 'user', 'users', 'home', 'tmp'),
+    # Code that looks like a handle: Python keywords, builtins and common decorators.
+    *keyword.kwlist,
+    *(name.lower() for name in dir(builtins)),
+    *('dataclass', 'classmethod', 'staticmethod', 'property', 'cached_property', 'contextmanager'),
+    *('asynccontextmanager', 'functools', 'pytest', 'override', 'overload', 'abstractmethod', 'cache', 'mermaid'),
+    *_COMMON_WORDS,
 }
+
+
+def _handles(pattern: re.Pattern[str], text: str) -> list[str]:
+    # An "@name" that starts its line (after indentation) is a decorator, not a mention.
+    return [
+        m[1]
+        for m in pattern.finditer(text)
+        if not (m[0].startswith('@') and not text[text.rfind('\n', 0, m.start()) + 1 : m.start()].strip())
+    ]
 
 
 def personal_identifiers(prompts: list[UserPrompt]) -> set[str]:
@@ -252,8 +299,8 @@ def personal_identifiers(prompts: list[UserPrompt]) -> set[str]:
         elif match := _HOST_OWNER.match(user):
             found.add(match[1])  # "Janes-MacBook-Air.local" names Jane; "pydantic-ai" names nobody
         # Handles typed in the prompt itself: "@someone", "assign it to someone", "/Users/someone/".
-        found |= {m for pattern in _HANDLE_PATTERNS for m in pattern.findall(p.text)}
-    return {f for f in found if len(f) >= 4 and f.lower() not in _NOT_HANDLES}
+        found |= {m for pattern in _HANDLE_PATTERNS for m in _handles(pattern, p.text)}
+    return {f for f in found if len(f) >= 4 and f.lower() not in _NOT_HANDLES and not f.isdigit()}
 
 
 def leaked_identifiers_in(text: str, identifiers: set[str]) -> set[str]:
@@ -320,14 +367,15 @@ async def draft_proposals(patterns: list[Pattern], *, model: str, max_evidence: 
         examples = [{'developer': numbers[p.user], 'prompt': p.text[:2000]} for p in pattern.prompts[:12]]
         identifiers = personal_identifiers(pattern.prompts)
         target = median_prompt_chars(pattern)
-        result = await agent.run(
+        draft = await run_cached(
+            agent,
             f'Pattern: {pattern.pattern}\n'
             f'Asked by {len(pattern.users)} distinct developers across {len(pattern.sessions)} sessions.\n'
             f'Median prompt length: {target} characters. Target for `text`: about {target}, at most {2 * target}.\n'
             f'What they typed:\n{json.dumps(examples, indent=2)}',
+            output_type=_Draft,
             deps=_DraftDeps(identifiers=identifiers, target_chars=target),
         )
-        draft = result.output
         if leaked := leaked_identifiers(draft, identifiers):  # pragma: no cover - only if retries ran out
             print(f'warning: redacted {len(leaked)} personal identifier(s) from `{pattern.id}`')
             draft = _Draft.model_validate({k: _redact(v, leaked) if isinstance(v, str) else v for k, v in draft})

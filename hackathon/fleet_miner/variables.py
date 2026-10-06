@@ -34,7 +34,13 @@ class VariablesClient:
         value = _label_value(config, LABEL) if config else None
         return ProposalsDoc.model_validate_json(value) if value else None
 
-    async def update(self, build: Callable[[ProposalsDoc | None], ProposalsDoc], *, attempts: int = 3) -> ProposalsDoc:
+    async def update(
+        self,
+        build: Callable[[ProposalsDoc | None], ProposalsDoc],
+        *,
+        unchanged: Callable[[ProposalsDoc, ProposalsDoc], bool] | None = None,
+        attempts: int = 3,
+    ) -> tuple[ProposalsDoc, bool]:
         """Read, merge, write, then re-read and verify, so a status the UI wrote meanwhile is not clobbered.
 
         `build` merges our proposals into whatever is current right now (the read happens just before the write,
@@ -45,7 +51,10 @@ class VariablesClient:
         for _ in range(attempts):
             before = await self._config()
             current_value = _label_value(before, LABEL) if before else None
-            doc = build(ProposalsDoc.model_validate_json(current_value) if current_value else None)
+            current = ProposalsDoc.model_validate_json(current_value) if current_value else None
+            doc = build(current)
+            if current is not None and unchanged is not None and unchanged(current, doc):
+                return current, False
             ours = doc.model_dump_json()
             await self.write(doc, exists=before is not None)
             after = await self._config()
@@ -53,7 +62,7 @@ class VariablesClient:
                 old_version = (before or {}).get('latest_version', {}).get('version', 0)
                 if after['latest_version']['version'] > old_version + 1:
                     print('warning: another write landed between our read and write; re-check its statuses')
-                return doc
+                return doc, True
             print('note: the variable changed right after our write; merging again onto the newer value')
         raise RuntimeError(f'could not write `{VARIABLE}` without racing another writer ({attempts} attempts)')
 

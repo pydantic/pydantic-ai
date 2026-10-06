@@ -23,7 +23,8 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
 from .fetch import _SESSIONS, IDENTITY, NOT_TEST
-from .models import Evidence, McpAllow, PolicyMatch, PolicyRule, Proposal, clean_text, redact_secrets
+from .llm_cache import run_cached
+from .models import Evidence, McpAllow, daily_trend, PolicyMatch, PolicyRule, Proposal, clean_text, redact_secrets
 from .patterns import leaked_identifiers_in
 
 TOOL_CALLS_SQL = f"""
@@ -105,7 +106,7 @@ async def fetch_tool_calls(read_token: str, *, base_url: str, since: datetime) -
             ToolCall(
                 trace_id=r['trace_id'],
                 span_id=r['span_id'],
-                timestamp=r['start_timestamp'],
+                timestamp=_parse_time(r['start_timestamp']),
                 tool=r['tool'] or '',
                 user=user,
                 session_id=r['session_id'] or r['trace_id'],
@@ -113,6 +114,10 @@ async def fetch_tool_calls(read_token: str, *, base_url: str, since: datetime) -
             )
         )
     return calls
+
+
+def _parse_time(value: str | datetime) -> datetime:
+    return value if isinstance(value, datetime) else datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
 def _command(tool: str | None, arguments: Any) -> str | None:
@@ -206,12 +211,16 @@ Never include names, usernames, emails, tokens or keys.
 class _RuleDraft(BaseModel):
     category: str = Field(description='The risk category key this rule addresses.')
     name: str = Field(description='kebab-case')
-    description: str
+    title: str = Field(
+        description='What the rule does, as a short imperative a person would say, at most 8 words, no globs or '
+        'flags (e.g. "Ask before force-deleting a branch", "Never pipe a download into a shell")'
+    )
+    description: str = Field(description='One sentence: why, in plain words.')
     action: Literal['deny', 'ask']
     command: str = Field(description='fnmatch glob over the whole shell command')
     rationale: str
 
-    _clean = field_validator('name', 'description', 'rationale', 'command')(clean_text)
+    _clean = field_validator('name', 'title', 'description', 'rationale', 'command')(clean_text)
 
 
 class _McpDraft(BaseModel):
@@ -235,7 +244,13 @@ class _Deps:
 
 
 async def mine_policy(
-    calls: list[ToolCall], *, model: str, min_users: int, identifiers: set[str], max_evidence: int = 5
+    calls: list[ToolCall],
+    *,
+    model: str,
+    min_users: int,
+    identifiers: set[str],
+    window: tuple[datetime, datetime],
+    max_evidence: int = 5,
 ) -> list[Proposal]:
     risks = risk_groups(calls)
     tools = mcp_groups(calls)
@@ -264,17 +279,19 @@ async def mine_policy(
             raise ModelRetry('; '.join(problems))
         return drafts
 
-    result = await agent.run(
+    output = await run_cached(
+        agent,
         'Risk categories:\n'
         + json.dumps([_summary(g) for g in risks], indent=2)
         + '\n\nNon-built-in tools in use:\n'
         + json.dumps([{'tool': g.key, 'calls': len(g.calls), 'distinct_users': len(g.users)} for g in tools], indent=2),
+        output_type=_PolicyDrafts,
         deps=_Deps(identifiers=identifiers, commands=commands),
     )
     generated_by = f'fleet-miner {__version__} / {model}'
     proposals: list[Proposal] = []
     groups = {g.key: g for g in risks}
-    for draft in result.output.rules:
+    for draft in output.rules:
         # Measure what the glob actually matches; the LLM's claims don't count.
         segments = {c.span_id: seg for c in calls if c.command and (seg := matching_segment(c.command, draft.command))}
         matched = Group(draft.name, [c for c in calls if c.span_id in segments])
@@ -286,7 +303,7 @@ async def mine_policy(
         proposal_id = f'policy-{draft.category}-{draft.action}'
         rule = PolicyRule(
             name=draft.name,
-            description=draft.description,
+            description=draft.title,
             action=draft.action,
             match=PolicyMatch(tool='shell', command=draft.command),
             proposal_id=proposal_id,
@@ -296,8 +313,9 @@ async def mine_policy(
                 id=proposal_id,
                 kind='policy',
                 name=draft.name,
-                description=draft.description,
-                text=f'{draft.action} `{draft.command}` (observe mode)',
+                # The UI leads with the human sentence; the glob lives in `rule.match.command`.
+                description=draft.title,
+                text=draft.description,
                 suggested_tier=None if users < min_users else 'required',
                 rationale=f'{draft.rationale} Measured: {len(matched.calls)} matching calls by {users} '
                 f'developer(s) in {len({c.session_id for c in matched.calls})} sessions.',
@@ -306,11 +324,12 @@ async def mine_policy(
                 sessions=len({c.session_id for c in matched.calls}),
                 evidence=_evidence(matched, max_evidence),
                 rule=rule,
+                trend=daily_trend(((c.timestamp, c.user) for c in matched.calls), *window),
                 generated_by=generated_by,
             )
         )
     by_tool = {g.key: g for g in tools}
-    for draft in result.output.mcp_servers:
+    for draft in output.mcp_servers:
         matched = Group(
             draft.server, [c for g in tools for c in g.calls if any(fnmatchcase(g.key, p) for p in draft.tool_globs)]
         )
@@ -331,6 +350,7 @@ async def mine_policy(
                 sessions=len({c.session_id for c in matched.calls}),
                 evidence=_evidence(matched, max_evidence),
                 mcp=McpAllow(allow=[draft.server]),
+                trend=daily_trend(((c.timestamp, c.user) for c in matched.calls), *window),
                 generated_by=generated_by,
             )
         )
@@ -347,7 +367,8 @@ def _evidence(group: Group, limit: int) -> list[Evidence]:
     return [Evidence(trace_id=c.trace_id, span_id=c.span_id, timestamp=c.timestamp) for c in picked[:limit]]
 
 
-def mask_identifiers(text: str, identifiers: set[str]) -> str:
+def mask_identifiers(text: str, identifiers: set[str], replacement: str = 'a teammate') -> str:
+    """Last-line defense (drafting already retries on identifiers): rephrase rather than leave a `<person>` token."""
     for i in sorted(identifiers, key=len, reverse=True):
-        text = re.sub(rf'(?<![\w-]){re.escape(i)}(?![\w-])', '<person>', text, flags=re.IGNORECASE)
+        text = re.sub(rf'(?<![\w-]){re.escape(i)}(?![\w-])', replacement, text, flags=re.IGNORECASE)
     return text

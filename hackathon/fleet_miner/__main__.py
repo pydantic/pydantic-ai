@@ -4,18 +4,28 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import re
+import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import logfire
 
-from . import facets as facets_mod, fetch, patterns as patterns_mod, policy as policy_mod
-from .models import Proposal, ProposalsDoc, UserPrompt, Window, pseudonymize
+from . import facets as facets_mod, fetch, impact as impact_mod, patterns as patterns_mod, policy as policy_mod
+from .models import Impact, Proposal, ProposalsDoc, UserPrompt, Window, daily_trend, pseudonymize
 from .variables import VARIABLE, VariablesClient
 
 HERE = Path(__file__).parent
+VERBOSE = True
+
+
+def say(*values: object) -> None:
+    """Progress output; `--watch` turns it off and prints one line per cycle instead."""
+    if VERBOSE:
+        print(*values)
 
 
 def _since(value: str) -> datetime:
@@ -58,11 +68,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument('--facet-model', default='gateway/anthropic:claude-sonnet-5-5')
     parser.add_argument('--pattern-model', default='gateway/anthropic:claude-sonnet-5-5')
+    parser.add_argument('--watch', type=float, metavar='MINUTES', help='re-run every N minutes, one line per cycle')
     parser.add_argument('--cache', type=Path, help='facet cache file (default: one per facet model under .cache/)')
     return parser
 
 
-async def main(args: argparse.Namespace) -> None:
+async def main(args: argparse.Namespace) -> str:
     if args.fixture and not args.dry_run:
         # Fixture output must never reach the live variable.
         raise SystemExit('--fixture runs are offline: add --dry-run (and --out to keep the result).')
@@ -79,7 +90,7 @@ async def main(args: argparse.Namespace) -> None:
         if args.save_fixture:
             fetch.save_fixture(args.save_fixture, prompts)
     users = {p.user for p in prompts}
-    print(f'{len(prompts)} prompts from {len(users)} users in {len({p.trace_id for p in prompts})} sessions')
+    say(f'{len(prompts)} prompts from {len(users)} users in {len({p.trace_id for p in prompts})} sessions')
 
     api_key = os.environ.get('LOGFIRE_CLAI2_API_KEY')
     client = VariablesClient(api_key, base_url=args.base_url) if api_key else None
@@ -92,7 +103,8 @@ async def main(args: argparse.Namespace) -> None:
 
     existing = [p for p in existing if keep(p)]
     mine_prompts, mine_policy = 'prompts' in args.only, 'policy' in args.only and not args.fixture
-    drafted = await _mine_prompts(args, prompts, existing) if mine_prompts else []
+    start = min((p.timestamp for p in prompts), default=args.since if isinstance(args.since, datetime) else now)
+    drafted, found = await _mine_prompts(args, prompts, existing, window=(start, now)) if mine_prompts else ([], [])
     calls = await _fetch_calls(args) if mine_policy else []
     identifiers = patterns_mod.personal_identifiers(prompts + _calls_as_prompts(calls))
     if mine_policy:
@@ -104,7 +116,11 @@ async def main(args: argparse.Namespace) -> None:
         drafted += [
             p
             for p in await policy_mod.mine_policy(
-                calls, model=args.pattern_model, min_users=args.min_users, identifiers=identifiers
+                calls,
+                model=args.pattern_model,
+                min_users=args.min_users,
+                identifiers=identifiers,
+                window=(start, now),
             )
             if p.rule is None or p.id.rsplit('-', 1)[0] not in reviewed or any(e.id == p.id for e in existing)
         ]
@@ -127,50 +143,69 @@ async def main(args: argparse.Namespace) -> None:
         for span, user in users_by_span.items()
     }
     dismissals = dict(item.split('=', 1) for item in args.dismiss)
+    pattern_spans = patterns_mod.load_prior_spans()
+    impacts = await impact_mod.compute_impacts(
+        [p for p in existing if p.status == 'accepted'],
+        prompts=prompts,
+        pattern_spans=pattern_spans,
+        calls=calls,
+        window_start=start,
+        now=now,
+        read_token=None if args.fixture else (os.environ.get('LOGFIRE_CLAI2_READ_TOKEN') or api_key),
+        base_url=args.base_url,
+    )
+    finish = Finisher(users_by_span, identifiers, dismissals, impacts)
     stale_kinds = ({'skill', 'instruction'} if mine_prompts else set()) | ({'policy'} if mine_policy else set())
     merged, actions = patterns_mod.merge(existing, drafted, stale_kinds=stale_kinds)
     for proposal in drafted:
-        print(f'\n--- [{actions[proposal.id]}] {proposal.kind} `{proposal.name}` -> {proposal.suggested_tier}')
-        print(proposal.description)
-        print(proposal.text)
+        say(f'\n--- [{actions[proposal.id]}] {proposal.kind} `{proposal.name}` -> {proposal.suggested_tier}')
+        say(proposal.description)
+        say(proposal.text)
         if proposal.kind == 'policy':
-            print(proposal.rationale)
+            say(proposal.rationale)
     for id_, action in actions.items():
         if action == 'stale':
-            print(f'\n--- [stale] `{id_}` no longer qualifies')
+            say(f'\n--- [stale] `{id_}` no longer qualifies')
 
-    start = min((p.timestamp for p in prompts), default=args.since if isinstance(args.since, datetime) else now)
-    doc = _finalize(
-        ProposalsDoc(generated_at=now, window=Window(start=start, end=now), min_users=args.min_users, proposals=merged),
-        users_by_span,
-        identifiers,
-        dismissals,
+    doc = finish(
+        ProposalsDoc(generated_at=now, window=Window(start=start, end=now), min_users=args.min_users, proposals=merged)
     )
     if args.out:
         args.out.write_text(doc.model_dump_json(indent=2))
-        print(f'\nWrote {args.out}')
+        say(f'\nWrote {args.out}')
+    summary = (
+        f'{len(prompts)} prompts, {len(users)} users, {len(found)} patterns, '
+        f'{sum(len(p.users) >= args.min_users for p in found)} qualifying, {len(calls)} tool calls'
+    )
     if args.dry_run:
-        return
+        return f'{summary}; dry run'
     if client is None:
-        print(f'\nNo LOGFIRE_CLAI2_API_KEY: not writing `{VARIABLE}`.')
-        return
+        say(f'\nNo LOGFIRE_CLAI2_API_KEY: not writing `{VARIABLE}`.')
+        return f'{summary}; no API key'
 
     def build(current: ProposalsDoc | None) -> ProposalsDoc:
         # Merge onto what is live right now: statuses written while we were mining win.
         fresh, _ = patterns_mod.merge(
             [p for p in (current.proposals if current else []) if keep(p)], drafted, stale_kinds=stale_kinds
         )
-        return _finalize(doc.model_copy(update={'proposals': fresh}), users_by_span, identifiers, dismissals)
+        return finish(doc.model_copy(update={'proposals': fresh}))
 
     async with client:
-        written = await client.update(build)
+        written, wrote = await client.update(build, unchanged=same_content)
     statuses = {s: sum(p.status == s for p in written.proposals) for s in ('pending', 'stale', 'accepted', 'dismissed')}
-    print(f'\nWrote and verified `{VARIABLE}`: {statuses}')
+    status_text = ' '.join(f'{k}={v}' for k, v in statuses.items())
+    result = f'{summary}; {status_text}; ' + ('WROTE live doc (verified)' if wrote else 'unchanged, not written')
+    say(f'\n{result}')
+    return result
 
 
 async def _mine_prompts(
-    args: argparse.Namespace, prompts: list[UserPrompt], existing: list[Proposal]
-) -> list[Proposal]:
+    args: argparse.Namespace,
+    prompts: list[UserPrompt],
+    existing: list[Proposal],
+    *,
+    window: tuple[datetime, datetime],
+) -> tuple[list[Proposal], list[patterns_mod.Pattern]]:
     cache_path = args.cache or HERE / '.cache' / f'facets-{re.sub(r"\W+", "_", args.facet_model)}.json'
     facets = (
         {}
@@ -178,23 +213,29 @@ async def _mine_prompts(
         else await facets_mod.extract_facets(prompts, model=args.facet_model, cache=facets_mod.FacetCache(cache_path))
     )
     if facets:
-        print(f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent')
+        say(f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent')
     clusters_path = HERE / '.cache' / 'clusters.json'
     if args.reuse_clusters:
         found = patterns_mod.load_patterns(clusters_path, prompts)
     else:
         found = await patterns_mod.find_patterns(prompts, facets, model=args.pattern_model, existing=existing)
-        patterns_mod.assign_stable_ids(found, existing, prior_spans=patterns_mod.load_prior_spans(clusters_path))
+        patterns_mod.assign_stable_ids(found, existing, prior_spans=patterns_mod.load_prior_spans())
         patterns_mod.save_patterns(clusters_path, found)
-    print('\nPatterns (distinct users / sessions / score):')
+    patterns_mod.record_pattern_spans(found)
+    say('\nPatterns (distinct users / sessions / score):')
     for p in found:
         mark = '*' if len(p.users) >= args.min_users else ' '
-        print(f' {mark} {len(p.users)}u {len(p.sessions)}s {p.score:.2f}  {p.id}: {p.pattern}')
+        say(f' {mark} {len(p.users)}u {len(p.sessions)}s {p.score:.2f}  {p.id}: {p.pattern}')
     qualifying = [p for p in found if len(p.users) >= args.min_users]
     if not qualifying:
-        print(f'\nNo pattern reached {args.min_users} distinct users.')
-        return []
-    return await patterns_mod.draft_proposals(qualifying, model=args.pattern_model)
+        say(f'\nNo pattern reached {args.min_users} distinct users.')
+        return [], found
+    drafted = await patterns_mod.draft_proposals(qualifying, model=args.pattern_model)
+    by_id = {p.id: p for p in qualifying}
+    for proposal in drafted:
+        events = ((u.timestamp, u.user or u.span_id) for u in by_id[proposal.id].prompts)
+        proposal.trend = daily_trend(events, *window)
+    return drafted, found
 
 
 async def _fetch_calls(args: argparse.Namespace) -> list[policy_mod.ToolCall]:
@@ -204,9 +245,9 @@ async def _fetch_calls(args: argparse.Namespace) -> list[policy_mod.ToolCall]:
         since=args.since,
     )
     commands = sum(1 for c in calls if c.command)
-    print(f'\n{len(calls)} tool calls ({commands} shell commands) from {len({c.user for c in calls})} users')
+    say(f'\n{len(calls)} tool calls ({commands} shell commands) from {len({c.user for c in calls})} users')
     for group in policy_mod.risk_groups(calls):
-        print(f'   risk {group.key}: {len(group.calls)} calls, {len(group.users)} users')
+        say(f'   risk {group.key}: {len(group.calls)} calls, {len(group.users)} users')
     return calls
 
 
@@ -218,25 +259,70 @@ def _calls_as_prompts(calls: list[policy_mod.ToolCall]) -> list[UserPrompt]:
     ]
 
 
-def _finalize(
-    doc: ProposalsDoc, users_by_span: dict[str, str], identifiers: set[str], dismissals: dict[str, str]
-) -> ProposalsDoc:
-    """Make the document safe to hand to every clai2 process: numbered developers, no identifiers in any text."""
-    proposals: list[Proposal] = []
-    for p in doc.proposals:
-        update: dict[str, object] = {
-            f: policy_mod.mask_identifiers(getattr(p, f), identifiers)
-            for f in ('name', 'description', 'text', 'rationale', 'pattern')
-        }
-        if p.id in dismissals and p.status in ('pending', 'stale'):
-            update |= {'status': 'dismissed', 'status_reason': dismissals[p.id]}
-        proposals.append(p.model_copy(update=update, deep=True))
-    doc = doc.model_copy(update={'proposals': proposals})
-    pseudonymize(doc, users_by_span)
-    return doc
+@dataclass
+class Finisher:
+    """Make the document safe to hand to every clai2 process, and attach the numbers that are only known now."""
+
+    users_by_span: dict[str, str]
+    identifiers: set[str]
+    dismissals: dict[str, str]
+    impacts: dict[str, Impact]
+
+    def __call__(self, doc: ProposalsDoc) -> ProposalsDoc:
+        proposals: list[Proposal] = []
+        for p in doc.proposals:
+            update: dict[str, object] = {
+                f: policy_mod.mask_identifiers(getattr(p, f), self.identifiers)
+                for f in ('name', 'description', 'text', 'rationale', 'pattern')
+            }
+            if p.id in self.dismissals and p.status in ('pending', 'stale'):
+                update |= {'status': 'dismissed', 'status_reason': self.dismissals[p.id]}
+            if p.status == 'accepted' and p.id in self.impacts:
+                update['impact'] = self.impacts[p.id]
+            proposals.append(p.model_copy(update=update, deep=True))
+        doc = doc.model_copy(update={'proposals': proposals})
+        pseudonymize(doc, self.users_by_span)
+        return doc
+
+
+def same_content(a: ProposalsDoc, b: ProposalsDoc) -> bool:
+    """Equal apart from when it was computed: the timestamps every run changes."""
+
+    def stable(doc: ProposalsDoc) -> str:
+        data = doc.model_dump(mode='json', exclude={'generated_at': True, 'window': {'end'}})
+        for p in data['proposals']:
+            if p.get('impact'):
+                p['impact'].pop('computed_at', None)
+                p['impact'].pop('days_after', None)
+                p['impact'].pop('after_per_day', None)
+                p['impact'].pop('days_before', None)
+                p['impact'].pop('before_per_day', None)
+                p['impact'].pop('follow_up_prompts_avoided_estimate', None)
+        return json.dumps(data, sort_keys=True)
+
+    return stable(a) == stable(b)
+
+
+async def watch(args: argparse.Namespace) -> None:
+    global VERBOSE
+    VERBOSE = False
+    while True:
+        started = datetime.now(UTC)
+        args.since = _since(args.since_text) if args.since_text else args.since
+        try:
+            line = await main(args)
+        except Exception as exc:  # keep the demo loop alive; the next cycle retries
+            line = f'error: {type(exc).__name__}: {exc}'[:300]
+        print(f'{started:%H:%M:%S} {line}', flush=True)
+        await asyncio.sleep(max(0.0, args.watch * 60 - (datetime.now(UTC) - started).total_seconds()))
 
 
 if __name__ == '__main__':
     logfire.configure(send_to_logfire='if-token-present', service_name='fleet-miner', console=False)
     logfire.instrument_pydantic_ai()
-    asyncio.run(main(_parser().parse_args()))
+    parsed = _parser().parse_args()
+    if parsed.watch:
+        parsed.since_text = sys.argv[sys.argv.index('--since') + 1] if '--since' in sys.argv else '7d'
+        asyncio.run(watch(parsed))
+    else:
+        asyncio.run(main(parsed))
