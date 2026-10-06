@@ -382,7 +382,7 @@ jobs:
           PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
           LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
           SHA: ${{ needs.eligibility.outputs.head_sha }}
-          FAILED: ${{ needs.safe_outputs.result != 'success' || needs.agent.outputs.output_types == '' }}
+          FAILED: ${{ needs.safe_outputs.result != 'success' || !(contains(needs.agent.outputs.output_types, 'submit_pull_request_review') || contains(needs.agent.outputs.output_types, 'noop')) }}
         run: |
           # Runs for different heads overlap, so only the run for the current head owns the label.
           head=$(gh api "$PR" -q .head.sha)
