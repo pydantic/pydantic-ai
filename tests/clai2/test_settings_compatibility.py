@@ -84,6 +84,42 @@ async def test_logfire_user_tag_settings_survive_older_builds(
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
 
 
+@pytest.mark.parametrize('ui_events', [None, False, True])
+async def test_logfire_ui_events_default_preserves_saved_overrides(
+    tmp_path: Path, recorder: Recorder, ui_events: bool | None
+) -> None:
+    loader, store = observability_loader(tmp_path)
+    # Historical declarations either omitted UI events (then default off), or saved an explicit choice.
+    previous = PluginSettings(
+        id='observability',
+        factory='pydantic_clai2.builtin_plugins.logfire',
+        settings={'send_to_logfire': False, 'include_content': False, 'service_name': 'shared-project'},
+    )
+    if ui_events is not None:
+        previous.settings['ui_events'] = ui_events
+    store.save_plugin(previous)
+    expected = ui_events is not False
+    try:
+        await loader.load_all()
+        host = _observability_host(loader)
+        assert host.settings(LogfireSettings).ui_events is expected
+        assert store.plugins() == [previous]  # No migration or write on load.
+        source = LogfireSource(host)
+        rows = {row.key: row for row in source.rows()}
+        source.apply(rows['service_name'], 'changed-project')
+        [saved] = store.plugins()
+        assert saved.settings['ui_events'] is expected
+        assert saved.settings['include_content'] is False
+        assert saved.settings['send_to_logfire'] is False
+        assert SettingsStore(store.path).plugins() == [saved]
+        await loader.reload('observability')
+        assert _observability_host(loader).settings(LogfireSettings).ui_events is expected
+        assert store.plugins() == [saved]
+    finally:
+        await loader.close('exit')
+    assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
 def _observability_host(loader: PluginLoader[None]) -> PluginHost[None]:
     loaded = loader.entries()[0].loaded
     assert loaded is not None

@@ -343,6 +343,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         ) as run:
             yield run
 
+    def _check_realtime_signaling(self) -> None:
+        self.wrapped._check_realtime_signaling()
+
     @asynccontextmanager
     async def _resolve_realtime_session(
         self,

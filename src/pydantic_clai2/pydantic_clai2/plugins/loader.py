@@ -680,8 +680,10 @@ class PluginLoader(Generic[DepsT]):
 
     async def configure(self, name: str) -> str:
         """Open the plugin's settings menu, then load it again if its saved settings changed."""
-        loaded = self._entry(name).loaded
+        entry = self._entry(name)
+        loaded = entry.loaded
         _requested('configure', name)
+        _check_not_included(entry)
         if loaded is None:
             raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
         if not loaded.plugin.has_configure:

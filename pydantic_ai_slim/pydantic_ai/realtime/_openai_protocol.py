@@ -481,6 +481,13 @@ def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     return result
 
 
+# What a spoken user turn with no transcript (transcription off, or the transcript never arrived)
+# replays as. Without it the turn would vanish and the fresh session would read the answer to it as the
+# model speaking unprompted. Written here, on the way to the provider, and never persisted: history
+# keeps the turn as the `SpeechPart` it was.
+_TRANSCRIPTLESS_SPEECH_MARKER = '[The user spoke; no transcript is available.]'
+
+
 async def replay_items(
     messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str
 ) -> list[dict[str, Any]]:
@@ -491,8 +498,9 @@ async def replay_items(
 
     Media is deliberately left behind: what the model needs is the *conversation*, and re-uploading a
     long call's retained audio (or a stale video frame) would cost far more than it restores. Stripping
-    it also keeps replay total — a turn whose audio is dropped and has no transcript becomes a
-    content-less placeholder, which seeding already skips, where the strict path would rightly refuse it.
+    it also keeps replay total where the strict path would rightly refuse retained audio. A spoken user
+    turn with no transcript replays as a neutral text marker rather than nothing, so the model still
+    sees that the user spoke before the answer it gave.
     """
     return await seed_items(
         [replayable for message in messages if (replayable := _without_media(message)) is not None],
@@ -504,12 +512,19 @@ async def replay_items(
 
 
 def _without_media(message: ModelMessage) -> ModelMessage | None:
-    """Strip audio and images from a message, dropping it entirely when nothing is left to replay."""
+    """Strip audio and images from a message, dropping it entirely when nothing is left to replay.
+
+    A user `SpeechPart` without a transcript has nothing left once its audio goes, so it is replaced by
+    a marker saying the user spoke.
+    """
     if isinstance(message, ModelRequest):
         request_parts: list[ModelRequestPart] = []
         for part in message.parts:
             if isinstance(part, SpeechPart):
-                request_parts.append(replace(part, audio=None))
+                if part.transcript:
+                    request_parts.append(replace(part, audio=None))
+                else:
+                    request_parts.append(UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER))
             elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                 if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
                     request_parts.append(replace(part, content=text))
