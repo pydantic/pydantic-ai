@@ -29,6 +29,14 @@ from tests.clai2.surface_terminal import SurfaceTerminal
 ROWS = ('TOP', 'DRAFT', 'BOTTOM', 'FOOTER')
 
 
+def test_terminal_fixture_returns_on_main_screen_newlines_only() -> None:
+    terminal = SurfaceTerminal(width=4, height=3)
+    terminal.write('abcdef\nxy')
+    assert terminal.lines() == ['abcd', 'ef', 'xy']
+    terminal.write('\x1b[?1049h\x1b[1;1Hab\ncd')
+    assert terminal.lines() == ['ab', '  cd', '']
+
+
 class Screen:
     def __init__(self, *, width: int = 80, height: int = 24) -> None:
         self.now = 0.0

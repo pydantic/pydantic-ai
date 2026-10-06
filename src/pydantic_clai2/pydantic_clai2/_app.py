@@ -28,7 +28,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
-from pydantic_clai2.cli.self_update import Relaunch, Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates, installed
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -1178,9 +1178,10 @@ class _Shell(Generic[DepsT, OutputT]):
 
 
 def _print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
-    """The banner and hints a fresh launch shows, which `/clear` returns to without the launch's worktree notice."""
+    """The banner, version, and hints a fresh launch shows, which `/clear` returns to without the worktree notice."""
     console.print()
     print_banner(console)
+    console.print(f'pydantic-clai2 {installed().label}', style=theme.color(theme.MUTED))
     if worktree is not None:
         # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
         console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
