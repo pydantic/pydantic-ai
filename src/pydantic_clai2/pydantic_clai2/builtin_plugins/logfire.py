@@ -50,6 +50,7 @@ from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_e
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
+from pydantic_clai2.managed import managed_target
 from pydantic_clai2.plugins import (
     Plugin,
     PluginHost,
@@ -145,6 +146,27 @@ class LogfireSettings(BaseModel):
     )
 
 
+REQUIRES: dict[str, list[str]] = {
+    'user_tag': ['logfire-user-tag'],
+    'account': ['logfire-user-tag'],
+    'httpx': ['logfire-httpx'],
+    **dict.fromkeys(
+        (
+            'agent_control',
+            'agent_control_name',
+            'api_key',
+            'team',
+            'allowed_catalog_plugins',
+            'fleet_env_allow',
+            'project',
+            'gateway',
+        ),
+        ['fleet-control'],
+    ),
+}
+"""Feature tags for settings an older build may not understand; also used by managed enrolment."""
+
+
 class LogfirePlugin(Plugin[LogfireSettings]):
     """Core instrumentation, without changing the supplied agent or global OTel providers."""
 
@@ -221,25 +243,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
         """Tag the identity settings so older builds sharing the database can ignore them."""
-        requires = {
-            'user_tag': ['logfire-user-tag'],
-            'account': ['logfire-user-tag'],
-            'httpx': ['logfire-httpx'],
-            **dict.fromkeys(
-                (
-                    'agent_control',
-                    'agent_control_name',
-                    'api_key',
-                    'team',
-                    'allowed_catalog_plugins',
-                    'fleet_env_allow',
-                    'project',
-                    'gateway',
-                ),
-                ['fleet-control'],
-            ),
-        }
-        return cls(host, host.settings(LogfireSettings, requires=requires))
+        return cls(host, host.settings(LogfireSettings, requires=REQUIRES))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         if self.fleet is None:
@@ -788,6 +792,8 @@ SETUP: Callable[[PluginHost[None]], Setup] = _announce
 
 async def _configure(host: PluginHost[None], setup: Setup) -> str:
     """The setup menu; saving new settings makes the loader load the plugin again, now sending to the project."""
+    if (target := managed_target()) is not None:
+        return f'Managed by your organization: clai2 sends to {target.project_label}, set by your IT.'
     config = host.settings(LogfireSettings)
     chosen = await run_setup(
         setup, current=config.base_url, owned=config.token, owned_variables=config.api_key, team=config.team

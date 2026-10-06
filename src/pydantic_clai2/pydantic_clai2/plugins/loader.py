@@ -27,6 +27,7 @@ from pydantic_clai2.config.plugin_requirements import (
     withheld,
 )
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
+from pydantic_clai2.managed import managed_target
 from pydantic_clai2.models.profiles import provider_of
 from pydantic_clai2.plugins import (
     Conversation,
@@ -628,7 +629,7 @@ class PluginLoader(Generic[DepsT]):
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now and remember it as disabled."""
-        if name == 'observability' and policy_state.current() is not None:
+        if name == 'observability' and (policy_state.current() is not None or managed_target() is not None):
             # Hackathon: while Logfire manages this agent, the plugin that connects it stays on. Client-side,
             # so it stops accidents rather than a user determined to edit their config.
             raise ValueError(f'{name} stays on while your organization manages this agent from Logfire.')

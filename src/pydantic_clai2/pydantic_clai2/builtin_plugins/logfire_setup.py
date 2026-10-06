@@ -123,13 +123,16 @@ async def run_setup(
     owned: KeyReference | None,
     owned_variables: KeyReference | None = None,
     team: str | None = None,
+    destination: str | None = None,
+    fixed_project: tuple[str, str] | None = None,
 ) -> Chosen | None:
     """Pick a destination, sign in, pick a project, and save its write token; `None` when cancelled.
 
     `owned` is the key the plugin already uses: setting up the same project again replaces it, but any other
     key of the same name is left alone.
     """
-    base_url = await run_worker(lambda: pick_destination(setup.runners, current=current))
+    # Managed enrolment names the Logfire and the project, so neither is picked.
+    base_url = destination or await run_worker(lambda: pick_destination(setup.runners, current=current))
     if base_url is None:
         return None
     with telemetry.span('logfire setup', destination=_destination(base_url)) as span:
@@ -139,7 +142,15 @@ async def run_setup(
             projects = await _projects(http, base_url, user_token)
             if not projects:
                 raise SetupError(f'You cannot write to any project on {base_url} yet. Create one there, then retry.')
-            project = await run_worker(lambda: pick_project(setup.runners, projects))
+            if fixed_project is not None:
+                project = next((p for p in projects if (p.organization_name, p.project_name) == fixed_project), None)
+                if project is None:
+                    raise SetupError(
+                        f'You cannot write to {fixed_project[0]}/{fixed_project[1]} on {base_url}. '
+                        'Ask whoever manages clai2 for access.'
+                    )
+            else:
+                project = await run_worker(lambda: pick_project(setup.runners, projects))
             if project is None:
                 span.set('outcome', 'cancelled')
                 return None
