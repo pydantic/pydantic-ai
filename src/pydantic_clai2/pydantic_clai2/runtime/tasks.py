@@ -79,7 +79,7 @@ def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTa
 def task_row(event: AgentStreamEvent) -> Text | None:
     """Compact lifecycle rows, with child output reserved for the inspector."""
     if isinstance(event, DelegationStartEvent):
-        name = 'general-purpose' if event.agent_name == 'self' else event.agent_name
+        name = _display_name(event.agent_name)
         prompt = ' '.join(terminal_text(event.task).split())
         # Styled like a tool-call header: muted marker, accent name, then dim details on one line.
         row = Text('● ', style=theme.color(theme.MUTED), no_wrap=True, overflow='ellipsis')
@@ -132,7 +132,16 @@ class Tasks:
 
     async def observe(self, update: DelegationTaskEvent) -> None:
         record, event = update.task, update.event
-        progress = self.progress.setdefault(record.id, Status(activity='starting'))
+        progress = self.progress.setdefault(
+            record.id,
+            Status(agent=f'{_display_name(record.agent_name)} [{record.id[:8]}]', model='', activity='starting'),
+        )
+        if update.model_name is not None:
+            progress.model, progress.context_window = update.model_name, update.context_window
+        for message in reversed(record.messages):
+            if isinstance(message, ModelResponse) and message.usage.input_tokens:
+                progress.context_tokens = message.usage.total_tokens
+                break
         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
             self.partial[record.id] = event.part.content
         elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
@@ -162,6 +171,23 @@ class Tasks:
             await self.sink(event)
         elif (row := task_row(event)) is not None:
             self.console.print(row)
+
+    def focused(self) -> Status | None:
+        """The newest subagent the main run is waiting on, whose figures the status row shows until it settles.
+
+        A background task, or one below a background ancestor, leaves the row to the main run.
+        """
+        waited = [record for record in self.records() if record.status == 'running' and self._waited_on(record)]
+        newest = max(waited, key=lambda record: record.started_at, default=None)
+        return self.progress.get(newest.id) if newest is not None else None
+
+    def _waited_on(self, record: DelegationTask) -> bool:
+        current: DelegationTask | None = record
+        while current is not None:
+            if current.background:
+                return False
+            current = self.owner.records.get(current.parent_id) if current.parent_id is not None else None
+        return True
 
     def _foreground_tasks(self) -> list[DelegationTask]:
         return [r for r in self.records() if r.status == 'running' and not r.background and r.parent_id is None]
@@ -195,7 +221,7 @@ class Tasks:
             state = activity.removeprefix('running: ').removeprefix('tool: ')
             state = state if record.status == 'running' else record.outcome
             elapsed = (record.finished_at or now) - record.started_at
-            name = 'general-purpose' if record.agent_name == 'self' else record.agent_name
+            name = _display_name(record.agent_name)
             mode = 'background' if record.background else 'foreground'
             suffix = f' · {descendants} descendants' if descendants else ''
             state_color = theme.ACCENT if record.status == 'running' else theme.ERROR
@@ -239,6 +265,10 @@ class Tasks:
         if len(matches) != 1:
             raise ValueError(f'Task ID {prefix!r} is unknown or ambiguous. Use /tasks.')
         return matches[0]
+
+
+def _display_name(agent_name: str) -> str:
+    return 'general-purpose' if agent_name == 'self' else agent_name
 
 
 class TaskPresentation(AbstractCapability[object]):

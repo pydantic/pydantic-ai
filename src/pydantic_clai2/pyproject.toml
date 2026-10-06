@@ -41,7 +41,9 @@ dependencies = [
     "cryptography>=42",
     "pillow>=12.3.0",
     # Default telemetry plugin: https://github.com/pydantic/pydantic-ai-harness/issues/979.
-    "logfire>=4.31.0",
+    "logfire[httpx]>=4.31.0",
+    # Required for HTTPX2ClientInstrumentor, including when the observability HTTPX option is off.
+    "opentelemetry-instrumentation-httpx>=0.65b0",
 ]
 
 # Providers whose SDK CLAI does not install by default. `/model` names the extra when it is missing.

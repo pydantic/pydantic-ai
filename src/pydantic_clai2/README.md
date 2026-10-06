@@ -491,6 +491,97 @@ Trusted third-party plugins must not read input or print directly to stdout;
 CLAI cannot enforce that contract on arbitrary Python code. Plugin load failures
 abort headless runs. Background session naming is not started.
 
+## The stock agent in your own code
+
+`open_stock_agent` opens CLAI's stock coding agent without the terminal. Use it with
+`agent.run`, `run_stream_events`, `iter`, or anything else that takes an agent:
+
+```python
+import asyncio
+from pathlib import Path
+
+from pydantic_clai2 import open_stock_agent
+
+
+async def main() -> None:
+    async with open_stock_agent(workspace=Path.cwd(), model='anthropic:claude-opus-5-5') as agent:
+        result = await agent.run('Summarize this repository in one paragraph.')
+        print(result.output)
+
+
+asyncio.run(main())
+```
+
+The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
+in `clai2`. The file and shell tools work in `workspace`, and `AGENTS.md` or `CLAUDE.md`
+is read from it. A capability you pass that supplies a workspace, such as a sandbox,
+takes its place, and a run's own `workspace=` replaces it for that run. Commands get
+this process's environment minus LLM provider API keys. Model names resolve as in
+`clai2`, the agent's own and any a run passes, so `openai-codex:` and `github-copilot:`
+use the sign-ins saved with `/login`. CLAI's per-model defaults apply too, such as
+Anthropic prompt caching. Without `model`, every run must pass one.
+
+Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
+`.clai/settings.json`, no `/model settings`, and no `chain:` fallback chains. `ask_user`
+and the other terminal plugins stay out, as do `observability` and `mcp`, which read
+your CLAI configuration, and the CLAI customization guide. Plugins close when the
+`async with` block exits.
+
+`plugin_settings` changes a built-in's settings, merged over the stock ones. This
+keeps the file tools inside the workspace and loads no agents from disk:
+
+```python
+plugin_settings = {'coder': {'unrestricted_filesystem': False, 'agent_folders': []}}
+```
+
+`capabilities` adds your own capabilities. They are bound beside the built-ins, so
+delegated tasks carry them too.
+
+### Serving it over ACP
+
+Harness [`run_acp_stdio`](../../docs/harness/acp.md) serves the agent to an ACP
+client, such as an editor. This script asks the client before every shell command
+and file change:
+
+```python
+import asyncio
+from pathlib import Path
+
+from pydantic_ai_harness.experimental.acp import run_acp_stdio
+from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
+from pydantic_clai2 import open_stock_agent
+
+
+def ask_first(call: ToolCallInfo) -> GuardrailResult:
+    if call.name in ('shell', 'write_file', 'edit_file'):
+        return GuardrailResult.approve()
+    return GuardrailResult.allow()
+
+
+async def main() -> None:
+    async with open_stock_agent(
+        workspace=Path.cwd(),
+        model='anthropic:claude-opus-5-5',
+        capabilities=[ToolGuardrail(guard=ask_first)],
+        plugin_settings={'coder': {'sub_agents': False}},
+    ) as agent:
+        await run_acp_stdio(agent)
+
+
+asyncio.run(main())
+```
+
+Install `pydantic-ai-harness[acp]` for `run_acp_stdio`. Each approval becomes an ACP
+permission request. Every session works in `workspace`. To follow the folder each
+client session opens instead, return a `workspace` from a `session_config`, as
+[Rooting tools at the workspace](../../docs/harness/acp.md#rooting-tools-at-the-workspace)
+shows. `sub_agents` is off because a delegated task cannot yet pass an
+approval up to the client, so its run would fail
+([#4302](https://github.com/pydantic/pydantic-ai/issues/4302)). Where approvals are
+answered in your own process, a
+[`HandleDeferredToolCalls`](../../docs/deferred-tools.md#resolving-deferred-calls-with-a-handler)
+capability in `capabilities` answers them for delegated tasks too.
+
 ## Git worktrees
 
 ```bash
@@ -867,6 +958,12 @@ CLAI2 enables Anthropic conversation, static-instruction, and tool-schema cachin
 `anthropic:` and `gateway/anthropic:` use a 5-minute TTL, while `claude-code:` uses 1 hour.
 These are CLI defaults only; plain Pydantic AI agents are unchanged. Saved cache settings override
 the defaults. Automatic caching advances to the last cacheable block, including tool results.
+
+`/effort` shows the active model's configured reasoning effort and supported values.
+`/effort high` (or another listed value) saves it for that model; `/effort reset`
+removes the native effort override. Custom parameters stay unchanged: remove any
+that override effort with `/model settings` first. Models without an effort
+control say so. Like `/fast`, `/effort` waits for the current turn to finish.
 
 First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
@@ -1523,8 +1620,9 @@ Definition files are read as data and never executed.
   for reviewing the child's result.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
-counts. Successful rows disappear on completion; failed and stopped rows remain
-for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
+counts. The footer shows the context of the newest foreground child; see
+[Status line](#status-line). Successful rows disappear on completion; failed
+and stopped rows remain for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
 completed tasks for inspection. Live previews retain the latest 65,536 characters
 of an unfinished text part; settled responses retain their full history.
 Questions asked by children use the main
@@ -1880,6 +1978,17 @@ output count, updated after each turn and hidden until a response has price data
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
+While the main run waits on a subagent, the footer shows that subagent's own
+figures instead: its name and short task ID, the model it is using, its context
+over that model's window, its streamed output estimate, and its activity, such
+as `Explore [abcd1234]: claude-sonnet-4-5 | context: 8k/200k tokens | ~1,204
+streamed tokens | running: grep`. The newest such subagent wins, so a nested
+child takes the row from its parent. When it settles, the row returns to the
+next one still running, then to the main conversation, with its figures as they
+were. Background tasks, and children below one, stay in the task panel and
+leave the footer to the main run. A subagent's figures show `?` until its model
+reports them.
+
 The shell owns a pinned editor below a Termflow live transcript panel. It uses
 Termflow's cell buffer and changed-cell painter, not a second terminal canvas or
 a prompt-toolkit renderer. The hardware cursor stays hidden during input; a
@@ -2026,8 +2135,8 @@ The stock CLI enables the built-in `observability` plugin by default. It adds Py
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
 spans, including timing, token usage, and failures. It adds CLAI's own UI spans
-only when `ui_events` is on (see below), and does not instrument HTTP clients or
-unrelated agents globally.
+only when `ui_events` is on (see below). HTTP client instrumentation is off by
+default; agent instrumentation does not affect unrelated agents globally.
 
 Startup plugin load failures reported in the terminal are also sent through the configured
 Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
@@ -2091,12 +2200,15 @@ its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `true`),
-`include_binary_content` (default `true`), and `send_to_logfire` (either
+`include_binary_content` (default `true`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
-scrubbing remains enabled.
+scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made with
+`httpx` and `httpx2` while the plugin is active. With `include_content=true`,
+Logfire also captures HTTP headers and request and response bodies; with it off,
+those are not captured. HTTP instrumentation is process-wide, unlike agent tracing.
 
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
