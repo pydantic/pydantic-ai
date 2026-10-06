@@ -27,7 +27,7 @@ from pydantic_clai2.mcp._settings import (
     http_client,
 )
 from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from pydantic_clai2.mcp._tokens import SignIn, TokenStore, oauth, sign_in
+from pydantic_clai2.mcp._tokens import OAuthSignIn, SignIn, TokenStore, oauth, sign_in
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
 
 __all__ = [
@@ -43,6 +43,7 @@ __all__ = [
     'MCPServers',
     'MCPSettings',
     'MCPStore',
+    'OAuthSignIn',
     'RemoteServer',
     'SSEServer',
     'Server',
