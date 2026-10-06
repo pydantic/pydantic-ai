@@ -16,9 +16,11 @@ import logfire
 
 from . import facets as facets_mod, fetch, impact as impact_mod, patterns as patterns_mod, policy as policy_mod
 from .models import Impact, Proposal, ProposalsDoc, UserPrompt, Window, daily_trend, pseudonymize
-from .variables import VARIABLE, VariablesClient
+from .llm_cache import CACHE_DIR, USAGE
+from .variables import CONTROL_VARIABLE, VARIABLE, VariablesClient
 
 HERE = Path(__file__).parent
+RECLUSTER_EVERY = timedelta(hours=24)
 VERBOSE = True
 
 
@@ -68,12 +70,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument('--facet-model', default='gateway/anthropic:claude-sonnet-5-5')
     parser.add_argument('--pattern-model', default='gateway/anthropic:claude-sonnet-5-5')
+    parser.add_argument('--recluster', action='store_true', help='cluster everything from scratch (default: daily)')
     parser.add_argument('--watch', type=float, metavar='MINUTES', help='re-run every N minutes, one line per cycle')
     parser.add_argument('--cache', type=Path, help='facet cache file (default: one per facet model under .cache/)')
     return parser
 
 
-async def main(args: argparse.Namespace) -> str:
+async def main(args: argparse.Namespace) -> tuple[str, int]:
+    """One mining run: returns a one-line summary and the number of new suggestions."""
+    USAGE.reset()
     if args.fixture and not args.dry_run:
         # Fixture output must never reach the live variable.
         raise SystemExit('--fixture runs are offline: add --dry-run (and --out to keep the result).')
@@ -86,6 +91,7 @@ async def main(args: argparse.Namespace) -> str:
             base_url=args.base_url,
             since=args.since,
             include_untagged_agent_runs=args.agent_runs,
+            store=fetch.PromptStore(CACHE_DIR / 'prompts.json'),
         )
         if args.save_fixture:
             fetch.save_fixture(args.save_fixture, prompts)
@@ -173,15 +179,17 @@ async def main(args: argparse.Namespace) -> str:
     if args.out:
         args.out.write_text(doc.model_dump_json(indent=2))
         say(f'\nWrote {args.out}')
+    new_count = sum(a == 'new' for a in actions.values())
     summary = (
         f'{len(prompts)} prompts, {len(users)} users, {len(found)} patterns, '
-        f'{sum(len(p.users) >= args.min_users for p in found)} qualifying, {len(calls)} tool calls'
+        f'{sum(len(p.users) >= args.min_users for p in found)} qualifying, {len(calls)} tool calls, '
+        f'{new_count} new suggestion(s); {USAGE}'
     )
     if args.dry_run:
-        return f'{summary}; dry run'
+        return f'{summary}; dry run', new_count
     if client is None:
         say(f'\nNo LOGFIRE_CLAI2_API_KEY: not writing `{VARIABLE}`.')
-        return f'{summary}; no API key'
+        return f'{summary}; no API key', new_count
 
     def build(current: ProposalsDoc | None) -> ProposalsDoc:
         # Merge onto what is live right now: statuses written while we were mining win.
@@ -196,7 +204,7 @@ async def main(args: argparse.Namespace) -> str:
     status_text = ' '.join(f'{k}={v}' for k, v in statuses.items())
     result = f'{summary}; {status_text}; ' + ('WROTE live doc (verified)' if wrote else 'unchanged, not written')
     say(f'\n{result}')
-    return result
+    return result, new_count
 
 
 async def _mine_prompts(
@@ -206,7 +214,7 @@ async def _mine_prompts(
     *,
     window: tuple[datetime, datetime],
 ) -> tuple[list[Proposal], list[patterns_mod.Pattern]]:
-    cache_path = args.cache or HERE / '.cache' / f'facets-{re.sub(r"\W+", "_", args.facet_model)}.json'
+    cache_path = args.cache or CACHE_DIR / f'facets-{re.sub(r"\W+", "_", args.facet_model)}.json'
     facets = (
         {}
         if args.reuse_clusters
@@ -214,12 +222,19 @@ async def _mine_prompts(
     )
     if facets:
         say(f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent')
-    clusters_path = HERE / '.cache' / 'clusters.json'
+    clusters_path = CACHE_DIR / 'clusters.json'
+    age = datetime.now(UTC).timestamp() - clusters_path.stat().st_mtime if clusters_path.exists() else None
     if args.reuse_clusters:
         found = patterns_mod.load_patterns(clusters_path, prompts)
-    else:
+    elif args.recluster or age is None or age > RECLUSTER_EVERY.total_seconds():
+        # Full re-clustering (first run, on request, or daily): groups can merge and split as the fleet evolves.
         found = await patterns_mod.find_patterns(prompts, facets, model=args.pattern_model, existing=existing)
         patterns_mod.assign_stable_ids(found, existing, prior_spans=patterns_mod.load_prior_spans())
+        patterns_mod.save_clustered_spans({s for s, f in facets.items() if f.intent})
+        patterns_mod.save_patterns(clusters_path, found)
+    else:
+        cached = patterns_mod.load_patterns(clusters_path, prompts)
+        found = await patterns_mod.update_patterns(prompts, facets, cached, model=args.pattern_model, existing=existing)
         patterns_mod.save_patterns(clusters_path, found)
     patterns_mod.record_pattern_spans(found)
     say('\nPatterns (distinct users / sessions / score):')
@@ -243,6 +258,7 @@ async def _fetch_calls(args: argparse.Namespace) -> list[policy_mod.ToolCall]:
         os.environ.get('LOGFIRE_CLAI2_READ_TOKEN') or os.environ['LOGFIRE_CLAI2_API_KEY'],
         base_url=args.base_url,
         since=args.since,
+        store_path=CACHE_DIR / 'tool_calls.json',
     )
     commands = sum(1 for c in calls if c.command)
     say(f'\n{len(calls)} tool calls ({commands} shell commands) from {len({c.user for c in calls})} users')
@@ -277,6 +293,8 @@ class Finisher:
             }
             if p.id in self.dismissals and p.status in ('pending', 'stale'):
                 update |= {'status': 'dismissed', 'status_reason': self.dismissals[p.id]}
+            if p.scope_reason:
+                update['scope_reason'] = policy_mod.mask_identifiers(p.scope_reason, self.identifiers)
             if p.status == 'accepted' and p.id in self.impacts:
                 update['impact'] = self.impacts[p.id]
             proposals.append(p.model_copy(update=update, deep=True))
@@ -303,18 +321,67 @@ def same_content(a: ProposalsDoc, b: ProposalsDoc) -> bool:
     return stable(a) == stable(b)
 
 
+POLL = timedelta(seconds=30)
+
+
+def _ts(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 async def watch(args: argparse.Namespace) -> None:
+    """Mine every `--watch` minutes, and right away whenever the UI's Run now button sets `requested_at`.
+
+    The control variable is `{requested_at, requested_by}` (written by the UI) plus what this loop writes back:
+    `{started_at, finished_at, status: running|done|error, message}`. The UI's fields are always preserved.
+    """
     global VERBOSE
     VERBOSE = False
+    api_key = os.environ['LOGFIRE_CLAI2_API_KEY']
+    control = VariablesClient(api_key, base_url=args.base_url)
+    description = 'Fleet miner control for clai2 (hackathon): Run now requests from the UI, run status from the miner.'
+
+    async def set_status(**fields: object) -> None:
+        def build(current: dict[str, object] | None) -> dict[str, object]:
+            base: dict[str, object] = {'requested_at': None, 'requested_by': None}
+            return (
+                base | (current or {}) | {k: v.isoformat() if isinstance(v, datetime) else v for k, v in fields.items()}
+            )
+
+        await control.update_json(CONTROL_VARIABLE, build, description=description)
+
+    if await control.read_json(CONTROL_VARIABLE) is None:
+        print(f'creating `{CONTROL_VARIABLE}`', flush=True)
+        await set_status(started_at=None, finished_at=None, status=None, message=None)
+
+    last_started: datetime | None = None
+    next_scheduled = datetime.now(UTC)
     while True:
-        started = datetime.now(UTC)
-        args.since = _since(args.since_text) if args.since_text else args.since
+        now = datetime.now(UTC)
         try:
-            line = await main(args)
-        except Exception as exc:  # keep the demo loop alive; the next cycle retries
-            line = f'error: {type(exc).__name__}: {exc}'[:300]
-        print(f'{started:%H:%M:%S} {line}', flush=True)
-        await asyncio.sleep(max(0.0, args.watch * 60 - (datetime.now(UTC) - started).total_seconds()))
+            requested = _ts((await control.read_json(CONTROL_VARIABLE) or {}).get('requested_at'))
+        except Exception as exc:  # a flaky poll must not stop the demo loop
+            print(f'{now:%H:%M:%S} poll error: {type(exc).__name__}: {exc}'[:200], flush=True)
+            requested = None
+        by_request = requested is not None and (last_started is None or requested > last_started)
+        if by_request or now >= next_scheduled:
+            last_started, next_scheduled = now, now + timedelta(minutes=args.watch)
+            args.since = _since(args.since_text)
+            await set_status(started_at=now, finished_at=None, status='running', message=None)
+            try:
+                line, new = await main(args)
+                await set_status(
+                    finished_at=datetime.now(UTC),
+                    status='done',
+                    message=f'{new} new suggestion{"" if new == 1 else "s"}',
+                )
+            except Exception as exc:  # keep the loop alive; the next cycle retries
+                line = f'error: {type(exc).__name__}: {exc}'[:300]
+                await set_status(finished_at=datetime.now(UTC), status='error', message=line)
+            print(f'{now:%H:%M:%S} [{"run now" if by_request else "scheduled"}] {line}', flush=True)
+        await asyncio.sleep(POLL.total_seconds())
 
 
 if __name__ == '__main__':
@@ -325,4 +392,4 @@ if __name__ == '__main__':
         parsed.since_text = sys.argv[sys.argv.index('--since') + 1] if '--since' in sys.argv else '7d'
         asyncio.run(watch(parsed))
     else:
-        asyncio.run(main(parsed))
+        print(asyncio.run(main(parsed))[0])

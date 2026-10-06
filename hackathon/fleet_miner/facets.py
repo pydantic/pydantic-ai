@@ -11,6 +11,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import Agent
 
+from .llm_cache import USAGE
 from .models import Facet, UserPrompt
 
 FACET_INSTRUCTIONS = """\
@@ -55,21 +56,28 @@ async def extract_facets(
     semaphore = asyncio.Semaphore(concurrency)
 
     async def one(session_prompts: list[UserPrompt]) -> None:
-        todo = [p for p in session_prompts if p.span_id not in cache.facets]
-        if not todo:
+        # Incremental: only prompts never faceted are sent, each with the session's previous prompt cut to 300
+        # characters as context, never the whole session again (that would grow quadratically with its length).
+        session_prompts = sorted(session_prompts, key=lambda p: p.timestamp)
+        payload = [
+            {'span_id': p.span_id, 'previous_prompt': prev.text[:300] if prev else None, 'prompt': p.text[:2000]}
+            for prev, p in zip([None, *session_prompts[:-1]], session_prompts)
+            if p.span_id not in cache.facets
+        ]
+        if not payload:
             return
-        payload = [{'span_id': p.span_id, 'prompt': p.text[:2000]} for p in session_prompts]
         async with semaphore:
             result = await agent.run(
-                'Prompts in this session, in order (extract a facet for every span_id):\n'
-                + json.dumps(payload, indent=2)
+                'New prompts from one session, in order; `previous_prompt` is only context '
+                '(extract a facet for every span_id):\n' + json.dumps(payload, indent=2)
             )
+        USAGE.add(result)
+        todo = [p for p in session_prompts if p.span_id not in cache.facets]
         wanted = {p.span_id for p in todo}
         for facet in result.output.facets:
             if facet.span_id in wanted:
                 cache.facets[facet.span_id] = facet
         cache.save()  # per session, so an interrupted run keeps what it paid for
-        print('.', end='', flush=True)
 
     await asyncio.gather(*(one(ps) for ps in by_session.values()))
     cache.save()

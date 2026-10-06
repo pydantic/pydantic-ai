@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -77,23 +77,93 @@ _INJECTED = ('The user ran a local shell command', '<system-reminder>', 'Summary
 _prompts_adapter = TypeAdapter(list[UserPrompt])
 
 
+OVERLAP = timedelta(minutes=30)
+"""Re-read this far behind the watermark: spans can land late, and duplicates are dropped by span id."""
+
+
+class PromptStore:
+    """What earlier runs already fetched, so each run only queries records newer than a per-source watermark."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path
+        data = json.loads(path.read_text()) if path and path.exists() else {}
+        self.watermarks: dict[str, datetime] = {
+            k: datetime.fromisoformat(v) for k, v in data.get('watermarks', {}).items()
+        }
+        self.prompts: dict[str, UserPrompt] = {
+            p.span_id: p for p in _prompts_adapter.validate_python(data.get('prompts', []))
+        }
+
+    def since(self, source: str, window_start: datetime) -> datetime:
+        watermark = self.watermarks.get(source)
+        return max(window_start, watermark - OVERLAP) if watermark else window_start
+
+    def add(self, source: str, prompts: list[UserPrompt]) -> int:
+        new = [p for p in prompts if p.span_id not in self.prompts]
+        for p in prompts:
+            self.prompts.setdefault(p.span_id, p)
+        if prompts:
+            latest = max(p.timestamp for p in prompts)
+            self.watermarks[source] = max(latest, self.watermarks.get(source, latest))
+        return len(new)
+
+    def save(self, window_start: datetime) -> None:
+        if self.path is None:
+            return
+        kept = [p for p in self.prompts.values() if p.timestamp >= window_start]
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(
+            json.dumps(
+                {
+                    'watermarks': {k: v.isoformat() for k, v in self.watermarks.items()},
+                    'prompts': _prompts_adapter.dump_python(kept, mode='json'),
+                }
+            )
+        )
+
+
 async def fetch_prompts(
-    read_token: str, *, base_url: str, since: datetime, include_untagged_agent_runs: bool = False
+    read_token: str,
+    *,
+    base_url: str,
+    since: datetime,
+    include_untagged_agent_runs: bool = False,
+    store: PromptStore | None = None,
 ) -> list[UserPrompt]:
+    """Typed prompts in the window. With a `store`, only records newer than its watermarks are queried."""
+    store = store or PromptStore()
     async with AsyncLogfireQueryClient(read_token, base_url=base_url, timeout=120) as client:
-        rows = (await client.query_json_rows(PROMPTS_SQL, min_timestamp=since, limit=10_000))['rows']
-        prompts = [_from_prompt_row(row) for row in rows]
+        rows = (await client.query_json_rows(PROMPTS_SQL, min_timestamp=store.since('prompts', since), limit=10_000))[
+            'rows'
+        ]
+        store.add('prompts', [_from_prompt_row(row) for row in rows])
         source_filter = _TYPED_OR_UNTAGGED_RUNS if include_untagged_agent_runs else _TYPED_RUNS
         sql = AGENT_RUNS_SQL.format(source_filter=source_filter)
-        run_rows = (await client.query_json_rows(sql, min_timestamp=since, limit=2_000))['rows']
-        prompts += _from_agent_rows(run_rows, seen={(p.session_id or p.trace_id, p.text) for p in prompts})
-    return _resolve_users(prompts)
+        source = 'agent_runs_untagged' if include_untagged_agent_runs else 'agent_runs'
+        run_rows = (await client.query_json_rows(sql, min_timestamp=store.since(source, since), limit=2_000))['rows']
+        seen = {(p.session_id or p.trace_id, p.text) for p in store.prompts.values()}
+        store.add(source, _from_agent_rows(run_rows, seen=seen))
+        # Identity can arrive after the prompt (a session root lands when the session ends): retry the unknown ones.
+        unknown = {p.span_id for p in store.prompts.values() if not p.user and p.timestamp >= since}
+        if unknown:
+            found = await _span_users(client, unknown, since)
+            for span_id, user in found.items():
+                if not user.startswith('host:'):
+                    store.prompts[span_id].user = user
+    prompts = [p.model_copy() for p in store.prompts.values() if p.timestamp >= since]
+    store.save(since)
+    return _resolve_users(sorted(prompts, key=lambda p: p.timestamp))
 
 
 async def fetch_span_users(read_token: str, *, base_url: str, span_ids: set[str], since: datetime) -> dict[str, str]:
     """Who is behind each of these spans (evidence from earlier runs, outside this run's prompts)."""
     if not span_ids:
         return {}
+    async with AsyncLogfireQueryClient(read_token, base_url=base_url, timeout=120) as client:
+        return await _span_users(client, span_ids, since)
+
+
+async def _span_users(client: AsyncLogfireQueryClient, span_ids: set[str], since: datetime) -> dict[str, str]:
     in_list = ', '.join(f"'{s}'" for s in sorted(span_ids) if s.isalnum())
     sql = f"""
 SELECT r.span_id, {IDENTITY}
@@ -101,8 +171,7 @@ FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.span_id IN ({in_list})
 """
-    async with AsyncLogfireQueryClient(read_token, base_url=base_url, timeout=120) as client:
-        rows = (await client.query_json_rows(sql, min_timestamp=since, limit=10_000))['rows']
+    rows = (await client.query_json_rows(sql, min_timestamp=since, limit=10_000))['rows']
     return {r['span_id']: r.get('user_email') or f'host:{r.get("host")}' for r in rows}
 
 
@@ -127,33 +196,47 @@ def _from_prompt_row(row: dict[str, Any]) -> UserPrompt:
 
 
 def _from_agent_rows(rows: list[dict[str, Any]], *, seen: set[tuple[str, str]]) -> list[UserPrompt]:
+    """The prompt that started each run: its latest user text, not the whole history `all_messages` repeats.
+
+    Reading every user message of every run would re-process the conversation on each turn (quadratic in its length).
+    """
     prompts: list[UserPrompt] = []
     for row in rows:
         messages = row['messages']
         if isinstance(messages, str):
             messages = json.loads(messages)
         key = row.get('session_id') or row['trace_id']
-        for message in messages or []:
-            if message.get('role') != 'user':
-                continue
-            for part in message.get('parts', []):
-                text = part.get('content') if part.get('type') == 'text' else None
-                if not isinstance(text, str) or text.startswith(_INJECTED) or (key, text) in seen:
-                    continue
-                seen.add((key, text))
-                prompts.append(
-                    UserPrompt(
-                        trace_id=row['trace_id'],
-                        span_id=row['span_id'],
-                        timestamp=row['start_timestamp'],
-                        text=text,
-                        user=row.get('user_email'),
-                        host=row.get('host'),
-                        session_id=row.get('session_id'),
-                        source='agent_run',
-                    )
-                )
+        text = _latest_user_text(messages or [])
+        if text is None or (key, text) in seen:
+            continue
+        seen.add((key, text))
+        prompts.append(
+            UserPrompt(
+                trace_id=row['trace_id'],
+                span_id=row['span_id'],
+                timestamp=row['start_timestamp'],
+                text=text,
+                user=row.get('user_email'),
+                host=row.get('host'),
+                session_id=row.get('session_id'),
+                source='agent_run',
+            )
+        )
     return prompts
+
+
+def _latest_user_text(messages: list[dict[str, Any]]) -> str | None:
+    for message in reversed(messages):
+        if message.get('role') != 'user':
+            continue
+        texts = [
+            p['content']
+            for p in message.get('parts', [])
+            if p.get('type') == 'text' and isinstance(p.get('content'), str) and not p['content'].startswith(_INJECTED)
+        ]
+        if texts:
+            return '\n'.join(texts)
+    return None
 
 
 def load_fixture(path: Path) -> list[UserPrompt]:

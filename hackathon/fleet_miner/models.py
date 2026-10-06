@@ -190,6 +190,9 @@ class Proposal(BaseModel):
     """Miner version and drafting model, e.g. `fleet-miner 0.2 / gateway/anthropic:claude-sonnet-5-5`."""
     score: float | None = None
     """Hackathon extra: LLM confidence times the distinct-user spread factor (braindump's scoring)."""
+    scope: Literal['company', 'repo'] = 'company'
+    """`repo` when the pattern looks specific to one codebase: suggest it for that repo's AGENTS.md instead."""
+    scope_reason: str | None = None
     trend: list[TrendPoint] | None = None
     """Pending proposals: per day over the window, for a sparkline."""
     impact: Impact | None = None

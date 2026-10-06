@@ -14,6 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Any, Literal
 
 from logfire.query_client import AsyncLogfireQueryClient
@@ -22,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
-from .fetch import _SESSIONS, IDENTITY, NOT_TEST
+from .fetch import _SESSIONS, IDENTITY, NOT_TEST, OVERLAP
 from .llm_cache import run_cached
 from .models import Evidence, McpAllow, daily_trend, PolicyMatch, PolicyRule, Proposal, clean_text, redact_secrets
 from .patterns import leaked_identifiers_in
@@ -90,17 +91,35 @@ class Group:
         return {c.user for c in self.calls}
 
 
-async def fetch_tool_calls(read_token: str, *, base_url: str, since: datetime) -> list[ToolCall]:
+async def fetch_tool_calls(
+    read_token: str, *, base_url: str, since: datetime, store_path: Path | None = None
+) -> list[ToolCall]:
+    """Tool calls in the window. With `store_path`, only calls newer than the stored watermark are queried."""
+    stored: dict[str, dict[str, Any]] = {}
+    watermark: datetime | None = None
+    if store_path and store_path.exists():
+        data = json.loads(store_path.read_text())
+        stored = {r['span_id']: r for r in data['rows']}
+        watermark = datetime.fromisoformat(data['watermark']) if data.get('watermark') else None
+    query_since = max(since, watermark - OVERLAP) if watermark else since
     async with AsyncLogfireQueryClient(read_token, base_url=base_url, timeout=180) as client:
         # File and code tools carry no policy signal, and the query API caps rows at 10k: leave them out.
         builtin = ', '.join(f"'{t}'" for t in sorted(BUILTIN_TOOLS - SHELL_TOOLS))
         sql = TOOL_CALLS_SQL.format(builtin_non_shell=builtin)
-        rows = (await client.query_json_rows(sql, min_timestamp=since, limit=10_000))['rows']
+        rows = (await client.query_json_rows(sql, min_timestamp=query_since, limit=10_000))['rows']
         if len(rows) == 10_000:
             print('warning: hit the 10k row cap; only the most recent tool calls were mined')
+    for r in rows:
+        r['start_timestamp'] = _parse_time(r['start_timestamp']).isoformat()
+        stored[r['span_id']] = r
+    rows = [r for r in stored.values() if _parse_time(r['start_timestamp']) >= since]
+    if store_path:
+        latest = max((_parse_time(r['start_timestamp']) for r in rows), default=watermark)
+        store_path.parent.mkdir(parents=True, exist_ok=True)
+        store_path.write_text(json.dumps({'watermark': latest.isoformat() if latest else None, 'rows': rows}))
     emails = {r['host']: r['user_email'] for r in rows if r.get('user_email') and r.get('host')}
     calls: list[ToolCall] = []
-    for r in rows:
+    for r in sorted(rows, key=lambda r: r['start_timestamp']):
         user = r.get('user_email') or emails.get(r.get('host')) or f'host:{r.get("host")}'
         calls.append(
             ToolCall(

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
-from .llm_cache import run_cached
+from .llm_cache import CACHE_DIR, run_cached
 from .models import Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, strip_markup
 
 CLUSTER_INSTRUCTIONS = """\
@@ -55,6 +55,11 @@ For an instruction, one short sentence saying when it applies.
 `suggested_tier`: `required` if nearly everyone would want it, `default_on` if broadly useful, `optional` if niche.
 `rationale`: one or two sentences: how many people asked, and what it saves them.
 
+`scope`: `repo` when the request only makes sense in one codebase (it names a specific repository, its paths,
+modules, scripts, CI jobs, branch conventions or tools unique to it), `company` when any developer on any repository
+could use it. `scope_reason`: one short sentence saying which detail makes it repo-specific, or null for `company`.
+Tools and bots used across many repos (gh, Macroscope, CI in general) do not make it repo-specific.
+
 Never include personal identifiers in any field: no people's names, GitHub usernames, handles or emails. Replace a
 person with their role ("the requested reviewer", "the PR author"). Do keep the names of tools, bots and repository
 conventions (e.g. Macroscope, douwebot, `SKIP=typecheck`): they are useful context for a company skill.
@@ -80,6 +85,8 @@ class _Draft(BaseModel):
     text: str
     suggested_tier: Tier
     rationale: str
+    scope: Literal['company', 'repo']
+    scope_reason: str | None = None
 
     _strip_markup = field_validator('name', 'description', 'text', 'rationale')(strip_markup)
 
@@ -142,7 +149,11 @@ async def find_patterns(
 
 
 def assign_stable_ids(
-    patterns: list[Pattern], existing: list[Proposal], *, prior_spans: dict[str, set[str]] | None = None
+    patterns: list[Pattern],
+    existing: list[Proposal],
+    *,
+    prior_spans: dict[str, set[str]] | None = None,
+    taken: set[str] | None = None,
 ) -> None:
     """Give each cluster the id of the earlier proposal it continues, so a renamed cluster can't resurrect an
     accepted or dismissed pattern under a new id.
@@ -153,7 +164,7 @@ def assign_stable_ids(
     """
     prior = [p for p in existing if p.kind in ('skill', 'instruction')]
     spans_of = {p.id: {e.span_id for e in p.evidence} | (prior_spans or {}).get(p.id, set()) for p in prior}
-    taken: set[str] = set()
+    taken = set(taken or ())
     for pattern in sorted(patterns, key=lambda p: len(p.prompts), reverse=True):
         spans = {u.span_id for u in pattern.prompts}
         overlaps = {pid: len(spans & s) for pid, s in spans_of.items() if pid not in taken}
@@ -170,7 +181,7 @@ def assign_stable_ids(
         taken.add(pattern.id)
 
 
-SPANS_PATH = Path(__file__).parent / '.cache' / 'pattern_spans.json'
+SPANS_PATH = CACHE_DIR / 'pattern_spans.json'
 """Every prompt span ever assigned to each proposal id, across runs (clusters.json only has the latest run)."""
 
 
@@ -200,6 +211,95 @@ def save_patterns(path: Path, patterns: list[Pattern]) -> None:
         for p in patterns
     ]
     path.write_text(json.dumps(data, indent=2))
+
+
+ASSIGN_INSTRUCTIONS = """\
+You keep groups of recurring requests that developers type into their coding agents up to date. You get the existing
+groups (id, the shared request, size), intents typed since the groups were made, and earlier intents that are not in
+any group yet. Put each new intent in the existing group that expresses the SAME request (even if worded differently),
+or form new groups from new and earlier ungrouped intents that share a request. Leave out intents that match nothing.
+Never put a throwaway test task (e.g. "write FizzBuzz in Rust") in a group.
+"""
+
+
+class _ExistingAssignment(BaseModel):
+    group_id: str
+    span_ids: list[str]
+
+
+class _Assignments(BaseModel):
+    to_existing: list[_ExistingAssignment]
+    new_groups: list[_Group]
+
+
+CLUSTERED_PATH = CACHE_DIR / 'clustered_spans.json'
+"""Every intent span clustering has already seen, grouped or not: the incremental step only sends newer ones."""
+
+
+def load_clustered_spans() -> set[str]:
+    return set(json.loads(CLUSTERED_PATH.read_text())) if CLUSTERED_PATH.exists() else set()
+
+
+def save_clustered_spans(spans: set[str]) -> None:
+    CLUSTERED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CLUSTERED_PATH.write_text(json.dumps(sorted(spans)))
+
+
+async def update_patterns(
+    prompts: list[UserPrompt],
+    facets: dict[str, Facet],
+    cached: list[Pattern],
+    *,
+    model: str,
+    existing: list[Proposal],
+    max_loners: int = 150,
+) -> list[Pattern]:
+    """Incremental clustering: place only intents typed since the last run, against the cached groups.
+
+    The cost of a run then scales with what is new, not with everything in the window. With nothing new there is
+    no LLM call at all.
+    """
+    by_span = {p.span_id: p for p in prompts}
+    seen = load_clustered_spans()
+    intents = {s: f for s, f in facets.items() if f.intent and s in by_span}
+    new = [s for s in intents if s not in seen]
+    if not new:
+        return cached
+    grouped = {u.span_id for p in cached for u in p.prompts}
+    loners = sorted((s for s in intents if s in seen and s not in grouped), key=lambda s: by_span[s].timestamp)
+    loners = loners[-max_loners:]
+    agent = Agent(model, output_type=_Assignments, instructions=ASSIGN_INSTRUCTIONS, name='fleet_miner_assign')
+    groups = [{'id': p.id, 'pattern': p.pattern, 'size': len(p.prompts)} for p in cached]
+    output = await run_cached(
+        agent,
+        f'Existing groups:\n{json.dumps(groups, indent=2)}\n\n'
+        f'New intents:\n{json.dumps([{"span_id": s, "intent": intents[s].intent} for s in new], indent=2)}\n\n'
+        f'Earlier ungrouped intents:\n{json.dumps([{"span_id": s, "intent": intents[s].intent} for s in loners], indent=2)}',
+        output_type=_Assignments,
+    )
+    by_id = {p.id: p for p in cached}
+    allowed = set(new) | set(loners)
+    for assignment in output.to_existing:
+        if (pattern := by_id.get(assignment.group_id)) is None:
+            continue
+        for span_id in assignment.span_ids:
+            if span_id in allowed and span_id not in grouped:
+                pattern.prompts.append(by_span[span_id])
+                grouped.add(span_id)
+    fresh: list[Pattern] = []
+    for group in output.new_groups:
+        group_prompts = [by_span[s] for s in dict.fromkeys(group.span_ids) if s in allowed and s not in grouped]
+        if len(group_prompts) < 2:
+            continue
+        grouped.update(p.span_id for p in group_prompts)
+        fresh.append(Pattern(id=group.slug, pattern=group.pattern, confidence=group.confidence, prompts=group_prompts))
+    assign_stable_ids(fresh, existing, prior_spans=load_prior_spans(), taken={p.id for p in cached})
+    patterns = cached + fresh
+    for pattern in patterns:
+        pattern.users = {p.user or f'unknown:{p.session_id or p.trace_id}' for p in pattern.prompts}
+        pattern.sessions = {p.session_id or p.trace_id for p in pattern.prompts}
+    save_clustered_spans(seen | set(intents))
+    return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
 
 
 def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
