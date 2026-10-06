@@ -24,9 +24,14 @@ _SESSIONS = """
     GROUP BY trace_id
 """
 
+# The session root only lands once a session ends, and clai2 builds before 2026-10-05 have none: fall back to the
+# machine as the user and the process as the session, so open and older sessions still count.
+_IDENTITY = """s.user_email, r.otel_resource_attributes->>'host.name' AS host,
+       coalesce(s.session_id, 'process:' || (r.otel_resource_attributes->>'service.instance.id')) AS session_id"""
+
 PROMPTS_SQL = f"""
 SELECT r.trace_id, r.span_id, r.start_timestamp, r.attributes->>'prompt' AS prompt,
-       s.user_email, s.session_id
+       {_IDENTITY}
 FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.span_name = 'prompt submitted'
@@ -40,13 +45,16 @@ ORDER BY r.start_timestamp
 # `pydantic_ai.all_messages` repeats the conversation so far, so texts are deduplicated per trace below.
 AGENT_RUNS_SQL = f"""
 SELECT r.trace_id, r.span_id, r.start_timestamp, r.attributes->>'pydantic_ai.all_messages' AS messages,
-       s.user_email, s.session_id
+       {_IDENTITY}
 FROM records r
-JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
+LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.service_name = 'pydantic-clai2'
   AND r.attributes->>'pydantic_ai.all_messages' IS NOT NULL
 ORDER BY r.start_timestamp
 """
+
+# Text clai2 itself puts in user messages, which is not something the user typed.
+_INJECTED = ('The user ran a local shell command', '<system-reminder>', 'Summary of the conversation so far')
 
 _prompts_adapter = TypeAdapter(list[UserPrompt])
 
@@ -59,7 +67,15 @@ async def fetch_prompts(
         prompts = [_from_prompt_row(row) for row in rows]
         if include_agent_runs:
             run_rows = (await client.query_json_rows(AGENT_RUNS_SQL, min_timestamp=since, limit=2_000))['rows']
-            prompts += _from_agent_rows(run_rows, seen={(p.trace_id, p.text) for p in prompts})
+            prompts += _from_agent_rows(run_rows, seen={(p.session_id or p.trace_id, p.text) for p in prompts})
+    return _resolve_users(prompts)
+
+
+def _resolve_users(prompts: list[UserPrompt]) -> list[UserPrompt]:
+    """Name each prompt's user by email, learning which machine is whose from prompts that know both."""
+    emails = {p.host: p.user for p in prompts if p.user and p.host}
+    for p in prompts:
+        p.user = p.user or emails.get(p.host) or (f'host:{p.host}' if p.host else None)
     return prompts
 
 
@@ -70,6 +86,7 @@ def _from_prompt_row(row: dict[str, Any]) -> UserPrompt:
         timestamp=row['start_timestamp'],
         text=row['prompt'],
         user=row.get('user_email'),
+        host=row.get('host'),
         session_id=row.get('session_id'),
     )
 
@@ -80,14 +97,15 @@ def _from_agent_rows(rows: list[dict[str, Any]], *, seen: set[tuple[str, str]]) 
         messages = row['messages']
         if isinstance(messages, str):
             messages = json.loads(messages)
+        key = row.get('session_id') or row['trace_id']
         for message in messages or []:
             if message.get('role') != 'user':
                 continue
             for part in message.get('parts', []):
                 text = part.get('content') if part.get('type') == 'text' else None
-                if not isinstance(text, str) or (row['trace_id'], text) in seen:
+                if not isinstance(text, str) or text.startswith(_INJECTED) or (key, text) in seen:
                     continue
-                seen.add((row['trace_id'], text))
+                seen.add((key, text))
                 prompts.append(
                     UserPrompt(
                         trace_id=row['trace_id'],
@@ -95,6 +113,7 @@ def _from_agent_rows(rows: list[dict[str, Any]], *, seen: set[tuple[str, str]]) 
                         timestamp=row['start_timestamp'],
                         text=text,
                         user=row.get('user_email'),
+                        host=row.get('host'),
                         session_id=row.get('session_id'),
                         source='agent_run',
                     )

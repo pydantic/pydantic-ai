@@ -20,6 +20,7 @@ class UserPrompt(BaseModel):
     timestamp: datetime
     text: str
     user: str | None = None
+    host: str | None = None
     session_id: str | None = None
     source: Literal['prompt_submitted', 'agent_run'] = 'prompt_submitted'
 
