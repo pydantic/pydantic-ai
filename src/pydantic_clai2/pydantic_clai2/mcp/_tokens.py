@@ -73,14 +73,18 @@ class TokenStore:
         """Entries are stored under the `mcp-NAME` credential account."""
         self.name = name
 
-    def signed_in(self) -> bool | None:
-        """Whether tokens are stored (they may still need a refresh); `None` when the keyring cannot be read."""
+    def signed_in(self, url: str | None = None) -> bool | None:
+        """Whether tokens are stored, for `url` when given (they may still need a refresh).
+
+        `None` when the keyring cannot be read. FastMCP keys tokens by the server URL without a trailing `/`.
+        """
         try:
             bundle = _load(self.name)
         except KeyringError:
             return None
         now = time.time()
-        return any(slot.startswith(f'{_TOKENS}/') and entry.live(now) for slot, entry in bundle.items())
+        prefix = f'{_TOKENS}/' if url is None else _slot(_TOKENS, f'{url.rstrip("/")}/tokens')
+        return any(slot.startswith(prefix) and entry.live(now) for slot, entry in bundle.items())
 
     def forget(self) -> None:
         """Sign out: drop the tokens and the registered client."""
@@ -219,8 +223,12 @@ class OAuthSignIn:
     """The loopback host the browser returns to; some servers register only `localhost`."""
 
     def signed_in(self) -> bool | None:
-        """Whether tokens are stored; `None` when the keyring cannot be read."""
-        return TokenStore(self.name).signed_in()
+        """Whether tokens are stored for this URL; `None` when the keyring cannot be read.
+
+        Tokens belong to the URL they were issued for, so a plugin whose URL follows its settings (read-only tools,
+        a region) is signed out after the URL changes, and its menu offers to sign in again.
+        """
+        return TokenStore(self.name).signed_in(url=self.url)
 
     def sign_out(self) -> None:
         """Forget the tokens and the registered client."""

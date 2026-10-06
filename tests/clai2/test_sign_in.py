@@ -12,15 +12,17 @@ import httpx
 import pytest
 import uvicorn
 from fastmcp import FastMCP
+from fastmcp.client.auth.oauth import TokenStorageAdapter
 from fastmcp.client.transports import SSETransport
 from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
 from mcp.server.auth.settings import ClientRegistrationOptions
+from mcp.shared.auth import OAuthToken
 from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.mcp import OAuthSignIn
+from pydantic_clai2.mcp import OAuthSignIn, TokenStore
 from pydantic_clai2.plugins import sign_in
 from pydantic_clai2.plugins.sign_in import (
     SignInRequired,
@@ -232,6 +234,22 @@ async def test_oauth_runs_never_open_a_browser_and_sign_in_is_only_on_request(
 
     await anyio.to_thread.run_sync(method.sign_out)
     assert not await anyio.to_thread.run_sync(method.signed_in)
+
+
+async def test_a_sign_in_belongs_to_the_url_it_was_made_for() -> None:
+    """A plugin whose URL follows its settings is signed out after the URL changes, so its menu offers to sign in."""
+    read_only = 'https://mcp.example/mcp?read_only=true'
+    await TokenStorageAdapter(TokenStore('plugin_example'), server_url=read_only).set_tokens(
+        OAuthToken(access_token='a', token_type='Bearer', expires_in=3600)
+    )
+
+    def method(url: str) -> OAuthSignIn:
+        return OAuthSignIn(name='plugin_example', service='Example', setup='/x', url=url)
+
+    assert method(read_only).signed_in()
+    assert method(f'{read_only}/').signed_in(), 'FastMCP keys tokens without a trailing slash'
+    assert not method('https://mcp.example/mcp').signed_in()
+    assert TokenStore('plugin_example').signed_in(), 'without a URL, any stored sign-in counts'
 
 
 async def test_oauth_over_sse_and_with_headers() -> None:

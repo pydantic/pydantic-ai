@@ -9,8 +9,7 @@ from anyio import to_thread
 
 from pydantic_clai2.mcp._form import Editor, edit_form, edit_in_editor, install_form
 from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State, not_owned, sign_in
-from pydantic_clai2.mcp._settings import RemoteServer, references, target
-from pydantic_clai2.mcp._tokens import TokenStore
+from pydantic_clai2.mcp._settings import references, target
 from pydantic_clai2.plugins.sign_in import sign_in_now, sign_out_now
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -158,9 +157,10 @@ class MCPCommand:
         )
 
     def _oauth_line(self, entry: ServerEntry) -> list[str]:
-        if not isinstance(entry.server, RemoteServer) or entry.server.auth is None:
+        method = sign_in(entry.name, entry.server)
+        if method is None:
             return []
-        state = TokenStore(entry.name).signed_in()
+        state = method.signed_in()
         status = {
             True: 'signed in',
             False: 'not signed in',
