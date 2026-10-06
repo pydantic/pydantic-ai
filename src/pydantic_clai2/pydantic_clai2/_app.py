@@ -616,7 +616,7 @@ def create_shell(
     commands.register(
         Command(
             name='update',
-            description='Install the newest CLAI from the updates.channel setting (stable or bleeding)',
+            description='Install the newest CLAI from the updates.channel setting (stable or main)',
             handler=updates.command,
         )
     )

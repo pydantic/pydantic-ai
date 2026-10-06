@@ -364,7 +364,7 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 `updates.channel` picks where it looks:
 
 - `stable` (default): the newest release on PyPI.
-- `bleeding`: the newest build from `main`. For each `main` commit that changes
+- `main`: the newest build from the `main` branch. For each `main` commit that changes
   CLAI, harness, or core, CI builds an sdist of each and publishes them to the
   [`clai2-bleeding`](https://github.com/pydantic/pydantic-ai/releases/tag/clai2-bleeding)
   prerelease, whose tag moves with them. CLAI reads `clai2-bleeding.json` there
@@ -372,9 +372,11 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
   from that commit's sdists with their required extras. These are plain release
   downloads, so they need no `git` and no GitHub API calls, which are rate
   limited without a token. The status row names the build by its short commit.
+  This channel used to be called `bleeding`. That name still selects it, and
+  CLAI saves it under that name so older versions sharing your settings can read it.
 
 ```text
-/set updates.channel bleeding
+/set updates.channel main
 /update
 ```
 
@@ -408,7 +410,7 @@ again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
 again afterwards. Without uv on `PATH`, `/update` prints the complete command to
-run yourself, in PowerShell syntax on Windows. For bleeding installs, it also
+run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
 ## Environment variables
