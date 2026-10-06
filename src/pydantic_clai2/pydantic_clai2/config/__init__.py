@@ -6,8 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 
 from pydantic_clai2.config.theme_names import names
 
-UpdateChannel = Literal['stable', 'bleeding']
+UpdateChannel = Literal['stable', 'main']
 UPDATE_CHANNELS: tuple[UpdateChannel, ...] = get_args(UpdateChannel)
+STORED_MAIN_CHANNEL = 'bleeding'
+"""`main`'s former name, still what is saved for it: older builds accept only this name."""
 
 
 class Settings(BaseModel):
@@ -74,8 +76,14 @@ class Settings(BaseModel):
     )
     update_channel: UpdateChannel = Field(
         default='stable',
-        description='Where /update looks: stable PyPI releases, or bleeding for the newest CLAI commit on main.',
+        description='Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main.',
     )
+
+    @field_validator('update_channel', mode='before')
+    @classmethod
+    def read_former_channel_name(cls, value: object) -> object:
+        """Read `bleeding`, saved by older builds and by this one, as `main`."""
+        return 'main' if value == STORED_MAIN_CHANNEL else value
 
     @field_validator('theme')
     @classmethod

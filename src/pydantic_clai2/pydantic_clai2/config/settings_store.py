@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, resolve_settings
+from pydantic_clai2.config import SETTING_FIELDS, STORED_MAIN_CHANNEL, PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.plugin_requirements import Requirements, merged_requirements
 
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
@@ -122,10 +122,12 @@ class SettingsStore:
     def set(self, key: str, value: JsonValue) -> None:
         """Validate before committing a single override."""
         resolve_settings({key: value})
+        # Older builds reject `main`, so it keeps the name they know; reading it back gives `main`.
+        stored = STORED_MAIN_CHANNEL if key == 'updates.channel' and value == 'main' else value
         with self._connect() as connection:
             connection.execute(
                 'INSERT INTO settings VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json',
-                (key, _JSON.dump_json(value).decode()),
+                (key, _JSON.dump_json(stored).decode()),
             )
 
             if key == 'model' and isinstance(value, str):
