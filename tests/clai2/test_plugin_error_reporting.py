@@ -143,7 +143,7 @@ async def test_startup_only_reports_import_errors_inside_available_plugins(
         entry = next(entry for entry in harness.loader.entries() if entry.name == 'mcp')
         assert entry.error is not None
         assert 'ModuleNotFoundError' in entry.error
-        errors = [span for span in recorder.spans() if span.name != 'CLAI session opened']
+        errors = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
         if module_present:
             assert "Plugin 'mcp': ModuleNotFoundError:" in harness.text
             assert len(errors) == 1
@@ -180,7 +180,7 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
         await harness.loader.load_all()
         assert "Plugin 'observer': RuntimeError: observer failed" in harness.text
         assert recorder.options[0]['send_to_logfire'] is False
-        errors = [span for span in recorder.spans() if span.name != 'CLAI session opened']
+        errors = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
         assert len(errors) == 1
         assert (errors[0].attributes or {})['plugin'] == 'broken'
     finally:

@@ -3,10 +3,9 @@ from __future__ import annotations as _annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, cast
+from typing import ClassVar, Literal, assert_never, cast
 
 from pydantic import JsonValue
-from typing_extensions import assert_never
 
 from .._http import to_httpx2_timeout
 from .._warnings import PydanticAIDeprecationWarning

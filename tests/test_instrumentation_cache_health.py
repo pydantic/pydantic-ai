@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -457,7 +457,7 @@ def test_sustained_collapse_emits_the_event_once() -> None:
 def test_collapse_without_an_event_does_not_latch(mocker: MockerFixture) -> None:
     """Only a collapse that emitted the event holds back the next one: an unexpected collapse right after
     a `ttl_expired` one (the prefix kept moving once the cache was re-written) still emits it."""
-    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     mocker.patch(
         'pydantic_ai._utils.now_utc',
         side_effect=[t0, t0 + timedelta(hours=2), t0 + timedelta(hours=2, minutes=1)],
@@ -535,7 +535,7 @@ def test_unreported_request_does_not_refresh_idle_clock(mocker: MockerFixture) -
     """The `0/0` request must not update `last_seen`: with the clock pinned, the later collapse is
     classified against the *first* request's timestamp (`ttl_expired`), which a clock-refreshing
     implementation would misreport as `unexpected`."""
-    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     mocker.patch(
         'pydantic_ai._utils.now_utc',
         side_effect=[t0, t0 + timedelta(minutes=100), t0 + timedelta(minutes=101)],
@@ -758,7 +758,7 @@ def test_compaction_in_the_history_is_not_unexpected() -> None:
 
 
 def test_continuation_after_cache_expiry_is_ttl_expired(mocker: MockerFixture) -> None:
-    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     mocker.patch('pydantic_ai._utils.now_utc', side_effect=[t0, t0 + timedelta(minutes=30)])
     model = ConversationModel(retention=timedelta(minutes=5))
     agent, exporter = conversation_agent(model)
@@ -788,7 +788,7 @@ def test_collapse_classified_with_resolved_retention(
 ) -> None:
     """Classification uses `Model.resolve_cache_retention()` for the request's settings, falling back to
     the profile's `default_cache_retention`."""
-    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     mocker.patch('pydantic_ai._utils.now_utc', side_effect=[t0, t0 + timedelta(minutes=30)])
     model = ConversationModel(retention=retention, requested=requested)
     agent, exporter = conversation_agent(model)
@@ -805,7 +805,7 @@ def test_collapse_classified_with_resolved_retention(
 
 def test_idle_conversations_are_forgotten(mocker: MockerFixture) -> None:
     """A conversation idle past the longest documented cache retention is dropped, bounding memory."""
-    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     mocker.patch(
         'pydantic_ai._utils.now_utc',
         side_effect=[t0, t0 + timedelta(hours=25), t0 + timedelta(hours=25)],
@@ -901,10 +901,8 @@ def test_marks_without_a_conversation_are_not_stored() -> None:
     """A run without a conversation id has nothing to share its marks with, so they stay private to it."""
     store = ConversationCacheMarkStore()
     marks = store.get(None)
-    marks[('test', None, 'cache-model')] = CacheMark(
-        established_tokens=14000, last_seen=datetime.now(timezone.utc), run_id=None
-    )
-    store.update(None, marks, datetime.now(timezone.utc))
+    marks[('test', None, 'cache-model')] = CacheMark(established_tokens=14000, last_seen=datetime.now(UTC), run_id=None)
+    store.update(None, marks, datetime.now(UTC))
 
     assert store.get(None) == {}
     assert not store._conversations  # pyright: ignore[reportPrivateUsage]

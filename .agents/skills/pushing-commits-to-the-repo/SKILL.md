@@ -1,7 +1,8 @@
 ---
 name: pushing-commits-to-the-repo
-description: Open and advance a PR — write a current title and body, label it, review before every
-  push, watch CI, and triage every comment. Use whenever you open a PR or push a commit to one.
+description: Open and advance a PR — write a current title and body, label it, review every push
+  subject to the mechanical-refresh exception, watch CI, and triage every comment. Use whenever you
+  open a PR or push a commit to one.
 ---
 
 # pushing-commits-to-the-repo
@@ -63,11 +64,20 @@ Labelling needs triage permission on the repo (Pydantic team members and their a
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
 
+## Mechanical text/data refreshes
+
+A small mechanical text/data refresh changes no code, runtime behavior, CI logic, or substantive
+instruction or review policy. A catalog-row refresh is one example.
+
+For this case, skip local `pre-push-review` and any additional substantive review dispatch. Do not
+ask for a second-opinion choice. Automatic configured CI and hosted reviews still run.
+
 ## Before you push
 - Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless
   the user's instructions override this.
-- Run `pre-push-review`. Address every finding, commit the fixes, and repeat the review until it
-  returns no findings. This applies before the first PR push and between every later PR iteration.
+- For all other diffs, run `pre-push-review` before each push. Address every finding, commit the
+  fixes, and repeat the review until it returns no findings. This applies before the first PR push
+  and between every later PR iteration.
 - A `pre-push-review` verdict belongs to the diff it read. Any later commit voids it — re-run against
   the new diff instead of carrying the earlier pass forward, and name the commit range each verdict
   covers when you report it.
@@ -101,6 +111,8 @@ The repo has two standards reviewers, and they are independent:
   it finishes, so each application buys exactly one review of the diff as it stands at that moment.
 
 Applying the label adds a second opinion; it does not suppress or replace `CI Review`.
+
+- Skip additional-review selection for a mechanical text/data refresh defined above.
 
 Once the loop above has terminated — CI green, every comment triaged — decide whether to apply it
 before handing the PR back or requesting merge:

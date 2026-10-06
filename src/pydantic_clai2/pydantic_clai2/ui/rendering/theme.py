@@ -16,11 +16,32 @@ if TYPE_CHECKING:
     from termflow.themes import TerminalPalette
 
 _ACTIVE: ContextVar[Callable[[], str]] = ContextVar('clai_theme', default=lambda: 'default')
+_BRANDED: ContextVar[bool] = ContextVar('clai_branded', default=False)
 
 
 def names() -> tuple[str, ...]:
     """Use the same theme choices as settings validation."""
     return theme_names()
+
+
+def name() -> str:
+    """The session's theme name, read at render time so a change applies to the next frame."""
+    return _ACTIVE.get()()
+
+
+@contextmanager
+def branded() -> Generator[None]:
+    """Mark output in Pydantic's brand colours, which keeps them when a theme change repaints the transcript."""
+    token = _BRANDED.set(True)
+    try:
+        yield
+    finally:
+        _BRANDED.reset(token)
+
+
+def painted_in() -> str | None:
+    """The theme output written now is painted in, or `None` for branding that no theme recolours."""
+    return None if _BRANDED.get() else name()
 
 
 def current() -> TerminalPalette | None:
@@ -94,6 +115,30 @@ def _is_light(palette: TerminalPalette) -> bool:
     return 0.299 * red + 0.587 * green + 0.114 * blue > 128
 
 
+def roles(name: str) -> tuple[tuple[str, str], ...]:
+    """The Rich colour `name` paints each role with; where roles share a colour, the earlier one claims it.
+
+    Roles are the background and foreground, diff lines and markers, CLAI's brand colours, and the
+    16 ANSI slots. The default theme leaves the background, foreground, and slots to the terminal.
+    Output painted in one theme repaints in another by translating its colours role by role.
+    """
+    with use(lambda: name):
+        palette = current()
+        diff = diff_theme()
+        brands = tuple((f'brand {brand}', color(brand)) for brand in _SLOTS)
+    surface = (palette.bg, palette.fg) if palette is not None else ('default', 'default')
+    return (
+        ('background', surface[0]),
+        ('foreground', surface[1]),
+        ('diff addition', diff.addition),
+        ('diff deletion', diff.deletion),
+        ('diff addition marker', diff.addition_marker),
+        ('diff deletion marker', diff.deletion_marker),
+        *brands,
+        *((f'ansi {slot}', palette.ansi[slot] if palette is not None else f'color({slot})') for slot in range(16)),
+    )
+
+
 def apply(name: str, *, output: IO[str]) -> None:
     """Apply a validated choice, or restore terminal defaults after a palette."""
     from termflow.themes import (
@@ -149,6 +194,7 @@ BANNER = (LITHIUM, PURPLE, AI_CYAN)
 DIFF_ADDITION = '#225C2B'
 DIFF_DELETION = '#7A2936'
 
+# `roles` gives a shared slot to the first brand here: muted grey text is commoner than element purple.
 _SLOTS = {
     LITHIUM: 12,
     CALCIUM: 1,
@@ -157,8 +203,8 @@ _SLOTS = {
     SUGAR: 7,
     LIGHT_PURPLE: 15,
     DARK_PURPLE: 0,
-    ELEMENT_PURPLE: 8,
     GREY: 8,
+    ELEMENT_PURPLE: 8,
     AI_CYAN: 6,
     AI_YELLOW: 3,
 }
