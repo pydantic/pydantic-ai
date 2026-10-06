@@ -267,6 +267,11 @@ class Fleet:
             user.opted_in.append(key)
         elif not on and item.default == 'on':
             user.opted_out.append(key)
+        # The user made this change themselves, so it is not news on their next prompt.
+        if on:
+            user.seen[key] = _digest(dict(item.payload))
+        else:
+            user.seen.pop(key, None)
         self._save(state)
         return f'{"Enabled" if on else "Disabled"} {item.name} ({item.kind}); it applies from your next prompt.'
 

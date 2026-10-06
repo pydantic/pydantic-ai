@@ -126,8 +126,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.
                 scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names) if settings.ui_events else None,
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
-                api_key=api_key,
-                variables=logfire.VariablesOptions(block_before_first_resolve=True) if api_key else None,
+                **({'api_key': api_key, 'variables': logfire.VariablesOptions()} if api_key else {}),
             )
         finally:
             # Even local SDK configuration replaces the process-wide propagator.
@@ -224,7 +223,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         for change in changes:
             self.host.console.print(f'◆ {change.describe()}', style=theme.color(theme.ACCENT), markup=False)
         if changes:
-            self._notice = f'◆ {changes[-1].describe()}'
+            self._notice = changes[-1].describe()
         for warning in self.fleet.warnings:
             self.host.console.print(warning, style=theme.color(theme.WARNING), markup=False)
 

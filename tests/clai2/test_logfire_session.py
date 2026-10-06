@@ -2,7 +2,6 @@
 
 import asyncio
 import io
-import json
 from pathlib import Path
 
 import anyio
@@ -96,9 +95,10 @@ async def test_session_root_groups_turns_tools_and_nested_runs(
     assert children
     assert all(span.context is not None and span.context.trace_id == root.context.trace_id for span in children)
     assert all(span.parent is not None for span in children)
-    assert all({'logfire.tags', 'user.email'}.isdisjoint(span.attributes or {}) for span in children)
-    if email:
-        assert email not in json.dumps([dict(span.attributes or {}) for span in children])
+    assert all('logfire.tags' not in (span.attributes or {}) for span in children)
+    # Hackathon fleet control: identity rides on every span of a run as baggage, for grouping by user.
+    runs = [span for span in children if (span.attributes or {}).get('user.email') is not None]
+    assert bool(runs) == bool(email)
     tools = [span for span in spans if operation(span) == 'execute_tool']
     nested_runs = [
         span
