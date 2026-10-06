@@ -15,7 +15,7 @@ from render.workflows import TaskDefinition, Workflows
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
@@ -137,11 +137,11 @@ class JsonRecordingTaskContext(RecordingTaskContext):
 
     async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
         for argument in args:
-            if _is_json_envelope(argument):
-                self.requests.append((task.name, json_round_trip(dict(argument))))
+            assert _is_json_envelope(argument)
+            self.requests.append((task.name, json_round_trip(dict(argument))))
         result = await super().run(task, *args, **kwargs)
-        if _is_json_envelope(result):
-            self.results.append((task.name, json_round_trip(dict(result))))
+        assert _is_json_envelope(result)
+        self.results.append((task.name, json_round_trip(dict(result))))
         return result
 
 
@@ -338,14 +338,6 @@ async def test_concurrent_child_effects_are_additive_and_ordered_per_child() -> 
     assert context.task_names.count('sibling-effects__function_toolset__<agent>.call_tool') == 2
 
 
-def _retry_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    del info
-    parts = [part for message in messages for part in message.parts]
-    if any(isinstance(part, ToolReturnPart) for part in parts):
-        return ModelResponse(parts=[TextPart('done')])
-    return ModelResponse(parts=[ToolCallPart('retrying', {}, tool_call_id='retrying')])
-
-
 async def _retry_then_finish_stream(
     messages: list[ModelMessage],
     info: AgentInfo,
@@ -363,7 +355,7 @@ async def test_failed_attempt_effects_are_discarded_and_success_is_applied_once(
     usage = RunUsage()
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](
-        FunctionModel(_retry_then_finish, stream_function=_retry_then_finish_stream),
+        FunctionModel(stream_function=_retry_then_finish_stream),
         name='retry-effects',
         deps_type=type(None),
         retries=1,
@@ -451,7 +443,8 @@ async def test_negative_usage_effects_fail_closed_without_mutating_caller_usage(
     assert usage == context.usage_before_effects
 
 
-async def test_immediate_capability_event_inline_control_denies_protected_action() -> None:
+@pytest.mark.parametrize('denied', [False, True])
+async def test_immediate_capability_event_inline_control_respects_decision(denied: bool) -> None:
     decision = ProtectedDecision()
     protected_actions: list[str] = []
     capability = ImmediateDecisionCapability(decision, protected_actions)
@@ -459,12 +452,12 @@ async def test_immediate_capability_event_inline_control_denies_protected_action
         TestModel(call_tools=['protected_operation']),
         name='immediate-effects-inline-control',
         deps_type=type(None),
-        capabilities=[capability, _immediate_decision_hooks(decision)],
+        capabilities=[capability, _immediate_decision_hooks(decision)] if denied else [capability],
     )
 
     assert isinstance((await agent.run('check before publishing')).output, str)
-    assert decision.allowed is False
-    assert protected_actions == []
+    assert decision.allowed is (not denied)
+    assert protected_actions == ([] if denied else ['published'])
 
 
 async def test_immediate_capability_event_fails_before_protected_action() -> None:
@@ -528,3 +521,65 @@ async def test_nested_agent_model_usage_matches_an_inline_run() -> None:
     assert inline.usage.requests == distributed.usage.requests == 3
     assert inline.usage.input_tokens == distributed.usage.input_tokens
     assert inline.usage.output_tokens == distributed.usage.output_tokens
+
+
+@pytest.mark.parametrize('capability_owned', [False, True])
+async def test_worker_rejects_events_from_the_wrong_owner(capability_owned: bool) -> None:
+    async def emit_wrong_event(ctx: RunContext[None]) -> str:
+        event = (
+            ChildEffectEvent(child='wrong', sequence=1)
+            if capability_owned
+            else OwnedEffectEvent(child='wrong', sequence=1)
+        )
+        await ctx.emit(event)
+        pytest.fail('the worker must reject an event from the wrong owner')  # pragma: no cover
+
+    class Owner(AbstractCapability[None]):
+        id = 'owner'
+
+        def get_toolset(self) -> AbstractToolset[None]:
+            return FunctionToolset([emit_wrong_event], id='owner')
+
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(
+        TestModel(),
+        name='wrong-owner',
+        deps_type=type(None),
+        tools=[] if capability_owned else [emit_wrong_event],
+        capabilities=[Owner(), runtime] if capability_owned else [runtime],
+    )
+    with pytest.raises(UserError, match=r'must emit|cannot be emitted'):
+        await run_agent_in_task(agent, runtime, JsonRecordingTaskContext())
+
+
+async def test_worker_preserves_explicit_event_ownership_and_tool_call() -> None:
+    seen: list[OwnedEffectEvent] = []
+
+    class Owner(AbstractCapability[None]):
+        id = 'owner'
+
+        def get_toolset(self) -> AbstractToolset[None]:
+            async def emit_owned(ctx: RunContext[None]) -> str:
+                await ctx.emit(
+                    OwnedEffectEvent(
+                        child='owned',
+                        sequence=1,
+                        capability_id='owner',
+                        tool_call_id='original',
+                        tool_name='original_tool',
+                    )
+                )
+                return 'emitted'
+
+            return FunctionToolset([emit_owned], id='owner')
+
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(
+        TestModel(),
+        name='explicit-event',
+        deps_type=type(None),
+        capabilities=[Owner(), _owned_event_hooks(seen), runtime],
+    )
+    await run_agent_in_task(agent, runtime, JsonRecordingTaskContext())
+    assert len(seen) == 1
+    assert (seen[0].capability_id, seen[0].tool_call_id, seen[0].tool_name) == ('owner', 'original', 'original_tool')

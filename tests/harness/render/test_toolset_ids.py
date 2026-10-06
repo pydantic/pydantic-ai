@@ -173,7 +173,7 @@ class ExternallyAnsweredNotes(Notes):
 
     def get_toolset(self) -> AbstractToolset[None]:
         async def note(text: str) -> str:
-            return text
+            return text  # pragma: no cover - invocation is outside this registration or rejection contract
 
         self.toolset = FunctionToolset[None]([note])
         return CombinedToolset([self.toolset, ExternalToolset[None]([ToolDefinition(name='answered_elsewhere')])])
@@ -191,10 +191,10 @@ class TwoToolsetNotes(Notes):
 
     def get_toolset(self) -> AbstractToolset[None]:
         async def note(text: str) -> str:
-            return text
+            return text  # pragma: no cover - invocation is outside this registration or rejection contract
 
         async def recall(topic: str) -> str:
-            return topic
+            return topic  # pragma: no cover - invocation is outside this registration or rejection contract
 
         self.leaves = [FunctionToolset[None]([note]), FunctionToolset[None]([recall])]
         return CombinedToolset(self.leaves)
@@ -209,7 +209,7 @@ def test_two_unnamed_capability_leaves_are_rejected_before_registration() -> Non
 
 def test_a_toolset_the_user_attached_without_an_id_is_refused_on_its_own_terms() -> None:
     async def recall(topic: str) -> str:
-        return topic
+        return topic  # pragma: no cover - invocation is outside this registration or rejection contract
 
     app = RecordingWorkflows()
 
@@ -228,7 +228,7 @@ def test_unnamed_leaf_under_unnamed_capability_is_rejected_before_registration()
 
 def test_two_toolsets_that_already_share_an_id_are_still_a_collision() -> None:
     async def recall(topic: str) -> str:
-        return topic
+        return topic  # pragma: no cover - invocation is outside this registration or rejection contract
 
     app = RecordingWorkflows()
 
@@ -262,7 +262,7 @@ def test_explicit_names_are_process_stable_with_helper_opt_outs() -> None:
 
 async def test_matching_id_does_not_admit_a_runtime_toolset() -> None:
     def lookup() -> str:
-        return 'registered'
+        return 'registered'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     runtime = RenderWorkflows[None](Workflows())
     agent = Agent(
@@ -306,7 +306,7 @@ class ResourceListingToolset(ExternalToolset[None]):
     """A non-MCP toolset whose resource API must not change core's classification."""
 
     async def list_resources(self) -> list[str]:
-        return []
+        return []  # pragma: no cover - invocation is outside this registration or rejection contract
 
 
 def test_list_resources_does_not_make_a_toolset_an_mcp_toolset() -> None:

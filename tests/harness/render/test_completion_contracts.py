@@ -423,7 +423,7 @@ async def slow_report() -> str:
 
 
 async def quick_report() -> str:
-    return 'quick'
+    return 'quick'  # pragma: no cover - invocation is outside this registration or rejection contract
 
 
 async def inline_report() -> str:
@@ -483,16 +483,16 @@ def test_toolset_task_names_survive_reordering_and_added_tools() -> None:
     """A tool name matching another toolset ID cannot rename that toolset's task."""
 
     async def part() -> str:
-        return 'part'
+        return 'part'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     async def other() -> str:
-        return 'other'
+        return 'other'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     async def added() -> str:
-        return 'added'
+        return 'added'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     async def shared_tool() -> str:
-        return 'shared'
+        return 'shared'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     expected: set[str] | None = None
     for tools in ([part, other], [other, part], [added, other, part]):

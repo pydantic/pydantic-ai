@@ -194,7 +194,7 @@ def current_effect_recorder() -> EffectRecorder | None:
 
 
 async def apply_effects(
-    effects: ChildEffects | None,
+    effects: ChildEffects,
     *,
     ctx: RunContext[AgentDepsT],
 ) -> None:
@@ -207,8 +207,6 @@ async def apply_effects(
     The caller applies a returned result once in this invocation. Retrying the entry
     task starts the agent again and can repeat events.
     """
-    if effects is None:
-        return
     if effects.usage is not None:
         ctx.usage.incr(effects.usage)
     for event in effects.events:
@@ -289,11 +287,6 @@ def permanent_error(
     message = str(exc).strip() or type(exc).__name__
     error: JsonObject = {'kind': kind, 'message': message[:500]}
     return {'version': PROTOCOL_VERSION, 'status': 'error', 'error': error}
-
-
-def read_result(value: object) -> JsonValue:
-    """Decode the payload of a task result, for a caller that applies no effects."""
-    return read_outcome(value).payload
 
 
 def read_outcome(value: object) -> OperationOutcome:
@@ -459,10 +452,7 @@ def _as_json_object(value: object, *, label: str) -> JsonObject:
 
 def _json_bytes(value: object, *, label: str) -> bytes:
     normalized = _as_json_value(value, label=label)
-    try:
-        return json.dumps(normalized, allow_nan=False).encode()
-    except (OverflowError, TypeError, ValueError) as exc:
-        raise RenderProtocolError(f'{label.capitalize()} must be JSON serializable: {exc}') from exc
+    return json.dumps(normalized, allow_nan=False).encode()
 
 
 def _object(value: object, *, label: str) -> dict[str, object]:

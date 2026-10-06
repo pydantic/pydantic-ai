@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import inspect
 from collections.abc import AsyncIterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import anyio
 import pytest
 from pydantic import TypeAdapter
-from render.workflows import TaskContext, TaskDefinition, Workflows
+from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata, Workflows
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -36,18 +35,11 @@ from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill
 
-from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency, run_agent_in_task
-
-if TYPE_CHECKING:
-    # Only the MCP tests below need this class, and only at runtime when the optional MCP
-    # dependency is installed. Importing it here keeps the annotations precise without making
-    # the whole Render-extra test module require the MCP extra to be collected.
-    from pydantic_ai.mcp import MCPToolset
+from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency, mcp_toolset, run_agent_in_task
 
 P = ParamSpec('P')
 R = TypeVar('R')
 
-MCP_DEPENDENCY_MODULE = 'fastmcp'
 _TOOL_METADATA = TypeAdapter(dict[str, object])
 
 
@@ -76,40 +68,6 @@ class FanOutRecordingTaskContext(RecordingTaskContext):
     async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
         with self.concurrency.track(task.name):
             return await super().run(task, *args, **kwargs)
-
-
-def mcp_dependency_installed() -> bool:
-    """Whether the optional MCP dependency `MCPToolset` needs is importable at all.
-
-    A present-but-broken MCP installation still has a discoverable module, so the import in
-    `mcp_toolset` below raises there instead of being turned into a skip.
-    """
-    try:
-        return importlib.util.find_spec(MCP_DEPENDENCY_MODULE) is not None
-    except ModuleNotFoundError as exc:
-        if exc.name != MCP_DEPENDENCY_MODULE:
-            raise
-        return False
-
-
-def mcp_toolset() -> tuple[MCPToolset[None], list[tuple[str, dict[str, Any]]]]:
-    """Exercise the real MCP client and server without a provider or network service."""
-    if not mcp_dependency_installed():
-        pytest.skip(f'`MCPToolset` needs the optional `{MCP_DEPENDENCY_MODULE}` client from the `mcp` extra.')
-
-    from fastmcp import FastMCP
-
-    from pydantic_ai.mcp import MCPToolset
-
-    calls: list[tuple[str, dict[str, Any]]] = []
-    server = FastMCP('render-tools')
-
-    @server.tool
-    async def remote_lookup(query: str) -> str:
-        calls.append(('remote_lookup', {'query': query}))
-        return 'remote result'
-
-    return MCPToolset[None](server, id='remote-tools'), calls
 
 
 class SuspendedModel(Model):
@@ -286,7 +244,7 @@ async def test_dynamic_tool_cannot_opt_out_of_render_child_task() -> None:
 
     @tools.tool_plain
     async def dynamic_lookup(query: str) -> str:
-        return f'found {query}'
+        return f'found {query}'  # pragma: no cover - rejected before the tool can run
 
     def resolve_tools(ctx: RunContext[None]) -> FunctionToolset[None]:
         del ctx
@@ -737,3 +695,28 @@ async def test_explicit_overflow_reader_opt_out_reads_the_parent_tasks_spill(tmp
     assert await run_agent_in_task(agent, runtime, context) == 'read the full document'
     assert 'overflow-reader__function_toolset__<agent>.call_tool' in context.task_names
     assert not [name for name in context.task_names if '__function_toolset__tool_output_limits' in name]
+
+
+async def test_synchronous_entry_task_activates_and_resets_context() -> None:
+    runtime = RenderWorkflows[None](Workflows())
+    context = RecordingTaskContext()
+
+    @runtime.task
+    def entry(ctx: TaskContext, value: int) -> int:
+        assert runtime.current_task_context is ctx
+        assert ctx.metadata == TaskRunMetadata()
+        return value + 1
+
+    assert await context.run(entry, 4) == 5
+    assert runtime.current_task_context is None
+
+
+def test_binding_an_agent_inside_a_workflow_is_rejected() -> None:
+    runtime = RenderWorkflows[None](Workflows())
+    with runtime.activate(RecordingTaskContext()), pytest.raises(UserError, match='constructed outside'):
+        Agent(TestModel(), deps_type=type(None), capabilities=[runtime])
+
+
+def test_unbound_backend_has_an_actionable_error() -> None:
+    with pytest.raises(UserError, match='must be bound'):
+        RenderWorkflows[None](Workflows()).get_durable_operation_backend()

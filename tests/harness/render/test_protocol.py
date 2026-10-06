@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
-from typing import ParamSpec, TypeAlias, TypeGuard, TypeVar
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
-from render.workflows import TaskDefinition, Workflows
+from pydantic import TypeAdapter
+from render.workflows import Workflows
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -24,23 +22,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext, run_agent_in_task
-
-P = ParamSpec('P')
-R = TypeVar('R')
-
-Tamper: TypeAlias = Callable[[dict[str, object]], None]
+from .conftest import Tamper, TaskBoundary, is_envelope, mcp_toolset, rewrite_tool_context, run_agent_in_task
 
 _ENVELOPE = TypeAdapter(dict[str, object])
-
-
-def _is_envelope(value: object) -> TypeGuard[dict[str, object]]:
-    """Validate that a value crossing the task boundary is a JSON object, then narrow it."""
-    try:
-        _ENVELOPE.validate_python(value, strict=True)
-    except ValidationError:
-        return False
-    return True
 
 
 def _set(key: str, value: object) -> Tamper:
@@ -55,45 +39,11 @@ def _in_error(tamper: Tamper) -> Tamper:
     """Apply a rewrite to the nested error object of a control-flow result."""
 
     def rewrite(envelope: dict[str, object]) -> None:
-        error = envelope.get('error')
-        if _is_envelope(error):
-            tamper(error)
+        error = _ENVELOPE.validate_python(envelope['error'], strict=True)
+        tamper(error)
+        envelope['error'] = error
 
     return rewrite
-
-
-class TaskBoundary(RecordingTaskContext):
-    """Runs child tasks in this process while recording the JSON envelopes that cross.
-
-    A `tamper` hook rewrites that JSON in place, which is how a foreign or future worker's
-    bytes reach the reader. Only JSON data is fabricated, only at this public boundary, and
-    every envelope is validated by a `TypeAdapter` before it is rewritten.
-    """
-
-    def __init__(self, *, tamper_request: Tamper | None = None, tamper_result: Tamper | None = None) -> None:
-        super().__init__()
-        self.requests: list[dict[str, object]] = []
-        self.results: list[dict[str, object]] = []
-        self.started: list[str] = []
-        self._tamper_request = tamper_request
-        self._tamper_result = tamper_result
-
-    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-        self.started.append(task.name)
-        request: object = args[0] if args else None
-        if _is_envelope(request):
-            self.requests.append(dict(request))
-            if self._tamper_request is not None:
-                self._tamper_request(request)
-        result = await super().run(task, *args, **kwargs)
-        self._returned(result)
-        return result
-
-    def _returned(self, result: object) -> None:
-        if _is_envelope(result):
-            if self._tamper_result is not None:
-                self._tamper_result(result)
-            self.results.append(dict(result))
 
 
 class Audit(AbstractCapability[None]):
@@ -147,7 +97,7 @@ def build_audited_agent(
 
 def _error_kind(result: dict[str, object]) -> object:
     error = result['error']
-    assert _is_envelope(error)
+    assert is_envelope(error)
     return error['kind']
 
 
@@ -348,7 +298,7 @@ async def test_function_tool_model_retry_is_completed_control_flow_and_agent_con
     completed_model_retries: list[dict[str, object]] = []
     for result in context.results:
         payload = result.get('payload')
-        if result['status'] == 'ok' and _is_envelope(payload) and payload.get('kind') == 'model_retry':
+        if result['status'] == 'ok' and is_envelope(payload) and payload.get('kind') == 'model_retry':
             completed_model_retries.append(payload)
     assert len(completed_model_retries) == 1
     assert completed_model_retries[0]['message'] == 'again'
@@ -366,3 +316,231 @@ async def test_protocol_enforces_four_mib_request_limit_through_public_agent() -
     reported = re.search(r'arguments are (\d+) bytes', str(raised.value))
     assert reported is not None
     assert int(reported.group(1)) > 4194304
+
+
+@pytest.mark.parametrize(
+    ('fields', '_reason'),
+    [
+        ({'status': 'future'}, 'unknown status'),
+        ({'extra': 1}, 'unexpected'),
+        ({'payload': [], 'extra': 1}, 'unexpected'),
+        ({'effects': {}}, 'must carry'),
+        ({'effects': {'usage': []}}, 'must be a JSON object'),
+        ({'effects': {'usage': {'requests': 'invalid'}}}, 'not a run usage delta'),
+        ({'effects': {'usage': {'details': {'invalid': [True, 'text', -1]}}}}, 'negative counts'),
+        ({'effects': {'events': {}}}, 'must be a JSON array'),
+        ({'effects': {'events': [None]}}, 'must be a JSON object'),
+        ({'effects': {'events': [{'event_kind': 'unknown'}]}}, 'not an agent stream event'),
+        (
+            {
+                'effects': {
+                    'events': [{'event_kind': 'part_start', 'index': 0, 'part': {'part_kind': 'text', 'content': 'x'}}]
+                }
+            },
+            'caller cannot emit',
+        ),
+    ],
+)
+async def test_foreign_worker_results_reject_invalid_envelope_and_effects(
+    fields: dict[str, object], _reason: str
+) -> None:
+    agent, runtime = build_agent()
+    with pytest.raises(ValueError):
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_result=lambda result: result.update(fields)))
+
+
+@pytest.mark.parametrize('error', [{'kind': 'future', 'message': 'x'}, {'kind': 'invalid-result', 'message': 1}])
+async def test_foreign_worker_permanent_errors_are_validated(error: dict[str, object]) -> None:
+    agent, runtime = build_agent()
+
+    def replace_result(result: dict[str, object]) -> None:
+        result.clear()
+        result.update(version=2, status='error', error=error)
+
+    with pytest.raises(ValueError):
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_result=replace_result))
+
+
+@pytest.mark.parametrize('failure', [ApprovalRequired(), CallDeferred()])
+async def test_control_flow_without_metadata_is_preserved(failure: Exception) -> None:
+    agent, runtime, recreated = build_audited_agent(failure)
+    await run_agent_in_task(agent, runtime, TaskBoundary())
+    assert len(recreated) == 1
+    assert isinstance(recreated[0], ApprovalRequired | CallDeferred)
+    assert recreated[0].metadata is None
+
+
+async def test_successful_capability_operation_result_crosses_json() -> None:
+    agent, runtime, errors = build_audited_agent()
+    context = TaskBoundary()
+    await run_agent_in_task(agent, runtime, context)
+    assert errors == []
+    assert any(
+        is_envelope(payload := result.get('payload')) and payload.get('value') == 'recorded:hello'
+        for result in context.results
+    )
+
+
+@pytest.mark.parametrize(
+    ('key', 'value', 'message'),
+    [
+        ('version', 0, 'run-context version'),
+        ('context', [], 'JSON object'),
+        ('deps', 'wrong', 'validation error'),
+        ('tracer_enabled', 'yes', 'boolean'),
+        ('_model_id', 42, 'string or null'),
+    ],
+)
+async def test_worker_rejects_malformed_run_context(key: str, value: object, message: str) -> None:
+    agent, runtime = build_agent()
+
+    def rewrite(request: dict[str, object]) -> None:
+        payload = _ENVELOPE.validate_python(request['payload'])
+        context = _ENVELOPE.validate_python(payload['run_context'])
+        if key in {'tracer_enabled', '_model_id'}:
+            fields = _ENVELOPE.validate_python(context['context'])
+            fields[key] = value
+            context['context'] = fields
+        else:
+            context[key] = value
+        payload['run_context'] = context
+        request['payload'] = payload
+
+    with pytest.raises(UserError, match=message):
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_request=rewrite))
+
+
+@pytest.mark.parametrize('mode', ['missing-definition', 'unknown-original-name', 'unknown-name'])
+async def test_worker_rebuilds_or_rejects_a_changed_function_definition(mode: str) -> None:
+    async def lookup() -> str:
+        return 'found'
+
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(TestModel(), name='changed-tool', deps_type=type(None), tools=[lookup], capabilities=[runtime])
+
+    def rewrite(request: dict[str, object]) -> None:
+        if not str(request['operation']).endswith('.call_tool'):
+            return
+        payload = _ENVELOPE.validate_python(request['payload'])
+        if mode == 'unknown-original-name':
+            payload['original_name'] = 'missing'
+        else:
+            payload['tool_def'] = None
+            if mode == 'unknown-name':
+                payload['name'] = 'missing'
+        request['payload'] = payload
+
+    context = TaskBoundary(tamper_request=rewrite)
+    if mode == 'missing-definition':
+        assert 'found' in await run_agent_in_task(agent, runtime, context)
+    else:
+        with pytest.raises(UserError, match='not found in toolset'):
+            await run_agent_in_task(agent, runtime, context)
+
+
+async def test_unserializable_operation_result_finishes_with_permanent_error() -> None:
+    class InvalidResult(AbstractCapability[None]):
+        id = 'invalid-result'
+
+        @durable_operation(name='produce')
+        async def produce(self, ctx: RunContext[None]) -> object:
+            return object()
+
+    capability = InvalidResult()
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(TestModel(), name='invalid-output', deps_type=type(None), capabilities=[capability, runtime])
+
+    @agent.instructions
+    async def instructions(ctx: RunContext[None]) -> str:
+        await capability.produce(ctx)
+        pytest.fail(
+            'an invalid operation result must fail before the agent continues'
+        )  # pragma: no cover - invocation is outside this registration or rejection contract
+
+    context = TaskBoundary()
+    with pytest.raises(UserError, match='invalid result'):
+        await run_agent_in_task(agent, runtime, context)
+    assert context.results[0]['status'] == 'error'
+
+
+async def test_worker_rejects_missing_dependencies() -> None:
+    agent, runtime = build_agent()
+
+    def rewrite(request: dict[str, object]) -> None:
+        payload = _ENVELOPE.validate_python(request['payload'])
+        context = _ENVELOPE.validate_python(payload['run_context'])
+        del context['deps']
+        payload['run_context'] = context
+        request['payload'] = payload
+
+    with pytest.raises(UserError, match='requires `deps`'):
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_request=rewrite))
+
+
+@pytest.mark.parametrize(
+    'missing', [None, 'usage', 'available_tool_names', 'active_capability_ids', '_deferred_capability_ids']
+)
+async def test_context_snapshots_and_missing_field_guards(missing: str | None) -> None:
+    from pydantic_ai.tools import ToolDefinition
+
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(TestModel(), name='context-fields', deps_type=type(None), capabilities=[runtime])
+
+    @agent.tool
+    async def inspect_context(ctx: RunContext[None]) -> str:
+        if missing == 'available_tool_names':
+            assert ctx.available_tool_names == set()
+        elif missing == 'active_capability_ids':
+            with pytest.raises(UserError, match=r'capabilities.*not available'):
+                _ = ctx.active_capability_ids
+        elif missing == '_deferred_capability_ids':
+            with pytest.raises(UserError, match=r'capabilities.*not available'):
+                ctx.is_tool_available(ToolDefinition(name='deferred', defer_loading=True, capability_id='deferred'))
+        elif missing is None:
+            assert not ctx.is_tool_available(
+                ToolDefinition(name='deferred', defer_loading=True, capability_id='deferred')
+            )
+        return 'checked'
+
+    context = TaskBoundary(tamper_request=rewrite_tool_context(_drop(missing)) if missing else None)
+    assert 'checked' in await run_agent_in_task(agent, runtime, context)
+
+
+async def test_missing_worker_workspace_provider_has_an_actionable_error() -> None:
+    from pydantic_ai.workspaces import WorkspaceUnavailableError
+
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(TestModel(), name='missing-workspace', deps_type=type(None), capabilities=[runtime])
+
+    @agent.tool
+    async def read_file(ctx: RunContext[None]) -> str:
+        with pytest.raises(WorkspaceUnavailableError, match='same workspace capabilities'):
+            await ctx.workspace.read_text('note.txt')
+        return 'unavailable'
+
+    context = TaskBoundary(
+        tamper_request=rewrite_tool_context(_set('workspace_ref', {'id': 'absent', 'provider': 'missing'}))
+    )
+    assert 'unavailable' in await run_agent_in_task(agent, runtime, context)
+
+
+async def test_mcp_worker_requires_a_serialized_tool_definition() -> None:
+    toolset, calls = mcp_toolset()
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(
+        TestModel(call_tools=['remote_lookup']),
+        name='missing-mcp-definition',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[runtime],
+    )
+
+    def rewrite(request: dict[str, object]) -> None:
+        if str(request['operation']).endswith('.call_tool'):
+            payload = _ENVELOPE.validate_python(request['payload'])
+            payload['tool_def'] = None
+            request['payload'] = payload
+
+    with pytest.raises(UserError, match='no serialized definition'):
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_request=rewrite))
+    assert calls == []

@@ -15,7 +15,7 @@ contracts not exposed there:
   `test_effects_contracts.py` and `test_workspaces.py`.
 
 Private context attributes and the effective tracer lookup also remain here.
-`test_local_runtime.py` checks context, usage, events and tracing in separate
+`test_local_runtime_live.py` checks context, usage, events and tracing in separate
 Render processes. Recheck these contracts when updating Pydantic AI; `JSON_CODEC`
 encodes values but does not rebuild a worker's `RunContext`.
 
@@ -35,14 +35,13 @@ from typing_extensions import TypeVar as TypeVarExtensions
 from pydantic_ai import Agent
 from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities.abstract import AbstractCapability, select_workspace
+from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec import JSON_CODEC
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
     CapabilityOperationParams,
     ModelRequestContextProjection,
     capability_operation_result_type,
-    collect_capability_operations,
 )
 from pydantic_ai.durable_exec._operation import (
     DurableOperation,
@@ -103,7 +102,6 @@ __all__ = (
     'WorkspaceCallParams',
     'WorkspaceCallResult',
     'capability_operation_result_type',
-    'get_capability_operation_declaration',
     'dump_json_object',
     'dump_operation_params',
     'function_tool_original_name',
@@ -177,11 +175,11 @@ class _CompactionModelPlaceholder(Model):
     """Inert public-model adapter replaced before compaction is invoked."""
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> str:  # pragma: no cover - placeholder is replaced before model use
         return 'render-compaction-placeholder'
 
     @property
-    def system(self) -> str:
+    def system(self) -> str:  # pragma: no cover - placeholder is replaced before model use
         return 'render'
 
     async def request(
@@ -189,14 +187,14 @@ class _CompactionModelPlaceholder(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
+    ) -> ModelResponse:  # pragma: no cover - placeholder is replaced before model use
         del messages, model_settings, model_request_parameters
         raise RuntimeError('The compaction model placeholder must be replaced before use.')
 
 
 def to_json_object(value: object) -> JSONObject:
     normalized = normalize_json_value(value)
-    if not isinstance(normalized, dict):
+    if not isinstance(normalized, dict):  # pragma: no cover - callers pass validated JSON objects
         raise TypeError(f'Expected a JSON object, got {type(normalized).__name__}.')
     return _JSON_OBJECT_ADAPTER.validate_python(normalized, strict=True)
 
@@ -215,13 +213,13 @@ def _normalize_json_value(value: object) -> JSONValue:
         return value
     if isinstance(value, list):
         return [_normalize_json_value(item) for item in _LIST_ADAPTER.validate_python(value, strict=True)]
-    if isinstance(value, tuple):
+    if isinstance(value, tuple):  # pragma: no cover - public codecs normalize tuples before this boundary
         return [_normalize_json_value(item) for item in _TUPLE_ADAPTER.validate_python(value, strict=True)]
     if isinstance(value, dict):
         mapping = _OPEN_OBJECT_ADAPTER.validate_python(value, strict=True)
         normalized: dict[str, JSONValue] = {}
         for key, item in mapping.items():
-            if not isinstance(key, str):
+            if not isinstance(key, str):  # pragma: no cover - public codecs already normalize mapping keys
                 raise TypeError(f'JSON object keys must be strings, got {type(key).__name__}.')
             normalized[key] = _normalize_json_value(item)
         return normalized
@@ -251,7 +249,7 @@ def load_operation_params(
     Reject an incompatible transport rather than asserting its wire type.
     """
     transport = operation.parameter_transport
-    if not isinstance(transport, RenderJsonTransport):
+    if not isinstance(transport, RenderJsonTransport):  # pragma: no cover - installed by this adapter
         raise TypeError(f'{type(transport).__name__} does not accept the Render JSON-object wire.')
     json_transport: RenderJsonTransport[ParamsT] = transport
     return json_transport.load(payload, runtime=runtime)
@@ -271,7 +269,7 @@ def operation_run_context(params: object) -> RunContext[Any] | None:
         | WorkspaceCallParams,
     ):
         return params.run_context
-    return None
+    return None  # pragma: no cover - every installed operation has a known context parameter
 
 
 async def prepare_function_call_params(
@@ -291,7 +289,7 @@ async def prepare_function_call_params(
             ) from exc
     from ._protocol import current_effect_recorder
 
-    if recorder := current_effect_recorder():
+    if recorder := current_effect_recorder():  # pragma: no branch - called inside operation_task
         recorder.set_event_capability(tool.tool_def.capability_id)
     args = tool.args_validator.validate_python(
         params.tool_args,
@@ -366,7 +364,7 @@ def resolve_mcp_tool_for_definition(
     ctx: RunContext[ToolDepsT],
 ) -> ToolsetTool[Any]:
     """Rebuild an MCP tool from its definition, narrowing the undeclared hook once."""
-    if not isinstance(toolset, _ToolDefinitionResolver):
+    if not isinstance(toolset, _ToolDefinitionResolver):  # pragma: no cover - core selects MCP toolsets
         raise TypeError(f'{type(toolset).__name__} cannot rebuild a tool from its definition.')
     return toolset.tool_for_tool_def(tool_def, ctx=ctx)
 
@@ -391,16 +389,6 @@ def make_model_request_context(
     context.model_id = model_id
     context.streaming = streaming
     return context
-
-
-def get_capability_operation_declaration(
-    capability: AbstractCapability[ToolDepsT], operation: str
-) -> CapabilityMethodDeclaration:
-    """Resolve one declaration through Pydantic AI's private collector."""
-    try:
-        return collect_capability_operations(capability)[operation]
-    except KeyError as exc:
-        raise ValueError(f'Capability {type(capability).__name__!r} has no operation {operation!r}.') from exc
 
 
 _STR_SET_ADAPTER: TypeAdapter[set[str]] = TypeAdapter(set[str])
@@ -505,7 +493,7 @@ class RenderRunContext(RunContext[AgentDepsT]):
         from ._protocol import RenderProtocolError, current_effect_recorder
 
         recorder = current_effect_recorder()
-        if recorder is None:
+        if recorder is None:  # pragma: no cover - reconstructed context belongs to operation_task
             raise UserError(
                 'Emitting events from a tool or event stream handler is not supported inside a Render child task.'
             )
@@ -620,7 +608,7 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
             deps=deps_value,
             model=model,
         )
-        if self._agent is not None:
+        if self._agent is not None:  # pragma: no branch - the bound capability supplies its agent
             ctx.__dict__['agent'] = self._agent
             ctx.__dict__['root_capability'] = self._agent.root_capability
             self._restore_workspace(ctx)
@@ -632,7 +620,7 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         ref = ctx.__dict__.get('workspace_ref')
         if self._agent is None or not isinstance(ref, WorkspaceRef):
             return
-        if ctx.workspace.backend is not NO_WORKSPACE:
+        if ctx.workspace.backend is not NO_WORKSPACE:  # pragma: no cover - fresh worker context starts empty
             return
         workspace = select_workspace(self._agent.root_capability, ctx, ref=ref)
         if workspace is None:
@@ -649,7 +637,7 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         """Recover instrumentation from worker configuration, never from the wire."""
         if isinstance(model, InstrumentedModel):
             return model.instrumentation_settings.tracer
-        if isinstance(self._agent, Agent):
+        if isinstance(self._agent, Agent):  # pragma: no branch - binding supplies a concrete Agent
             if isinstance(self._agent.model, InstrumentedModel):
                 return self._agent.model.instrumentation_settings.tracer
             # Core has no public getter for the effective agent/global settings.
@@ -667,7 +655,7 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         This keeps work performed by a child inside that child task. If the ID
         is unknown, `ctx.model` remains guarded.
         """
-        if self._model_resolver is None:
+        if self._model_resolver is None:  # pragma: no cover - the bound capability supplies its resolver
             return None
         model_id = context.get('_model_id')
         if model_id is not None and not isinstance(model_id, str):

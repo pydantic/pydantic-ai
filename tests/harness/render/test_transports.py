@@ -352,7 +352,7 @@ async def test_worker_context_keeps_availability_validation_and_enqueue_guards()
 
 
 async def test_upstream_memory_preserves_namespaces_and_configured_limits(tmp_path: Path) -> None:
-    from .runtime_app import MemoryDeps, memory_agents
+    from .runtime_app_live import MemoryDeps, memory_agents
 
     database = str(tmp_path / 'memory.sqlite')
 
@@ -366,3 +366,39 @@ async def test_upstream_memory_preserves_namespaces_and_configured_limits(tmp_pa
     assert (await run('alice', 'read', 4)).startswith('abcd\n\n[Truncated:')
     assert (await run('alice', 'read', 8)).startswith('abcdefgh\n\n[Truncated:')
     assert await run('bob', 'read') == 'other tenant\n'
+
+
+async def test_model_compaction_preserves_settings_and_rebuilds_the_worker_model() -> None:
+    from pydantic_ai import ModelRequestContext
+    from pydantic_ai.models import ModelRequestParameters
+
+    class CompactModel(TestModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            assert request_context.model is self
+            assert request_context.model_settings == {'temperature': 0.2}
+            assert instructions == 'Keep decisions'
+            return ModelResponse(parts=[TextPart('compacted')])
+
+    model = CompactModel()
+    agent = Agent(model, name='compact', capabilities=[RenderWorkflows(Workflows())])
+    runtime = RenderWorkflows.from_agent(agent)
+    assert runtime is not None
+    request = ModelRequestContext(
+        model=model,
+        messages=[],
+        model_settings={'temperature': 0.2},
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    async def handler(context: ModelRequestContext) -> ModelResponse:
+        return await context.model.compact_messages(context, instructions='Keep decisions')
+
+    tasks = RecordingTaskContext()
+    with runtime.activate(tasks):
+        result = await runtime.wrap_model_request(
+            RunContext(deps=None, model=model, usage=RunUsage()), request_context=request, handler=handler
+        )
+    assert result.parts == [TextPart('compacted')]
+    assert tasks.task_names == ['compact__model.compact_messages']

@@ -122,7 +122,7 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJsonTransport[Tools
 
     def dump(self, params: ToolsetCallToolParams) -> JSONObject:
         tool = params.tool
-        if tool is None:
+        if tool is None:  # pragma: no cover - core resolves tools before dispatch
             raise ValueError(f'Function tool {params.name!r} has no resolved definition.')
         payload = _CallToolPayload(
             name=params.name,
@@ -193,7 +193,7 @@ class RenderMCPCallTransport(Generic[AgentDepsT], RenderJsonTransport[ToolsetCal
 
     def dump(self, params: ToolsetCallToolParams) -> JSONObject:
         tool = params.tool
-        if tool is None:
+        if tool is None:  # pragma: no cover - core resolves tools before dispatch
             raise ValueError(f'MCP tool {params.name!r} has no resolved definition.')
         payload = _CallToolPayload(
             name=params.name,

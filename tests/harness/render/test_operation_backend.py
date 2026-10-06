@@ -55,8 +55,8 @@ async def test_invocation_options_that_differ_from_registration_are_rejected() -
 
     @agent.tool
     async def ping(ctx: RunContext[None]) -> str:
-        del ctx
-        return 'pong'
+        del ctx  # pragma: no cover - invocation is outside this registration or rejection contract
+        return 'pong'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     # Render fixes a task's retry, timeout, and plan when the task is registered, so options
     # resolved later for one tool cannot take effect and are rejected instead of ignored.
@@ -92,7 +92,7 @@ async def test_named_toolsets_register_and_use_distinct_options() -> None:
         resolve_tool_options=resolve_options,
     )
     agent = Agent[None, str](
-        TestModel(call_tools=['fast_lookup']),
+        TestModel(call_tools=['fast_lookup', 'slow_lookup']),
         name='toolset-options',
         deps_type=type(None),
         toolsets=[
@@ -133,8 +133,8 @@ async def test_registered_task_options_are_snapshotted_when_the_agent_is_bound()
 
     @agent.tool
     async def ping(ctx: RunContext[None]) -> str:
-        del ctx
-        return 'pong'
+        del ctx  # pragma: no cover - invocation is outside this registration or rejection contract
+        return 'pong'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     assert options.retry is not None
     options.retry.max_retries = 99
@@ -154,7 +154,7 @@ def test_options_resolver_failure_registers_no_tasks_and_app_can_be_reused(with_
             pass
 
     def lookup() -> str:
-        return 'found'
+        return 'found'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     def invalid_options(operation: object, tool: object | None, name: str) -> None:
         if name == 'lookup':
@@ -208,7 +208,7 @@ def test_different_static_tool_options_fail_before_registration() -> None:
     app = RecordingWorkflows()
 
     def slow() -> str:
-        return 'slow'
+        return 'slow'  # pragma: no cover - invocation is outside this registration or rejection contract
 
     with pytest.raises(UserError, match='separate named toolsets'):
         Agent(

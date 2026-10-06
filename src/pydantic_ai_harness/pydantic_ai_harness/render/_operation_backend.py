@@ -109,12 +109,14 @@ class RenderBoundOperation(
         self._runtime = runtime
 
     @property
-    def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
+    def operation(
+        self,
+    ) -> DurableOperation[ParamsT, WireT, ResultT]:  # pragma: no cover - backend protocol introspection
         return self._operation
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         context = self._runtime.current_task_context
-        if context is None:
+        if context is None:  # pragma: no cover - core bypasses bound operations outside durable context
             return await self._operation.handler(params)
 
         registered = self._registered

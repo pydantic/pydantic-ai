@@ -71,3 +71,38 @@ async def test_child_tool_tracer_uses_worker_instrumentation(instrumentation: st
         if instrumentation == 'global':
             Agent.instrument_all(False)
         provider.shutdown()
+
+
+@pytest.mark.parametrize('instrumented', [False, True])
+async def test_wire_tracer_flag_uses_only_worker_configuration(instrumented: bool) -> None:
+    from .conftest import TaskBoundary, rewrite_tool_context, run_agent_in_task
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(tracer_provider=provider)
+    model = TestModel()
+    runtime = RenderWorkflows[None](Workflows(), models={'plain': model})
+    agent = Agent(
+        InstrumentedModel(model, settings) if instrumented else model,
+        name='tracer-fallback',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+    recording: list[bool] = []
+
+    @agent.tool
+    async def inspect_tracer(ctx: RunContext[None]) -> str:
+        with ctx.tracer.start_as_current_span('fallback') as span:
+            recording.append(span.is_recording())
+        return 'checked'
+
+    def rewrite(fields: dict[str, object]) -> None:
+        fields['_model_id'] = 'unknown-to-worker'
+        fields['tracer_enabled'] = True
+
+    try:
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_request=rewrite_tool_context(rewrite)))
+        assert recording == [instrumented]
+    finally:
+        provider.shutdown()

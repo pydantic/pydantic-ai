@@ -159,7 +159,7 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         def resolve_options(
             operation_id: DurableOperationId, tool: object | None, tool_name: str
         ) -> Options | Literal[False]:
-            if resolve_tool_options is None:
+            if resolve_tool_options is None:  # pragma: no cover - resolver is installed only when provided
                 return base_tool_options
             static_name = function_tool_original_name(tool) if tool is not None else None
             resolved = resolve_tool_options(operation_id, tool, static_name or tool_name)
@@ -314,7 +314,7 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
 
     def _codec(self) -> RenderRunContextCodec[Any]:
         codec = self._context_codec
-        if codec is None:
+        if codec is None:  # pragma: no cover - transports are created only after binding
             raise UserError('`RenderWorkflows` must be bound to an agent before its operation transports are used.')
         return codec
 
@@ -336,7 +336,9 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
 
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         guarded = super()._durable_run_context(ctx)
-        if isinstance(ctx, RenderRunContext) and isinstance(guarded, RenderRunContext):
+        if isinstance(ctx, RenderRunContext) and isinstance(
+            guarded, RenderRunContext
+        ):  # pragma: no branch - worker hook
             guarded.restore_snapshots(ctx)
         return guarded
 

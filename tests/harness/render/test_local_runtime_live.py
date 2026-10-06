@@ -1,7 +1,7 @@
 """Manual integration coverage against the keyless local Render runtime.
 
 Install Render CLI 2.28.0 or later and run this module with
-`PYDANTIC_AI_HARNESS_RENDER_LOCAL_RUNTIME=1 uv run pytest tests/harness/render/test_local_runtime.py`.
+`PYDANTIC_AI_HARNESS_RENDER_LOCAL_RUNTIME=1 uv run pytest tests/harness/render/test_local_runtime_live.py`.
 These tests are skipped by default, including in CI. They exercise nested agents, JSON dependencies,
 task lineage, distinct worker processes, usage and event propagation, tool retries, and worker tracing.
 They do not establish hosted storage sharing, failure recovery, or performance.
@@ -15,8 +15,8 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from .conftest import LocalRenderRuntime, LocalTaskRun
-from .runtime_app import RootTaskResult, TracingTaskResult
+from .runtime_app_live import RootTaskResult, TracingTaskResult
+from .runtime_live import LocalRenderRuntime, LocalTaskRun, local_render_runtime as local_render_runtime
 
 ROOT_TASK = 'run-local-runtime-agent'
 PARENT_MODEL_TASK = 'runtime-parent__model.request'
