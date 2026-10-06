@@ -1276,10 +1276,10 @@ on. A tool call with no recorded result gets one saying it was interrupted. The
 tools in the old calls belong to the other agent; the model sees them as history,
 and CLAI's own tools handle what comes next.
 
-Resuming the same session again opens the same copy. If you have not continued
-it in CLAI yet and the original has changed, CLAI imports it again. Once you
-send a prompt in CLAI, the copy is CLAI's own and later turns in Claude Code or
-Codex are not merged into it.
+Resuming the same session again opens the same copy. Until you continue it in
+CLAI, each resume reads the original again, so later turns in Claude Code or
+Codex come along. Once you send a prompt in CLAI, the copy is CLAI's own and
+later turns in Claude Code or Codex are not merged into it.
 
 ### Background names
 

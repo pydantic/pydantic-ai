@@ -12,18 +12,7 @@ from pydantic_clai2.ui.rendering.splash import Splash
 def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
     parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
-    resume_flags = parser.add_mutually_exclusive_group()
-    resume_flags.add_argument(
-        '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
-    )
-    for flag, name in (('--resume-claude', 'Claude Code'), ('--resume-codex', 'Codex')):
-        resume_flags.add_argument(
-            flag,
-            nargs='?',
-            const='',
-            metavar='SESSION-ID',
-            help=f'Import and restore a {name} session; no ID browses {name} sessions',
-        )
+    _add_resume_flags(parser)
     parser.add_argument(
         '--worktree',
         '-w',
@@ -154,6 +143,22 @@ def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str 
     if session_id is not None:
         argv += ['--resume', session_id]
     return argv
+
+
+def _add_resume_flags(parser: argparse.ArgumentParser) -> None:
+    """`--resume` and its Claude Code and Codex counterparts, of which one may be given."""
+    flags = parser.add_mutually_exclusive_group()
+    flags.add_argument(
+        '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
+    )
+    for flag, name in (('--resume-claude', 'Claude Code'), ('--resume-codex', 'Codex')):
+        flags.add_argument(
+            flag,
+            nargs='?',
+            const='',
+            metavar='SESSION-ID',
+            help=f'Import and restore a {name} session; no ID browses {name} sessions',
+        )
 
 
 def _resume_source(args: argparse.Namespace) -> None:

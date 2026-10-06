@@ -1,8 +1,8 @@
 """Claude Code and Codex sessions for `/resume`, copied into CLAI's store when one is resumed.
 
 A session keeps one CLAI ID derived from its own, so resuming it again finds the same copy. A copy
-CLAI has not continued is refreshed when the original has changed since; once CLAI adds a turn, the
-copy is CLAI's own and the original is no longer read.
+CLAI has not continued is read again from the original each time it is resumed; once CLAI adds a
+turn, the copy is CLAI's own and the original is no longer read.
 """
 
 from __future__ import annotations
@@ -180,13 +180,17 @@ def merge(
 
 
 async def save_import(store: SqliteConversationStore, imported: ImportedSession) -> str:
-    """Copy a session into the store, or refresh a copy CLAI has not continued, and return its CLAI ID."""
+    """Copy a session into the store, or refresh a copy CLAI has not continued, and return its CLAI ID.
+
+    The refresh does not compare times: the original may change while it is being read, after its
+    time was taken, and that turn would never be imported.
+    """
     try:
         saved = (await store.get(conversation_id=imported.summary.id)).summary
     except LookupError:
         saved = None
     # Importing saves revision 1, and each CLAI turn adds one.
-    if saved is not None and (saved.revision > 1 or saved.updated_at >= imported.summary.updated_at):
+    if saved is not None and saved.revision > 1:
         return saved.id
     messages = await run_sync(imported.messages)
     if not messages:

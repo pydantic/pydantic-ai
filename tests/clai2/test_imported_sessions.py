@@ -415,23 +415,22 @@ async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
     assert saved.messages == codex_sessions.messages(path)
     assert await save_import(store, imported) == conversation_id
     assert (await store.get(conversation_id=conversation_id)).summary.revision == 1
-    # Codex continued the session after it was imported: the untouched copy follows it.
+    # Codex continued the session, even after this listing read it and the copy was saved: the
+    # untouched copy still follows it, whatever the file's time says.
     content = [{'type': 'output_text', 'text': 'And more'}]
-    with path.open('a') as file:
+    with path.open('a', encoding='utf-8') as file:
         file.write(
             json.dumps(
                 {'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant', 'content': content}}
             )
             + '\n'
         )
-    later = saved.summary.updated_at.timestamp() + 60
-    os.utime(path, (later, later))
-    assert await save_import(store, find_import('codex', CODEX_ID)) == conversation_id
+    os.utime(path, (1_000, 1_000))
+    assert await save_import(store, imported) == conversation_id
     refreshed = await store.get(conversation_id=conversation_id)
     assert refreshed.messages[-1].parts == [TextPart('Added'), TextPart('And more')]
     # Once CLAI continues it, the copy is CLAI's own.
     continued = await store.save(summary=refreshed.summary, messages=refreshed.messages[:1])
-    os.utime(path, (later + 3600, later + 3600))
     assert await save_import(store, find_import('codex', CODEX_ID)) == conversation_id
     assert (await store.get(conversation_id=conversation_id)).summary == continued
 
