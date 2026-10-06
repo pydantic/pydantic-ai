@@ -275,9 +275,9 @@ class Fleet:
             cache_key = _digest([server.url, headers])
             toolset = self._mcp.get(cache_key)
             if toolset is None:
-                toolset = MCPToolset[None](server.url, id=server.name, headers=headers or None).prefixed(
-                    _capability_id(server.name)
-                )
+                leaf = MCPToolset[None](server.url, id=server.name, headers=headers or None)
+                policy_state.mark_gated(leaf)  # Pushed by Logfire, so always allowed.
+                toolset = leaf.prefixed(_capability_id(server.name))
                 self._mcp[cache_key] = toolset
             return Capability[None](toolsets=[toolset])
         factory = str(item.payload.get('factory', ''))
@@ -427,7 +427,29 @@ class FleetControl(AbstractCapability[None]):
         rules = PolicyRules(
             policy=self.fleet.policy, approver=self.approver, record=self.record, attribute_prefix='clai2.policy'
         )
-        return CombinedCapability([_AdoptionBaggage(baggage=baggage), rules, *capabilities])
+        return CombinedCapability([_AdoptionBaggage(baggage=baggage), rules, _PluginMCPAllowlist(), *capabilities])
+
+
+@dataclass(kw_only=True)
+class _PluginMCPAllowlist(AbstractCapability[None]):
+    """Apply the MCP allowlist to MCP toolsets other plugins contribute (the `mcp` plugin gates its own).
+
+    In `enforce` mode a server outside the list keeps its connection but offers the model no tools.
+    """
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[None]) -> AbstractToolset[None]:
+        return toolset.visit_and_replace(_gate_plugin_mcp)
+
+
+def _gate_plugin_mcp(toolset: AbstractToolset[None]) -> AbstractToolset[None]:
+    if not isinstance(toolset, MCPToolset) or policy_state.is_gated(toolset):
+        return toolset
+    transport = getattr(toolset.client, 'transport', None)
+    url = str(getattr(transport, 'url', '') or '')
+    name = toolset.id or url or 'unnamed'
+    if policy_state.mcp_allowed(name, url, subject=url or name):
+        return toolset
+    return toolset.filtered(lambda ctx, tool_def: False)
 
 
 ACTIVE_ITEMS_ATTRIBUTE = 'clai2.fleet.active'

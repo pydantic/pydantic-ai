@@ -114,3 +114,32 @@ async def test_failing_monty_rule_fails_closed_or_open(mode: str, runs: int, out
 )
 def test_command_globs_match_per_segment(pattern: str, command: str, expected: bool) -> None:
     assert command_matches(pattern, command) is expected
+
+
+async def test_shell_calls_from_run_code_go_through_the_rules() -> None:
+    """Code mode runs nested tool calls through the agent's capability hooks, so writing code routes nowhere."""
+    from pydantic_ai_harness.code_mode import CodeMode
+
+    code = "await shell(command='rm -rf /etc/important')"
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    ran: list[str] = []
+    recorded: list[PolicyDecision] = []
+    rule = _rule(mode='enforce', match={'tool': 'shell'}, monty=MONTY_RULE)
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[CodeMode(), PolicyRules(policy=lambda: Policy(rules=[rule]), record=recorded.append)],
+    )
+
+    @agent.tool_plain
+    def shell(command: str) -> str:
+        ran.append(command)
+        return 'ok'
+
+    await agent.run('clean up')
+    assert ran == []
+    assert [(d.rule, d.outcome, d.tool_name) for d in recorded] == [('no-force-push', 'denied', 'shell')]

@@ -6,7 +6,6 @@ A server that fails to connect is marked `error` and left out, so it cannot fail
 `stop` releases the connection and disables the server.
 """
 
-import fnmatch
 import time
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -20,7 +19,6 @@ from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHt
 from pydantic_ai import RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
-from pydantic_ai_harness.policy import PolicyDecision
 from pydantic_clai2 import policy_state
 from pydantic_clai2.mcp._settings import Server, Servers, SSEServer, StdioServer, http_client, missing, resolve
 from pydantic_clai2.mcp._store import MCPStore
@@ -71,7 +69,6 @@ class MCPServers:
         self._overrides: dict[tuple[Source, Path | None, str], bool] = {}
         """Session-only enable state for servers whose file `/mcp` does not write."""
         self._connections: dict[str, _Connection] = {}
-        self._policy_recorded: set[tuple[str, bool]] = set()
 
     def entries(self) -> list[ServerEntry]:
         """User servers, then plugin settings, then trusted project files; the first name wins."""
@@ -211,36 +208,19 @@ class MCPServers:
             connection = await self._connection(entry)
             if connection.stack is None and await self._open(entry.name, connection):
                 continue  # A server that cannot connect is marked `error`, not allowed to fail the prompt.
+            policy_state.mark_gated(connection.toolset)
             toolsets.append(connection.toolset.prefixed(entry.name))
         return CombinedToolset(toolsets) if toolsets else None
 
     def _allowed_by_policy(self, entry: ServerEntry) -> bool:
         """Hackathon: apply the organization's MCP allowlist to the user's and the project's servers.
 
-        Servers Logfire pushes never come through here. A server outside the list is recorded once per
-        session; in `enforce` mode it is not connected.
+        Servers Logfire pushes never come through here. In `enforce` mode a server outside the list is not
+        connected; either way it is recorded once per session.
         """
-        source = policy_state.current()
-        policy = source.policy() if source is not None else None
-        if source is None or policy is None or policy.mcp is None:
-            return True
         url = str(getattr(entry.server, 'url', '') or '')
-        if any(entry.name == allowed or (url and fnmatch.fnmatchcase(url, allowed)) for allowed in policy.mcp.allow):
-            return True
-        enforce = policy.mcp.mode == 'enforce'
-        if (entry.name, enforce) not in self._policy_recorded:
-            self._policy_recorded.add((entry.name, enforce))
-            source.record(
-                PolicyDecision(
-                    rule='mcp-allowlist',
-                    mode=policy.mcp.mode,
-                    action='deny',
-                    outcome='denied' if enforce else 'would_deny',
-                    tool_name=f'mcp:{entry.name}',
-                    subject=(url or getattr(entry.server, 'command', '') or entry.name)[:500],
-                )
-            )
-        return not enforce
+        subject = url or str(getattr(entry.server, 'command', '') or '') or entry.name
+        return policy_state.mcp_allowed(entry.name, url, subject=subject)
 
     async def list_tools(self, name: str) -> list[str]:
         """Connect if needed and list the server's prefixed tool names."""

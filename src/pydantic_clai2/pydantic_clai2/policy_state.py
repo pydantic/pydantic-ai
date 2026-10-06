@@ -5,6 +5,8 @@ and the plugin loader (what may be disabled) act on it too. They read it here; t
 installs the reader when it loads and removes it when it unloads, so without that plugin nothing is gated.
 """
 
+import fnmatch
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -43,3 +45,40 @@ def locked(key: str) -> bool:
 
 
 LOCKED_MESSAGE = 'locked by your organization'
+
+_gated: 'weakref.WeakSet[object]' = weakref.WeakSet()
+_recorded: set[tuple[str, bool]] = set()
+
+
+def mark_gated(toolset: object) -> None:
+    """Note an MCP toolset the allowlist already handled (or that Logfire pushed), so it is not checked twice."""
+    _gated.add(toolset)
+
+
+def is_gated(toolset: object) -> bool:
+    """Whether `mark_gated` already saw this toolset."""
+    return toolset in _gated
+
+
+def mcp_allowed(name: str, url: str, *, subject: str) -> bool:
+    """Whether the MCP allowlist lets this server be used; a server outside it is recorded once per session."""
+    source = _source
+    policy = source.policy() if source is not None else None
+    if source is None or policy is None or policy.mcp is None:
+        return True
+    if any(name == allowed or (url and fnmatch.fnmatchcase(url, allowed)) for allowed in policy.mcp.allow):
+        return True
+    enforce = policy.mcp.mode == 'enforce'
+    if (name, enforce) not in _recorded:
+        _recorded.add((name, enforce))
+        source.record(
+            PolicyDecision(
+                rule='mcp-allowlist',
+                mode=policy.mcp.mode,
+                action='deny',
+                outcome='denied' if enforce else 'would_deny',
+                tool_name=f'mcp:{name}',
+                subject=subject[:500],
+            )
+        )
+    return not enforce
