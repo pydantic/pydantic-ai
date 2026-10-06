@@ -4,7 +4,7 @@ import io
 import re
 from collections.abc import Callable, Sequence
 from functools import partial
-from typing import IO
+from typing import IO, Literal
 
 import anyio
 from rich.console import Console, RenderableType
@@ -216,10 +216,24 @@ class MarkdownPipeline:
                 self._renderer.render(event)
 
 
-def render_markdown(*, source: str, width: int, thinking: bool) -> str:
-    """Render a whole part as the stream did, for a width or theme it was not streamed at."""
+ColorSystemName = Literal['standard', '256', 'truecolor', 'windows']
+
+
+def color_system(console: Console) -> ColorSystemName | None:
+    """The colour system `console` renders with; `None` when it renders no colour."""
+    name = console.color_system
+    return name if name in ('standard', '256', 'truecolor', 'windows') else None
+
+
+def render_markdown(*, source: str, width: int, thinking: bool, colors: ColorSystemName | None) -> str:
+    """Render a whole part as the stream did, for a width or theme it was not streamed at.
+
+    `colors` must be the stream console's colour system. Rich caches a style's ANSI codes on the
+    shared style instance for the first colour system that renders it, so a replay in another
+    system would change what the main console emits afterwards.
+    """
     output = io.StringIO()
-    console = Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=width)
+    console = Console(file=io.StringIO(), force_terminal=True, color_system=colors, width=width)
     if thinking and source:
         output.write(thinking_heading(console))
     markdown = MarkdownPipeline(output=LinkOutput(output=output), console=console, thinking=thinking, hyperlinks=True)
@@ -346,7 +360,10 @@ class StreamRenderer:
     def _start_part(self) -> None:
         surface = self.console.file
         self._block = (
-            surface.markdown(render=partial(render_markdown, thinking=self._thinking), width=self.console.width)
+            surface.markdown(
+                render=partial(render_markdown, thinking=self._thinking, colors=color_system(self.console)),
+                width=self.console.width,
+            )
             if isinstance(surface, PromptSurface)
             else None
         )

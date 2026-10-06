@@ -221,7 +221,7 @@ def test_markdown_replay_caps_hyperlink_metadata(length: int, width: int) -> Non
 
     url = 'https://example.com/' + 'x' * (length - len('https://example.com/'))
     label = 'label ' * 40
-    rendered = render_markdown(source='[' + label + '](' + url + ')', width=width, thinking=False)
+    rendered = render_markdown(source='[' + label + '](' + url + ')', width=width, thinking=False, colors='truecolor')
     text = Text.from_ansi(rendered)
     console = Console(file=io.StringIO())
     assert text.get_style_at_offset(console, text.plain.index('label')).link == (url if length <= 2048 else None)
