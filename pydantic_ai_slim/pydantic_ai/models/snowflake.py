@@ -236,6 +236,8 @@ class SnowflakeModel(OpenAIChatModel):
         for choice in response.choices:
             if not choice.finish_reason:
                 choice.finish_reason = self._missing_finish_reason(choice)
+        # The SDK's lenient parse accepts the stub's invalid `type`, which warns when serialized.
+        # Suppress those warnings before removing the stub and strictly revalidating the response.
         return _SnowflakeChatCompletion.model_validate(_drop_empty_moderation_stub(response.model_dump(warnings=False)))
 
     @override
@@ -284,6 +286,8 @@ class SnowflakeStreamedResponse(OpenAIStreamedResponse):
     @override
     async def _validate_response(self) -> AsyncIterable[chat.ChatCompletionChunk]:
         async for chunk in self._response:
+            # The SDK's lenient parse accepts the stub's invalid `type`, which warns when serialized.
+            # Suppress those warnings before removing the stub and strictly revalidating the chunk.
             yield _SnowflakeChatCompletionChunk.model_validate(
                 _drop_empty_moderation_stub(chunk.model_dump(warnings=False))
             )

@@ -415,7 +415,10 @@ _EMPTY_MODERATION_STUB: dict[str, Any] = {
 
 
 async def test_snowflake_response_with_empty_moderation_stub(allow_model_requests: None):
-    """Cortex sends an empty `moderation` placeholder on every response, which the strict validation rejects."""
+    """Cortex's empty moderation placeholder must not fail strict validation.
+
+    Existing recordings omit moderation, so construct the reported stub as a leniently parsed SDK response.
+    """
     completion = chat.ChatCompletion.model_construct(
         id='chatcmpl-123',
         choices=[
@@ -443,7 +446,10 @@ async def test_snowflake_response_with_empty_moderation_stub(allow_model_request
 @pytest.mark.parametrize('stream', [False, True])
 @pytest.mark.parametrize('extra_stub', [False, True])
 async def test_snowflake_response_keeps_valid_moderation(allow_model_requests: None, stream: bool, extra_stub: bool):
-    """Real moderation results must still reach `provider_details`, including when extra keys contain placeholders."""
+    """Real moderation results must still reach `provider_details`, including when extra keys contain placeholders.
+
+    Existing recordings omit moderation, so use constructed SDK responses to cover these valid combinations.
+    """
     moderation: dict[str, Any] = {
         'input': {'type': 'moderation_results', 'model': 'omni-moderation-latest', 'results': []},
         'output': {'type': 'moderation_results', 'model': 'omni-moderation-latest', 'results': []},
@@ -493,6 +499,11 @@ async def test_snowflake_response_keeps_valid_moderation(allow_model_requests: N
 
 
 async def test_snowflake_response_still_rejects_other_malformed_fields(allow_model_requests: None):
+    """Dropping the moderation stub must not hide malformed response fields.
+
+    The bogus `finish_reason` is synthesized, so use a constructed SDK response rather than a recording.
+    """
+
     completion = chat.ChatCompletion.model_construct(
         id='chatcmpl-123',
         choices=[
@@ -547,7 +558,10 @@ async def test_snowflake_response_still_rejects_other_malformed_fields(allow_mod
 async def test_snowflake_response_rejects_malformed_moderation_that_is_not_the_stub(
     allow_model_requests: None, stream: bool, moderation: dict[str, Any]
 ):
-    """Only the complete Cortex placeholder is dropped; other malformed moderation is still rejected."""
+    """Only the complete Cortex placeholder is dropped; other malformed moderation is still rejected.
+
+    Existing recordings omit moderation, so construct synthetic malformed variants to pin strict validation.
+    """
     if stream:
         chunk = chat.ChatCompletionChunk.model_construct(
             id='chatcmpl-123',
@@ -587,6 +601,11 @@ async def test_snowflake_response_rejects_malformed_moderation_that_is_not_the_s
 
 
 async def test_snowflake_stream_with_empty_moderation_stub(allow_model_requests: None):
+    """Cortex's empty moderation placeholder must not fail streamed validation.
+
+    Existing recordings omit moderation, so construct a chunk containing the reported stub.
+    """
+
     stream = [
         chat.ChatCompletionChunk.model_construct(
             id='chatcmpl-123',
