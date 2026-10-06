@@ -5,12 +5,12 @@ import pickle
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from enum import Enum, IntEnum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, NotRequired, cast
 
 import httpx2
 import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -75,7 +75,7 @@ pytestmark = [
 
 # Opted in, and the cassettes were recorded with the described options in the request, so Jev answered
 # knowing what each verdict means.
-class Verdict(UseEnumMemberDocstrings, str, Enum):
+class Verdict(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How to handle this command."""
 
     run = 'run'
@@ -93,7 +93,7 @@ class Handling(BaseModel):
     irreversible: bool = Field(description='Would running this destroy data or leak secrets?')
 
 
-class Colour(str, Enum):
+class Colour(str, Enum):  # noqa: UP042
     red = 'red'
     blue = 'blue'
 
@@ -449,7 +449,7 @@ class WithOutOfOrderRubric(BaseModel):
     level: OutOfOrder
 
 
-class OnlyOne(str, Enum):
+class OnlyOne(str, Enum):  # noqa: UP042
     only = 'only'
 
 
@@ -1997,7 +1997,7 @@ class Customer(BaseModel):
 
 
 # Opted in, and the cassette was recorded with the description on the `billing` option.
-class Area(UseEnumMemberDocstrings, str, Enum):
+class Area(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     billing = 'billing'
     """Money already owed, charged or refunded."""
     account = 'account'

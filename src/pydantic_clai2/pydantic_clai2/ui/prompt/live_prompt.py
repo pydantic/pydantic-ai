@@ -20,13 +20,14 @@ from termflow.tui.layout import truncate
 from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.image_input import ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import SCROLL_KEYS, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -180,6 +181,10 @@ class LivePrompt:
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
+        if key in SCROLL_KEYS:
+            # Leave the draft and the notice alone.
+            self.output.scroll_key(key, data)
+            return
         self.notice = ''
         if key != 'escape':
             self._last_escape = None
@@ -310,6 +315,7 @@ class LivePrompt:
         command = expand_bare_command(text)
         if target is not None and command == target.text:
             return
+        self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         if self.run_now is not None and self.run_now(command):
@@ -362,6 +368,8 @@ class LivePrompt:
             self.accept()
             return
         target, self._editing = self._editing, None
+        # Steered text joins the running turn, so show its response, as submitting does.
+        self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         self.buffer.history_index = None
@@ -379,6 +387,7 @@ class LivePrompt:
         if not isinstance(head, _Queued) or not self._steered(head.text):
             telemetry.record('prompt steer', steered=False, source='queue')
             return
+        self.output.view.follow()
         self._discard(head)
         telemetry.record('prompt steer', steered=True, source='queue')
 
@@ -571,7 +580,10 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                self.paint()
+                if self._suspended:
+                    self.output.refresh()
+                else:
+                    self.paint()
                 # A spinner faster than the status poll gets a repaint per frame, but only while it shows.
                 await anyio.sleep(min(0.1, self.spinner().interval) if self.interrupts.active else 0.1)
 
@@ -585,7 +597,7 @@ class LivePrompt:
         self._opened = True
         self.console.file = self.output
         try:
-            with resize_notifications(resized):
+            with resize_notifications(resized), holding_output(self.output.held):
                 self.paint()
                 self.keys.start()
                 async with anyio.create_task_group() as tasks:
@@ -601,7 +613,7 @@ class LivePrompt:
             self.keys.stop()
             self._completion_worker.close()
             self.console.file = original
-            self.output.release()
+            self.output.restore()
 
 
 def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:

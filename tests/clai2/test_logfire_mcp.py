@@ -328,7 +328,7 @@ async def test_a_chosen_saved_key_gives_an_agent_run_the_logfire_tools(
     shell = Shell(tmp_path, {'key': {'name': 'SHARED'}, 'read_only': False})
     await shell.loader.enable('logfire_mcp')
     agent = Agent(TestModel(), deps_type=type(None), capabilities=shell.loader.capabilities())
-    assert (await agent.run('Query Logfire.')).output == '{"query_run":"rows"}'
+    assert (await agent.run('Query Logfire.')).output == '{"logfire_query_run":"rows"}'
     assert connected == ['shared-secret']
     api_keys.delete_key(name='SHARED')
     with pytest.raises(UserError, match=r'Saved API key SHARED is missing\. Run /plugins configure logfire_mcp'):
@@ -343,7 +343,7 @@ async def test_an_environment_key_gives_an_agent_run_the_logfire_tools(
     shell = Shell(tmp_path, {'read_only': False})
     await shell.loader.enable('logfire_mcp')
     agent = Agent(TestModel(), deps_type=type(None), capabilities=shell.loader.capabilities())
-    assert (await agent.run('Query Logfire.')).output == '{"query_run":"rows"}'
+    assert (await agent.run('Query Logfire.')).output == '{"logfire_query_run":"rows"}'
     # `None` lets `LogfireMCP` read the environment itself.
     assert connected == [None]
 

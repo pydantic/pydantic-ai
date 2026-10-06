@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from .test_engine_definition import launch, proxy_env, requires_safe_path
+from .test_engine_definition import launch, proxy_env
 
 # Configure is real; only outbound HTTP is replaced. The CLI boundary records the
 # resulting public configuration instead of making a model request.
@@ -68,7 +68,6 @@ exec(compile(sys.argv.pop(1), '<launcher>', 'exec'))
 """
 
 
-@requires_safe_path
 @pytest.mark.parametrize('token', ['', 'test-maintainer-token'])
 @pytest.mark.parametrize('exit_code', [0, 7])
 def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: str, exit_code: int) -> None:

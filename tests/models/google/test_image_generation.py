@@ -8,7 +8,7 @@ capability runs its local fallback instead.
 from __future__ import annotations as _annotations
 
 import re
-from datetime import timezone
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -155,7 +155,7 @@ async def test_google_image_generation(allow_model_requests: None, gemini_api_ke
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -200,7 +200,7 @@ async def test_google_image_generation(allow_model_requests: None, gemini_api_ke
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -267,7 +267,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, gemini
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -333,7 +333,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -438,7 +438,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -477,7 +477,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -558,7 +558,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
