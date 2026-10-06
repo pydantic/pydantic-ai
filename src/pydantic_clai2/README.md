@@ -62,7 +62,7 @@ default. Plugin-provided rendering, including interactive questions, is unchange
 
 To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
 one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
-tool or other output follows. Grouped mode shows only names and counts, so it ignores
+tool or other output follows. The `grouped` style shows only names and counts, so it ignores
 `display.tool_output` and `display.tool_arg_chars`. File edits and writes still print their summary and diff,
 which ends the line. `/set` previews both styles when you pick one. The default is `detailed`, one line per call.
 
@@ -1648,7 +1648,7 @@ of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is r
 as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
 In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
 mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
-Grouped mode ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
+The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
 `edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
 The setting applies to the next turn.
 

@@ -17,11 +17,11 @@ from pydantic_clai2.ui.rendering.tool_output import terminal_text
 if TYPE_CHECKING:
     from pydantic_clai2.ui.rendering._rendering import ColorSystemName
 
-Run = tuple[str, int]
+_Streak = tuple[str, int]
 """A tool name and how many consecutive calls it received."""
 
 
-def _line(runs: Sequence[Run]) -> Text:
+def _line(runs: Sequence[_Streak]) -> Text:
     text = Text('● ', style=theme.color(theme.MUTED))
     for index, (name, count) in enumerate(runs):
         if index:
@@ -31,7 +31,7 @@ def _line(runs: Sequence[Run]) -> Text:
     return text
 
 
-def _count(rows: list[list[Run]], name: str, *, width: int) -> None:
+def _count(rows: list[list[_Streak]], name: str, *, width: int) -> None:
     """Count one call into the last row, or start a row when a new tool would not fit, so a redraw never wraps.
 
     A new tool is measured with a three-digit count, leaving its count room to grow in place.
@@ -58,7 +58,7 @@ class ToolCallGroup:
         """Count into `console`, styled in `colors`, which must be `console`'s colour system."""
         self.console = console
         self.colors: ColorSystemName | None = colors
-        self._rows: list[list[Run]] = [[]]
+        self._rows: list[list[_Streak]] = [[]]
         self._block: MarkdownBlock | None = None
 
     def add(self, name: str) -> None:
@@ -88,7 +88,7 @@ class ToolCallGroup:
             self._rows = [[]]
             self._block = None
 
-    def _end_line(self, row: list[Run]) -> None:
+    def _end_line(self, row: list[_Streak]) -> None:
         """A terminal already shows the line, so only move past it."""
         self._write('\n' if self.console.is_terminal else self._ansi(row, width=self.console.width))
 
@@ -97,16 +97,23 @@ class ToolCallGroup:
         output.write(text)
         output.flush()
 
-    def _ansi(self, row: list[Run], *, width: int, end: str = '\n') -> str:
+    def _ansi(self, row: list[_Streak], *, width: int, end: str = '\n') -> str:
         """Style on a console of our own: a replay can run while the stream's console is mid-print."""
         output = io.StringIO()
         console = Console(file=output, force_terminal=True, color_system=self.colors, width=width)
-        console.print(_line(row), end=end, overflow='ellipsis', no_wrap=True)
+        line = _line(row)
+        if len(row) == 1 and line.cell_len > width:
+            # A tool alone on its row is cut in its name, keeping the count.
+            name, count = row[0]
+            short = Text(name)
+            short.truncate(width - _line([('', count)]).cell_len, overflow='ellipsis')
+            line = _line([(short.plain, count)])
+        console.print(line, end=end, overflow='ellipsis', no_wrap=True)
         return output.getvalue()
 
     def _render(self, *, source: str, width: int) -> str:
         """The whole group again, for a width or theme it was not drawn at; `source` holds one name per call."""
-        rows: list[list[Run]] = [[]]
+        rows: list[list[_Streak]] = [[]]
         for name in source.splitlines():
             if name:
                 _count(rows, name, width=width)

@@ -138,6 +138,15 @@ def test_a_new_tool_leaves_room_for_its_count_to_grow() -> None:
     assert output.getvalue() == '● shell 2\n● search 100\n\n'
 
 
+def test_a_tool_too_wide_for_its_row_keeps_its_count() -> None:
+    output = io.StringIO()
+    group = ToolCallGroup(Console(file=output, width=24), colors=None)
+    for _ in range(12):
+        group.add('mcp_github__list_review_comments')
+    group.close()
+    assert output.getvalue() == '● mcp_github__list_r… 12\n\n'
+
+
 async def test_tool_part_starts_and_results_do_not_end_or_count() -> None:
     output = io.StringIO()
     renderer = grouped(output)
