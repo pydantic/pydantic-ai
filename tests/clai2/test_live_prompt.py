@@ -21,7 +21,7 @@ from rich.console import Console
 from rich.text import Text
 from termflow.tui.completion import Completion
 
-from pydantic_ai import PartStartEvent, TextPart, ThinkingPart
+from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
 from pydantic_ai.messages import BinaryContent
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import Command, Commands
@@ -202,6 +202,46 @@ async def test_interrupt_targets_work_and_preserves_draft(key: str) -> None:
             await done.wait()
         assert not any('Working' in row for row in live.frame())
         assert live.buffer.text == 'retained draft'
+
+
+async def test_ctrl_l_clears_the_screen_but_keeps_the_draft_and_queue() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, pipe, _):
+        live.console.print('earlier output')
+        live.submit('queued')
+        live.buffer.replace('draft')
+        live.paint()
+        assert 'earlier output' in terminal.lines()
+        pipe.send_text('\x0c!\r')
+        assert await live.read() == 'queued'
+        assert await live.read() == 'draft!'
+        live.output.refresh()
+        assert 'earlier output' not in terminal.lines()
+        assert not live.output.transcript.printed(width=80)
+
+
+async def test_ctrl_l_during_a_turn_keeps_the_streaming_response() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, _, _):
+        started, release = anyio.Event(), anyio.Event()
+
+        async def operation() -> None:
+            renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+            await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content='first half')))
+            started.set()
+            await release.wait()
+            await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' second half')))
+            await renderer.finish()
+
+        live.console.print('earlier output')
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.interrupts.run, operation())
+            await started.wait()
+            live.feed('ctrl-l')
+            release.set()
+        live.output.refresh()
+        assert 'earlier output' not in terminal.lines()
+        assert terminal.lines()[0] == 'first half second half'
 
 
 async def test_closed_input_reports_eof() -> None:

@@ -255,9 +255,12 @@ of your draft or submitted message. The editor sits below a Termflow live transc
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Hold Shift or Option to select
+bottom or submitting follows new output again. Ctrl+L clears the screen, as in
+Claude Code: the transcript is forgotten, but the conversation, your draft, and
+queued messages stay. During a turn, the response still streaming keeps showing.
+Use `/clear` to start a new conversation instead. Hold Shift or Option to select
 text with the mouse, depending on your terminal. On exit, CLAI prints the retained
-transcript into native terminal scrollback. Typing updates the draft row; a
+transcript into native terminal scrollback, without output cleared by Ctrl+L. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
