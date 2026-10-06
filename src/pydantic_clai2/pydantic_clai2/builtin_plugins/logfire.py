@@ -324,19 +324,19 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         pending = f' · {self._pending} awaiting your OK' if self._pending else ''
         return f'Logfire config v{snapshot.version}{pending}'
 
-    def _link(self) -> str | None:
-        """This agent's page in Logfire, when setup recorded the project."""
+    def _link(self, anchor: str = '') -> str | None:
+        """This agent's configuration page in Logfire (Behavior, where policy lives too), when setup recorded the project."""
         if not self.settings.project or self.fleet is None:
             return None
         base = (self.settings.base_url or 'https://logfire-us.pydantic.dev').rstrip('/')
-        return f'{base}/{self.settings.project}/agents/{self.settings.agent_control_name}'
+        return f'{base}/{self.settings.project}/agents/{self.settings.agent_control_name}/configure/edit{anchor}'
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         """A policy block gets a panel for the user; the model already has the plain message."""
         if isinstance(event, FunctionToolResultEvent) and isinstance(event.part, ToolReturnPart):
             content = event.part.content
             if isinstance(content, str) and content.startswith(BLOCKED_PREFIX):
-                return blocked_panel(content, link=self._link())
+                return blocked_panel(content, link=self._link('#policy'))
         return None
 
     async def on_turn_start(self, event: TurnStart) -> None:

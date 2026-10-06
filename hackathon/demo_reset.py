@@ -61,8 +61,9 @@ def _value(config: VariableConfig, label: str = 'production') -> Any:
 def curated_agent(current: dict[str, Any] | None) -> dict[str, Any]:
     """The demo's company config, keeping production's policy rules (observe, except Monty rules)."""
     current = dict(current or {})
-    policy = dict(current.get('policy') or {})
-    rules = [{**rule, 'mode': 'enforce' if rule.get('monty') else 'observe'} for rule in policy.get('rules') or []]
+    policy: dict[str, Any] = dict(current.get('policy') or {})
+    existing: list[dict[str, Any]] = list(policy.get('rules') or [])
+    rules = [{**rule, 'mode': 'enforce' if rule.get('monty') else 'observe'} for rule in existing]
     if rules or policy:
         policy['rules'] = rules
     value: dict[str, Any] = {'instructions': [RUN_TESTS_FIRST], 'skills': [PR_SHEPHERD]}
@@ -143,21 +144,38 @@ def main() -> None:
     for name, target in targets.items():
         config = configs[name]
         assert config is not None
-        latest = getattr(config.latest_version, 'version', 0) or 0
-        labels: dict[str, LabeledValue | LabelRef] = {
-            label: LabelRef(ref='production') for label in config.labels if label != 'production'
-        }
-        labels['production'] = LabeledValue(version=latest + 1, serialized_value=json.dumps(target))
-        provider.update_variable(
-            name, config.model_copy(update={'labels': labels, 'overrides': [], 'json_schema': None})
-        )
-        provider.refresh(force=True)
-        updated = provider.get_variable_config(name)
-        assert updated is not None
-        labels = dict(updated.labels)
+        latest = config.latest_version
+        latest_value = json.loads(latest.serialized_value) if latest is not None else None
+        overrides: list[Any] = []
+        if latest_value != target:
+            # Write only what differs: the public PUT may not create a version for content an older
+            # version already has, so the result is checked below rather than assumed.
+            labels: dict[str, LabeledValue | LabelRef] = dict(config.labels)
+            labels['production'] = LabeledValue(
+                version=(getattr(latest, 'version', 0) or 0) + 1, serialized_value=json.dumps(target)
+            )
+            provider.update_variable(
+                name, config.model_copy(update={'labels': labels, 'overrides': overrides, 'json_schema': None})
+            )
+            provider.refresh(force=True)
+            config = provider.get_variable_config(name)
+            assert config is not None
+            latest = config.latest_version
+            if latest is None or json.loads(latest.serialized_value) != target:
+                print(
+                    f'{name}: Logfire did not make a new latest version with this content. Create it in the UI '
+                    '(createVersion) and re-run; production was left as it was.'
+                )
+                continue
+        # Point production at latest explicitly (the public API's equivalent of the UI's
+        # `assignLabel production {target_type: 'latest'}`), and send other labels to production.
+        labels = {label: LabelRef(ref='production') for label in config.labels if label != 'production'}
         labels['production'] = LabelRef(ref='latest')
-        provider.update_variable(name, updated.model_copy(update={'labels': labels, 'json_schema': None}))
-        print(f'{name}: production now follows latest (v{latest + 1} written)')
+        provider.update_variable(
+            name, config.model_copy(update={'labels': labels, 'overrides': overrides, 'json_schema': None})
+        )
+        version = getattr(latest, 'version', None)
+        print(f'{name}: production follows latest (v{version}); overrides cleared')
     provider.shutdown()
 
 
