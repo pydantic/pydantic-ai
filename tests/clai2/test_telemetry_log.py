@@ -137,6 +137,46 @@ async def test_handlers_the_application_configured_on_a_descendant_still_get_the
     assert text.endswith(_NOTICE.format(log))
 
 
+async def test_the_log_rotates_at_its_limit_keeping_one_previous_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / 'telemetry.log'
+    log.write_bytes(b'x' * 1_000_000)
+    with unconfigured_logging():
+        await _chat(tmp_path, monkeypatch, ['/fail'])
+    assert (tmp_path / 'telemetry.log.1').read_bytes() == b'x' * 1_000_000
+    assert 'Currently retrying' in log.read_text()
+    if os.name != 'nt':  # pragma: no branch
+        assert log.stat().st_mode & 0o777 == 0o600
+
+
+async def test_a_root_handler_added_during_the_session_still_gets_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Records keep propagating, so an application handler added on the root mid-session is not cut off."""
+    stream = io.StringIO()
+
+    class _Late(AbstractCapability[None]):
+        def get_commands(self, context: CommandContext) -> Sequence[Command]:
+            def attach(args: list[str]) -> str:
+                logging.getLogger().addHandler(logging.StreamHandler(stream))
+                return 'Attached.'
+
+            return [Command(name='attach', description='Add a root handler', handler=attach)]
+
+    inputs(monkeypatch, ['/attach', '/fail', '/exit'])
+    with unconfigured_logging():
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            plugins=[_Exports(), _Late()],
+            settings=Settings(model='test'),
+            console=Console(file=io.StringIO(), width=1000),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+    assert 'Currently retrying 1 failed export(s) (955 bytes)' in stream.getvalue()
+
+
 async def test_a_session_without_problems_creates_no_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with unconfigured_logging():
         text = await _chat(tmp_path, monkeypatch, [])

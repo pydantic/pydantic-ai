@@ -65,18 +65,16 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     handler.setLevel(logging.WARNING)
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
     handler.addFilter(_unhandled_below)
+    # `lastResort` only fires when no handler at all is on a record's path, so a handler on these loggers is enough;
+    # records still propagate, so a handler the application adds to the root later sees them too.
     loggers = [logger for name in _LOGGERS if not (logger := logging.getLogger(name)).hasHandlers()]
-    propagate = [logger.propagate for logger in loggers]
     for logger in loggers:
         logger.addHandler(handler)
-        # A record that still propagated would find no handler and reach `logging.lastResort` after all.
-        logger.propagate = False
     try:
         yield
     finally:
-        for logger, previous in zip(loggers, propagate):
+        for logger in loggers:
             logger.removeHandler(handler)
-            logger.propagate = previous
         handler.close()
         if handler.wrote:
             console.print(
