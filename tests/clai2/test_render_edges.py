@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 
 
 @dataclass(kw_only=True)
@@ -182,3 +183,68 @@ async def test_echo_prompt_idle_is_literal() -> None:
     await renderer.echo_prompt('[bold]first[/bold]\nsecond\tline\x07')
     await renderer.finish()
     assert output.getvalue() == '> [bold]first[/bold]\nsecond  line\\x07\n\n'
+
+
+@pytest.mark.parametrize('surface_output', [False, True])
+@pytest.mark.parametrize('thinking', [False, True])
+@pytest.mark.parametrize('pending_line', [False, True])
+@pytest.mark.parametrize('remainder', ['print(2)\n```\nAfter\n', '```\nAfter\n', ''])
+async def test_echo_prompt_preserves_fence(
+    surface_output: bool, thinking: bool, pending_line: bool, remainder: str
+) -> None:
+    """Continued fences keep their language, including when replayed at a new width."""
+    output = io.StringIO()
+    surface = PromptSurface(output=output, size=lambda: (60, 24)) if surface_output else None
+    renderer = StreamRenderer(Console(file=surface or output, force_terminal=True, width=60), stop_loading=lambda: None)
+    source = '```python\nprint(1)' + ('' if pending_line else '\n')
+    part = ThinkingPart(source) if thinking else TextPart(source)
+    await renderer.on_stream_event(PartStartEvent(index=7, part=part))
+    await renderer.echo_prompt('steer')
+    delta = ThinkingPartDelta(content_delta=remainder) if thinking else TextPartDelta(remainder)
+    await renderer.on_stream_event(PartDeltaEvent(index=7, delta=delta))
+    await renderer.on_stream_event(PartEndEvent(index=7, part=part))
+    await renderer.finish()
+    for width in (60, 45, 70, 45):
+        rendered = Text.from_ansi(
+            '\n'.join(row for item in surface.transcript.ids() for row in surface.transcript.rows(item, width=width))
+            if surface
+            else output.getvalue()
+        ).plain
+        assert rendered.count('python ') == (2 if 'print(2)' in remainder else 1)
+        assert rendered.count('print(1)') == 1
+        assert 'text ' not in rendered
+        assert '```' not in rendered
+        assert rendered.index('print(1)') < rendered.index('> steer')
+        if 'print(2)' in remainder:
+            assert rendered.count('print(2)') == 1
+            assert rendered.index('> steer') < rendered.index('print(2)') < rendered.index('After')
+        elif 'After' in remainder:
+            assert rendered.index('> steer') < rendered.index('After')
+
+
+@pytest.mark.parametrize('surface_output', [False, True])
+@pytest.mark.parametrize('thinking', [False, True])
+async def test_echo_prompt_preserves_list_numbering(surface_output: bool, thinking: bool) -> None:
+    """Repeated steering preserves automatic numbering in the stream and resize replay."""
+    output = io.StringIO()
+    surface = PromptSurface(output=output, size=lambda: (60, 24)) if surface_output else None
+    renderer = StreamRenderer(Console(file=surface or output, force_terminal=True, width=60), stop_loading=lambda: None)
+    part = ThinkingPart('1. first\n') if thinking else TextPart('1. first\n')
+    await renderer.on_stream_event(PartStartEvent(index=7, part=part))
+    for text in ('second', 'third'):
+        await renderer.echo_prompt(f'before {text}')
+        content = f'1. {text}\n'
+        delta = ThinkingPartDelta(content_delta=content) if thinking else TextPartDelta(content)
+        await renderer.on_stream_event(PartDeltaEvent(index=7, delta=delta))
+    await renderer.finish()
+    for width in (60, 45, 70, 45):
+        rendered = Text.from_ansi(
+            '\n'.join(row for item in surface.transcript.ids() for row in surface.transcript.rows(item, width=width))
+            if surface
+            else output.getvalue()
+        ).plain
+        assert rendered.count('1. first') == 1
+        assert rendered.count('2. second') == 1
+        assert rendered.count('3. third') == 1
+        assert rendered.index('1. first') < rendered.index('> before second') < rendered.index('2. second')
+        assert rendered.index('2. second') < rendered.index('> before third') < rendered.index('3. third')
