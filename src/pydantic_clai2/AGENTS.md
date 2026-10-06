@@ -411,21 +411,27 @@ History-changing plugins use `await conversation.commit_messages`, not the legac
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 
 The interactive editor owns its layout explicitly. Do not reintroduce a
-PromptSession renderer or mutate generated layout children. Transcript writes
-go directly to the scroll region, never through an erase/redraw of the editor.
-The hardware cursor stays hidden until release; the input cursor is a painted
-reverse-video cell. Keep terminal mutations in `PromptSurface`, and detach the
-key reader before a menu owns the screen. The remaining prompt-toolkit decoder
-preserves paste and modified keys not yet exposed by Termflow's `read_key`.
+PromptSession renderer. `PromptSurface` composes a termflow.live `ScreenBuffer`,
+`TranscriptView` draws its transcript region, and `render_diff` paints changed
+cells. Do not invent a parallel canvas. The hardware cursor stays hidden;
+the input cursor is a painted reverse-video cell. Keep terminal mutations in
+`PromptSurface`, and detach the key reader before a menu owns the screen.
+The prompt-toolkit decoder preserves paste, modified keys, and SGR mouse reports.
+PageUp/PageDown and wheel input scroll the transcript, not the draft.
 
-Physical resize blanks the viewport and defers output until size notifications
-have been quiet for 250 ms. Rebuild from `TranscriptBuffer`, not guessed old row
-coordinates or cursor reports. Never send erase-scrollback (CSI 3 J). Keep editor
-height changes separate from physical resize, preserve the draft, and close the
-resize output spool on both normal handoff and failure. `SIGWINCH` only marks the
-resize and schedules a paint; the signal handler must not perform terminal IO.
+Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
+reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
+anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
+Full-screen menus leave the live panel temporarily. Inline questions borrow it
+with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source
+for width/theme repaint; tool output keeps styled lines. On exit, `restore`
+prints retained output into native scrollback once, skipping startup output
+already printed there. Transcript memory is bounded, including Markdown parts.
+Reload rebinds the retained transcript and its nested classes in place after a
+successful shell rebuild, including migration from the pre-live Text-line buffer.
+The suspended `chat` coroutine still holds that transcript; do not only replace
+it on the new shell or mutate it before a rebuild that can fail.
 
-The `ask_user` picker is an inline exception to the full-screen menu convention.
-It borrows the released `PromptSurface` while the editor is suspended, retaining
-the shared transcript for resize replay. Keep its numbered choices and Enter
-toggles; do not reintroduce alternate-screen switching or Space-to-toggle.
+The `ask_user` picker borrows the released `PromptSurface` while the editor is
+suspended. Keep its numbered choices and Enter toggles; do not switch screens
+inside the picker or reintroduce Space-to-toggle.
