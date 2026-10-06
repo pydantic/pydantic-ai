@@ -30,6 +30,7 @@ __all__ = (
     'SUBCOMMANDS',
     'SignInMethod',
     'SignInRequired',
+    'Signing',
     'not_signed_in',
     'run_subcommand',
     'sign_in_command',
@@ -45,12 +46,35 @@ class SignInRequired(UserError):
     """A run needs a sign-in that only the user can start; the message says how."""
 
 
-class SignInMethod(Protocol):
-    """One service's sign-in. `signed_in` and `sign_out` read or write the credential store, so call them off the loop."""
+class Signing(Protocol):
+    """What the waiting screen needs: a name to show and the sign-in to wait on."""
 
     @property
     def service(self) -> str:
         """The service's name in messages, such as `Notion`."""
+        ...
+
+    async def sign_in(self, *, show: Callable[[str], object]) -> object:
+        """Sign in now, opening the browser. `show` displays what the user may need, such as a link and a code.
+
+        Each call replaces what the previous one showed, so a retried attempt never leaves a stale link up.
+        """
+        ...
+
+
+class SignInMethod(Protocol):
+    """One service's sign-in, a `Signing` that can also say whether it is signed in and sign out.
+
+    `signed_in` and `sign_out` read or write the credential store, so call them off the loop.
+    """
+
+    @property
+    def service(self) -> str:
+        """The service's name in messages, such as `Notion`."""
+        ...
+
+    async def sign_in(self, *, show: Callable[[str], object]) -> object:
+        """As `Signing.sign_in`."""
         ...
 
     @property
@@ -60,13 +84,6 @@ class SignInMethod(Protocol):
 
     def signed_in(self) -> bool | None:
         """Whether a sign-in is stored; `None` when the credential store cannot be read."""
-        ...
-
-    async def sign_in(self, *, show: Callable[[str], object]) -> object:
-        """Sign in now, opening the browser. `show` displays what the user may need, such as a link and a code.
-
-        Each call replaces what the previous one showed, so a retried attempt never leaves a stale link up.
-        """
         ...
 
     def sign_out(self) -> None:
@@ -81,13 +98,10 @@ def not_signed_in(method: SignInMethod) -> str:
 
 def status(method: SignInMethod) -> str:
     """Whether `method` is signed in, as one line. Reads the credential store; call it off the loop."""
-    match method.signed_in():
-        case True:
-            return f'Signed in to {method.service}.'
-        case False:
-            return not_signed_in(method)
-        case None:
-            return f'Could not tell whether {method.service} is signed in: the keyring could not be read.'
+    signed_in = method.signed_in()
+    if signed_in is None:
+        return f'Could not tell whether {method.service} is signed in: the keyring could not be read.'
+    return f'Signed in to {method.service}.' if signed_in else not_signed_in(method)
 
 
 async def warn_if_signed_out(method: SignInMethod, console: Console) -> bool:
@@ -157,7 +171,7 @@ _REDRAW = 'sign-in:changed'
 """A key no keyboard sends and no handler takes: termflow repaints after it, showing the new lines."""
 
 
-async def wait_for_sign_in(method: SignInMethod, runners: Runners | None = None) -> bool:
+async def wait_for_sign_in(method: Signing, runners: Runners | None = None) -> bool:
     """Run `method.sign_in` behind a waiting screen; whether it finished. Esc cancels it; its errors propagate.
 
     The screen closes by itself when the sign-in returns, and shows the latest text the sign-in passed to `show`.

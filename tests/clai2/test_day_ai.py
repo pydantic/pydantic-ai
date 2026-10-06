@@ -323,6 +323,9 @@ async def test_choosing_the_browser_when_already_signed_in_does_not_open_it(
     assert await shell.loader.configure('day_ai') == 'Saved Sign-in.'
     assert isinstance(await shell.client(), Client)
     assert SignIn.attempts == 0
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('automatic')])
+    assert await shell.loader.configure('day_ai') == 'Saved Sign-in.'
+    assert shell.saved() == {'auth': None, 'include_instructions': True}
     await shell.loader.close('exit')
 
 

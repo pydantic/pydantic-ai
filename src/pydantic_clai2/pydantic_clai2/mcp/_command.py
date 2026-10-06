@@ -8,9 +8,10 @@ from pathlib import Path
 from anyio import to_thread
 
 from pydantic_clai2.mcp._form import Editor, edit_form, edit_in_editor, install_form
-from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State, not_owned
+from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State, not_owned, sign_in
 from pydantic_clai2.mcp._settings import RemoteServer, references, target
 from pydantic_clai2.mcp._tokens import TokenStore
+from pydantic_clai2.plugins.sign_in import sign_in_now, sign_out_now
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
@@ -30,7 +31,7 @@ Servers
   /mcp status NAME               Details: target, env references, tools, last error
   /mcp tools NAME                Connect and list the tools the agent sees
   /mcp logs NAME [LINES]         Server stderr and lifecycle events (default 20 lines)
-  /mcp auth NAME [logout]        Sign in to an OAuth server again, or sign out
+  /mcp auth NAME [logout]        Sign in to an OAuth server in the browser, or sign out
   /mcp edit NAME                 Edit a saved server in the same form
   /mcp remove NAME               Stop and forget a saved server
   /mcp trust [status|accept|revoke]
@@ -162,7 +163,7 @@ class MCPCommand:
         state = TokenStore(entry.name).signed_in()
         status = {
             True: 'signed in',
-            False: 'not signed in; the browser opens on connect',
+            False: 'not signed in',
             None: 'unknown; the keyring could not be read',
         }[state]
         return [f'  oauth    {status} (/mcp auth {entry.name} [logout])']
@@ -219,16 +220,21 @@ class MCPCommand:
         return await methods[action](name)
 
     async def _auth(self, entry: ServerEntry, extra: list[str]) -> str:
-        server, name = entry.server, entry.name
-        if not isinstance(server, RemoteServer) or server.auth is None:
+        """Sign in again behind the waiting screen, then connect; or sign out."""
+        name = entry.name
+        method = sign_in(name, entry.server)
+        if method is None:
             raise ValueError(f'{name} does not use OAuth. Turn on OAuth sign-in with /mcp edit {name}.')
         if extra not in ([], ['logout']):
             raise ValueError('Usage: /mcp auth NAME [logout]')
         await self.servers.disconnect(name)
-        await to_thread.run_sync(TokenStore(name).forget)
         if extra:
-            return f'Signed out of {name}. Its next connection opens the browser to sign in.'
-        return await self.servers.start(name)
+            return await sign_out_now(method)
+        await to_thread.run_sync(method.sign_out)  # A fresh sign-in, also when the stored one still works.
+        message = await sign_in_now(method, self.runners)
+        if not await to_thread.run_sync(method.signed_in):
+            return message
+        return f'{message}\n{await self.servers.start(name)}'
 
     async def _logs(self, name: str, extra: list[str]) -> str:
         if extra and not extra[0].isdigit():

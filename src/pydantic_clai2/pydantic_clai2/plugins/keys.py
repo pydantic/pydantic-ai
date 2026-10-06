@@ -110,18 +110,11 @@ async def browser_sign_in(session: PKCESignIn, runners: Runners) -> bool:
 
 
 class _ShowsLink:
-    """A `PKCESignIn` as a `SignInMethod` that always shows its link, not only when no browser opens."""
+    """A `PKCESignIn` for the waiting screen, always showing its link, not only when no browser opens."""
 
     def __init__(self, session: PKCESignIn) -> None:
         self.session = session
         self.service = session.service
-        self.setup = session.setup
-
-    def signed_in(self) -> bool:
-        return self.session.signed_in()
-
-    def sign_out(self) -> None:
-        self.session.sign_out()
 
     async def sign_in(self, *, show: Callable[[str], object]) -> None:
         flow = self.session.start()

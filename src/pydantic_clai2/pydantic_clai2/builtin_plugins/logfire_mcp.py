@@ -4,6 +4,8 @@ The built-in `logfire_mcp` plugin: harness `LogfireMCP`, a settings menu, and ke
 
 Plugin settings are plaintext SQLite, so they hold only the name of a `/keys` entry plus `LogfireMCP`'s
 non-secret options, all edited in the menu that `/plugins configure logfire_mcp` opens.
+
+The browser sign-in runs only from `/logfire_mcp login`; see `pydantic_clai2.plugins.sign_in`.
 """
 
 import asyncio
@@ -26,14 +28,14 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_URL, LogfireMCP
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
-from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, Announce, DeviceAuth, SignInError, forget, status
+from pydantic_clai2.logfire_oauth import DeviceAuth, LogfireSignIn, forget, status
 from pydantic_clai2.mcp import http_client
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins.sign_in import SUBCOMMANDS, run_subcommand, warn_if_signed_out
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 KEY_NAME = 'LOGFIRE_API_KEY'
 """The conventional `/keys` label, matching the variable `LogfireMCP` reads, so other tools can share one key."""
@@ -76,14 +78,15 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
 
     def get_commands(self) -> Sequence[Command]:
         async def command(args: list[str]) -> str:
-            return await _command(args, settings=self.settings, announce=self._announce)
+            return await _command(args, settings=self.settings)
 
         return (
             Command(
                 name='logfire_mcp',
-                description='Sign in to Logfire through the browser, or forget that sign-in (/logfire_mcp login|logout).',
+                description='Sign in to Logfire through the browser, sign out, or show the sign-in '
+                '(/logfire_mcp login|logout|status).',
                 handler=command,
-                complete=lambda _: ('login', 'logout'),
+                complete=lambda args: SUBCOMMANDS if len(args) <= 1 else (),
             ),
         )
 
@@ -93,8 +96,10 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
     async def on_session_start(self, event: SessionStart) -> None:
         # A worker thread: `/keys` takes a lock another CLAI process can hold, and the keyring can block.
         self.capability, missing = await anyio.to_thread.run_sync(
-            partial(_capability, settings=self.settings, announce=self._announce), abandon_on_cancel=True
+            partial(_capability, settings=self.settings), abandon_on_cancel=True
         )
+        if self.capability.client is not None:
+            await warn_if_signed_out(_sign_in(self.settings), self.host.console)
         if missing is not None:
             # Loading anyway keeps the settings menu available; each run fails closed until the key is saved.
             self.host.console.print(
@@ -105,18 +110,22 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
 
     async def _for_run(self, ctx: RunContext[None]) -> LogfireMCP[None] | None:
         capability = self.capability
+        if capability is not None and capability.client is not None:
+            # Browser sign-in: no tools until `/logfire_mcp login`, which applies to the next prompt.
+            signed_in = await anyio.to_thread.run_sync(_sign_in(self.settings).signed_in, abandon_on_cancel=True)
+            return capability if signed_in else None
         if capability is None or not callable(capability.auth):
             return capability
         # Resolved here, not by `LogfireMCP`: a run would not set up its per-run toolset nested in this factory's.
         token = await anyio.to_thread.run_sync(capability.auth, ctx, abandon_on_cancel=True)
         return replace(capability, auth=token)
 
-    def _announce(self, line: str) -> None:
-        # Links, codes, and notices can carry text from a self-hosted server, so terminal controls are made inert.
-        self.host.console.print(terminal_text(line), markup=False, highlight=False)
+
+def _sign_in(settings: LogfireMCPSettings) -> LogfireSignIn:
+    return LogfireSignIn(resource=settings.url, read_only=settings.read_only)
 
 
-def _capability(*, settings: LogfireMCPSettings, announce: Announce) -> tuple[LogfireMCP[None], str | None]:
+def _capability(*, settings: LogfireMCPSettings) -> tuple[LogfireMCP[None], str | None]:
     """The first of: chosen key, `LOGFIRE_API_KEY` env, `/keys` `LOGFIRE_API_KEY`, then browser sign-in.
 
     Blocking; returns the name of the `/keys` entry the capability needs when it is missing.
@@ -137,27 +146,21 @@ def _capability(*, settings: LogfireMCPSettings, announce: Announce) -> tuple[Lo
         return build(), None
     saved = load_keys()
     if settings.key is None and KEY_NAME not in saved and settings.oauth:
-        return build(client=_oauth_client(settings=settings, announce=announce)), None
+        return build(client=_oauth_client(settings=settings)), None
     # Resolved on every run, so saving the key in /keys connects without a reload.
     name = settings.key.name if settings.key is not None else KEY_NAME
     return build(auth=SavedKey(name=name, setup=SETUP)), None if name in saved else name
 
 
-def _oauth_client(*, settings: LogfireMCPSettings, announce: Announce) -> Client[StreamableHttpTransport]:
-    """Device-flow sign-in, started by the first connection that has no usable token."""
-    auth = DeviceAuth(resource=settings.url, read_only=settings.read_only, announce=announce)
+def _oauth_client(*, settings: LogfireMCPSettings) -> Client[StreamableHttpTransport]:
+    """The stored device-flow sign-in, refreshed as needed; `/logfire_mcp login` makes one."""
+    auth = DeviceAuth(resource=settings.url, read_only=settings.read_only)
     transport = StreamableHttpTransport(settings.url, auth=auth, httpx_client_factory=http_client)
-    return Client(transport, init_timeout=SIGN_IN_TIMEOUT)
+    return Client(transport)
 
 
-async def _command(args: list[str], *, settings: LogfireMCPSettings, announce: Announce) -> str:
-    """`/logfire_mcp login` signs in (or up) now; `/logfire_mcp logout` forgets every sign-in."""
-    if args == ['login']:
-        try:
-            await DeviceAuth(resource=settings.url, read_only=settings.read_only, announce=announce).sign_in()
-        except SignInError as exc:
-            raise ValueError(str(exc)) from None
-        return 'Logfire runs use this sign-in when no API key is chosen, set, or saved.'
+async def _command(args: list[str], *, settings: LogfireMCPSettings) -> str:
+    """`login` signs in (or up) now, `status` says whether runs can use it, `logout` forgets every sign-in."""
     if args == ['logout']:
         try:
             forgotten = await anyio.to_thread.run_sync(forget, abandon_on_cancel=True)
@@ -168,7 +171,12 @@ async def _command(args: list[str], *, settings: LogfireMCPSettings, announce: A
         if forgotten:
             return 'Forgot the Logfire browser sign-in. Keys in /keys are kept.'
         return 'There was no Logfire browser sign-in to forget.'
-    raise ValueError('Usage: /logfire_mcp login|logout (settings and keys: /plugins configure logfire_mcp)')
+    message = await run_subcommand(_sign_in(settings), args, RUNNERS)
+    if message is None:
+        raise ValueError(
+            'Usage: /logfire_mcp [login | logout | status] (settings and keys: /plugins configure logfire_mcp)'
+        )
+    return message
 
 
 _KEY = FieldRow(
@@ -213,9 +221,8 @@ _ROWS = (
         key='oauth',
         label='Browser sign-in',
         description=(
-            'Sign in, or sign up, through the browser when no API key is chosen, set, or saved. The first run, or '
-            '/logfire_mcp login, shows a link and a code that also work from another device. Tokens stay in the '
-            'OS keyring.'
+            'Sign in, or sign up, through the browser when no API key is chosen, set, or saved. /logfire_mcp login '
+            'shows a link and a code that also work from another device. Tokens stay in the OS keyring.'
         ),
         default='true',
         choices=('true', 'false'),
@@ -246,7 +253,7 @@ class LogfireMCPSource:
         signed = status(resource=settings.url, read_only=settings.read_only)
         notes = {
             'key': _key_note(settings.key),
-            'oauth': signed if signed == 'signed in' else f'{signed}: signs in on the next run',
+            'oauth': signed if signed == 'signed in' else f'{signed}: /logfire_mcp login signs in',
         }
         return [replace(row, note=notes.get(row.key, '')) for row in _ROWS]
 

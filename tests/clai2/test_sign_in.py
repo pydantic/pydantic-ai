@@ -1,5 +1,6 @@
 """The shared sign-in API: sign in only on request, behind a waiting screen; runs never open a browser."""
 
+import gc
 import io
 import socket
 import threading
@@ -96,7 +97,8 @@ async def test_sign_in_now_reports_success_failure_and_cancellation() -> None:
     assert waiting.state is False
 
 
-async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it() -> None:
+async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sign_in, 'menu_key', lambda: 'esc')
     service = Service(hang=True)
     seen: list[tuple[str, str]] = []
 
@@ -110,6 +112,7 @@ async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it() ->
         seen.append((read_key(), preview(item)))
         service.shown('Enter code: ABCD')
         seen.append((read_key(), preview(item)))
+        assert read_key() == 'esc', 'with nothing new, keys come from the terminal'
         return CLOSE  # Esc
 
     scripted = Runners(run_list=lambda menu: CLOSE, run_choice=run_choice, run_text=lambda widget: CLOSE)  # pyright: ignore[reportArgumentType]
@@ -180,6 +183,8 @@ async def oauth_server() -> AsyncIterator[str]:
             await anyio.sleep(0.01)
         yield f'{base}/mcp'
         running.should_exit = True
+    # Collect the stream the server leaves now, under this test's warning filter, not during a later test.
+    gc.collect()
 
 
 @pytest.fixture

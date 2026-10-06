@@ -280,7 +280,7 @@ class ServerForm:
             lines.append(self.status)
         lines += ['', 'Use $VAR in env or headers to read secrets from your environment.']
         if self.type != 'stdio':
-            lines.append('OAuth signs in through your browser when the server connects.')
+            lines.append('With OAuth on, /mcp auth NAME signs in through your browser.')
         return '\n'.join(lines)
 
 
