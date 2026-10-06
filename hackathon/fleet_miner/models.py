@@ -74,6 +74,9 @@ class Proposal(BaseModel):
     status: ProposalStatus = 'pending'
     accepted_tier: Tier | None = None
     accepted_at: datetime | None = None
+    source: Literal['fleet-miner'] = 'fleet-miner'
+    generated_by: str | None = None
+    """Miner version and drafting model, e.g. `fleet-miner 0.2 / gateway/anthropic:claude-sonnet-5-5`."""
     score: float | None = None
     """Hackathon extra: LLM confidence times the distinct-user spread factor (braindump's scoring)."""
 

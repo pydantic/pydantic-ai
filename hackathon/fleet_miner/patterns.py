@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 from pydantic_ai import Agent
 
+from . import __version__
 from .models import Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, strip_markup
 
 CLUSTER_INSTRUCTIONS = """\
@@ -28,20 +30,18 @@ pattern as an earlier proposal, set `existing_id` to that proposal's id exactly 
 """
 
 DRAFT_INSTRUCTIONS = """\
-Several developers at one company independently asked their coding agents for the same thing. Turn that into a
-change that is pushed to every developer's agent, so nobody has to ask again.
+Several developers at one company typed the same kind of request into their coding agents. Turn it into something
+pushed to every developer's agent, so nobody has to type it again. Keep it as short as what they typed.
 
 Decide the kind:
-- `skill` when the pattern is a multi-step procedure (a workflow with steps, checks and a stop condition). Write
-  `text` as the body of a SKILL.md: a short purpose line, when to use it, numbered steps, and when to stop. Make it
-  concrete and tool-agnostic enough to work in any repository (e.g. use `gh` for GitHub).
-- `instruction` when it is a short standing preference or rule. Write `text` as one to three sentences addressed
-  to the agent.
+- `skill` when they asked for a sequence of steps. Write `text` as 3 to 8 short lines: the steps they actually
+  asked for, in their own words and order, plus at most one line saying when to stop. No headings, no "Purpose" or
+  "When to use" sections, no generic advice they didn't ask for (testing, linting, force-push warnings, ...).
+- `instruction` when it is a standing preference or rule. Write `text` as one or two sentences in their phrasing.
 
-`name` is a kebab-case slug, `description` a one-line catalog blurb saying when the agent should use it.
-`suggested_tier`: `required` for something nearly everyone wants by default, `default_on` for broadly useful
-but opinionated, `optional` for niche. `rationale`: two to four sentences citing how many people asked and why
-pushing it down saves them time.
+`name`: a short kebab-case slug. `description`: one short sentence saying when it applies.
+`suggested_tier`: `required` if nearly everyone would want it, `default_on` if broadly useful, `optional` if niche.
+`rationale`: one or two sentences: how many people asked, and what it saves them.
 """
 
 
@@ -123,6 +123,33 @@ async def find_patterns(
     return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
 
 
+def save_patterns(path: Path, patterns: list[Pattern]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = [
+        {'id': p.id, 'pattern': p.pattern, 'confidence': p.confidence, 'existing_id': p.existing_id,
+         'span_ids': [u.span_id for u in p.prompts]}
+        for p in patterns
+    ]
+    path.write_text(json.dumps(data, indent=2))
+
+
+def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
+    """Rebuild cached groups against the current prompts, so drafting can be re-run without re-clustering."""
+    by_span = {p.span_id: p for p in prompts}
+    patterns: list[Pattern] = []
+    for item in json.loads(path.read_text()):
+        group_prompts = [by_span[s] for s in item['span_ids'] if s in by_span]
+        pattern = Pattern(
+            id=item['id'], pattern=item['pattern'], confidence=item['confidence'],
+            prompts=group_prompts, existing_id=item['existing_id'],
+        )
+        for p in group_prompts:
+            pattern.users.add(p.user or f'unknown:{p.session_id or p.trace_id}')
+            pattern.sessions.add(p.session_id or p.trace_id)
+        patterns.append(pattern)
+    return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
+
+
 async def draft_proposals(patterns: list[Pattern], *, model: str, max_evidence: int = 5) -> list[Proposal]:
     agent = Agent(model, output_type=_Draft, instructions=DRAFT_INSTRUCTIONS, name='fleet_miner_draft')
 
@@ -141,6 +168,7 @@ async def draft_proposals(patterns: list[Pattern], *, model: str, max_evidence: 
             sessions=len(pattern.sessions),
             evidence=_evidence(pattern, max_evidence),
             score=pattern.score,
+            generated_by=f'fleet-miner {__version__} / {model}',
             **draft.model_dump(),
         )
 

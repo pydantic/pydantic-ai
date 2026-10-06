@@ -33,9 +33,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--save-fixture', type=Path, help='also save the fetched prompts here')
     parser.add_argument('--agent-runs', action='store_true', help='also mine user text on agent run spans')
     parser.add_argument('--dry-run', action='store_true', help='print, write nothing')
-    parser.add_argument(
-        '--include-proposals', type=Path, help='also merge in the proposals of this document (e.g. a fixture run)'
-    )
+    parser.add_argument('--reuse-clusters', action='store_true', help='re-draft from the cached groups, skip clustering')
+    parser.add_argument('--drop', action='append', default=[], help='remove this proposal id from the live document')
     parser.add_argument('--out', type=Path, help='write the proposals document to this file')
     parser.add_argument('--base-url', default=os.environ.get('LOGFIRE_CLAI2_BASE_URL', 'https://logfire-eu.pydantic.info'))
     parser.add_argument('--facet-model', default='gateway/anthropic:claude-sonnet-5-5')
@@ -45,6 +44,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 async def main(args: argparse.Namespace) -> None:
+    if args.fixture and not args.dry_run:
+        # Fixture output must never reach the live variable.
+        raise SystemExit('--fixture runs are offline: add --dry-run (and --out to keep the result).')
     now = datetime.now(UTC)
     if args.fixture:
         prompts = fetch.load_fixture(args.fixture)
@@ -69,7 +71,13 @@ async def main(args: argparse.Namespace) -> None:
     facets = await facets_mod.extract_facets(prompts, model=args.facet_model, cache=facets_mod.FacetCache(cache_path))
     print(f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent')
 
-    found = await patterns_mod.find_patterns(prompts, facets, model=args.pattern_model, existing=existing)
+    existing = [p for p in existing if p.id not in args.drop]
+    clusters_path = HERE / '.cache' / 'clusters.json'
+    if args.reuse_clusters:
+        found = patterns_mod.load_patterns(clusters_path, prompts)
+    else:
+        found = await patterns_mod.find_patterns(prompts, facets, model=args.pattern_model, existing=existing)
+        patterns_mod.save_patterns(clusters_path, found)
     print('\nPatterns (distinct users / sessions / score):')
     for p in found:
         mark = '*' if len(p.users) >= args.min_users else ' '
@@ -79,8 +87,7 @@ async def main(args: argparse.Namespace) -> None:
     if not qualifying:
         print(f'\nNo pattern reached {args.min_users} distinct users.')
     drafted = await patterns_mod.draft_proposals(qualifying, model=args.pattern_model) if qualifying else []
-    included = ProposalsDoc.model_validate_json(args.include_proposals.read_bytes()).proposals if args.include_proposals else []
-    merged, actions = patterns_mod.merge(existing, drafted + included)
+    merged, actions = patterns_mod.merge(existing, drafted)
     for proposal in drafted:
         print(f'\n--- [{actions[proposal.id]}] {proposal.kind} `{proposal.name}` -> {proposal.suggested_tier}')
         print(proposal.description)
