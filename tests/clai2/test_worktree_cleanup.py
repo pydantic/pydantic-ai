@@ -1,11 +1,11 @@
-"""Worktree shutdown keeps user work unless removal is explicitly confirmed."""
+"""Worktree shutdown removes an unchanged checkout CLAI created, and keeps changed work unless removal is confirmed."""
 
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup
+from pydantic_clai2.runtime.worktrees import Worktree, current_worktree, offer_worktree_cleanup, open_worktree
 
 
 def git(directory: Path, *args: str) -> str:
@@ -14,111 +14,234 @@ def git(directory: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def no_prompt(prompt: str) -> str:
+    pytest.fail('Unexpected cleanup prompt')  # pragma: no cover
+
+
 @pytest.fixture
-def checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo = tmp_path / 'repo'
     repo.mkdir()
     git(repo, 'init')
     git(repo, 'config', 'user.name', 'Test')
     git(repo, 'config', 'user.email', 'test@example.com')
-    git(repo, 'commit', '--allow-empty', '-m', 'Initial')
-    linked = tmp_path / 'linked checkout'
+    (repo / 'tracked.txt').write_text('committed')
+    git(repo, 'add', 'tracked.txt')
+    git(repo, 'commit', '-m', 'Initial')
+    monkeypatch.setattr('sys.stdin.isatty', lambda: True)
+    return repo
+
+
+@pytest.fixture
+def checkout(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    linked = repo.parent / 'linked checkout'
     git(repo, 'worktree', 'add', '-b', 'feature', str(linked))
     monkeypatch.chdir(linked)
-    monkeypatch.setattr('sys.stdin.isatty', lambda: True)
     return linked
 
 
+@pytest.fixture
+def launched(checkout: Path) -> Worktree:
+    """The hand-made checkout as CLAI saw it at launch, with a commit made since."""
+    worktree = Worktree(path=checkout, branch='feature', head=git(checkout, 'rev-parse', 'HEAD'), created=False)
+    assert current_worktree() == worktree
+    git(checkout, 'commit', '--allow-empty', '-m', 'Work')
+    return worktree
+
+
+@pytest.fixture
+def created(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Worktree:
+    monkeypatch.chdir(repo)
+    worktree = open_worktree(name='task')
+    assert worktree.created and worktree.new_branch
+    monkeypatch.chdir(worktree.path)
+    return worktree
+
+
 @pytest.mark.parametrize('answer', ['', 'n', 'no', 'perhaps'])
-def test_keep_is_default(checkout: Path, monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
+def test_keep_is_default(launched: Worktree, monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
     def respond(prompt: str) -> str:
-        assert str(checkout) in prompt
+        assert str(launched.path) in prompt
         assert '[y/N]' in prompt
         return answer
 
     monkeypatch.setattr('builtins.input', respond)
-    offer_worktree_cleanup()
-    assert checkout.exists()
-    assert Path.cwd() == checkout
+    offer_worktree_cleanup(worktree=launched)
+    assert launched.path.exists()
+    assert Path.cwd() == launched.path
 
 
 @pytest.mark.parametrize('error', [EOFError, KeyboardInterrupt])
-def test_cancel_keeps(checkout: Path, monkeypatch: pytest.MonkeyPatch, error: type[BaseException]) -> None:
+def test_cancel_keeps(launched: Worktree, monkeypatch: pytest.MonkeyPatch, error: type[BaseException]) -> None:
     def respond(prompt: str) -> str:
         raise error
 
     monkeypatch.setattr('builtins.input', respond)
-    offer_worktree_cleanup()
-    assert checkout.exists()
+    offer_worktree_cleanup(worktree=launched)
+    assert launched.path.exists()
 
 
 @pytest.mark.parametrize('answer', ['y', ' YES '])
-def test_remove_preserves_branch(checkout: Path, monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
+def test_remove_preserves_branch(
+    launched: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], answer: str
+) -> None:
     def respond(prompt: str) -> str:
         return answer
 
+    work = git(launched.path, 'rev-parse', 'HEAD')
     monkeypatch.setattr('builtins.input', respond)
-    offer_worktree_cleanup()
-    assert not checkout.exists()
-    repo = checkout.parent / 'repo'
+    offer_worktree_cleanup(worktree=launched)
+    assert not launched.path.exists()
     assert Path.cwd() == repo
-    assert git(repo, 'rev-parse', 'feature') == git(repo, 'rev-parse', 'HEAD')
-    assert str(checkout) not in git(repo, 'worktree', 'list')
+    assert git(repo, 'rev-parse', 'feature') == work
+    assert str(launched.path) not in git(repo, 'worktree', 'list')
+    assert 'Branch kept.' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('condition', ['dirty', 'locked'])
 def test_git_refusal_keeps_checkout(
-    checkout: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], condition: str
+    launched: Worktree, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], condition: str
 ) -> None:
     if condition == 'dirty':
-        (checkout / 'unsaved.txt').write_text('keep me')
+        (launched.path / 'unsaved.txt').write_text('keep me')
     else:
-        git(checkout, 'worktree', 'lock', str(checkout))
+        git(launched.path, 'worktree', 'lock', str(launched.path))
 
     def respond(prompt: str) -> str:
         return 'yes'
 
     monkeypatch.setattr('builtins.input', respond)
-    offer_worktree_cleanup()
-    assert checkout.exists()
-    assert Path.cwd() == checkout
-    assert 'Worktree kept' in capsys.readouterr().err
+    offer_worktree_cleanup(worktree=launched)
+    assert launched.path.exists()
+    assert Path.cwd() == launched.path
+    output = capsys.readouterr()
+    assert 'Worktree kept' in output.err
+    assert 'Removed' not in output.out
     if condition == 'dirty':
-        assert (checkout / 'unsaved.txt').read_text() == 'keep me'
+        assert (launched.path / 'unsaved.txt').read_text() == 'keep me'
 
 
-def test_missing_git_keeps_checkout(checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_git_keeps_checkout(launched: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('PATH', '')
-    offer_worktree_cleanup()
-    assert checkout.exists()
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=launched)
+    assert launched.path.exists()
 
 
 def test_removal_os_error_keeps_checkout(
-    checkout: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    launched: Worktree, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def respond(prompt: str) -> str:
         monkeypatch.setenv('PATH', '')
         return 'yes'
 
     monkeypatch.setattr('builtins.input', respond)
-    offer_worktree_cleanup()
-    assert checkout.exists()
-    assert Path.cwd() == checkout
+    offer_worktree_cleanup(worktree=launched)
+    assert launched.path.exists()
+    assert Path.cwd() == launched.path
     assert 'Worktree kept' in capsys.readouterr().err
 
 
-@pytest.mark.parametrize('location', ['main', 'outside', 'pipe'])
-def test_no_prompt(checkout: Path, monkeypatch: pytest.MonkeyPatch, location: str) -> None:
-    if location == 'main':
-        monkeypatch.chdir(checkout.parent / 'repo')
-    elif location == 'outside':
-        monkeypatch.chdir(checkout.parent)
+@pytest.mark.parametrize('location', ['main', 'outside'])
+def test_only_linked_checkouts_are_worktrees(repo: Path, monkeypatch: pytest.MonkeyPatch, location: str) -> None:
+    monkeypatch.chdir(repo if location == 'main' else repo.parent)
+    assert current_worktree() is None
+
+
+def test_detached_checkout(checkout: Path) -> None:
+    git(checkout, 'checkout', '--detach')
+    worktree = current_worktree()
+    assert worktree is not None
+    assert worktree.branch == 'detached HEAD'
+
+
+def test_piped_input_keeps_without_prompt(created: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('sys.stdin.isatty', lambda: False)
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=created)
+    assert created.path.exists()
+
+
+def test_no_worktree_is_a_no_op(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=None)
+
+
+def test_unchanged_hand_made_checkout_is_kept_silently(
+    checkout: Path, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    worktree = current_worktree()
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=worktree)
+    assert checkout.exists()
+    assert git(repo, 'branch', '--list', 'feature')
+    assert capsys.readouterr() == ('', '')
+
+
+def test_unchanged_created_checkout_is_removed_silently(
+    created: Worktree, repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (created.path / 'ignored.log').write_text('build output')
+    (repo / '.git/info/exclude').write_text('*.log\n')
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=created)
+    assert not created.path.exists()
+    assert Path.cwd() == repo
+    assert str(created.path) not in git(repo, 'worktree', 'list')
+    assert not git(repo, 'branch', '--list', created.branch)
+    assert capsys.readouterr() == ('', '')
+
+
+def test_unchanged_created_checkout_keeps_a_reused_branch(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    git(repo, 'branch', 'clai-task')
+    monkeypatch.chdir(repo)
+    worktree = open_worktree(name='task')
+    assert worktree.created and not worktree.new_branch
+    monkeypatch.chdir(worktree.path)
+    offer_worktree_cleanup(worktree=worktree)
+    assert not worktree.path.exists()
+    assert git(repo, 'branch', '--list', 'clai-task')
+
+
+def test_unmerged_branch_is_kept(created: Worktree, repo: Path) -> None:
+    """`git branch -d` refuses once the main checkout moves to history without the branch's commit."""
+    git(repo, 'checkout', '--orphan', 'elsewhere')
+    git(repo, 'commit', '--allow-empty', '-m', 'Unrelated')
+    offer_worktree_cleanup(worktree=created)
+    assert not created.path.exists()
+    assert git(repo, 'branch', '--list', created.branch)
+
+
+def test_unchanged_locked_checkout_reports_refusal(
+    created: Worktree, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    git(created.path, 'worktree', 'lock', str(created.path))
+    monkeypatch.setattr('builtins.input', no_prompt)
+    offer_worktree_cleanup(worktree=created)
+    assert created.path.exists()
+    assert Path.cwd() == created.path
+    assert 'Worktree kept' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('change', ['untracked', 'modified', 'commit'])
+def test_changed_created_checkout_still_asks(
+    created: Worktree, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], change: str
+) -> None:
+    if change == 'untracked':
+        (created.path / 'new.txt').write_text('draft')
+    elif change == 'modified':
+        (created.path / 'tracked.txt').write_text('edited')
     else:
-        monkeypatch.setattr('sys.stdin.isatty', lambda: False)
+        git(created.path, 'commit', '--allow-empty', '-m', 'Work')
+    prompts: list[str] = []
 
     def respond(prompt: str) -> str:
-        pytest.fail('Unexpected cleanup prompt')  # pragma: no cover
+        prompts.append(prompt)
+        return ''
 
     monkeypatch.setattr('builtins.input', respond)
-    offer_worktree_cleanup()
-    assert checkout.exists()
+    offer_worktree_cleanup(worktree=created)
+    assert len(prompts) == 1
+    assert created.path.exists()
+    assert git(created.path, 'branch', '--show-current') == created.branch
+    assert 'Worktree kept at' in capsys.readouterr().out

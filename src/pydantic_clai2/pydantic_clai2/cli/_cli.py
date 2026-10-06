@@ -54,7 +54,7 @@ def run(*, splash: Splash | None = None) -> None:
         from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
-        from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup, open_worktree
+        from pydantic_clai2.runtime.worktrees import current_worktree, offer_worktree_cleanup, open_worktree
     finally:
         if splash is not None:
             splash.stop()
@@ -66,11 +66,15 @@ def run(*, splash: Splash | None = None) -> None:
             print(handler(store, args.arguments))
             return
         agent = import_agent(args.agent) if args.agent is not None else None
+        worktree = None
         if args.worktree is not None:
             worktree = open_worktree(name=args.worktree)
+            # Only an interactive exit cleans up; headless runs and piped input keep the checkout.
+            removable = worktree.created and args.prompt is None and sys.stdin.isatty()
             print(
                 f'{"Worktree" if worktree.created else "Reopened worktree"}: {worktree.path} '
-                f'(branch: {worktree.branch}). Kept unless removal is confirmed on exit.',
+                f'(branch: {worktree.branch}). '
+                + ('Removed on exit if unchanged.' if removable else 'Kept unless removal is confirmed on exit.'),
                 file=sys.stderr if args.prompt is not None else sys.stdout,
             )
             os.chdir(worktree.path)
@@ -99,6 +103,8 @@ def run(*, splash: Splash | None = None) -> None:
                     )
                 )
             )
+        if worktree is None:
+            worktree = current_worktree()
         asyncio.run(
             chat(
                 create_agent() if agent is None else agent,
@@ -112,7 +118,7 @@ def run(*, splash: Splash | None = None) -> None:
                 load_plugins=agent is None,
             )
         )
-        offer_worktree_cleanup()
+        offer_worktree_cleanup(worktree=worktree)
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
         argv = relaunch_argv(args, executable=relaunch.executable, session_id=relaunch.session_id)

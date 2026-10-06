@@ -503,13 +503,19 @@ worktree is rejected. If checkout fails, CLAI tries to remove only the branch it
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery.
 
-On normal interactive exit from a linked worktree, CLAI asks whether to remove
-its checkout. Enter, Ctrl-C, or EOF keeps it; only `y` or `yes` confirms removal.
-This also applies when launching inside an existing linked worktree. Git removal
-runs without `--force`, so dirty or locked worktrees are kept with an explanation.
-The branch is kept even when removal succeeds. The main checkout is not offered
-for removal. Headless runs, piped input, and startup errors keep the worktree
-without prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
+On normal interactive exit, CLAI checks the linked worktree for changes:
+uncommitted or untracked files, or a different commit checked out than at launch.
+Ignored files do not count. If nothing changed in a worktree this launch created,
+CLAI removes it without asking, and deletes its `clai-NAME` branch too when this
+launch created that branch and Git agrees it is merged (`git branch -d`). An
+unchanged worktree that CLAI reopened, or one you launched inside, is kept without
+asking.
+
+If the worktree changed, CLAI asks whether to remove its checkout. Enter, Ctrl-C,
+or EOF keeps it; only `y` or `yes` confirms removal, and the branch is kept. Git
+removal runs without `--force`, so dirty or locked worktrees are kept with an
+explanation. The main checkout is never removed. Headless runs, piped input, and
+startup errors keep the worktree without prompting. `/new`, `/resume`, and `/reload` do not remove the checkout:
 they leave the shell using the same working directory.
 Enter a retained directory and run `clai2 --resume` to continue a saved session. `--worktree` cannot be
 combined with `--resume`, `config`, or `plugins`.
