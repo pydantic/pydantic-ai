@@ -480,6 +480,14 @@ engine:
         console.log(`Wrote ${Object.keys(mcpServers).length} MCP server(s) to ${configPath}`);
     log-parser: |
       function parseLog(logContent) {
+        const { existsSync } = require('node:fs');
+        const { join } = require('node:path');
+        const pydanticParserPath = join(__dirname, 'parse_pydantic_log.cjs');
+        if (existsSync(pydanticParserPath)) {
+          const parsed = require(pydanticParserPath).parsePydanticLog(logContent);
+          if (parsed.logEntries.length > 0) return parsed;
+        }
+
         const lines = logContent.split("\n");
         const logEntries = [];
         const mcpFailures = [];

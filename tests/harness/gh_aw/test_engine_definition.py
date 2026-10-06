@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from pydantic_ai import Agent, ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -97,6 +97,17 @@ AGENT_LOG = """[pydantic-ai] starting the agent
 {"answer": 42}
 {"type": "tool_call", "tool": "read_file", "msg": "read 12 lines"}
 {"msg": "Done."}
+"""
+
+# Captured from the current `pai` CLI banner and agent stdout.
+CURRENT_PAI_LOG = """                 pydantic-ai v2.51.1.dev535+a27beaa31 • pydantic-ai-harness v0.53.1.dev14+80454d412
+                   • Python 3.13.3
+      / \\
+     /   \\       agent: test_agent:agent • model: test:test • tools: 1 • capabilities: 0
+   /___.___\\
+  /    |    \\    observability: off
+▌ Called tool read_marker.
+Deterministic parser probe answer.
 """
 
 PROMPT = 'summarize the issue'
@@ -284,12 +295,14 @@ def launch(tmp_path: Path, env: dict[str, str]) -> _Invocation:
     return _Invocation.model_validate_json(record.read_text(encoding='utf-8'))
 
 
-def parse_log(tmp_path: Path, log: str) -> _ParsedLog:
+def run_log_parser(tmp_path: Path, log: str, pydantic_parser: str | None = None) -> str:
     """Run the shipped `log-parser` over `log`, exported the way gh-aw exports it."""
     # gh-aw wraps the block in a module that exports the `parseLog` the block defines,
     # so the driver requires it under that name.
     parser = tmp_path / 'parser.cjs'
     parser.write_text(f'{behaviors().log_parser}\nmodule.exports = {{ parseLog }};\n', encoding='utf-8')
+    if pydantic_parser is not None:
+        (tmp_path / 'parse_pydantic_log.cjs').write_text(pydantic_parser, encoding='utf-8')
     driver = tmp_path / 'driver.cjs'
     driver.write_text(LOG_PARSER_DRIVER, encoding='utf-8')
     agent_log = tmp_path / 'agent.log'
@@ -303,7 +316,11 @@ def parse_log(tmp_path: Path, log: str) -> _ParsedLog:
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
-    return _ParsedLog.model_validate_json(completed.stdout)
+    return completed.stdout
+
+
+def parse_log(tmp_path: Path, log: str, pydantic_parser: str | None = None) -> _ParsedLog:
+    return _ParsedLog.model_validate_json(run_log_parser(tmp_path, log, pydantic_parser))
 
 
 def gateway_config(tmp_path: Path) -> Path:
@@ -547,6 +564,58 @@ class TestLauncherProgram:
 
 class TestLogParser:
     """The `log-parser` gh-aw runs over the agent step's output."""
+
+    def test_a_sibling_pydantic_parser_is_returned_unchanged(self, tmp_path: Path) -> None:
+        log = 'first line\r\n雪 ☃'
+        result = TypeAdapter(dict[str, object]).validate_json(
+            run_log_parser(
+                tmp_path,
+                log,
+                """
+exports.parsePydanticLog = content => ({
+  markdown: content,
+  logEntries: [
+    { type: 'assistant.message', data: { content: 'hello', messageId: 'event-1' } },
+    { type: 'session.result', data: { usage: { input_tokens: 0, output_tokens: 0 } } },
+  ],
+  mcpFailures: ['gateway'],
+  maxTurnsHit: true,
+  partial: true,
+  upstreamMetadata: { source: 'gh-aw' },
+});
+""",
+            )
+        )
+
+        assert result == {
+            'markdown': log,
+            'logEntries': [
+                {'type': 'assistant.message', 'data': {'content': 'hello', 'messageId': 'event-1'}},
+                {'type': 'session.result', 'data': {'usage': {'input_tokens': 0, 'output_tokens': 0}}},
+            ],
+            'mcpFailures': ['gateway'],
+            'maxTurnsHit': True,
+            'partial': True,
+            'upstreamMetadata': {'source': 'gh-aw'},
+        }
+
+    def test_an_empty_sibling_parser_result_uses_fallback_for_current_pai_output(self, tmp_path: Path) -> None:
+        parsed = parse_log(
+            tmp_path,
+            CURRENT_PAI_LOG,
+            'exports.parsePydanticLog = () => ({ logEntries: [] });',
+        )
+
+        expected_text = '\n'.join(line.strip() for line in CURRENT_PAI_LOG.splitlines() if line.strip())
+        assert parsed.texts == [expected_text]
+
+    def test_errors_from_a_sibling_pydantic_parser_propagate(self, tmp_path: Path) -> None:
+        with pytest.raises(AssertionError, match='delegated parser failed'):
+            run_log_parser(
+                tmp_path,
+                AGENT_LOG,
+                'exports.parsePydanticLog = () => { throw new Error("delegated parser failed"); };',
+            )
 
     def test_a_reply_that_is_bare_json_is_kept(self, tmp_path: Path) -> None:
         parsed = parse_log(tmp_path, AGENT_LOG)
