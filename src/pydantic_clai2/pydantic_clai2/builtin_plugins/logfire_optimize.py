@@ -205,7 +205,9 @@ class OptimizeCommand:
         model = await self._host.conversation.resolved_model()
         if model is None:
             raise ValueError('Choose a model first: /model')
-        self._host.console.print(f'Reviewing {len(evidence)} runs of {agent}...', markup=False, highlight=False)
+        self._host.console.print(
+            terminal_text(f'Reviewing {len(evidence)} runs of {agent}...'), markup=False, highlight=False
+        )
         reviewer = Agent(model, output_type=Proposal, instructions=INSTRUCTIONS, name='clai_logfire_optimize')
         result = await reviewer.run(review_prompt(agent, current, evidence, focus))
         return render_proposal(agent, project, current, evidence, result.output)
