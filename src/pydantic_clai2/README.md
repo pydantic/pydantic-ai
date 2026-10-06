@@ -1039,7 +1039,11 @@ every later session; `/plugins enable repo_context` brings it back. See
 Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
-and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
+and paths after `@`. Suggestions match any substring, case-sensitively. While
+you type a command name, the best match comes first and is highlighted without
+pressing Tab: the exact name, then names that start with what you typed. Enter
+fills in the highlighted command, or runs it when it is already typed in full;
+Tab and Up/down move the highlight. For paths,
 matching applies to the filename within the typed directory. Path completion inserts
 a path; it does not attach file contents.
 Unknown command-shaped input such as `/missing` still reports an error instead

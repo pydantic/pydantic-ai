@@ -1855,6 +1855,9 @@ list when there is none); `/fork` does this so prompts keep their apostrophes.
 It may be `async`. Add `complete=` to offer Tab suggestions. The registry filters
 command names and returned candidates by case-sensitive substring, replacing the
 whole typed fragment when selected. Return full candidates, not just suffixes.
+Command names are listed exact match first, then names that start with the typed
+fragment; the first is highlighted as you type. Candidates keep the order
+`complete=` returns them in, and none is highlighted until Tab or Up/down picks one.
 Set `available=` to a zero-argument callable returning a boolean to gate dispatch,
 help, and completion on live session state. It defaults to always available.
 Unavailable commands retain their registered names and ownership, so they still
