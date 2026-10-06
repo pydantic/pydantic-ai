@@ -1799,9 +1799,11 @@ terminal grows. Resizing repaints the panel at the new size and preserves the
 draft and scroll position. It never erases terminal scrollback.
 
 Assistant text and thinking retain their Markdown source and render again when
-the width or theme changes. Tool and command output rewrap with their original
-colours. Full-screen menus temporarily leave the panel and detach its keyboard
-reader. Output arriving during a menu stays in the transcript and appears when
+the width or theme changes. Tool and command output rewrap at the new width,
+and a `/theme` change repaints their colours role by role: muted text, errors,
+diff lines, and code take the new palette's shades. Colours no theme assigns
+keep their original values, and so does the CLAI logo. Full-screen menus
+temporarily leave the panel and detach its keyboard reader. Output arriving during a menu stays in the transcript and appears when
 the menu closes. Inline questions borrow the panel. The transcript includes
 startup and plugin lifecycle notices and is carried across shell reloads.
 It retains up to 10,000 items and four million characters, plus a bounded partial

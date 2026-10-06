@@ -2,14 +2,16 @@
 
 import io
 from collections import deque
+from collections.abc import Iterable
 from typing import cast
 
 import pytest
 from rich.color import ColorSystem
 from rich.console import Console
 from rich.style import Style
-from rich.text import Text
+from rich.text import Span, Text
 from termflow.ansi.utils import visible_length
+from termflow.themes import PALETTES
 
 from pydantic_clai2.ui.prompt.prompt_transcript import (
     MarkdownBlock,
@@ -19,6 +21,8 @@ from pydantic_clai2.ui.prompt.prompt_transcript import (
     style_prefix,
 )
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering._branding import print_banner
+from pydantic_clai2.ui.rendering.recolor import recolor
 
 
 def plain(buffer: TranscriptBuffer, *, width: int = 80, height: int = 24) -> list[str]:
@@ -392,3 +396,111 @@ def test_markdown_repaint_respects_configured_character_and_line_limits(repaint:
     assert plain(transcript, width=40) == ['ok', '']
     with theme.use(lambda: 'github_light' if repaint == 'theme' else 'default'):
         assert plain(transcript, width=20 if repaint == 'width' else 40) == ['three', '']
+
+
+def _painted(text: str) -> TranscriptBuffer:
+    buffer = TranscriptBuffer()
+    buffer.write(text)
+    return buffer
+
+
+def _printed(styles: list[Style]) -> str:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    for index, style in enumerate(styles):
+        console.print(f'line {index}', style=style)
+    return output.getvalue()
+
+
+def _colours(rows: Iterable[str]) -> list[tuple[str | None, str | None]]:
+    console = Console()
+    styles = [Text.from_ansi(row).get_style_at_offset(console, 0) for row in rows if row]
+    return [
+        (None if style.color is None else style.color.name, None if style.bgcolor is None else style.bgcolor.name)
+        for style in styles
+    ]
+
+
+def test_styled_lines_repaint_in_a_newly_selected_theme_and_back() -> None:
+    styles = [
+        Style(color=theme.color(theme.MUTED)),
+        Style(bgcolor=theme.diff_theme().addition),
+        Style(color='green'),
+        Style(color='#123456', bgcolor='#abcdef'),
+        Style(bold=True),
+    ]
+    buffer = _painted(_printed(styles))
+    original = _colours(buffer.frame(width=80, height=24).rows)
+    tokyo = PALETTES['tokyo_night']
+    with theme.use(lambda: 'tokyo_night'):
+        expected = [
+            (tokyo.ansi[8], None),
+            (None, theme.diff_theme().addition.lower()),
+            ('color(2)', None),
+            ('#123456', '#abcdef'),
+            (None, None),
+        ]
+        assert _colours(buffer.frame(width=80, height=24).rows) == expected
+        assert _colours(buffer.printed(width=80).splitlines()) == expected
+    assert _colours(buffer.frame(width=80, height=24).rows) == original
+    assert plain(buffer) == [f'line {index}' for index in range(5)] + ['']
+
+
+def test_palette_output_repaints_in_another_palette_or_the_default_theme() -> None:
+    light = PALETTES['github_light']
+    tokyo = PALETTES['tokyo_night']
+    with theme.use(lambda: 'github_light'):
+        styles = [
+            Style(color=theme.color(theme.MUTED)),
+            Style(color=light.ansi[2], bgcolor=light.bg),
+            Style(color=theme.color(theme.ERROR)),
+        ]
+        buffer = _painted(_printed(styles))
+    with theme.use(lambda: 'tokyo_night'):
+        assert _colours(buffer.frame(width=80, height=24).rows) == [
+            (tokyo.ansi[8], None),
+            (tokyo.ansi[2], tokyo.bg),
+            (tokyo.ansi[1], None),
+        ]
+    assert _colours(buffer.frame(width=80, height=24).rows) == [
+        (theme.GREY.lower(), None),
+        ('color(2)', 'default'),
+        (theme.CALCIUM.lower(), None),
+    ]
+
+
+def test_recolor_accepts_spans_styled_by_name() -> None:
+    text = Text('muted', spans=[Span(0, 5, f'bold {theme.GREY}')])
+    themed = recolor(text, source='default', target='tokyo_night')
+    style = themed.spans[0].style
+    assert isinstance(style, Style)
+    assert style.bold and style.color is not None and style.color.name == PALETTES['tokyo_night'].ansi[8]
+    assert text.spans[0].style == f'bold {theme.GREY}', 'the retained line is unchanged'
+
+
+def test_rebind_assumes_the_current_theme_for_lines_retained_without_one() -> None:
+    transcript = _painted(_printed([Style(color=theme.color(theme.MUTED))]))
+    block = _block(transcript)
+    block.write(_printed([Style(color=theme.color(theme.MUTED))]))
+    block.freeze()
+    stream = cast(object, vars(block)['_stream'])
+    lines = [*cast(deque[object], vars(transcript)['_items']), *cast(list[object], vars(stream)['lines'])]
+    for line in lines:
+        vars(line).pop('theme_name', None)
+    with theme.use(lambda: 'tokyo_night'):
+        TranscriptBuffer.rebind(transcript)
+        assert _colours(transcript.frame(width=80, height=24).rows) == [(theme.GREY.lower(), None)] * 2
+    assert _colours(transcript.frame(width=80, height=24).rows) == [(theme.GREY.lower(), None)] * 2
+
+
+def test_branding_keeps_its_colours_when_the_theme_changes() -> None:
+    buffer = TranscriptBuffer()
+    console = Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=20)
+    with buffer.capture(console):
+        print_banner(console)
+        console.print('accent', style=theme.color(theme.ACCENT))
+    with theme.use(lambda: 'tokyo_night'):
+        assert _colours(buffer.frame(width=20, height=24).rows) == [
+            (theme.LITHIUM.lower(), None),
+            (PALETTES['tokyo_night'].ansi[12], None),
+        ]

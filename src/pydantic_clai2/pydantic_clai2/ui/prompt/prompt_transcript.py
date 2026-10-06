@@ -16,6 +16,7 @@ from rich.text import Text
 from termflow.ansi.utils import ANSI_ESCAPE_RE, visible_length
 
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.recolor import recolor
 
 # Rich does not recognize palette OSC commands and renders their payload as text.
 _OSC = re.compile(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)')
@@ -149,19 +150,35 @@ class TranscriptDecoder(AnsiDecoder):
 
 
 class _Line:
-    """One completed line, with its rows cached for the last width painted."""
+    """One completed line and the theme that painted it, with rows cached for the last width and theme."""
 
     def __init__(self, text: Text) -> None:
         self.text = text
-        self._rows: tuple[int, tuple[str, ...]] = (0, ())
+        self.theme_name = theme.painted_in()
+        self._rows: tuple[tuple[int, str], tuple[str, ...]] = ((0, ''), ())
+
+    @classmethod
+    def rebind(cls, line: '_Line') -> '_Line':
+        line.__class__ = cls
+        # Lines retained before themes were recorded were painted in the theme of the reload.
+        vars(line).setdefault('theme_name', theme.name())
+        return line
+
+    def _themed(self) -> Text:
+        """The line in the current theme, translated role by role from the theme that painted it."""
+        current = theme.name()
+        if self.theme_name is None or current == self.theme_name:
+            return self.text
+        return recolor(self.text, source=self.theme_name, target=current)
 
     def rows(self, *, width: int) -> tuple[str, ...]:
-        if self._rows[0] != width:
-            self._rows = (width, wrap(self.text, width=width))
+        key = (width, theme.name())
+        if self._rows[0] != key:
+            self._rows = (key, wrap(self._themed(), width=width))
         return self._rows[1]
 
     def printed(self, *, width: int) -> str:
-        return _encode(_clean(self.text)) + '\n'
+        return _encode(_clean(self._themed())) + '\n'
 
 
 class _Lines:
@@ -180,7 +197,7 @@ class _Lines:
         stream.__class__ = cls
         stream._decoder.__class__ = TranscriptDecoder
         for line in stream.lines:
-            line.__class__ = _Line
+            _Line.rebind(line)
         return stream
 
     def write(self, text: str) -> None:
@@ -338,7 +355,7 @@ class TranscriptBuffer:
             if isinstance(item, io.StringIO):
                 MarkdownBlock.rebind(item)
             else:
-                item.__class__ = _Line
+                _Line.rebind(item)
         return transcript
 
     @property
