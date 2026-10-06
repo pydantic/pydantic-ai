@@ -116,7 +116,7 @@ class CatalogRow:
 
 def row_label(row: CatalogRow) -> str:
     """`● skill pr-shepherd 🔒 • new`: state, kind, name, lock and the new dot."""
-    state = '●' if row.on else '○'
+    state = '●' if row.on and not row.elsewhere else '○'
     lock = ' 🔒' if row.locked else ''
     new = ' • new' if row.new else ''
     declined = ' · declined' if row.declined else ''
