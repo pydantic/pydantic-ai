@@ -83,7 +83,7 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
         async def signed_in(_: RunContext[DepsT]) -> DayAI[DepsT] | None:
             # Checked per run, so a sign-in finished in the menu applies without a reload, and a run never
             # connects without one: that would open the browser mid-turn.
-            return browser if await to_thread.run_sync(self.tokens.signed_in) else None
+            return browser if await to_thread.run_sync(self.tokens.signed_in, abandon_on_cancel=True) else None
 
         return (signed_in,)
 
@@ -102,7 +102,8 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
                     markup=False,
                 )
             return
-        if not await to_thread.run_sync(self.tokens.signed_in):
+        # A keyring lookup that blocks must not hold up cancelling startup or exit.
+        if not await to_thread.run_sync(self.tokens.signed_in, abandon_on_cancel=True):
             console.print(f'Day AI is not signed in. {SETUP}', style=theme.color(theme.WARNING), markup=False)
 
 
