@@ -229,9 +229,10 @@ value, default, what it does). Type to filter. Enter edits: booleans and the
 model get a picker (the model list is searchable, with "Type a value..." for
 anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`.
+edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+an alias of `/set` and accepts the same arguments.
 
-While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
+While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
 `/theme`, and `/spinner` typed without further arguments open their menu right
 away instead of queueing.
 The turn keeps running: its output is held while the menu is open
@@ -318,7 +319,7 @@ Settings are validated before writes. `/set` updates the active settings snapsho
 legacy `/config` writes apply on restart; plugin changes apply on the next prompt.
 `--request-limit` controls the full prompt's model-request budget.
 
-Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/help`, `/new`, `/clear`, `/exit`, `/config`, `/plugins`, and `/reload`.
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/help`, `/new`, `/clear`, `/exit`, `/config`, `/plugins`, and `/reload`.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history

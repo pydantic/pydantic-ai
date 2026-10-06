@@ -644,9 +644,10 @@ value, default, what it does). Type to filter. Enter edits: booleans and the
 model get a picker (the model list is searchable, with "Type a value..." for
 anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`.
+edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+an alias of `/set` and accepts the same arguments.
 
-While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
+While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
 `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
 `/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
 arguments open right away instead of queueing.
@@ -942,7 +943,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
