@@ -1,6 +1,7 @@
 """Pinned editor and scrollback ownership, without a PromptSession renderer."""
 
 import asyncio
+import re
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
@@ -20,6 +21,7 @@ from termflow.tui.layout import truncate
 from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.image_input import ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
@@ -180,6 +182,9 @@ class LivePrompt:
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
+        if key in ('pageup', 'pagedown', 'mouse'):
+            self.scroll(key, data)
+            return
         self.notice = ''
         if key != 'escape':
             self._last_escape = None
@@ -218,6 +223,19 @@ class LivePrompt:
             self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
+
+    def scroll(self, key: str, data: str) -> None:
+        """Page or wheel through the transcript, leaving the draft and the notice alone."""
+        if key == 'mouse':
+            wheel = _WHEEL.fullmatch(data)
+            # Shift, Alt, and Ctrl add 4, 8, and 16 to the button; anything else is a click.
+            button = int(wheel[1]) & ~(4 | 8 | 16) if wheel else None
+            if button not in (64, 65):
+                return
+            rows = WHEEL_ROWS if button == 64 else -WHEEL_ROWS
+        else:
+            rows = self.output.page if key == 'pageup' else -self.output.page
+        self.output.scroll(rows)
 
     def escape(self) -> None:
         """Cancel or dismiss first; only consecutive idle presses request a rewind."""
@@ -310,6 +328,7 @@ class LivePrompt:
         command = expand_bare_command(text)
         if target is not None and command == target.text:
             return
+        self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         if self.run_now is not None and self.run_now(command):
@@ -362,6 +381,8 @@ class LivePrompt:
             self.accept()
             return
         target, self._editing = self._editing, None
+        # Steered text joins the running turn, so show its response, as submitting does.
+        self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         self.buffer.history_index = None
@@ -379,6 +400,7 @@ class LivePrompt:
         if not isinstance(head, _Queued) or not self._steered(head.text):
             telemetry.record('prompt steer', steered=False, source='queue')
             return
+        self.output.view.follow()
         self._discard(head)
         telemetry.record('prompt steer', steered=True, source='queue')
 
@@ -571,7 +593,10 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                self.paint()
+                if self._suspended:
+                    self.output.refresh()
+                else:
+                    self.paint()
                 # A spinner faster than the status poll gets a repaint per frame, but only while it shows.
                 await anyio.sleep(min(0.1, self.spinner().interval) if self.interrupts.active else 0.1)
 
@@ -585,7 +610,7 @@ class LivePrompt:
         self._opened = True
         self.console.file = self.output
         try:
-            with resize_notifications(resized):
+            with resize_notifications(resized), holding_output(self.output.held):
                 self.paint()
                 self.keys.start()
                 async with anyio.create_task_group() as tasks:
@@ -601,7 +626,11 @@ class LivePrompt:
             self.keys.stop()
             self._completion_worker.close()
             self.console.file = original
-            self.output.release()
+            self.output.restore()
+
+
+WHEEL_ROWS = 3
+_WHEEL = re.compile(r'\x1b\[<(\d+);\d+;\d+[mM]')
 
 
 def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:

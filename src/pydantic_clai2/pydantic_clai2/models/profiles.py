@@ -1,6 +1,7 @@
 """Auth profiles: several accounts for one provider, named in the model as `PROVIDER@PROFILE:NAME`.
 
-A model without `@PROFILE` uses the provider's default account, stored where it always was. A profile's
+A model without `@PROFILE` uses the provider's default account, stored where it always was, unless the
+`accounts.pool` setting runs it on every signed-in account; `@default` names that account alone. A profile's
 credentials are stored under the account `PROVIDER@PROFILE`. Only the prefix before the first `:` is
 read, so model IDs that contain `@` themselves, such as Vertex's `claude-...@20240620`, are left alone.
 """
@@ -9,6 +10,12 @@ import re
 from dataclasses import dataclass
 
 _NAME = re.compile(r'[a-z0-9][a-z0-9_-]{0,31}')
+
+ALL = '*'
+"""The profile meaning every signed-in account of the provider, tried in `/accounts` order: `openai-codex@*:gpt-6`."""
+
+DEFAULT = 'default'
+"""The profile meaning the account without a profile alone, even when `accounts.pool` pools plain names."""
 
 
 def check_name(value: str, *, kind: str) -> str:
@@ -45,13 +52,15 @@ def parse_model(model: str) -> ModelRef:
 
 
 def split_profile(name: str) -> tuple[str, str | None]:
-    """`openai-codex@work` as `('openai-codex', 'work')`; no `@` means the default profile."""
+    """`openai-codex@work` as `('openai-codex', 'work')`; no `@` means the default profile.
+
+    `ALL` and `DEFAULT` come back as they are, for the caller to handle.
+    """
     provider, at, profile = name.partition('@')
     if not at:
         return provider, None
-    if profile == 'default':
-        # Plugins such as Claude Code keep the account without a profile under this name.
-        raise ValueError(f'Profile name default is reserved for the account without a profile. Use {provider}.')
+    if profile in (ALL, DEFAULT):
+        return provider, profile
     return provider, check_name(profile, kind='Profile')
 
 

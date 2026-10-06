@@ -39,7 +39,7 @@ once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
 and project trust. `/plugins disable mcp` removes the command and tools.
 
-Python 3.10+ is required.
+Python 3.11+ is required.
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
@@ -252,9 +252,13 @@ streamed output while CLAI works, and remains editable. A `Working` label and
 animated spinner, in the same pink accent as tool names, appear in the box's top border while a turn or its lifecycle
 hooks are active, without adding a row to the input area. The animation uses the editor's existing refresh
 cycle and disappears when work finishes, fails, or is cancelled. It is not part
-of your draft or submitted message. The editor reserves rows below a terminal
-scroll region. Both partial and completed output stream directly above it,
-without erasing or repainting the input box. Typing updates the draft row; a
+of your draft or submitted message. The editor sits below a Termflow live transcript panel on the alternate screen.
+Both partial and completed output paint above it without repainting unchanged
+input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
+changing the draft. New output leaves a scrolled view in place; returning to the
+bottom or submitting follows new output again. Hold Shift or Option to select
+text with the mouse, depending on your terminal. On exit, CLAI prints the retained
+transcript into native terminal scrollback. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
 previews, with queued slash commands labeled `Command:`. Previews are shown in
@@ -316,13 +320,14 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 `~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
-`/new` starts a new saved conversation, without deleting the previous one or
-input recall. `/clear`, or bare `clear`, does the same and also clears the screen back to the startup banner. Model responses and tool results are not saved to this file.
+`/clear` (alias `/new`), or bare `clear`, starts a new saved conversation, without
+deleting the previous one or input recall, and clears the screen back to the startup
+banner. Model responses and tool results are not saved to this file.
 
 ## CI coverage
 
-The `CLAI coverage` check combines branch coverage from Python 3.10 and 3.14
-and requires 100% for `src/pydantic_clai2`. It is separate from Harness coverage;
+The `CLAI coverage` check requires 100% branch coverage for `src/pydantic_clai2`.
+It is separate from Harness coverage;
 passing CLAI test jobs alone does not mean either coverage gate has passed.
 Tracked under [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
 
@@ -617,8 +622,42 @@ Core owns inference and its telemetry; CLAI adds no login-specific spans.
 
 ### Several accounts and fallback chains
 
-Sign in to more than one account per provider with a profile. Write
-`/login PROVIDER@PROFILE`, then use `PROVIDER@PROFILE:MODEL` as the model:
+`/accounts` lists every account you are signed in to, grouped by provider.
+Logins you already had show up on their own.
+
+- **a** adds an account: pick a provider and CLAI fills in a free name, such as
+  `account-2`. Press Enter to keep it, then sign in as usual (browser, device code,
+  connection, or API key).
+- **Enter** on an account signs in to it again, for example after it expired.
+- **r** gives an account a name to show, such as your email.
+- **d** signs out, after asking. For a plugin's account, it only leaves the list;
+  the plugin keeps its own sign-in.
+- **[** and **]** reorder accounts. The order is the order `@*`, and a model
+  without an account, try them in.
+
+Each account shows its current usage as it loads, without holding up the menu:
+`5h 92% · 7d 43%` on the row, and a bar with the reset time for each limit on the
+right. CLAI reads it for ChatGPT/Codex (the five-hour and weekly windows) and
+GitHub Copilot (premium requests); plugins can report their own, as the Claude
+Code plugin does. `…` means it is still loading and `?` that the service did not
+answer; the right-hand panel says why.
+
+When you pick a model in `/model add` and its provider has more than one account,
+CLAI asks which account runs it, or **all accounts**. All accounts saves the model
+as `PROVIDER@*:MODEL`: it runs on the first signed-in account and moves to the next
+when a request fails with a model API error, such as a rate or usage limit. Signing
+in to another account adds it to the rotation, with nothing else to change. If
+every account fails, CLAI lists why each one did.
+
+A model that names no account, such as `claude-code:claude-opus-5-5`, works the
+same way: once its provider has two or more signed-in accounts, it runs on all of
+them in `/accounts` order, as `@*` does. With one, it runs on that one. To run the
+default account alone, write `PROVIDER@default:MODEL`; picking an account in
+`/model add` saves it that way. `/set accounts.pool false` turns this off, so a
+model without an account runs on the default one only, as it did before.
+
+Under the menus, an account other than the default is a profile, written
+`PROVIDER@PROFILE`. You can type it instead:
 
 ```text
 /login openai-codex@work         # a second ChatGPT/Codex account
@@ -627,36 +666,39 @@ Sign in to more than one account per provider with a profile. Write
 /login vllm@lab                  # another vLLM server
 /login openai@work               # any provider that takes an API key: a /keys entry or a typed key
 /model openai-codex@work:gpt-6-astra
+/model openai-codex@*:gpt-6-astra  # every signed-in Codex account, in /accounts order
+/model openai-codex@default:gpt-6-astra  # the default account alone
 ```
 
-A model without `@PROFILE` uses the default account, exactly as before. For
-Codex, Copilot, OpenRouter, and vLLM that is the existing login. Providers such as
+The default account is the one without `@PROFILE`. For Codex, Copilot,
+OpenRouter, and vLLM that is the existing login. Providers such as
 `openai` and `anthropic` still read their usual environment variables by default;
 a profile uses the key saved at `/login`. Anything else a provider needs, such as an
 Azure endpoint or an Ollama URL, still comes from the environment, and `/login`
 refuses to save the key until it is set. Plugins can support profiles too, such
 as `/login claude@work` for a plugin's `claude-code` models. A profile name is 1
-to 32 lowercase letters, digits, hyphens, or underscores; `default` is reserved
-for the account without a profile. Each profile's
+to 32 lowercase letters, digits, hyphens, or underscores; `default` names the
+account without a profile, and `/login NAME@default` signs in to it. Each profile's
 credentials are stored separately, the same way as the default login.
 
-A fallback chain tries its models in order, moving on when a request fails with
-a model API error, such as a rate or usage limit. Pool accounts with one:
+A fallback chain does the same across different models or providers, such as Codex
+first and Claude after it. It tries its models in order:
 
 ```text
-/chain codex openai-codex:gpt-6-astra openai-codex@work:gpt-6-astra
-/model chain:codex
+/chain best openai-codex@*:gpt-6-astra anthropic:claude-sonnet-4-5
+/model chain:best
 /chain                    # list chains
-/chain codex              # show one
-/chain remove codex
+/chain best               # show one
+/chain remove best
 ```
 
 Saving a chain adds `chain:NAME` to `/model`. A chain uses its first model's
 `/model settings` controls and defaults, and saves overrides under
-`chain:NAME`, so `/fast` works for a chain of Codex accounts. A chain cannot
-contain another chain. A model whose profile is not signed in fails the turn
+`chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
+`openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
 instead of falling back, so a missing login is not hidden. Older CLAI builds keep
-the rest of your settings, but cannot run a profile or chain model.
+the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
+model, and run a model without an account on the default account only.
 
 ## Settings and commands
 
@@ -679,6 +721,7 @@ values for known settings and unsupported database schema versions still cause a
 /set display.thinking false
 /set run.request_limit 10000
 /set run.tool_retries 3
+/set accounts.pool false
 ```
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
@@ -691,13 +734,14 @@ edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
 While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
-`/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
+`/accounts`, `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
 `/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
 arguments open right away instead of queueing.
 The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
-running turn ends. `/model settings` edits to the running model apply to its
+running turn ends, and so do account changes: the running turn keeps the
+accounts it started with. `/model settings` edits to the running model apply to its
 next model request in the same turn. `/resume` can browse, rename, and delete
 sessions mid-turn, but a running conversation cannot be swapped out: picking one
 tells you to enter `/resume ID`, which restores it once the turn ends. With
@@ -986,7 +1030,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
@@ -1049,6 +1093,8 @@ After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
 `importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
 and session with the updated code. The Python process, agent, dependencies passed
 to `chat`, conversation messages, selected model, and active settings are kept.
+The retained transcript is kept too, including when upgrading a running session
+from the older scrollback implementation to the live panel.
 Enabled plugins unload and load again so their handlers use the refreshed
 shell types. Disabled and unapproved project plugins stay off.
 
@@ -1550,8 +1596,8 @@ Streaming uses the defaults from [Code Puppy's smoothing adapters](https://githu
   renderer, at Code Puppy's thinking pace: 20 ms ticks, 0.4-second catch-up,
   minimum two characters per tick. The `Thinking` heading ends without a
   newline, so the first rendered reasoning line continues on the heading's row.
-- Both writers feed the terminal scroll region directly. Partial text does not
-  wait for an editor refresh, and a completed line does not clear the input box.
+- Both writers feed the live transcript panel. Output paints at up to 60 frames
+  per second; changed cells do not clear the input box.
 - Smoothing applies only to interactive terminal output. Redirected output is
   written directly. Parts drain before the next heading, tool status, or prompt.
 
@@ -1744,22 +1790,26 @@ output count, updated after each turn and hidden until a response has price data
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
-The shell owns a pinned editor below a VT terminal scroll region, with Termflow
-layout and completion helpers. Rich and Termflow transcript output scroll above
-it without repainting the editor. The hardware cursor stays hidden during input;
-a nonblinking reverse-video cell marks the editing position. Status and resize
-checks run ten times per second, writing only changed rows. Terminals shorter
-than six rows or narrower than six columns omit the border. Below three rows,
-the draft is retained but hidden until the terminal grows. The pinned surface
-requires VT scrolling-margin support. While resizing, the visible viewport goes
-blank and incoming output is buffered. After 250 ms without another size change,
-CLAI redraws recent transcript at the new width and restores the current draft.
-It does not clear terminal scrollback or conversation history. The repaint cache
-retains up to 2,000 lines and one million characters per editor, plus a bounded
-partial line; it includes startup and plugin lifecycle notices and is carried
-across shell reloads. Output arriving during resize
-is kept separately and flushed in order, spilling to a private temporary file
-for large bursts. Full-screen menus release scrolling margins and detach the keyboard reader before taking over.
+The shell owns a pinned editor below a Termflow live transcript panel. It uses
+Termflow's cell buffer and changed-cell painter, not a second terminal canvas or
+a prompt-toolkit renderer. The hardware cursor stays hidden during input; a
+nonblinking reverse-video cell marks the editing position. Status checks run ten
+times per second. Terminals shorter than six rows or narrower than six columns
+omit the border. Below three rows, the draft is retained but hidden until the
+terminal grows. Resizing repaints the panel at the new size and preserves the
+draft and scroll position. It never erases terminal scrollback.
+
+Assistant text and thinking retain their Markdown source and render again when
+the width or theme changes. Tool and command output rewrap with their original
+colours. Full-screen menus temporarily leave the panel and detach its keyboard
+reader. Output arriving during a menu stays in the transcript and appears when
+the menu closes. Inline questions borrow the panel. The transcript includes
+startup and plugin lifecycle notices and is carried across shell reloads.
+It retains up to 10,000 items and four million characters, plus a bounded partial
+line. Old output is dropped at those limits; oversized Markdown parts keep their
+rendered tail instead of their source. `/clear` and `/new` forget earlier output,
+so neither the panel nor the exit printout shows it again. Hyperlinks are
+preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 The status row follows Code Puppy's styling: muted surrounding text, an accented

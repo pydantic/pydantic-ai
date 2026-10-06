@@ -4,6 +4,7 @@ import os
 import sqlite3
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -42,6 +43,20 @@ def _stored_plugin_id(plugin_id: str) -> str:
     return _STORED_PLUGIN_NAMES.get(current_id, current_id)
 
 
+@dataclass(frozen=True, kw_only=True)
+class StoredAccount:
+    """An account as saved: no secrets, only what lists and orders it."""
+
+    provider: str
+    """The model prefix it runs, such as `openai-codex` or a plugin's `claude-code`."""
+    profile: str | None
+    """`None` for the provider's default account."""
+    label: str | None = None
+    """A name the user gave it; the profile is shown when there is none."""
+    plugin_login: str | None = None
+    """The plugin `/login` name that signed it in, such as `claude`; `None` when CLAI keeps its credentials."""
+
+
 def config_dir() -> Path:
     """The user's CLAI folder, honouring `XDG_CONFIG_HOME`."""
     return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
@@ -73,6 +88,12 @@ class SettingsStore:
             # Fallback chains are their own table for the same reason: builds without chains never read it.
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS model_chains (name TEXT PRIMARY KEY, models_json TEXT NOT NULL)'
+            )
+            # Accounts hold no secrets: their order, label, and the plugin sign-in that owns them. The
+            # default account's profile is ''.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS accounts (provider TEXT NOT NULL, profile TEXT NOT NULL, label TEXT, '
+                'plugin_login TEXT, position INTEGER NOT NULL, PRIMARY KEY (provider, profile))'
             )
             connection.execute('PRAGMA user_version = 1')
 
@@ -158,6 +179,58 @@ class SettingsStore:
                 (name, _CHAIN.dump_json(models).decode()),
             )
             connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (f'chain:{name}',))
+
+    def accounts(self) -> list[StoredAccount]:
+        """Saved accounts, grouped by provider in the order the user chose."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                'SELECT provider, profile, label, plugin_login FROM accounts ORDER BY provider, position, profile'
+            ).fetchall()
+        return [
+            StoredAccount(provider=provider, profile=profile or None, label=label, plugin_login=plugin_login)
+            for provider, profile, label, plugin_login in rows
+        ]
+
+    def add_account(self, account: StoredAccount) -> None:
+        """Remember an account last in its provider's order; a known one keeps its place and label."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO accounts SELECT ?, ?, ?, ?, '
+                'COALESCE((SELECT MAX(position) + 1 FROM accounts WHERE provider = ?), 0) '
+                'WHERE true ON CONFLICT(provider, profile) DO UPDATE SET plugin_login = excluded.plugin_login',
+                (account.provider, account.profile or '', account.label, account.plugin_login, account.provider),
+            )
+
+    def rename_account(self, *, provider: str, profile: str | None, label: str | None) -> None:
+        """Change the name an account is shown with; `None` shows its profile again."""
+        with self._connect() as connection:
+            connection.execute(
+                'UPDATE accounts SET label = ? WHERE provider = ? AND profile = ?', (label, provider, profile or '')
+            )
+
+    def remove_account(self, *, provider: str, profile: str | None) -> None:
+        """Forget an account; its credentials are the caller's to delete."""
+        with self._connect() as connection:
+            connection.execute('DELETE FROM accounts WHERE provider = ? AND profile = ?', (provider, profile or ''))
+
+    def move_account(self, *, provider: str, profile: str | None, offset: int) -> None:
+        """Move an account `offset` places within its provider, clamped to the ends."""
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            order = [
+                row[0]
+                for row in connection.execute(
+                    'SELECT profile FROM accounts WHERE provider = ? ORDER BY position, profile', (provider,)
+                )
+            ]
+            if (profile or '') not in order:
+                return
+            index = order.index(profile or '')
+            order.insert(max(0, min(len(order) - 1, index + offset)), order.pop(index))
+            connection.executemany(
+                'UPDATE accounts SET position = ? WHERE provider = ? AND profile = ?',
+                [(position, provider, name) for position, name in enumerate(order)],
+            )
 
     def reset(self, key: str) -> None:
         """Remove a setting override, restoring its default."""

@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import keyring
 from cryptography.fernet import Fernet, InvalidToken
-from keyring.errors import InitError, NoKeyringError, PasswordDeleteError
+from keyring.errors import InitError, KeyringError, NoKeyringError, PasswordDeleteError
 
 from pydantic_ai.exceptions import UserError
 
@@ -40,6 +40,32 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
     root = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
     # A gateway profile such as `gateway/openai@work` stays one file in this folder, not a subfolder.
     return root / f'credentials-{account.replace("/", _SLASH)}.json'
+
+
+_NO_OLDER_ENTRY: set[str] = set()
+"""Default accounts already found to have no older per-entry login; this CLAI never writes one."""
+
+
+def has_credentials(*, account: str) -> bool:
+    """Whether a login is saved for `account`.
+
+    A file answers without decrypting anything or reading the keyring. A default account without one
+    may still have a login an older CLAI saved as its own keyring entry; that entry is moved into its
+    file, as loading it would. Profiles came after per-entry logins, so they are never looked up, and a
+    default account found without an entry is not looked up again this process, so turns read no entry.
+    """
+    encrypted, plaintext = _files(account=account, fallback=None)
+    if encrypted.is_file() or plaintext.is_file():
+        return True
+    if '@' in account or account in _NO_OLDER_ENTRY:
+        return False
+    try:
+        found = load_codex_credentials(account=account) is not None
+    except (KeyringError, UserError):
+        return False  # A locked keyring or a lost key: look again next time.
+    if not found:
+        _NO_OLDER_ENTRY.add(account)
+    return found
 
 
 def profile_accounts() -> list[str]:
@@ -163,6 +189,21 @@ def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Pat
     write_private(path=encrypted, value=cipher.encrypt(value.encode()).decode())
     _delete_keyring(account=account)
     plaintext.unlink(missing_ok=True)
+
+
+def replace_credentials(*, value: str, account: str) -> bool:
+    """Replace a saved login with refreshed tokens; `False`, writing nothing, once there is none.
+
+    Holds the account's lock, which signing out holds while it deletes, so a refresh that finishes
+    after a sign-out cannot sign the account back in: it either saves first and is then deleted, or
+    finds nothing to replace.
+    """
+    with credential_lock(account=account, busy=f'Another CLAI is updating the {account} login. Try again.'):
+        encrypted, plaintext = _files(account=account, fallback=None)
+        if not (encrypted.is_file() or plaintext.is_file()):
+            return False
+        save_codex_credentials(value=value, account=account)
+        return True
 
 
 def delete_credentials(*, account: str = _ACCOUNT, fallback: Path | None = None) -> None:

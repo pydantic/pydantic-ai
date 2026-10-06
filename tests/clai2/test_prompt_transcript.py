@@ -1,6 +1,8 @@
 """Bounded transcript replay preserves text, wrapping, and styling, not controls."""
 
 import io
+from collections import deque
+from typing import cast
 
 import pytest
 from rich.color import ColorSystem
@@ -9,7 +11,13 @@ from rich.style import Style
 from rich.text import Text
 from termflow.ansi.utils import visible_length
 
-from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer, render_ansi, style_prefix
+from pydantic_clai2.ui.prompt.prompt_transcript import (
+    MarkdownBlock,
+    TranscriptBuffer,
+    TranscriptDecoder,
+    render_ansi,
+    style_prefix,
+)
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -231,3 +239,156 @@ def test_colour_reset_does_not_close_a_hyperlink_across_lines() -> None:
     buffer.write('\x1b]8;;\x1b\\ unlinked')
     text = Text.from_ansi(buffer.frame(width=80, height=10).rows[-1])
     assert text.get_style_at_offset(console, -1).link is None
+
+
+def _block(buffer: TranscriptBuffer, *, width: int = 40) -> MarkdownBlock:
+    def render(*, source: str, width: int) -> str:
+        return f'rendered at {width}: {source}\n'
+
+    return buffer.markdown(render=render, width=width, changed=lambda: None)
+
+
+def test_markdown_part_starts_on_its_own_row_and_keeps_its_id() -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('tool header')
+    block = _block(buffer)
+    assert buffer.ids() == range(0, 3)
+    block.extend('**hi**')
+    block.write('streamed\npartial')
+    block.flush()
+    buffer.write('after\n')
+    assert plain(buffer, width=40) == ['tool header', 'streamed', 'partial', 'after', '']
+    assert plain(buffer, width=30) == ['tool header', 'rendered at 30: **hi**', 'after', '']
+    assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['streamed', 'partial']
+
+
+def test_printed_skips_output_already_in_scrollback_and_cleared_output() -> None:
+    buffer = TranscriptBuffer()
+    buffer.write('startup\n')
+    buffer.mark_printed()
+    buffer.write('\tconversation\n')
+    block = _block(buffer)
+    block.extend('answer')
+    block.write('answer\n')
+    buffer.clear()
+    buffer.write('after clear\n')
+    assert Text.from_ansi(buffer.printed(width=40)).plain == 'after clear'
+    assert buffer.printed(width=40) == ''
+    block.freeze()
+    assert plain(buffer) == ['after clear', '']
+
+
+def test_markdown_parts_count_towards_the_line_limit() -> None:
+    buffer = TranscriptBuffer(max_lines=2)
+    _block(buffer)
+    buffer.write('one\ntwo\n')
+    assert buffer.ids() == range(1, 4)
+    assert plain(buffer) == ['one', 'two', '']
+
+
+def test_oversized_markdown_keeps_a_bounded_tail_and_does_not_evict_itself() -> None:
+    buffer = TranscriptBuffer(max_chars=10, max_lines=2)
+    block = _block(buffer)
+    block.extend('source much larger than the limit')
+    block.extend('ignored after freezing')
+    assert block.source is None
+    block.write('one\ntwo\nthree\n')
+    assert plain(buffer, width=40) == ['two', 'three', '']
+    block.write('four\n')
+    assert plain(buffer, width=40) == ['three', 'four', ''], 'a same-length tail still invalidates its cache'
+    block.write('pending-too-long')
+    assert block.chars <= 10
+    assert plain(buffer, width=40) == ['g-too-long', '']
+    buffer.write('new\nnext\n')
+    block.write('evicted block still receiving output')
+    assert plain(buffer, width=40) == ['new', 'next', '']
+
+
+def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() -> None:
+    buffer = TranscriptBuffer(max_chars=10)
+    block = _block(buffer)
+    block.extend('source')
+    block.write('answer\n')
+    assert block.source is None
+    assert plain(buffer, width=40) == ['answer', '']
+
+
+class _PreLiveTranscript:
+    """The pre-1.0 runtime state: styled Text lines and an unfinished ANSI stream.
+
+    It deliberately has no live-panel methods, including `mark_printed`.
+    """
+
+    def __init__(self, *, pending: str = 'pending\x1b[32', discard: bool = False) -> None:
+        self.max_lines = 2000
+        self.max_chars = 1_000_000
+        self._lines = deque([Text.from_ansi('\x1b[31mold output\x1b[0m')])
+        self._pending = pending
+        self._chars = len(self._lines[0])
+        self._discard_until_newline = discard
+        self._decoder = TranscriptDecoder()
+
+
+def test_pre_live_transcript_migrates_in_place_preserving_styles_and_partial_ansi() -> None:
+    legacy = _PreLiveTranscript()
+    retained = cast(TranscriptBuffer, legacy)
+    transcript = TranscriptBuffer.rebind(retained)
+    assert transcript is retained
+    assert type(transcript) is TranscriptBuffer
+    assert transcript.max_lines == 2000 and transcript.max_chars == 1_000_000
+    assert plain(transcript) == ['old output', 'pending']
+    assert '\x1b[31m' in transcript.frame(width=80, height=24).rows[0]
+    transcript.write('m green\x1b[0m\n')
+    assert plain(transcript) == ['old output', 'pending green', '']
+    assert '\x1b[32m' in transcript.frame(width=80, height=24).rows[1]
+    assert Text.from_ansi(transcript.printed(width=80)).plain == 'pending green', 'old output was already emitted'
+    output = io.StringIO()
+    console = Console(file=output)
+    with transcript.capture(console):
+        console.print('after reload')
+    assert console.file is output
+    assert output.getvalue() == 'after reload\n'
+    assert plain(transcript) == ['old output', 'pending green', 'after reload', '']
+    assert transcript.printed(width=80) == '', 'capture does not duplicate lifecycle output'
+
+
+def test_pre_live_transcript_preserves_discarding_a_malformed_escape() -> None:
+    legacy = _PreLiveTranscript(pending='', discard=True)
+    transcript = TranscriptBuffer.rebind(cast(TranscriptBuffer, legacy))
+    transcript.write('discarded')
+    assert plain(transcript) == ['old output', '']
+    transcript.write('discarded\nnew\n')
+    assert plain(transcript) == ['old output', '', 'new', '']
+
+
+def test_live_transcript_rebinds_nested_markdown_state_without_resetting_output() -> None:
+    transcript = TranscriptBuffer(max_lines=3)
+    transcript.write('notice\n')
+    block = _block(transcript)
+    block.extend('answer')
+    block.write('answer\n')
+    for _ in range(2):
+        assert TranscriptBuffer.rebind(transcript) is transcript
+        assert plain(transcript, width=40) == ['notice', 'answer', '']
+    block.extend(' more')
+    block.write('more\n')
+    assert plain(transcript, width=40) == ['notice', 'answer', 'more', '']
+    transcript.max_lines = 1
+    transcript.write('latest\n')
+    assert plain(transcript, width=40) == ['latest', '']
+    assert transcript.printed(width=40) == 'latest\n'
+
+
+@pytest.mark.parametrize('repaint', ['width', 'theme'])
+def test_markdown_repaint_respects_configured_character_and_line_limits(repaint: str) -> None:
+    transcript = TranscriptBuffer(max_chars=8, max_lines=1)
+
+    def render(*, source: str, width: int) -> str:
+        return 'one\ntwo\nthree\n'
+
+    block = transcript.markdown(render=render, width=40, changed=lambda: None)
+    block.extend('x')
+    block.write('ok\n')
+    assert plain(transcript, width=40) == ['ok', '']
+    with theme.use(lambda: 'github_light' if repaint == 'theme' else 'default'):
+        assert plain(transcript, width=20 if repaint == 'width' else 40) == ['three', '']

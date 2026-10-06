@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import pytest
@@ -76,7 +76,7 @@ def test_openai_prompt_cache_retention_does_not_widen_gpt_5_6_window(
         model=model, messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
     )
     detector = CacheHealthDetector(ConversationCacheMarkStore(), 'conversation', 'run', alert_on={'unexpected'})
-    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     mocker.patch('pydantic_ai._utils.now_utc', side_effect=[t0, t0 + timedelta(minutes=45)])
 
     def response(*, read: int = 0, write: int = 0) -> ModelResponse:

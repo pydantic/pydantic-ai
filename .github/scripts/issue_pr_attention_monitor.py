@@ -2170,7 +2170,7 @@ def main() -> int:
         return 1
     client = GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     failures: list[str] = []
     if args.mode == 'snapshot':
         lines = write_snapshot(client, repo, args.snapshot_path, now=now)

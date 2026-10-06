@@ -19,7 +19,7 @@ from pydantic_clai2.commands import config_command, plugins_command
 from pydantic_clai2.config import PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.models.model_settings import model_settings_from_json
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.plugins.loader import PluginLoader
@@ -291,6 +291,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('display.spinner', '""'),
         ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
+        ('accounts.pool', '"off"'),
     ],
 )
 def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str, value_json: str) -> None:
@@ -302,6 +303,32 @@ def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str,
     with pytest.raises(ValidationError):
         store.load()
     assert store.path.read_bytes() == snapshot
+
+
+def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    # Literal rows an earlier build wrote, with a saved profile model and no `accounts.pool`.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.executemany(
+            'INSERT INTO settings VALUES (?, ?)',
+            [('model', '"claude-code@work:opus"'), ('display.thinking', 'false'), ('future.setting', '1')],
+        )
+    store = SettingsStore(path)
+    settings = store.load()
+    # Turning pooling on for existing databases is the intended default; named profiles stay pinned.
+    assert settings.pool_accounts is True
+    assert settings.model == 'claude-code@work:opus' and settings.thinking is False
+    config_command(store, ['set', 'accounts.pool', 'false'])
+    assert SettingsStore(path).load().pool_accounts is False
+    config_command(store, ['reset', 'accounts.pool'])
+    assert SettingsStore(path).load() == settings
+    with closing(sqlite3.connect(path)) as connection:
+        assert dict(connection.execute('SELECT key, value_json FROM settings')) == {
+            'model': '"claude-code@work:opus"',
+            'display.thinking': 'false',
+            'future.setting': '1',
+        }
 
 
 def test_incompatible_schema_is_not_modified(tmp_path: Path) -> None:
@@ -477,6 +504,33 @@ def test_database_without_chains_keeps_models_and_gains_chains(tmp_path: Path) -
         assert connection.execute("SELECT models_json FROM model_chains WHERE name = 'future'").fetchone() == (
             '{"models": []}',
         )
+
+
+def test_database_without_accounts_keeps_its_data_and_gains_accounts(tmp_path: Path) -> None:
+    """A database from before `/accounts` opens unchanged; accounts go in a table older builds never read."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('CREATE TABLE models (name TEXT PRIMARY KEY)')
+        connection.execute('CREATE TABLE model_chains (name TEXT PRIMARY KEY, models_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"openai-codex@work:gpt-6-astra"'))
+        connection.execute('INSERT INTO models VALUES (?)', ('openai-codex@work:gpt-6-astra',))
+        connection.execute('INSERT INTO model_chains VALUES (?, ?)', ('pool', '["openai:gpt-5", "openai@work:gpt-5"]'))
+    store = SettingsStore(path)
+    assert store.accounts() == []
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    store.add_account(StoredAccount(provider='openai-codex', profile='work', label='Work'))
+    reopened = SettingsStore(path)
+    assert reopened.load().model == 'openai-codex@work:gpt-6-astra'
+    assert reopened.models() == ['openai-codex@work:gpt-6-astra']
+    assert reopened.chains() == {'pool': ['openai:gpt-5', 'openai@work:gpt-5']}
+    assert reopened.accounts() == [StoredAccount(provider='openai-codex', profile='work', label='Work')]
 
 
 def test_saved_spinner_from_a_removed_plugin_is_kept(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@
 import asyncio
 import io
 
+import httpx2
 import keyring
 import pytest
 from prompt_toolkit.application import create_app_session
@@ -13,11 +14,17 @@ from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
+from pydantic_ai.providers.openai_codex import (
+    CredentialsPersistenceError,
+    OpenAICodexCredentials,
+    OpenAICodexOAuthFlow,
+    OpenAICodexProvider,
+)
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command, read_line
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
-from pydantic_clai2.config.credential_store import load_codex_credentials
+from pydantic_clai2.config.api_keys import forget_connection
+from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.ui.menus.field_menu import Runners
 
@@ -65,8 +72,42 @@ async def test_credentials_round_trip() -> None:
     credentials = OpenAICodexCredentials(
         access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
     )
-    await source.save(credentials)
+    with pytest.raises(UserError, match='openai-codex was signed out'):
+        await source.save(credentials)  # a refresh never creates a login
+    await source.save_login(credentials)
     assert await source.load() == credentials
+    refreshed = OpenAICodexCredentials(access_token='new', refresh_token='new-refresh', account_id='fake-account')
+    await source.save(refreshed)
+    assert await source.load() == refreshed
+    forget_connection(account='openai-codex')
+    with pytest.raises(UserError, match=r'signed out\. Run /login openai-codex to use it again\.'):
+        await source.save(credentials)
+    assert not has_credentials(account='openai-codex')
+
+
+async def test_a_refresh_finishing_after_sign_out_does_not_sign_the_account_back_in() -> None:
+    account = 'openai-codex@work'
+    source = CodexCredentials(account=account)
+    await source.save_login(OpenAICodexCredentials(access_token='old', refresh_token='old-refresh', account_id='acct'))
+    sent: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request.url.host)
+        if request.url.host == 'auth.openai.com':
+            forget_connection(account=account)  # signed out while the token exchange is in flight
+            return httpx2.Response(
+                200, json={'access_token': 'new', 'refresh_token': 'new-refresh', 'account_id': 'acct'}
+            )
+        return httpx2.Response(401, json={'error': {'message': 'expired'}})
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    provider = OpenAICodexProvider(credential_source=source, http_client=client)
+    with pytest.raises(CredentialsPersistenceError):
+        await provider.client.with_options(max_retries=0).get(
+            'https://chatgpt.com/backend-api/wham/usage', cast_to=object
+        )
+    assert sent == ['chatgpt.com', 'auth.openai.com']
+    assert not has_credentials(account=account), 'the refreshed tokens were not saved back'
 
 
 @pytest.mark.parametrize('command', ['/login codex', '/login openai-codex'])
@@ -254,7 +295,7 @@ async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(keyring, 'set_password', discard)
     with pytest.raises(UserError, match='did not retain'):
-        await source.save(OpenAICodexCredentials(access_token='test', refresh_token='test', account_id='test'))
+        await source.save_login(OpenAICodexCredentials(access_token='test', refresh_token='test', account_id='test'))
     monkeypatch.setattr(keyring, 'set_password', original_set)
     keyring.set_password('pydantic-clai2', 'openai-codex', 'not json')
     with pytest.raises(UserError, match='invalid'):

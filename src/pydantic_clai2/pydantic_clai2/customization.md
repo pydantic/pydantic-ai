@@ -550,7 +550,8 @@ plugin_menu.py's bridge back to the main event loop.
 
 Pass during_turn=True to Command when the menu is safe to open mid-turn, so the
 bare command opens at once instead of queueing behind the running turn. While
-run_worker runs, CLAI holds the turn's output and prints it in order afterwards.
+run_worker runs, CLAI leaves the live panel temporarily. The turn's output stays
+in the transcript and paints when the menu closes.
 Only opt in when the running turn cannot observe what the menu changes.
 during_turn_subcommands=('add',) does the same for a bare subcommand such as
 /model add. Pass args_during_turn=True when every form of the command is safe

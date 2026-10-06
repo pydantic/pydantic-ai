@@ -77,11 +77,20 @@ def test_malformed_profiles_are_rejected(model: str) -> None:
         parse_model(model)
 
 
-async def test_the_default_profile_name_is_reserved() -> None:
-    with pytest.raises(ValueError, match=r'reserved for the account without a profile\. Use openai-codex\.'):
-        parse_model('openai-codex@default:gpt-6')
-    with pytest.raises(ValueError, match='reserved'):
-        await login_command(['claude@default'], codex=CodexAuth(Console(file=io.StringIO())))
+async def test_the_default_profile_names_the_account_without_a_profile() -> None:
+    assert parse_model('openai-codex@default:gpt-6') == ModelRef(
+        provider='openai-codex', profile='default', name='gpt-6'
+    )
+
+    async def default_only() -> str:
+        return 'Signed in to the default account.'
+
+    async def profile_only(profile: str) -> str:  # pragma: no cover -- @default is not a profile
+        raise AssertionError(profile)
+
+    plugins = {'claude': PluginLogin(name='claude', handler=default_only, profile_handler=profile_only)}
+    codex = CodexAuth(Console(file=io.StringIO()))
+    assert await login_command(['claude@default'], codex=codex, plugins=plugins) == 'Signed in to the default account.'
 
 
 async def test_codex_profiles_sign_in_and_run_on_separate_accounts(monkeypatch: pytest.MonkeyPatch) -> None:

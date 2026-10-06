@@ -28,7 +28,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from .. import _utils
@@ -117,7 +117,7 @@ MergeMode = Literal['replace-same-id', 'replace-new', 'accumulate']
 # Deterministic fallback for `timestamp` before any segment has streamed. This is
 # never reached in practice (a segment is always in flight or finalized by the time
 # `timestamp` is read), but keeps the loop free of `now_utc()` for durable replay.
-_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=timezone.utc)
+_FALLBACK_TIMESTAMP = datetime.fromtimestamp(0, tz=UTC)
 
 
 def _has_replace_marker(response: ModelResponse) -> bool:
