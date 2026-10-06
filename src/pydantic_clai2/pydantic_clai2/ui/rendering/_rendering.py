@@ -428,6 +428,17 @@ class StreamRenderer:
         assert self._markdown is not None
         self._markdown.line(line)
 
+    async def echo_prompt(self, text: str) -> None:
+        """Print a steering prompt between streamed chunks without ending the active part."""
+        index, thinking = self._index, self._thinking
+        await self.finish()
+        self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
+        self.console.print()
+        if index is not None:
+            self._index = index
+            self._thinking = thinking
+            self._start_part()
+
     async def finish(self) -> None:
         """Drain rendered Markdown and end any tool-call group before a plugin rendering, a widget, or the prompt appears."""
         await self._drain()

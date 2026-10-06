@@ -1194,8 +1194,9 @@ suggestions for a prefix you type take Up/down as before. Esc closes the
 suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer the active run instead, press Alt+Enter (Option+Enter). With a typed
-draft, this sends the draft to the run at its next opportunity, without
-cancelling in-flight tools. Messages already queued stay queued. With an empty
+draft, this immediately shows the message in the transcript and enqueues it for
+the run's next model request. It does not interrupt the current response or
+cancel in-flight tools. Messages already queued stay queued. With an empty
 draft, it sends the oldest queued follow-up instead. Each Alt+Enter sends one
 message. Slash commands, `!` shell commands, and exit signals are never steered.
 A draft that cannot steer, including any draft while idle, is taken as if you
