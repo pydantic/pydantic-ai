@@ -1,5 +1,6 @@
 """The built-in `day_ai` plugin: a settings menu for `DayAI`'s options, with any token kept in `/keys`."""
 
+import inspect
 import io
 from pathlib import Path
 from types import TracebackType
@@ -16,12 +17,13 @@ from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 
 import pydantic_clai2.builtin_plugins.day_ai as day_ai
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.day_ai import DayAI
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.builtin_plugins.day_ai import SETUP, DayAISource
+from pydantic_clai2.builtin_plugins.day_ai import SETUP, DayAISettings, DayAISource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, api_keys
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey
@@ -88,10 +90,20 @@ class Shell:
         assert entry.loaded is not None
         return entry.loaded.host
 
-    def client(self) -> object:
+    async def next_run(self) -> DayAI[None] | None:
+        """What the browser sign-in's per-run factory gives a run: `DayAI` once signed in, else nothing."""
         [capability] = self.loader.capabilities()
-        assert isinstance(capability, DayAI)
-        return capability.client
+        assert callable(capability)
+        result = capability(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+        assert inspect.isawaitable(result)
+        built = await result
+        assert built is None or isinstance(built, DayAI)
+        return built
+
+    async def client(self) -> object:
+        built = await self.next_run()
+        assert built is not None
+        return built.client
 
 
 @pytest.fixture(autouse=True)
@@ -149,7 +161,7 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
             'Saved Server instructions.',
         ]
     )
-    assert f'Day AI is not connected. {SETUP}' in shell.output.getvalue()
+    assert f'Day AI is not signed in. {SETUP}' in shell.output.getvalue()
     assert labels == ['Day AI access token (saved in /keys as DAY_AI_ACCESS_TOKEN)']
     assert shown.opened == ['list', 'choice', 'list', 'choice', 'list']
     assert api_keys.load_keys()['DAY_AI_ACCESS_TOKEN'].get_secret_value() == 'day-secret'
@@ -160,9 +172,9 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     await shell.loader.close('exit')
 
 
-async def test_conventional_key_is_used_and_resolved_on_every_run(tmp_path: Path) -> None:
+async def test_a_chosen_key_is_resolved_on_every_run(tmp_path: Path) -> None:
     api_keys.save_key(name='DAY_AI_ACCESS_TOKEN', value='first')
-    shell = Shell(tmp_path)
+    shell = Shell(tmp_path, settings={'auth': {'name': 'DAY_AI_ACCESS_TOKEN'}})
     await shell.loader.enable('day_ai')
     assert shell.loader.capabilities() == with_key()
     token = SavedKey(name='DAY_AI_ACCESS_TOKEN', setup=SETUP)
@@ -192,14 +204,17 @@ async def test_reconfigure_picks_another_saved_key_without_reinstalling(
     await shell.loader.close('exit')
 
 
-async def test_choosing_the_browser_signs_in_and_sticks_with_the_conventional_key_saved(
+async def test_browser_sign_in_is_the_default_even_with_the_conventional_key_saved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     api_keys.save_key(name='DAY_AI_ACCESS_TOKEN', value='shared-with-another-tool')
     shell = Shell(tmp_path, terminal=True)
     await shell.loader.enable('day_ai')
+    assert SignIn.connected == [], 'loading never opens the browser'
+    assert await shell.next_run() is None, 'a run without a sign-in leaves Day AI out'
     source = DayAISource(shell.host())
-    assert source.rows()[0].note == 'uses DAY_AI_ACCESS_TOKEN'
+    [auth, _] = source.rows()
+    assert source.current(auth) == 'oauth' and auth.note == ''
     script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), UNTIL_CLOSED])
     assert await shell.loader.configure('day_ai') == '\n'.join(
         [
@@ -208,31 +223,49 @@ async def test_choosing_the_browser_signs_in_and_sticks_with_the_conventional_ke
         ]
     )
     assert shell.saved() == {'auth': 'oauth', 'include_instructions': True}
-    transport = shell.client()
+    transport = await shell.client()
     assert isinstance(transport, StreamableHttpTransport) and isinstance(transport.auth, OAuth)
     assert transport.url == day_ai.DAY_AI_MCP_URL
     [signed_in_with] = SignIn.connected
     assert signed_in_with is not transport
-    assert 'not signed in' not in shell.output.getvalue()
+    assert await shell.client() is transport, 'runs share one connection'
     await shell.loader.close('exit')
 
 
-async def test_automatic_uses_a_stored_sign_in_without_the_browser(tmp_path: Path) -> None:
+async def test_a_sign_in_finished_in_the_menu_applies_without_a_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shell = Shell(tmp_path, terminal=True, settings={'auth': 'oauth', 'include_instructions': True})
+    await shell.loader.enable('day_ai')
+    [capability] = shell.loader.capabilities()
+    assert await shell.next_run() is None
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), UNTIL_CLOSED])
+    assert (await shell.loader.configure('day_ai')).endswith(
+        'Signed in to Day AI. Tokens are kept in the OS credential store and renew themselves.'
+    )
+    assert shell.loader.capabilities() == [capability], 'the settings did not change, so nothing reloaded'
+    assert isinstance(await shell.client(), StreamableHttpTransport)
+    await shell.loader.close('exit')
+
+
+async def test_a_stored_sign_in_is_used_without_the_browser(tmp_path: Path) -> None:
     await store_sign_in()
     shell = Shell(tmp_path)
     await shell.loader.enable('day_ai')
-    assert isinstance(shell.client(), StreamableHttpTransport)
-    assert SignIn.connected == []
-    assert DayAISource(shell.host()).rows()[0].note == 'uses the stored browser sign-in'
+    assert isinstance(await shell.client(), StreamableHttpTransport)
+    assert SignIn.connected == [] and shell.output.getvalue() == ''
     await shell.loader.close('exit')
 
 
-async def test_nothing_chosen_loads_no_capability_and_says_how_to_connect(tmp_path: Path) -> None:
-    shell = Shell(tmp_path)
+async def test_automatic_saved_by_an_earlier_build_means_the_browser(tmp_path: Path) -> None:
+    assert DayAISettings.model_validate({'auth': None}) == DayAISettings()
+    await store_sign_in()
+    shell = Shell(tmp_path, settings={'auth': None, 'include_instructions': False})
     await shell.loader.enable('day_ai')
-    assert shell.loader.capabilities() == []
-    assert DayAISource(shell.host()).rows()[0].note == 'not connected'
-    assert SignIn.connected == []
+    source = DayAISource(shell.host())
+    assert source.current(source.rows()[0]) == 'oauth'
+    built = await shell.next_run()
+    assert built is not None and not built.include_instructions
     await shell.loader.close('exit')
 
 
@@ -247,7 +280,7 @@ async def test_failed_sign_in_is_reported_and_adds_no_capability(
         ['Saved Sign-in.', f'Could not sign in to Day AI: Client failed to connect: authorization denied. {SETUP}']
     )
     assert shell.saved() == {'auth': 'oauth', 'include_instructions': True}
-    assert shell.loader.capabilities() == []
+    assert await shell.next_run() is None
     await shell.loader.close('exit')
 
 
@@ -270,7 +303,7 @@ async def test_an_unfinished_sign_in_never_holds_up_loading(tmp_path: Path) -> N
         shell = Shell(folder, terminal=terminal, settings={'auth': 'oauth'})
         with anyio.fail_after(5):
             await shell.loader.enable('day_ai')
-        assert shell.loader.capabilities() == []
+        assert await shell.next_run() is None
         assert 'Day AI is not signed in. Run ' in shell.output.getvalue()
         assert SignIn.connected == []
         await shell.loader.close('exit')
@@ -287,7 +320,7 @@ async def test_esc_cancels_an_unfinished_sign_in_and_leaves_day_ai_signed_out(
         message = await shell.loader.configure('day_ai')
     assert message == f'Saved Sign-in.\nDay AI sign-in cancelled. {SETUP}'
     assert len(SignIn.connected) == 1
-    assert shell.loader.capabilities() == []
+    assert await shell.next_run() is None
     assert 'Day AI is not signed in. Run ' in shell.output.getvalue()
     await shell.loader.close('exit')
 
@@ -300,7 +333,7 @@ async def test_choosing_the_browser_when_already_signed_in_does_not_open_it(
     await shell.loader.enable('day_ai')
     script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth')])
     assert await shell.loader.configure('day_ai') == 'Saved Sign-in.'
-    assert isinstance(shell.client(), StreamableHttpTransport)
+    assert isinstance(await shell.client(), StreamableHttpTransport)
     assert SignIn.connected == []
     await shell.loader.close('exit')
 
@@ -324,9 +357,10 @@ async def test_cancelling_or_resetting_in_the_menu(tmp_path: Path, monkeypatch: 
     [auth, instructions] = source.rows()
     assert source.current(auth) == 'oauth' and auth.note == ''
     assert source.reset(instructions) == 'Reset Server instructions.'
-    assert source.apply(auth, 'automatic') == 'Saved Sign-in.'
-    assert shell.saved() == {'auth': None, 'include_instructions': True}
-    assert source.current(auth) == 'automatic'
+    assert source.apply(auth, 'WORK_DAY_AI') == 'Saved Sign-in.'
+    assert source.reset(auth) == 'Reset Sign-in.'
+    assert shell.saved() == {'auth': 'oauth', 'include_instructions': True}
+    assert source.current(auth) == 'oauth'
     await shell.loader.close('exit')
 
 
@@ -346,7 +380,12 @@ async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypa
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('include_instructions')], choices=[pick('true')])
     added = await shell.loader.command(
-        ['add', 'day_ai', 'pydantic_clai2.builtin_plugins.day_ai', '{"include_instructions": false}']
+        [
+            'add',
+            'day_ai',
+            'pydantic_clai2.builtin_plugins.day_ai',
+            '{"auth": {"name": "DAY_AI_ACCESS_TOKEN"}, "include_instructions": false}',
+        ]
     )
     assert added == 'Replaced built-in day_ai.\nSaved Server instructions.'
     assert shell.loader.capabilities() == with_key()
@@ -368,7 +407,7 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
 
 async def test_plugins_menu_enabling_opens_the_settings_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     api_keys.save_key(name='DAY_AI_ACCESS_TOKEN', value='saved')
-    shell = Shell(tmp_path)
+    shell = Shell(tmp_path, settings={'auth': {'name': 'DAY_AI_ACCESS_TOKEN'}})
     script(monkeypatch, lists=[pick('include_instructions')], choices=[pick('false')])
     presses = iter(['space', 'close'])
 

@@ -2,26 +2,31 @@
 
 import io
 import sqlite3
+import sys
 from contextlib import closing
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_clai2 import StreamRenderer
+from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
+from pydantic_clai2.builtin_plugins.day_ai import DayAISource
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
-from pydantic_clai2.commands import config_command, plugins_command
+from pydantic_clai2.builtin_plugins.notion import NotionSource
+from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
+from pydantic_clai2.commands import Commands, config_command, plugins_command
 from pydantic_clai2.config import PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.models.model_settings import model_settings_from_json
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
@@ -662,3 +667,49 @@ def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None
     assert store.plugins()[0].enabled
     plugins_command(store, ['remove', 'logfire'])
     assert store.plugins() == []
+
+
+@pytest.mark.parametrize(
+    ('name', 'previous', 'saved'),
+    [
+        ('day_ai', {'auth': None}, {'auth': 'oauth', 'include_instructions': False}),
+        (
+            'notion',
+            {'auth': None, 'read_only': True},
+            {'auth': 'oauth', 'read_only': True, 'include_instructions': False},
+        ),
+        ('ordinal', {'sign_in': 'auto'}, {'sign_in': 'browser', 'include_instructions': False}),
+    ],
+)
+async def test_automatic_sign_in_saved_by_older_builds_means_the_browser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    previous: dict[str, JsonValue],
+    saved: dict[str, JsonValue],
+) -> None:
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: True)  # `ordinal` refuses a browser sign-in without one.
+    store = SettingsStore(tmp_path / 'settings.db')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == name)
+    declaration = builtin.model_copy(update={'enabled': True, 'settings': previous})
+    store.save_plugin(declaration)
+    loader = PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(builtin,),
+    )
+    try:
+        await loader.load_all()
+        [entry] = loader.entries()
+        assert entry.loaded is not None, 'the automatic choice older builds saved still loads'
+        assert store.plugins() == [declaration]  # Loading does not rewrite it.
+        host = entry.loaded.plugin.host
+        source = {'day_ai': DayAISource, 'notion': NotionSource, 'ordinal': OrdinalSource}[name](host)
+        [instructions] = [row for row in source.rows() if row.key == 'include_instructions']
+        source.apply(instructions, 'false')
+        # An unrelated edit saves the browser sign-in, a value older builds read too.
+        assert [plugin.settings for plugin in store.plugins()] == [saved]
+    finally:
+        await loader.close('exit')

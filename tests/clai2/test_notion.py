@@ -124,6 +124,7 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
         [
             'Enabled notion.',
             'Notion uses the saved key NOTION_API_KEY. Manage it in /keys.',
+            'Saved Sign-in: key only.',
             'Saved Sign-in.',
             'Saved Tools.',
             'Saved Server instructions.',
@@ -151,12 +152,13 @@ async def test_reopening_repicks_a_saved_key_and_resets_options_without_reinstal
     assert await shell.loader.command(['configure', 'notion']) == (
         'Notion uses the saved key TEAM_NOTION. Manage it in /keys.\nReset Tools.'
     )
-    assert shell.saved() == {'auth': None, 'read_only': False, 'include_instructions': True}
+    assert shell.saved() == {'auth': 'key', 'read_only': False, 'include_instructions': True}
     assert (await shell.built()).auth == 'ntn-team'
     script(monkeypatch, lists=[reset('key')])
     assert await shell.loader.configure('notion') == (
-        'Notion no longer uses a saved key. The key itself stays in /keys.'
+        'Notion no longer uses a saved key and signs in through the browser. The key itself stays in /keys.'
     )
+    assert shell.saved() == {'auth': 'oauth', 'read_only': False, 'include_instructions': True}
     assert (await shell.built()).auth is None
     assert set(api_keys.load_keys()) == {'NOTION_API_KEY', 'TEAM_NOTION'}
 
@@ -164,7 +166,7 @@ async def test_reopening_repicks_a_saved_key_and_resets_options_without_reinstal
 async def test_a_chosen_key_is_resolved_each_run_and_fails_closed(tmp_path: Path) -> None:
     api_keys.save_key(name='NOTION_API_KEY', value='ntn-first')
     notion.select_key(KeyReference(name='NOTION_API_KEY'))
-    shell = Shell(tmp_path)
+    shell = Shell(tmp_path, {'auth': 'key'})
     await shell.loader.enable('notion')
     assert (await shell.built()).auth == 'ntn-first'
     api_keys.save_key(name='NOTION_API_KEY', value='ntn-second')
@@ -248,29 +250,43 @@ async def test_key_only_mode_warns_and_never_opens_a_browser(tmp_path: Path) -> 
     assert shell.output.getvalue().count('no key selected') == 1, 'a chosen key silences the warning'
 
 
-async def test_browser_mode_ignores_a_chosen_key(tmp_path: Path) -> None:
+async def test_browser_sign_in_is_the_default_and_ignores_a_chosen_key(tmp_path: Path) -> None:
     api_keys.save_key(name='NOTION_API_KEY', value='ntn-token')
     notion.select_key(KeyReference(name='NOTION_API_KEY'))
-    shell = Shell(tmp_path, {'auth': 'oauth'})
+    shell = Shell(tmp_path)
     await shell.loader.enable('notion')
     capability = await shell.built()
     assert capability.auth is None and isinstance(capability.client, Client)
 
 
+async def test_automatic_saved_by_an_earlier_build_means_the_browser(tmp_path: Path) -> None:
+    assert notion.NotionSettings.model_validate({'auth': None}) == notion.NotionSettings()
+    api_keys.save_key(name='NOTION_API_KEY', value='ntn-token')
+    notion.select_key(KeyReference(name='NOTION_API_KEY'))
+    shell = Shell(tmp_path, {'auth': None, 'read_only': True})
+    await shell.loader.enable('notion')
+    capability = await shell.built()
+    assert capability.auth is None and isinstance(capability.client, Client) and capability.read_only
+
+
 async def test_invalid_selection_fails_closed_and_the_menu_offers_a_new_choice(tmp_path: Path) -> None:
     save_codex_credentials(account='notion', value='{"token": "ntn-inline"}')
-    shell = Shell(tmp_path)
-    await shell.loader.enable('notion')
-    with pytest.raises(UserError, match='selection is invalid'):
-        await shell.built()
+    shell = Shell(tmp_path, {'auth': 'key'})
+    with pytest.raises(PluginError, match='selection is invalid'):
+        await shell.loader.enable('notion')
     menu = source()
-    assert [menu.current(row) for row in menu.rows()] == ['(invalid; choose again)', 'auto', 'false', 'true']
+    assert [menu.current(row) for row in menu.rows()] == ['(invalid; choose again)', 'oauth', 'false', 'true']
 
 
 def test_menu_validates_like_saving_would() -> None:
     menu = source(read_only=True)
-    [_, auth, tools, _] = menu.rows()
+    [key, auth, tools, _] = menu.rows()
     assert menu.problem(auth, 'browser') is not None
+    assert menu.problem(auth, 'auto') is not None, 'automatic is no longer offered'
+    assert menu.reset(key) == (
+        'Notion no longer uses a saved key and signs in through the browser. The key itself stays in /keys.'
+    )
+    assert menu.current(auth) == 'oauth'
     assert menu.problem(tools, 'maybe') is not None
     assert menu.problem(tools, 'false') is None
     assert menu.current(tools) == 'true', 'checking a value does not save it'
