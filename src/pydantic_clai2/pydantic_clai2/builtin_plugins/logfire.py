@@ -51,6 +51,7 @@ from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, ru
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.managed import managed_target
+from pydantic_clai2.mcp._resilient import ResilientMCP
 from pydantic_clai2.plugins import (
     Plugin,
     PluginHost,
@@ -246,8 +247,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         return cls(host, host.settings(LogfireSettings, requires=REQUIRES))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        resilient = ResilientMCP(warn=self._warn_mcp)
         if self.fleet is None:
-            return (self._session_tracing, self.instrumentation)
+            return (self._session_tracing, self.instrumentation, resilient)
         tracing = self._session_tracing
         control = AgentControl[None](
             self.fleet.agent_variable,
@@ -257,7 +259,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             applies=self.fleet.applies_here,
         )
         fleet_control = FleetControl(fleet=self.fleet, approver=self._approve, blocked_message=self._blocked_message)
-        return (self._session_tracing, self.instrumentation, control, fleet_control)
+        return (self._session_tracing, self.instrumentation, control, fleet_control, resilient)
+
+    def _warn_mcp(self, message: str) -> None:
+        self.host.console.print(message, style=theme.color(theme.WARNING), markup=False)
 
     def _blocked_message(self, rule: PolicyRule) -> str:
         """What the model reads for a denied call; the user sees it as a panel with a Learn more link."""

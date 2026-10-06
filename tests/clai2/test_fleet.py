@@ -155,7 +155,7 @@ def test_notices_name_the_version_of_what_changed(tmp_path: Path) -> None:
     assert 'config v1 · /catalog' in render([by_tier['company']])
     both = render(changes)
     assert 'Updated from Logfire · logfire/clai2' in both
-    assert '+ skills: pr-shepherd · catalog: iterate' in both
+    assert 'Added: skills pr-shepherd · catalog iterate' in both
     assert 'config v1 · catalog v1 · /catalog' in both
     assert fleet.compliance(build.snapshot, build.loaded)['clai2.catalog.version'] == '1'
 

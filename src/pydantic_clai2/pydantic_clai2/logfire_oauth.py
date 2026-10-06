@@ -37,6 +37,7 @@ from pydantic import (
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.mcp import http_client
+from pydantic_clai2.mcp._auth import MCPAuth
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 ACCOUNT = 'logfire-oauth'
@@ -407,7 +408,7 @@ async def _refresh(http: httpx.AsyncClient, *, resource: str, tokens: Tokens) ->
     return refreshed
 
 
-class DeviceAuth(httpx.Auth):
+class DeviceAuth(MCPAuth):
     """Bearer tokens from a stored sign-in; refreshes them, or starts a browser sign-in when there is none."""
 
     def __init__(

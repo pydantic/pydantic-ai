@@ -44,6 +44,7 @@ from pydantic_clai2.config.api_keys import (
 )
 from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore, http_client, sign_in
+from pydantic_clai2.mcp._auth import MCPAuth
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE_DETAILS,
@@ -168,7 +169,7 @@ def saved_key() -> KeyReference | None:
         raise UserError(f'The saved PostHog key reference is invalid. {SETUP}') from None
 
 
-class SavedKeyAuth(httpx.Auth):
+class SavedKeyAuth(MCPAuth):
     """Send the chosen `/keys` entry as the bearer token, looked up again for every request."""
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:

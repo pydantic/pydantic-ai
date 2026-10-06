@@ -21,10 +21,7 @@ NOUNS = {'skill': 'skill', 'mcp_server': 'MCP server', 'plugin': 'plugin', 'inst
 BLOCKED_PREFIX = 'Blocked by policy'
 
 
-def _mark(action: str) -> str:
-    return {'added': '+', 'updated': '~', 'removed': '-'}[action]
-
-
+ACTION_WORDS = {'added': 'Added', 'updated': 'Changed', 'removed': 'Removed'}
 PLURALS = {'skill': 'skills', 'mcp_server': 'MCP servers', 'plugin': 'plugins', 'instruction': 'instructions'}
 
 
@@ -48,11 +45,12 @@ def notice_panel(changes: Sequence[Change], *, snapshot: Snapshot, source: str, 
                 groups.setdefault(PLURALS.get(change.kind, change.kind), []).append(change.name)
         if not groups:
             continue
-        line = Text(f'{_mark(action)} ', style=theme.color(theme.ACCENT))
+        # Words, not +/-: a leading "-" reads like a bullet list of what is managed.
+        line = Text(f'{ACTION_WORDS[action]}: ', style=theme.color(theme.ACCENT))
         for index, (group, names) in enumerate(groups.items()):
             if index:
                 line.append(' · ', style=theme.color(theme.MUTED))
-            line.append(f'{group}: ', style=theme.color(theme.MUTED))
+            line.append(f'{group} ', style=theme.color(theme.MUTED))
             line.append(', '.join(names), style='bold')
         lines.append(line)
     tiers = {change.tier for change in changes}
