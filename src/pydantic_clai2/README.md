@@ -8,10 +8,9 @@ see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-`coder` includes its own context management: it clears old tool results as the
-context fills. The fuller built-in `compaction` plugin,
-[described below](#compacting-the-conversation), stays greyed out in `/plugins`
-while `coder` is on, since the two overlap, and takes over when you disable `coder`.
+`coder` clears old tool results as the context fills. The built-in `compaction`
+plugin, [described below](#compacting-the-conversation), is on by default beside it:
+it summarises older messages before the context runs out and adds `/compact`.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
@@ -1293,7 +1292,7 @@ for that.
 
 ## Compacting the conversation
 
-The built-in `compaction` plugin runs while `coder` is off (`/plugins disable coder`).
+The built-in `compaction` plugin is on by default, with or without `coder`.
 It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
 It protects the most recent 50,000 tokens. `ModelAPIError`,
@@ -1315,9 +1314,8 @@ context sizes from. A model it does not list (`test`, a local endpoint) is
 assumed to have 200,000 tokens, the harness default. To change any of this,
 run `/plugins configure compaction` (or press `c` on its `/plugins` row): each
 edit is validated and saved as you make it, and the plugin reloads so the next
-turn uses the new settings. A turn already running keeps the old ones. While `coder`
-is on, `compaction` is greyed out and cannot be configured, since its settings would
-have no effect. You can also redeclare the plugin with your own settings;
+turn uses the new settings. A turn already running keeps the old ones.
+You can also redeclare the plugin with your own settings;
 `/plugins disable compaction` turns it off, `/compact` included:
 
 ```text
@@ -1335,8 +1333,7 @@ have no effect. You can also redeclare the plugin with your own settings;
 The status row shows compact used/max context tokens, such as `128k/1m`.
 The maximum comes from the request's model or the `context_window` override.
 It stays `?` until the first request of the session or after a model change, and for
-a model with no known window. With `compaction` off, for example while `coder` is on,
-the shell reads the window from the request's model itself. An unknown model's fallback
+a model with no known window. With `compaction` off, the shell reads the window from the request's model itself. An unknown model's fallback
 compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
 larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 

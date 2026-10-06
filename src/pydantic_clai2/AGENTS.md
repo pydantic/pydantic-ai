@@ -132,9 +132,11 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `on_session_start`.
 
 **Overlapping plugins go in the compatibility matrix.** `plugins/compatibility.py`
-maps a plugin's factory to the factories it already includes (`coder` includes
-`compaction`, and harness `SubAgents` while it binds one, which it does with
-`sub_agents` on). While the including plugin is loaded, the
+maps a plugin's factory to the factories it already includes, each with the
+capability classes it must bind for that to hold (`coder` includes harness
+`SubAgents` while it binds one, which it does with `sub_agents` on, and
+`compaction` only while it binds a history compaction, which it does not, so
+both run by default). While the including plugin is loaded, the
 loader keeps the included ones unloaded and refuses to enable or configure them, and `/plugins`
 greys their rows out. Their saved `enabled` flag is untouched, so turning the
 including plugin off loads them again. Add a row there; do not special-case ids.
