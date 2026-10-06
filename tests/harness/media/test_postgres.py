@@ -1,18 +1,21 @@
-"""SQL-free tests for `PostgresMediaStore`.
+"""Unit tests for `PostgresMediaStore`.
 
-Everything here runs without a database: construction, table name validation,
-protocol conformance, `public_url`, and the URI check that precedes every
-query. `_StubPool` satisfies `PostgresPool` structurally and is never queried.
+Construction, table name validation, protocol conformance, `public_url`, and the
+URI check that precedes every query run against `_StubPool`, which satisfies
+`PostgresPool` structurally and is never queried. Round trips, dedup, and schema
+creation run against `SqlitePool`, an in-memory SQLite stand-in for a pool: there
+is no in-process Postgres, and these tests must run in every CI job.
 
-The behavior that needs a server (round trips, dedup, schema creation) is
-covered by `src/pydantic_ai_harness/integration_tests/postgres`, which runs
-against a real Postgres.
+The edges only a real server shows are covered by
+`src/pydantic_ai_harness/integration_tests/postgres`, which runs against Postgres.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import AbstractAsyncContextManager
 
+import anyio
 import pytest
 
 import pydantic_ai_harness.media as media
@@ -26,6 +29,7 @@ from pydantic_ai_harness.media import (
     media_uri_for,
     parse_media_uri,
 )
+from tests.harness._postgres_sqlite import SqlitePool
 
 _MALFORMED_URI = 'https://example.com/not-a-media-uri'
 
@@ -111,3 +115,96 @@ class TestMediaPostgresExport:
         assert media.PostgresPool is PostgresPool
         assert media.PostgresConnection is PostgresConnection
         assert {'PostgresMediaStore', 'PostgresPool', 'PostgresConnection'} <= set(media.__all__)
+
+
+@pytest.fixture
+def pool() -> Iterator[SqlitePool]:
+    sqlite_pool = SqlitePool()
+    yield sqlite_pool
+    sqlite_pool.close()
+
+
+_MISSING_URI = 'media+sha256://' + '0' * 64
+
+
+class TestPostgresMediaStoreRoundTrip:
+    async def test_put_get_round_trip(self, pool: SqlitePool) -> None:
+        """Bytes that are not valid UTF-8 come back identical."""
+        store = PostgresMediaStore(pool)
+        data = b'hello postgres bytes \x00\xff'
+
+        uri = await store.put(data, context=MediaContext(media_type='application/octet-stream'))
+
+        assert uri == media_uri_for(data)
+        assert await store.get(uri) == data
+        assert await store.exists(uri) is True
+        assert await store.exists(_MISSING_URI) is False
+
+    async def test_second_put_is_a_no_op(self, pool: SqlitePool) -> None:
+        """The digest is the primary key, so a repeat `put` neither fails nor overwrites."""
+        store = PostgresMediaStore(pool)
+        data = b'duplicate me'
+
+        first = await store.put(data, context=MediaContext(media_type='text/plain', metadata={'writer': 'first'}))
+        second = await store.put(data, context=MediaContext(media_type='image/png', metadata={'writer': 'second'}))
+
+        assert first == second
+        assert await pool.count_rows('media') == 1
+        assert await store.get_metadata(first) == {'writer': 'first'}
+
+    async def test_metadata_defaults_to_empty(self, pool: SqlitePool) -> None:
+        store = PostgresMediaStore(pool)
+
+        uri = await store.put(b'no tags')
+
+        assert await store.get_metadata(uri) == {}
+
+    async def test_custom_table_name(self, pool: SqlitePool) -> None:
+        store = PostgresMediaStore(pool, table='blobs')
+
+        uri = await store.put(b'in a custom table')
+
+        assert await pool.count_rows('blobs') == 1
+        assert await store.get(uri) == b'in a custom table'
+
+    async def test_missing_digest_raises_file_not_found(self, pool: SqlitePool) -> None:
+        store = PostgresMediaStore(pool)
+
+        with pytest.raises(FileNotFoundError, match='media not found'):
+            await store.get(_MISSING_URI)
+        with pytest.raises(FileNotFoundError, match='media not found'):
+            await store.get_metadata(_MISSING_URI)
+
+    async def test_row_with_wrong_types_raises(self, pool: SqlitePool) -> None:
+        """A row another writer stored with the wrong column types is refused, not returned."""
+        store = PostgresMediaStore(pool)
+        await store.exists(_MISSING_URI)  # creates the table
+        async with pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                'INSERT INTO media (sha256, bytes, size_bytes, metadata) VALUES ($1, $2, $3, $4)',
+                parse_media_uri(_MISSING_URI),
+                'not bytes',
+                9,
+                b'not text',
+            )
+
+        with pytest.raises(ValueError, match='has wrong types'):
+            await store.get(_MISSING_URI)
+        with pytest.raises(ValueError, match='has wrong types'):
+            await store.get_metadata(_MISSING_URI)
+
+
+class TestPostgresMediaStoreSchema:
+    async def test_schema_is_created_once_under_concurrent_first_calls(self, pool: SqlitePool) -> None:
+        """The second first call waits on the lock and then finds the schema ready."""
+        store = PostgresMediaStore(pool)
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(store.put, b'first caller')
+            tg.start_soon(store.put, b'second caller')
+        await store.put(b'later caller')
+
+        assert await pool.count_rows('media') == 3
+        creates = [statement for statement in pool.statements if statement.startswith('CREATE TABLE')]
+        assert len(creates) == 1
+        assert pool.statements.count('SELECT pg_advisory_xact_lock(hashtext($1))') == 1

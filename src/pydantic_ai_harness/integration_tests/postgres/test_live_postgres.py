@@ -1,12 +1,11 @@
 """Live PostgreSQL tests for `PostgresStepStore` and `PostgresMediaStore`.
 
 Both stores take a caller-owned asyncpg-compatible pool and speak SQL to it, and
-there is no in-memory fake of Postgres to run them against. The unit suites under
-`tests/harness` therefore only cover what needs no server (construction, table
-name validation, `public_url`, URI parsing). This file is the behavior coverage
-for the Postgres stores: every read, write, ordering, idempotency and retention
-rule is exercised here against a real server, along with the edges only a real
-server shows:
+there is no in-process Postgres to run them against. The unit suites under
+`tests/harness` run the stores against an in-memory SQLite stand-in for the pool,
+which rewrites the few Postgres-only spellings. This file runs every read, write,
+ordering, idempotency and retention rule against a real server instead, along
+with the edges only a real server shows:
 
 - parameter binding: a `run_id` and metadata holding a quote, a backslash and the
   text `$1` are stored and returned unchanged;
