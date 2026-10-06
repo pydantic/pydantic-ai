@@ -364,14 +364,34 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 `updates.channel` picks where it looks:
 
 - `stable` (default): the newest release on PyPI.
-- `bleeding`: the newest commit on `main` that changes CLAI. It downloads that
-  commit's `.tar.gz` archive over HTTPS and uses `--overrides` to install CLAI,
-  harness, and core with their required extras. It needs no release and no `git`.
-  These builds report version `0.0.0+<full-commit-sha>`.
+- `bleeding`: the newest build from `main`. For each `main` commit that changes
+  CLAI, harness, or core, CI builds an sdist of each and publishes them to the
+  [`clai2-bleeding`](https://github.com/pydantic/pydantic-ai/releases/tag/clai2-bleeding)
+  prerelease, whose tag moves with them. CLAI reads `clai2-bleeding.json` there
+  to learn the commit, then uses `--overrides` to install CLAI, harness, and core
+  from that commit's sdists with their required extras. These are plain release
+  downloads, so they need no `git` and no GitHub API calls, which are rate
+  limited without a token. The status row names the build by its short commit.
 
 ```text
 /set updates.channel bleeding
 /update
+```
+
+To use another copy of the release, start CLAI with `CLAI_BLEEDING_URL` set to
+the folder that holds `clai2-bleeding.json`. A fork that runs the `CLAI2 bleeding`
+workflow publishes its own:
+
+```bash
+CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding clai2
+```
+
+To try a local checkout, build the same files and serve them over HTTP:
+
+```bash
+src/pydantic_clai2/scripts/build_bleeding.sh /tmp/clai2-bleeding
+python -m http.server --directory /tmp/clai2-bleeding 8000 &
+CLAI_BLEEDING_URL=http://localhost:8000 clai2
 ```
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
@@ -895,7 +915,7 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
-`plugins` takes the same declarations as `/plugins add`: an `id`, a `factory`
+`plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
 relative `path` is relative to the folder that holds `.clai`, whichever
 subdirectory you launch from. A
@@ -1757,9 +1777,13 @@ class Search(Plugin):
         self.host.console.bell()
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
-next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
+Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
+importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
+repository with `/plugins add https://github.com/your-org/my-plugin.git`.
+Git repositories need an `__init__.py` or `plugin.py` at their root; install
+any dependencies in CLAI's Python environment first. See
+[where plugins live](PLUGINS.md#where-plugins-live) for supported URLs and checkout management.
+The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove: Space toggles the highlighted plugin, and `c`, `r`, and `d`
 configure, reload, and remove it. Press `/` to search plugin names; while you
 search, every key you type filters, Enter keeps the matches so the keys act on
@@ -1900,7 +1924,7 @@ scrubbing remains enabled.
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `false`) adds spans and logs in the
+rather than falling back. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
 `clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never typed values or
@@ -1932,7 +1956,8 @@ credentials file.
 `@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire
 project: run `/plugins configure observability`, choose **Logfire project**, pick
 Logfire US, sign in with your Pydantic account, and pick the shared CLAI project.
-Then set **UI events** to recorded in the same menu, or:
+UI events are recorded by default. If you previously turned them off, set
+**UI events** to recorded in the same menu, or:
 
 ```text
 /plugins add observability pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
