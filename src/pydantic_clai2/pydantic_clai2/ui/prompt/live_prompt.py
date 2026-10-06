@@ -203,6 +203,9 @@ class LivePrompt:
                 self.buffer.edit('delete')
             else:
                 self.submit(EOFError())
+        elif key == 'ctrl-l':
+            # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
+            self.output.clear(keep_current=self.interrupts.active)
         elif key in ('paste', 'ctrl-v', 'alt-v'):
             self.paste(data if key == 'paste' else None)
         elif key == 'ctrl-r' or self.buffer.search is not None:
