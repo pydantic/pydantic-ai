@@ -8,6 +8,7 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
 from pydantic_clai2.config.api_keys import load_keys
@@ -106,11 +107,62 @@ def ensure_enrolled(store: SettingsStore) -> ManagedTarget | None:
         raise SystemExit(130) from None
     if not enrolled(store, target):
         raise SystemExit('Sign-in did not complete, so clai2 cannot start: your organization manages it.')
+    _adopt_pushed_model(store, target)
     return target
 
 
-GATEWAY_DEFAULT_MODEL = 'gateway/anthropic:claude-sonnet-5-5'
-"""The model when setup configured the gateway and the user has not picked one."""
+def _adopt_pushed_model(store: SettingsStore, target: ManagedTarget) -> None:
+    """On the first managed enrolment only: let the organization's model (from Agent Control) take over.
+
+    Clears a model picked before enrolment, once (a marker beside the settings records it), so the model pushed
+    in `agent__<agent>` is the default; a model picked afterwards sticks. The pushed model is also saved to the
+    `/model` list so it can be picked again.
+    """
+    marker = store.path.parent / 'managed-model-adopted'
+    if marker.exists():
+        return
+    model = _pushed_model(store, target)
+    try:
+        marker.write_text(target.project_label, encoding='utf-8')
+    except OSError:
+        pass
+    if model is None:
+        return
+    if 'model' in store.overrides():
+        store.reset('model')
+    if model not in store.models():
+        store.add_model(name=model)
+    print(f"Your organization's default model is {model} (from Logfire). /model to change.")
+
+
+def _pushed_model(store: SettingsStore, target: ManagedTarget) -> str | None:
+    """The `model` the managed agent's config serves, read with the key enrolment saved."""
+    import json
+
+    import httpx
+    from logfire.variables import VariablesConfig
+
+    declaration = next((plugin for plugin in store.plugins() if plugin.id == 'observability'), None)
+    reference = declaration.settings.get('api_key') if declaration is not None else None
+    name = reference.get('name') if isinstance(reference, dict) else None
+    key = load_keys().get(name) if isinstance(name, str) else None
+    if key is None:
+        return None
+    try:
+        response = httpx.get(
+            f'{target.base_url}/v1/variables/',
+            headers={'Authorization': f'bearer {key.get_secret_value()}'},
+            timeout=10,
+        )
+        response.raise_for_status()
+        resolved = VariablesConfig.model_validate(response.json()).resolve_serialized_value(
+            f'agent__{target.agent}', None, {}
+        )
+        value: object = json.loads(resolved.value) if resolved.value else {}
+    except (httpx.HTTPError, ValueError):
+        return None
+    model = cast(dict[str, object], value).get('model') if isinstance(value, dict) else None
+    return model if isinstance(model, str) and model else None
 
 
 def apply_gateway(store: SettingsStore) -> bool:

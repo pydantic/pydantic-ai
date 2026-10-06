@@ -1104,6 +1104,9 @@ class _Shell(Generic[DepsT, OutputT]):
             )
             try:
                 model = self.session.model or _model_label(self.agent)
+                if not self.session.model_chosen and (pushed := policy_state.pushed_model()):
+                    # Hackathon: with no pick of the user's own, Agent Control's pushed model is the one that runs.
+                    model = pushed
                 if model != self.status.model:
                     self.status.context_window = None
                     self.status.context_alert = False

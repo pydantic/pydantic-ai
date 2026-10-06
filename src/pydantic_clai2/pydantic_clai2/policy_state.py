@@ -37,6 +37,14 @@ loaded_plugins: Callable[[], frozenset[str]] = frozenset
 """Ids of the plugins loaded now; the shell installs the reader, so `locked_ok` can check `plugin:<id>` keys."""
 
 
+def _no_model() -> str | None:
+    return None
+
+
+pushed_model: Callable[[], str | None] = _no_model
+"""The model Agent Control pushes, when it pushes one; the status row shows it while the user has picked none."""
+
+
 def current() -> PolicySource | None:
     """The policy source, if the observability plugin installed one."""
     return _source

@@ -499,6 +499,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             self._active_httpx.append(self)
         if self.fleet is not None:
             fleet = self.fleet
+            policy_state.pushed_model = lambda: fleet.latest.config.model if fleet.latest is not None else None
             policy_state.install(
                 policy_state.PolicySource(
                     policy=fleet.current_policy,
@@ -542,6 +543,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     async def on_session_end(self, event: SessionEnd) -> None:
         policy_state.install(None)
+        policy_state.pushed_model = lambda: None
         if self._watcher is not None:
             self._watcher.cancel()
             self._watcher = None
