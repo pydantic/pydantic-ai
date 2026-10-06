@@ -223,6 +223,8 @@ Propose:
   that are fine with a human's OK (pushing to main, deleting branches, `rm -rf` of a directory). `command` is a glob
   over the WHOLE command string (fnmatch: `*` matches anything), e.g. `*git push*--force*`. Make it precise: it must
   match the risky examples and not routine commands (`git push origin my-branch` must not match a force-push rule).
+  Generalize paths beyond the spelling in the examples: `~/.ssh/key`, `$HOME/.ssh/key` and `/Users/x/.ssh/key` are
+  the same risk, so match `*.ssh/*`, not `*~/.ssh/*`.
   Skip categories where the examples are all harmless (e.g. `rm -rf` of `node_modules` or a temp dir).
 - `mcp_servers`: servers that several developers use, worth adding to the company allowlist. Name each server and
   give globs over the tool names it provides.
