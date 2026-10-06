@@ -131,3 +131,28 @@ def test_an_allowed_but_unset_variable_is_a_load_failure(tmp_path: Path, monkeyp
     fleet = _fleet(tmp_path, {'mcp_servers': [server], 'policy': {'env_allow': ['DEEPWIKI_TOKEN']}}, {'items': []})
     [(item, error)] = fleet.build().failed
     assert error == 'ValueError: Logfire config references $DEEPWIKI_TOKEN, which is not set in your environment'
+
+
+def test_notices_name_the_version_of_what_changed(tmp_path: Path) -> None:
+    from io import StringIO
+
+    from rich.console import Console
+
+    from pydantic_clai2.builtin_plugins.fleet_ui import notice_panel
+
+    skill = {'name': 'pr-shepherd', 'description': 'Babysit PRs', 'instructions': 'Watch CI.'}
+    addon = {'kind': 'skill', 'name': 'iterate', 'default': 'on', 'payload': {'instructions': 'Iterate.'}}
+    fleet = _fleet(tmp_path, {'skills': [skill]}, {'items': [addon]})
+    build = fleet.build()
+    changes = fleet.changes(build, mark_seen=False)
+
+    def title(selected: list[Any]) -> str:
+        console = Console(file=StringIO(), width=200)
+        console.print(notice_panel(selected, snapshot=build.snapshot, link=None))
+        return console.file.getvalue().splitlines()[0]  # pyright: ignore[reportAttributeAccessIssue]
+
+    by_tier = {change.tier: change for change in changes}
+    assert '(catalog v1)' in title([by_tier['catalog']])
+    assert '(config v1)' in title([by_tier['company']])
+    assert '(config v1 · catalog v1)' in title(changes)
+    assert fleet.compliance(build.snapshot, build.loaded)['clai2.catalog.version'] == '1'

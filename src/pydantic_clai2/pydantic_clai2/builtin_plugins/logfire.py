@@ -301,7 +301,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         while True:
             snapshot = fleet.snapshot()
             rows = fleet.rows(snapshot)
-            menu = catalog_menu(rows, version=snapshot.version, link=self._link(), index=index)
+            menu = catalog_menu(rows, snapshot=snapshot, link=self._link(), index=index)
             result = await run_worker(lambda: RUNNERS.run_choice(menu))
             if result.cancelled or result.item is None or not isinstance(result.item.value, CatalogRow):
                 return '\n'.join(changed) or 'Catalog unchanged.'
@@ -319,10 +319,11 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         """`◆ Logfire config v10`, plus how many pushed items await the user's OK."""
         assert self.fleet is not None
         snapshot = self.fleet.latest
-        if snapshot is None or snapshot.version is None:
+        versions = snapshot.versions() if snapshot is not None else ''
+        if not versions:
             return ''
         pending = f' · {self._pending} awaiting your OK' if self._pending else ''
-        return f'Logfire config v{snapshot.version}{pending}'
+        return f'Logfire {versions}{pending}'
 
     def _link(self, anchor: str = '') -> str | None:
         """This agent's configuration page in Logfire (Behavior, where policy lives too), when setup recorded the project."""
@@ -395,7 +396,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         fresh = [change for change in changes if change.describe() not in self._announced]
         self._announced.update(change.describe() for change in fresh)
         if fresh:
-            self.host.console.print(notice_panel(fresh, version=build.snapshot.version, link=self._link()))
+            self.host.console.print(notice_panel(fresh, snapshot=build.snapshot, link=self._link()))
         self._pending = len(build.pending)
         for item, error in build.failed:
             # A broken item fails on every build; say so once per version of it, not on every prompt.

@@ -11,7 +11,7 @@ from rich.text import Text
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
 
-from pydantic_clai2.builtin_plugins.fleet import Change, Provenance
+from pydantic_clai2.builtin_plugins.fleet import Change, Provenance, Snapshot
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
@@ -25,7 +25,7 @@ def _mark(action: str) -> str:
     return {'added': '+', 'updated': '~', 'removed': '-'}[action]
 
 
-def notice_panel(changes: Sequence[Change], *, version: str | None, link: str | None) -> RenderableType:
+def notice_panel(changes: Sequence[Change], *, snapshot: Snapshot, link: str | None) -> RenderableType:
     """One compact panel per batch: what changed, why, and where to look."""
     lines: list[RenderableType] = []
     for change in changes:
@@ -46,7 +46,11 @@ def notice_panel(changes: Sequence[Change], *, version: str | None, link: str | 
     if link:
         footer.append(f'  ·  {link}', style=theme.color(theme.MUTED))
     lines.append(footer)
-    title = f'◆ From your organization{f" (config v{version})" if version else ""}'
+    # Name the version of what changed: a catalog-only push must not look like a new company config.
+    tiers = {change.tier for change in changes}
+    unknown = '' in tiers  # A removal no longer says where it came from.
+    versions = snapshot.versions(config='company' in tiers or unknown, catalog='catalog' in tiers or unknown)
+    title = f'◆ From your organization{f" ({versions})" if versions else ""}'
     return Panel(
         Group(*lines),
         title=Text(title, style=theme.color(theme.ACCENT)),
@@ -124,9 +128,10 @@ def row_preview(row: CatalogRow, *, link: str | None) -> str:
     return '\n'.join(parts)
 
 
-def catalog_menu(rows: Sequence[CatalogRow], *, version: str | None, link: str | None, index: int = 0) -> Menu:
+def catalog_menu(rows: Sequence[CatalogRow], *, snapshot: Snapshot, link: str | None, index: int = 0) -> Menu:
     """The `/catalog` picker: organization items, then optional add-ons; Enter toggles an add-on."""
-    title = f'From your organization{f" (v{version})" if version else ""} and optional add-ons'
+    versions = snapshot.versions()
+    title = f'From your organization and optional add-ons{f" ({versions})" if versions else ""}'
     builder = (
         MenuBuilder(title)
         .style(markdown_style())

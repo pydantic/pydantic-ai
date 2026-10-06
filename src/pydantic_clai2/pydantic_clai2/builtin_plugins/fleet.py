@@ -203,7 +203,17 @@ class Snapshot:
 
     config: FleetAgentConfig
     version: str | None
+    """The `agent__` (company config) version."""
     catalog: Catalog
+    catalog_version: str | None = None
+
+    def versions(self, *, config: bool = True, catalog: bool = True) -> str:
+        """`config v12 · catalog v3`, naming only what was asked for and is known."""
+        parts = [
+            *([f'config v{self.version}'] if config and self.version else []),
+            *([f'catalog v{self.catalog_version}'] if catalog and self.catalog_version else []),
+        ]
+        return ' · '.join(parts)
 
     @property
     def policy(self) -> Policy | None:
@@ -306,9 +316,14 @@ class Fleet:
         targeting_key, attributes = self.targeting_key(), self.attributes()
         resolved = self.agent_variable.get(targeting_key=targeting_key, attributes=attributes)
         version = getattr(resolved, 'version', None)
-        catalog = self.catalog_variable.get(targeting_key=targeting_key, attributes=attributes).value
+        catalog_resolved = self.catalog_variable.get(targeting_key=targeting_key, attributes=attributes)
+        catalog_version = getattr(catalog_resolved, 'version', None)
+        catalog = catalog_resolved.value
         self.latest = Snapshot(
-            config=resolved.value, version=None if version is None else str(version), catalog=catalog
+            config=resolved.value,
+            version=None if version is None else str(version),
+            catalog=catalog,
+            catalog_version=None if catalog_version is None else str(catalog_version),
         )
         return self.latest
 
@@ -368,6 +383,7 @@ class Fleet:
         keys = {item.key for item in active} | {f'plugin:{name}' for name in policy_state.loaded_plugins()}
         return {
             'clai2.policy.version': snapshot.version or '',
+            'clai2.catalog.version': snapshot.catalog_version or '',
             'clai2.catalog.opted_out': ','.join(opted_out),
             'clai2.policy.locked_ok': 'true' if snapshot.locked <= keys else 'false',
         }

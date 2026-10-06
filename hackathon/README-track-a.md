@@ -85,6 +85,7 @@ To publish a new version of a variable without the UI, run
 | Every span of an agent run | `clai2.prompt.source` | `typed`, `plugin` (automated continuation), `headless` (`-p`), or `subagent` |
 | Every span of an agent run | `clai2.fleet.active` | The company and catalog items in force, as sorted `kind:name` keys joined by commas |
 | Every span of an agent run | `logfire.variables.agent__clai2`, `logfire.variables.agent__clai2.version` | Label and version of the company config this run used |
+| Every span of an agent run | `clai2.policy.version`, `clai2.catalog.version` | The `agent__` and `catalog__` versions the run used |
 | Every span of an agent run | `logfire.managed.applied_sections` | Agent Control sections applied, such as `instructions` |
 | `prompt submitted` UI record | `kind`, `prompt`, `clai2.prompt.source` (`typed`), `user.email`, `clai2.team`, `agent_session_id` | One typed prompt, joinable without the session root |
 | `agent_control_config_hint` | `agent_control.variable_name`, `.agent_name`, `.baseline`, ... | The code baseline, once per process |
