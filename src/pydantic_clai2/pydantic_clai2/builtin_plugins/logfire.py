@@ -255,8 +255,6 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     async def on_turn_start(self, event: TurnStart) -> None:
         self._announce_changes()
-        if self.fleet is not None and self._watcher is None:
-            self._watcher = asyncio.get_running_loop().create_task(self._watch())
 
     def _announce_changes(self) -> None:
         """At turn start: show what Logfire pushed since the user last looked, and mark it seen."""
@@ -333,6 +331,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 )
             )
         self._announce_changes()
+        if self.fleet is not None and self._watcher is None:
+            self._watcher = asyncio.get_running_loop().create_task(self._watch())
         if self.settings.ui_events:
             self._unsubscribe = telemetry.subscribe(
                 self._clai2,
