@@ -7,7 +7,15 @@ from rich.console import Console
 from rich.text import Text
 from termflow.themes import reset_palette
 
-from pydantic_clai2.ui.prompt.prompt_surface import ENTER, FRAME_INTERVAL, LEAVE, MODES_OFF, MODES_ON, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import (
+    ENTER,
+    FRAME_INTERVAL,
+    LEAVE,
+    MAX_HELD_OSC,
+    MODES_OFF,
+    MODES_ON,
+    PromptSurface,
+)
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.transcript_view import SCROLLED_HINT
 from pydantic_clai2.ui.rendering import theme
@@ -358,3 +366,46 @@ def test_transcript_scrolls_rows_within_one_wrapped_item_and_skips_empty_parts()
     # An empty anchor at the very beginning falls back to the last row.
     view.anchor = (0, 0)
     assert view.window(width=4, height=3) == ['uvwx', 'yz', '']
+
+
+@pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])
+def test_palette_controls_split_across_writes_reach_the_terminal_whole(terminator: str) -> None:
+    control = f'\x1b]11;#0a1929{terminator}'
+    for split in range(1, len(control)):
+        screen = Screen()
+        screen.surface.paint(ROWS)
+        start = len(screen.terminal.getvalue())
+        screen.write('text ' + control[:split])
+        screen.write(control[split:] + 'more\n')
+        assert screen.terminal.getvalue()[start:].count(control) == 1, split
+        assert [Text.from_ansi(row).plain for row in screen.surface.transcript.frame(width=80, height=5).rows] == [
+            'text more',
+            '',
+        ]
+
+
+def test_controls_only_split_does_not_mark_a_partial_line() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('\x1b]104')
+    screen.write('\x07')
+    assert '\x1b]104\x07' in screen.terminal.getvalue()
+    assert not screen.surface._partial  # pyright: ignore[reportPrivateUsage]
+
+
+def test_overlong_unterminated_control_is_dropped_not_held_forever() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('\x1b]11;' + 'x' * (MAX_HELD_OSC + 1))
+    screen.write('\x07after\n')
+    assert '\x1b]11;' not in screen.terminal.getvalue()
+    assert screen.surface._held == ''  # pyright: ignore[reportPrivateUsage]
+
+
+def test_split_hyperlinks_stay_in_the_transcript_and_are_not_forwarded() -> None:
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('\x1b]8;;https://example.com')
+    screen.write('\x1b\\link\x1b]8;;\x1b\\\n')
+    assert '\x1b]8;;https://example.com' not in screen.terminal.getvalue()
+    assert Text.from_ansi(screen.surface.transcript.frame(width=80, height=5).rows[0]).plain == 'link'

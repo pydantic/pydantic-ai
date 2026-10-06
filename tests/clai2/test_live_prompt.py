@@ -681,3 +681,37 @@ async def test_wheel_reports_arrive_through_the_decoder() -> None:
         with anyio.fail_after(2):
             while live.output.view.anchor is not None:  # pyright: ignore[reportUnnecessaryComparison] -- changed by input
                 await anyio.sleep(0.01)
+
+
+async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
+    steered: list[str] = []
+
+    def steer(text: str) -> bool:
+        steered.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        for index in range(60):
+            live.output.write(f'line {index}\n')
+        live.paint()
+        # The draft steers.
+        live.feed('pageup')
+        assert live.output.view.anchor is not None
+        live.buffer.replace('steer the draft')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is None
+        # A queued prompt steers.
+        live.buffer.replace('steer the queue')
+        live.feed('enter')
+        live.feed('pageup')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is None
+        # A command never steers, so the view stays where the user scrolled.
+        live.buffer.replace('/help')
+        live.feed('enter')
+        live.feed('pageup')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is not None
+        assert await live.read() == '/help'
+    assert steered == ['steer the draft', 'steer the queue']

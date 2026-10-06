@@ -381,6 +381,8 @@ class LivePrompt:
             self.accept()
             return
         target, self._editing = self._editing, None
+        # Steered text joins the running turn, so show its response, as submitting does.
+        self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         self.buffer.history_index = None
@@ -398,6 +400,7 @@ class LivePrompt:
         if not isinstance(head, _Queued) or not self._steered(head.text):
             telemetry.record('prompt steer', steered=False, source='queue')
             return
+        self.output.view.follow()
         self._discard(head)
         telemetry.record('prompt steer', steered=True, source='queue')
 

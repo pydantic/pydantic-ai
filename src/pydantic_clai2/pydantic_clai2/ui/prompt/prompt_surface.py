@@ -28,6 +28,10 @@ FRAME_INTERVAL = 1 / 60
 """Writes repaint at most this often; the editor's refresh loop paints what is left."""
 # Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
 _TERMINAL_OSC = re.compile(r'\x1b\](?!8;)[^\x07\x1b]*(?:\x07|\x1b\\)')
+_UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
+"""An OSC, or a lone ESC that may start one, still waiting for its terminator at the end of a write."""
+MAX_HELD_OSC = 4096
+"""An unterminated control longer than this is malformed and dropped, as the transcript does."""
 
 
 class PromptSurface(io.StringIO):
@@ -65,6 +69,8 @@ class PromptSurface(io.StringIO):
         self._dirty = False
         self._painted_at = -math.inf
         self._partial = False
+        self._held = ''
+        """The start of a control split across writes, kept until its terminator arrives."""
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -99,7 +105,13 @@ class PromptSurface(io.StringIO):
         arrives as several writes, and a frame painted between them would split the sequence.
         """
         with self._lock:
-            controls = _TERMINAL_OSC.findall(text)
+            data = self._held + text
+            unfinished = _UNFINISHED_OSC.search(data)
+            cut = unfinished.start() if unfinished else len(data)
+            data, self._held = data[:cut], data[cut:]
+            if len(self._held) > MAX_HELD_OSC:
+                self._held = ''
+            controls = _TERMINAL_OSC.findall(data)
             for control in controls:
                 self.output.write(control)
             if controls:
@@ -107,7 +119,7 @@ class PromptSurface(io.StringIO):
                 # Every cell's colours changed, so the next frame repaints them all.
                 self._previous = None
             self.transcript.write(text)
-            if content := _TERMINAL_OSC.sub('', text):
+            if content := _TERMINAL_OSC.sub('', data):
                 self._partial = not content.endswith('\n')
                 self.changed()
             elif controls:
