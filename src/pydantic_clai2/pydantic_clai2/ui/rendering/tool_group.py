@@ -32,11 +32,14 @@ def _line(runs: Sequence[Run]) -> Text:
 
 
 def _count(rows: list[list[Run]], name: str, *, width: int) -> None:
-    """Count one call into the last row, or start a row when a new tool would not fit, so a redraw never wraps."""
+    """Count one call into the last row, or start a row when a new tool would not fit, so a redraw never wraps.
+
+    A new tool is measured with a three-digit count, leaving its count room to grow in place.
+    """
     row = rows[-1]
     if row and row[-1][0] == name:
         row[-1] = (name, row[-1][1] + 1)
-    elif row and _line([*row, (name, 1)]).cell_len >= width:
+    elif row and _line([*row, (name, 999)]).cell_len >= width:
         rows.append([(name, 1)])
     else:
         row.append((name, 1))

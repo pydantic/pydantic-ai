@@ -56,6 +56,12 @@ class _Reset:
     key: str
 
 
+class ChoicePreview(Protocol):
+    """Render a sample of `choice` for the choice picker's right-hand panel, `width` cells wide."""
+
+    def __call__(self, choice: str, /, *, width: int) -> str: ...
+
+
 @dataclass(frozen=True, kw_only=True)
 class FieldRow:
     """One editable field as the menu sees it."""
@@ -70,8 +76,8 @@ class FieldRow:
     secret: bool = False
     note: str = ''
     """Where the value comes from when not from the user; shown muted after the value."""
-    preview: Callable[[str, int], str] | None = None
-    """Renders a sample of a choice for the choice picker's right-hand panel, given its width."""
+    preview: ChoicePreview | None = None
+    """Renders a sample of each choice in the choice picker."""
 
     def display(self, value: str) -> str:
         """Label a choice without changing its stored or validated value."""
@@ -213,11 +219,11 @@ class FieldMenu:
         return builder.build()
 
     @staticmethod
-    def _preview(render: Callable[[str, int], str], item: MenuItem) -> str:
+    def _preview(render: ChoicePreview, item: MenuItem) -> str:
         """Size the sample to the panel; the typed-value and keep rows have none."""
         if not isinstance(item.value, str) or item.value in (CUSTOM, KEEP):
             return ''
-        return render(item.value, max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
+        return render(item.value, width=max(20, terminal_size()[0] - _PREVIEW_LIST_WIDTH - 4))
 
     def build_editor(self, row: FieldRow) -> TextInput:
         """A typed input that validates as you go; empty resets."""

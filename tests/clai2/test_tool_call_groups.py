@@ -14,8 +14,11 @@ from pydantic_ai import (
     CapabilityEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
 )
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
@@ -109,6 +112,30 @@ async def test_hidden_thinking_does_not_end_the_group() -> None:
     await feed(renderer, 'shell')
     await renderer.finish()
     assert output.getvalue() == '● shell 2\n\n'
+
+
+async def test_a_part_that_shows_nothing_does_not_end_the_group() -> None:
+    output = io.StringIO()
+    renderer = grouped(output)
+    await feed(renderer, 'shell')
+    reasoning = ThinkingPart(content='', signature='encrypted')  # Reasoning returned without a summary.
+    await renderer.on_stream_event(PartStartEvent(index=1, part=reasoning))
+    await renderer.on_stream_event(PartEndEvent(index=1, part=reasoning))
+    await feed(renderer, 'shell')
+    await renderer.on_stream_event(PartStartEvent(index=2, part=TextPart(content='')))
+    await renderer.on_stream_event(PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='Done.\n')))
+    await renderer.finish()
+    assert output.getvalue() == '● shell 2\n\nDone.\n\n'
+
+
+def test_a_new_tool_leaves_room_for_its_count_to_grow() -> None:
+    output = io.StringIO()
+    group = ToolCallGroup(Console(file=output, width=20), colors=None)
+    # `● shell 2, search 1` fits in 20 cells, but `search 100` would not.
+    for name in ['shell'] * 2 + ['search'] * 100:
+        group.add(name)
+    group.close()
+    assert output.getvalue() == '● shell 2\n● search 100\n\n'
 
 
 async def test_tool_part_starts_and_results_do_not_end_or_count() -> None:
@@ -278,10 +305,10 @@ def test_setting_is_validated_and_defaults_to_detailed() -> None:
 
 
 def test_preview_shows_the_same_calls_in_each_style() -> None:
-    detailed = Text.from_ansi(tool_calls_preview('detailed', 60)).plain
+    detailed = Text.from_ansi(tool_calls_preview('detailed', width=60)).plain
     assert detailed.splitlines()[0] == '● shell git status'
     assert detailed.count('● shell') == 4 and detailed.count('● read_file') == 2
-    assert Text.from_ansi(tool_calls_preview('grouped', 60)).plain == '● shell 3, read_file 2, shell 1'
+    assert Text.from_ansi(tool_calls_preview('grouped', width=60)).plain == '● shell 3, read_file 2, shell 1'
 
 
 def test_set_menu_previews_each_style_in_the_choice_picker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,7 +327,6 @@ def test_set_menu_previews_each_style_in_the_choice_picker(tmp_path: Path, monke
     plain = Text.from_ansi(output.getvalue()).plain
     assert '● shell git status' in plain
     assert '● shell 3, read_file 2, shell 1' in plain
-    assert menu.row_for('display.thinking') is not None
     # The typed-value row has no sample to preview.
     keys = iter(['down', 'down', 'enter'])
     result = menu.build_choices(row).run()

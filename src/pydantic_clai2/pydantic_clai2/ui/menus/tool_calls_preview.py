@@ -17,7 +17,7 @@ _CALLS = (
 )
 
 
-def tool_calls_preview(style: str, width: int) -> str:
+def tool_calls_preview(style: str, *, width: int) -> str:
     """Print the same calls the way `style` would, using the shell's own tool-line renderers.
 
     The console is not a terminal, so a group shows only its final line, not each redraw.

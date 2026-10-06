@@ -6,7 +6,7 @@ from pydantic_ai.models import known_model_names
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import SETTING_FIELDS, TOOL_CALL_DISPLAYS, UPDATE_CHANNELS, Settings
 from pydantic_clai2.config.api_keys import set_api_key
-from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
+from pydantic_clai2.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, run_flow, shown
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.tool_calls_preview import tool_calls_preview
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
@@ -27,7 +27,7 @@ class SettingsSource:
         rows: list[FieldRow] = []
         for key, field in SETTING_FIELDS.items():
             info = Settings.model_fields[field]
-            preview: Callable[[str, int], str] | None = None
+            preview: ChoicePreview | None = None
             if info.annotation is bool:
                 choices: tuple[str, ...] = ('true', 'false')
             elif key == 'display.theme':

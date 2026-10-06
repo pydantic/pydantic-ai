@@ -307,7 +307,6 @@ class StreamRenderer:
             thinking = isinstance(event.part, ThinkingPart)
             if thinking and not self.show_thinking:
                 return
-            self._close_group()
             self._thinking = thinking
             self._index = event.index
             self._start_part()
@@ -407,6 +406,9 @@ class StreamRenderer:
 
     def _feed(self, content: str) -> None:
         content = terminal_text(content)
+        if content and not self._heading_printed:
+            # Only a part that shows something ends the group; reasoning can arrive with no text.
+            self._close_group()
         if self._block is not None:
             self._block.extend(content)
         if content and not self._heading_printed:
