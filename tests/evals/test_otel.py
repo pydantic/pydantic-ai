@@ -5,7 +5,7 @@ import gc
 import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 
 import pytest
@@ -122,7 +122,7 @@ def span_tree() -> SpanTree:
         duration: int,
         **attributes: AttributeValue,
     ) -> SpanNode:
-        start_timestamp = datetime.fromtimestamp(start, tz=timezone.utc)
+        start_timestamp = datetime.fromtimestamp(start, tz=UTC)
         return SpanNode(
             name=name,
             trace_id=1,

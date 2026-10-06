@@ -17,13 +17,12 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 import logfire
 from anyio import CancelScope, to_thread
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
-from typing_extensions import Self
 
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -74,7 +73,7 @@ class LogfireSettings(BaseModel):
         'else the region the token names.',
     )
     ui_events: bool = Field(
-        default=False,
+        default=True,
         description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions. '
         'With message content included, submitted prompts carry their text.',
     )
@@ -284,7 +283,7 @@ _ROWS = (
         key='ui_events',
         label='UI events',
         description=LogfireSettings.model_fields['ui_events'].description or '',
-        default='false',
+        default='true',
         choices=_BOOLEAN,
         choice_labels={'true': 'recorded', 'false': 'off'},
         allow_custom=False,

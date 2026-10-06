@@ -19,7 +19,7 @@ from pydantic_clai2.commands import config_command, plugins_command
 from pydantic_clai2.config import PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.models.model_settings import model_settings_from_json
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.plugins.loader import PluginLoader
@@ -79,6 +79,42 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         assert old_settings.user_tag == 'logfire-account'
         assert not old_settings.include_content
         assert store.plugins() == [saved]  # An older build can read without discarding the newer preference.
+    finally:
+        await loader.close('exit')
+    assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
+@pytest.mark.parametrize('ui_events', [None, False, True])
+async def test_logfire_ui_events_default_preserves_saved_overrides(
+    tmp_path: Path, recorder: Recorder, ui_events: bool | None
+) -> None:
+    loader, store = observability_loader(tmp_path)
+    # Historical declarations either omitted UI events (then default off), or saved an explicit choice.
+    previous = PluginSettings(
+        id='observability',
+        factory='pydantic_clai2.builtin_plugins.logfire',
+        settings={'send_to_logfire': False, 'include_content': False, 'service_name': 'shared-project'},
+    )
+    if ui_events is not None:
+        previous.settings['ui_events'] = ui_events
+    store.save_plugin(previous)
+    expected = ui_events is not False
+    try:
+        await loader.load_all()
+        host = _observability_host(loader)
+        assert host.settings(LogfireSettings).ui_events is expected
+        assert store.plugins() == [previous]  # No migration or write on load.
+        source = LogfireSource(host)
+        rows = {row.key: row for row in source.rows()}
+        source.apply(rows['service_name'], 'changed-project')
+        [saved] = store.plugins()
+        assert saved.settings['ui_events'] is expected
+        assert saved.settings['include_content'] is False
+        assert saved.settings['send_to_logfire'] is False
+        assert SettingsStore(store.path).plugins() == [saved]
+        await loader.reload('observability')
+        assert _observability_host(loader).settings(LogfireSettings).ui_events is expected
+        assert store.plugins() == [saved]
     finally:
         await loader.close('exit')
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
@@ -255,6 +291,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('display.spinner', '""'),
         ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
+        ('accounts.pool', '"off"'),
     ],
 )
 def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str, value_json: str) -> None:
@@ -266,6 +303,32 @@ def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str,
     with pytest.raises(ValidationError):
         store.load()
     assert store.path.read_bytes() == snapshot
+
+
+def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    # Literal rows an earlier build wrote, with a saved profile model and no `accounts.pool`.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.executemany(
+            'INSERT INTO settings VALUES (?, ?)',
+            [('model', '"claude-code@work:opus"'), ('display.thinking', 'false'), ('future.setting', '1')],
+        )
+    store = SettingsStore(path)
+    settings = store.load()
+    # Turning pooling on for existing databases is the intended default; named profiles stay pinned.
+    assert settings.pool_accounts is True
+    assert settings.model == 'claude-code@work:opus' and settings.thinking is False
+    config_command(store, ['set', 'accounts.pool', 'false'])
+    assert SettingsStore(path).load().pool_accounts is False
+    config_command(store, ['reset', 'accounts.pool'])
+    assert SettingsStore(path).load() == settings
+    with closing(sqlite3.connect(path)) as connection:
+        assert dict(connection.execute('SELECT key, value_json FROM settings')) == {
+            'model': '"claude-code@work:opus"',
+            'display.thinking': 'false',
+            'future.setting': '1',
+        }
 
 
 def test_incompatible_schema_is_not_modified(tmp_path: Path) -> None:
@@ -402,6 +465,72 @@ def test_database_without_requirement_tags_loads_unchanged(tmp_path: Path) -> No
         # Tags sit in their own table; older builds never read it.
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         assert 'plugin_requirements' in tables
+
+
+def test_database_without_chains_keeps_models_and_gains_chains(tmp_path: Path) -> None:
+    """A database from before fallback chains and auth profiles keeps its models and settings unchanged."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('CREATE TABLE models (name TEXT PRIMARY KEY)')
+        connection.execute('CREATE TABLE model_settings (model TEXT PRIMARY KEY, settings_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"openai-codex:gpt-6-astra"'))
+        connection.execute('INSERT INTO models VALUES (?)', ('openai-codex:gpt-6-astra',))
+        connection.execute(
+            'INSERT INTO model_settings VALUES (?, ?)', ('openai-codex:gpt-6-astra', '{"service_tier":"priority"}')
+        )
+    store = SettingsStore(path)
+    assert store.load().model == 'openai-codex:gpt-6-astra'
+    assert store.models() == ['openai-codex:gpt-6-astra']
+    assert store.model_settings('openai-codex:gpt-6-astra') == {'service_tier': 'priority'}
+    assert store.chains() == {}
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+        # Older builds refuse any other version; chains live in a table they never read.
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    store.save_chain(name='pool', models=['openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra'])
+    with closing(sqlite3.connect(path)) as connection, connection:
+        # A row another build wrote in a shape this one cannot read is skipped, not rewritten.
+        connection.execute('INSERT INTO model_chains VALUES (?, ?)', ('future', '{"models": []}'))
+    reopened = SettingsStore(path)
+    assert reopened.chains() == {'pool': ['openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra']}
+    assert reopened.models() == ['chain:pool', 'openai-codex:gpt-6-astra']
+    assert reopened.model_settings('openai-codex:gpt-6-astra') == {'service_tier': 'priority'}
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT models_json FROM model_chains WHERE name = 'future'").fetchone() == (
+            '{"models": []}',
+        )
+
+
+def test_database_without_accounts_keeps_its_data_and_gains_accounts(tmp_path: Path) -> None:
+    """A database from before `/accounts` opens unchanged; accounts go in a table older builds never read."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('CREATE TABLE models (name TEXT PRIMARY KEY)')
+        connection.execute('CREATE TABLE model_chains (name TEXT PRIMARY KEY, models_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"openai-codex@work:gpt-6-astra"'))
+        connection.execute('INSERT INTO models VALUES (?)', ('openai-codex@work:gpt-6-astra',))
+        connection.execute('INSERT INTO model_chains VALUES (?, ?)', ('pool', '["openai:gpt-5", "openai@work:gpt-5"]'))
+    store = SettingsStore(path)
+    assert store.accounts() == []
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    store.add_account(StoredAccount(provider='openai-codex', profile='work', label='Work'))
+    reopened = SettingsStore(path)
+    assert reopened.load().model == 'openai-codex@work:gpt-6-astra'
+    assert reopened.models() == ['openai-codex@work:gpt-6-astra']
+    assert reopened.chains() == {'pool': ['openai:gpt-5', 'openai@work:gpt-5']}
+    assert reopened.accounts() == [StoredAccount(provider='openai-codex', profile='work', label='Work')]
 
 
 def test_saved_spinner_from_a_removed_plugin_is_kept(tmp_path: Path) -> None:

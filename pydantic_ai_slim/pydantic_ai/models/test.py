@@ -6,10 +6,9 @@ from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 
 import pydantic_core
-from typing_extensions import assert_never
 
 from .. import _utils
 from .._run_context import RunContext

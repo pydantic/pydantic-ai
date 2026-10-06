@@ -143,7 +143,7 @@ async def test_startup_only_reports_import_errors_inside_available_plugins(
         entry = next(entry for entry in harness.loader.entries() if entry.name == 'mcp')
         assert entry.error is not None
         assert 'ModuleNotFoundError' in entry.error
-        errors = recorder.spans()
+        errors = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
         if module_present:
             assert "Plugin 'mcp': ModuleNotFoundError:" in harness.text
             assert len(errors) == 1
@@ -180,7 +180,8 @@ async def test_failing_observer_does_not_prevent_error_reporting(tmp_path: Path,
         await harness.loader.load_all()
         assert "Plugin 'observer': RuntimeError: observer failed" in harness.text
         assert recorder.options[0]['send_to_logfire'] is False
-        observer_failed, broken = recorder.spans()
+        errors = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
+        observer_failed, broken = errors
         assert (broken.attributes or {})['plugin'] == 'broken'
         # The observer's own failure, shown in the terminal and carried on from, is recorded too.
         assert (observer_failed.attributes or {})['logfire.msg'] == "Plugin 'observer' failed handling PluginLoadFailed"
@@ -216,7 +217,7 @@ async def test_handled_errors_keep_plugin_and_event_names_without_ui_events(tmp_
     )
     await harness.loader.load_all()
     await harness.loader.close('exit')
-    [failed] = [span for span in recorder.spans() if span.name != 'CLAI session']
+    [failed] = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
     attributes = failed.attributes or {}
     assert attributes['logfire.msg'] == "Plugin 'session_namer' failed handling SessionEnd"
     assert (attributes['plugin'], attributes['event']) == ('session_namer', 'SessionEnd')
@@ -237,7 +238,7 @@ async def test_startup_errors_keep_only_their_type_without_content(tmp_path: Pat
     try:
         await harness.loader.load_all()
         assert "Plugin 'broken': ImportError: missing pasted-token dependency" in harness.text
-        [error] = recorder.spans()
+        [error] = [span for span in recorder.spans() if (span.attributes or {}).get('logfire.level_num') == 17]
         assert (error.attributes or {})['plugin'] == 'broken'
         assert error.status.status_code is trace.StatusCode.ERROR
         # The message can quote saved settings, so like agent spans without content the event keeps only the type.

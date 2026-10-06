@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
 import anyio
 import httpx
@@ -287,6 +288,30 @@ async def test_env_references_resolve_at_connect_time(tmp_path: Path, monkeypatc
     assert 'o github' in await plugin.commands.execute_async('/mcp')
     servers = MCPServers(store)
     assert servers.state(servers.get('github')) == 'ready'
+
+
+@pytest.mark.parametrize('kind', ['stdio', 'http'])
+def test_env_reference_order_and_template_escapes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: Literal['stdio', 'http']
+) -> None:
+    monkeypatch.delenv('FIRST_TOKEN', raising=False)
+    monkeypatch.delenv('SECOND_TOKEN', raising=False)
+    values = {'first': '${FIRST_TOKEN}:$SECOND_TOKEN:$FIRST_TOKEN', 'second': '$$LITERAL:$9:${'}
+    server = (
+        StdioServer(type='stdio', command='python', env=values)
+        if kind == 'stdio'
+        else HTTPServer(type='http', url=HttpUrl('https://api.example.com/mcp'), headers=values)
+    )
+    store = MCPStore(tmp_path / 'config', workspace=tmp_path)
+    store.put('configured', server)
+    servers = MCPServers(store)
+    entry = servers.get('configured')
+    assert servers.state(entry) == 'error'
+    assert servers.problem(entry) == 'set FIRST_TOKEN, SECOND_TOKEN in your environment'
+    monkeypatch.setenv('FIRST_TOKEN', 'first-value')
+    assert servers.problem(entry) == 'set SECOND_TOKEN in your environment'
+    monkeypatch.setenv('SECOND_TOKEN', 'second-value')
+    assert servers.state(entry) == 'ready'
 
 
 async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path) -> None:

@@ -1,21 +1,51 @@
-"""A pinned editor with a blank, debounced viewport during terminal resize."""
+"""The live panel: transcript and pinned editor painted as termflow.live frames on the alternate screen."""
 
 import io
+import math
+import re
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from tempfile import SpooledTemporaryFile
 from threading import RLock
 from typing import IO
 
-from termflow.ansi.utils import visible_length
+from termflow.live import Rect, ScreenBuffer, render_diff
 from termflow.tui.layout import truncate
 
-from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
+from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
+from pydantic_clai2.ui.prompt.transcript_view import TranscriptView
+
+ENTER = '\x1b[?1049h\x1b[?25l\x1b[?7l'
+"""Alternate screen, hidden cursor, and no autowrap, which `render_diff` assumes."""
+LEAVE = '\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l'
+MODES_ON = '\x1b[?2004h\x1b[>4;1m\x1b[>5u\x1b[?1000h\x1b[?1006h'
+"""Bracketed paste, xterm modified keys, Kitty disambiguation with alternate keys, and SGR mouse buttons.
+
+Kitty keeps a flag stack per screen, so these are pushed after `ENTER` and popped before `LEAVE`.
+"""
+MODES_OFF = '\x1b[?1006l\x1b[?1000l\x1b[<u\x1b[>4;0m\x1b[?2004l'
+FRAME_INTERVAL = 1 / 60
+"""Writes repaint at most this often; the editor's refresh loop paints what is left."""
+# Palette and other non-hyperlink OSC commands are meant for the terminal, not the transcript.
+_TERMINAL_OSC = re.compile(r'\x1b\](?!8;)[^\x07\x1b]*(?:\x07|\x1b\\)')
+_UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
+"""An OSC, or a lone ESC that may start one, still waiting for its terminator at the end of a write."""
+MAX_HELD_OSC = 4096
+"""An unterminated control longer than this is malformed and dropped, as the transcript does."""
+SCROLL_KEYS = frozenset({'pageup', 'pagedown', 'mouse'})
+"""Decoded keys that move the transcript rather than whatever widget is pinned under it."""
+WHEEL_ROWS = 3
+_WHEEL = re.compile(r'\x1b\[<(\d+);\d+;\d+[mM]')
 
 
 class PromptSurface(io.StringIO):
-    """Own terminal writes; redraw from retained output rather than old coordinates."""
+    """Own the terminal: every write lands in the transcript, and frames show it.
+
+    Frames are a termflow.live `ScreenBuffer`: the transcript view fills the rows above the editor's,
+    and `render_diff` sends only changed cells. Nothing scrolls the terminal, so a resize, a theme
+    change, or a closed menu repaints from the transcript. `restore` prints what the terminal's own
+    scrollback has not seen yet.
+    """
 
     def __init__(
         self,
@@ -31,79 +61,90 @@ class PromptSurface(io.StringIO):
         self.size = size
         self.clock = clock
         self.transcript = transcript if transcript is not None else TranscriptBuffer()
+        self.view = TranscriptView(self.transcript)
         self._lock = RLock()
-        self._geometry = (0, 0)
         self._rows: tuple[str, ...] = ()
-        self._active = False
-        self._partial = False
-        self._resize_at: float | None = None
-        self._resize_notice = False
-        self._observed_size = (0, 0)
-        self._deferred: IO[str] | None = None
+        self._previous: ScreenBuffer | None = None
+        self._live = False
+        """Painted since opening, so writes repaint."""
+        self._screen = False
+        self._modes = False
         self._holds = 0
+        self._dirty = False
+        self._painted_at = -math.inf
+        self._partial = False
+        self._held = ''
+        """The start of a control split across writes, kept until its terminator arrives."""
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
         return self.output.isatty()
 
     def resize_notice(self) -> None:
-        """Mark a resize notification; signal handlers must not draw or erase."""
-        if self._active:
-            self._resize_notice = True
-            self._resize_at = self.clock()
-
-    def _check_resize(self, *, size: tuple[int, int]) -> None:
-        if self._resize_notice or size != self._observed_size:
-            self._resize_notice = False
-            self._observed_size = size
-            self._resize_at = self.clock()
-            self._spool()
-            self._transaction('\x1b[?25l\x1b[r\x1b[2J\x1b[1;1H')
-
-    def _spool(self) -> None:
-        if self._deferred is None:
-            # Large output during a long drag or an open menu spills to a private
-            # temp file rather than growing memory without bound or being dropped.
-            self._deferred = SpooledTemporaryFile(max_size=1_000_000, mode='w+t', encoding='utf-8', newline='')
+        """Repaint every cell next frame; signal handlers must not draw."""
+        self._previous = None
 
     @contextmanager
-    def held(self) -> Generator[None]:
-        """Spool writes while another widget owns the terminal, then replay them in order.
+    def held(self, *, leave_screen: bool = True) -> Generator[None]:
+        """Stop painting while another widget owns the terminal; writes still reach the transcript.
 
-        Holds nest; output is replayed when the outermost one exits, unless a resize
-        rebuild is still pending, which replays it once the viewport settles.
+        Full-screen widgets enter the alternate screen themselves and leave it for the main one,
+        so the panel steps out first and enters again on its next frame. An inline widget that
+        paints through this surface keeps it on screen with `leave_screen=False`. Holds nest.
         """
         with self._lock:
             self._holds += 1
-            self._spool()
+            if leave_screen:
+                self._leave()
         try:
             yield
         finally:
             with self._lock:
                 self._holds -= 1
-                if self._resize_at is None:
-                    self._flush_deferred()
-
-    def _emit(self, text: str) -> None:
-        self.transcript.write(text)
-        self.output.write(text.replace('\n', '\r\n') if self._active and self.output.isatty() else text)
-        self.output.flush()
 
     def write(self, text: str) -> int:
-        """Stream normally, or spool writes while the visible viewport is blank."""
+        """Record output and repaint, forwarding palette controls to the terminal.
+
+        A write of controls alone repaints on the next frame instead of now: a palette change
+        arrives as several writes, and a frame painted between them would split the sequence.
+        """
         with self._lock:
-            if self._active:
-                self._check_resize(size=self.size())
-            if self._deferred is not None:
-                self._deferred.write(text)
-            else:
-                self._emit(text)
-            if text:
-                self._partial = not text.endswith('\n')
+            data = self._held + text
+            unfinished = _UNFINISHED_OSC.search(data)
+            cut = unfinished.start() if unfinished else len(data)
+            data, self._held = data[:cut], data[cut:]
+            if len(self._held) > MAX_HELD_OSC:
+                self._held = ''
+            controls = _TERMINAL_OSC.findall(data)
+            for control in controls:
+                self.output.write(control)
+            if controls:
+                self.output.flush()
+                # Every cell's colours changed, so the next frame repaints them all.
+                self._previous = None
+            self.transcript.write(text)
+            if content := _TERMINAL_OSC.sub('', data):
+                self._partial = not content.endswith('\n')
+                self.changed()
+            elif controls:
+                self._dirty = True
         return len(text)
 
+    def changed(self) -> None:
+        """Note new transcript content, painting now unless the last frame was too recent."""
+        with self._lock:
+            self._dirty = True
+            if self.clock() - self._painted_at >= FRAME_INTERVAL:
+                self.refresh()
+
+    def refresh(self) -> None:
+        """Paint output that arrived since the last frame, unless another widget owns the screen."""
+        with self._lock:
+            if self._dirty and self._live and not self._holds:
+                self._paint()
+
     def flush(self) -> None:
-        """Flush without repainting or ending an incomplete line."""
+        """Flush without painting; the frame rate is the surface's own."""
         with self._lock:
             self.output.flush()
 
@@ -112,130 +153,114 @@ class PromptSurface(io.StringIO):
         if self._partial:
             self.write('\n')
 
-    def paint(self, rows: tuple[str, ...]) -> None:
-        """Wait for 250 ms of stable size before rebuilding the viewport once."""
+    def markdown(self, *, render: Render, width: int) -> MarkdownBlock:
+        """Start a Markdown part that renders again for a new width or theme."""
         with self._lock:
-            width, height = self.size()
-            width, height = max(1, width), max(2, height)
-            rows = tuple(truncate(row, width) for row in rows[-(height - 2) :]) if height > 2 else ()
-            if self._active:
-                self._check_resize(size=(width, height))
-            if self._resize_at is not None:
-                if self.clock() - self._resize_at >= 0.25:
-                    self._rebuild(rows=rows, width=width, height=height)
+            return self.transcript.markdown(render=render, width=width, changed=self.changed)
+
+    def scroll(self, rows: int) -> None:
+        """Scroll the transcript back (positive) or forward (negative)."""
+        with self._lock:
+            self.view.scroll(rows)
+            if self._live and not self._holds:
+                self._paint()
+
+    def scroll_key(self, key: str, data: str = '') -> None:
+        """Page or wheel through the transcript for one of `SCROLL_KEYS`; clicks scroll nothing."""
+        if key == 'mouse':
+            wheel = _WHEEL.fullmatch(data)
+            # Shift, Alt, and Ctrl add 4, 8, and 16 to the button; anything else is a click.
+            button = int(wheel[1]) & ~(4 | 8 | 16) if wheel else None
+            if button not in (64, 65):
                 return
-            self._paint(rows=rows, width=width, height=height)
+            rows = WHEEL_ROWS if button == 64 else -WHEEL_ROWS
+        else:
+            rows = self.page if key == 'pageup' else -self.page
+        self.scroll(rows)
 
-    def _paint(self, *, rows: tuple[str, ...], width: int, height: int) -> None:
+    @property
+    def page(self) -> int:
+        """Rows one PageUp moves: the transcript's height, keeping a row of context."""
+        _, height = self._geometry()
+        return max(1, height - len(self._rows) - 1)
+
+    def _geometry(self) -> tuple[int, int]:
+        width, height = self.size()
+        return max(1, width), max(2, height)
+
+    def paint(self, rows: tuple[str, ...]) -> None:
+        """Pin `rows` under the transcript and enable the editor's input modes."""
+        with self._lock:
+            width, height = self._geometry()
+            self._rows = tuple(truncate(row, width) for row in rows[-(height - 2) :]) if height > 2 else ()
+            self._live = True
+            self._paint(modes=True)
+
+    def _paint(self, *, modes: bool = False) -> None:
+        width, height = self._geometry()
+        parts: list[str] = []
+        if not self._screen:
+            parts.append(ENTER)
+            self._screen = True
+            self._previous = None
+        if modes and not self._modes:
+            parts.append(MODES_ON)
+            self._modes = True
+        rows = self._rows[-(height - 2) :] if height > 2 else ()
         bottom = height - len(rows)
-        changed_geometry = self._geometry != (width, height) or len(rows) != len(self._rows)
-        parts: list[str] = []
-        if not self._active:
-            # Scroll only as far as the rows need, then return to the writer's row.
-            # Jumping to the region bottom instead left a blank band under short
-            # history, visible after startup and whenever a menu hands the screen back.
-            up = f'\x1b[{len(rows)}A' if rows else ''
-            # Keep xterm's legacy Ctrl keys; Kitty needs disambiguation and alternate
-            # key identities to preserve Ctrl shortcuts on non-Latin layouts.
-            parts.extend(
-                [
-                    '\x1b[?25l\x1b[?2004h\x1b[>4;1m\x1b[>5u',
-                    '\r\n' * len(rows),
-                    up,
-                    '\x1b7',
-                    f'\x1b[1;{bottom}r',
-                    '\x1b8',
-                ]
-            )
-            self._active = True
-        elif changed_geometry:
-            old_bottom = self._geometry[1] - len(self._rows)
-            growth = max(0, old_bottom - bottom)
-            parts.append('\x1b7')
-            if growth:
-                # Make room from the writer's actual position, not the old
-                # region bottom. Reopening a popup can reuse the gap left when
-                # it closed without scrolling another batch of blank lines.
-                parts.extend(['\x1bD' * growth, f'\x1b[{growth}A', '\x1b7'])
-            parts.extend([f'\x1b[1;{bottom}r', '\x1b8'])
-            if bottom > old_bottom:
-                parts.append('\x1b7')
-                for row in range(old_bottom + 1, bottom + 1):
-                    parts.append(f'\x1b[{row};1H\x1b[2K')
-                parts.append('\x1b8')
-        parts.append(self._row_changes(rows=rows, bottom=bottom, width=width, force=changed_geometry))
-        if any(parts):
-            self._transaction(''.join(parts))
-        self._rows, self._geometry = rows, (width, height)
-        self._observed_size = (width, height)
-
-    def _row_changes(self, *, rows: tuple[str, ...], bottom: int, width: int, force: bool) -> str:
-        parts: list[str] = []
+        frame = ScreenBuffer(width, height)
+        self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
         for index, row in enumerate(rows):
-            if force or index >= len(self._rows) or row != self._rows[index]:
-                clear = '\x1b[K' if visible_length(row) < width else ''
-                parts.append(f'\x1b[{bottom + index + 1};1H\x1b[0m{row}\x1b[0m{clear}')
-        return '\x1b7\x1b[?7l' + ''.join(parts) + '\x1b[?7h\x1b8' if parts else ''
+            frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
+        parts.append(render_diff(self._previous, frame))
+        self._previous = frame
+        self._dirty = False
+        self._painted_at = self.clock()
+        if text := ''.join(parts):
+            self.output.write('\x1b[?2026h' + text + '\x1b[?2026l')
+            self.output.flush()
 
-    def _rebuild(self, *, rows: tuple[str, ...], width: int, height: int) -> None:
-        bottom = height - len(rows)
-        frame = self.transcript.frame(width=width, height=bottom)
-        parts = ['\x1b[r\x1b[2J\x1b[1;1H', f'\x1b[1;{bottom}r']
-        parts.append(self._row_changes(rows=rows, bottom=bottom, width=width, force=True))
-        # Address each transcript row directly. Replaying it must not scroll old
-        # output into native history a second time. Last row retains the writer's
-        # column and delayed-wrap state for the next streaming chunk.
-        for index, row in enumerate(frame.rows, start=bottom - len(frame.rows) + 1):
-            parts.append(f'\x1b[{index};1H\x1b[0m{row}')
-        parts.append(frame.continuation_style)
-        self._transaction(''.join(parts))
-        self._rows, self._geometry = rows, (width, height)
-        self._observed_size = (width, height)
-        self._resize_at = None
-        self._resize_notice = False
-        self._flush_deferred()
-
-    def _flush_deferred(self) -> None:
-        if self._holds:
-            return
-        deferred, self._deferred = self._deferred, None
-        if deferred is not None:
-            try:
-                deferred.seek(0)
-                while chunk := deferred.read(65536):
-                    self._emit(chunk)
-            finally:
-                deferred.close()
-
-    def _transaction(self, text: str) -> None:
-        self.output.write('\x1b[?2026h' + text + '\x1b[?2026l')
-        self.output.flush()
+    def _leave(self) -> None:
+        parts: list[str] = []
+        if self._modes:
+            parts.append(MODES_OFF)
+            self._modes = False
+        if self._screen:
+            parts.append(LEAVE)
+            self._screen = False
+            self._previous = None
+        if parts:
+            self.output.write(''.join(parts))
+            self.output.flush()
 
     def release(self) -> None:
-        """Flush pending output and restore modes before a menu or shell takes over."""
+        """Drop the editor rows and input modes before a menu, command, or shell takes over.
+
+        The transcript stays on screen, and output the command prints still appears.
+        """
         with self._lock:
-            if not self._active:
-                return
-            try:
-                width, height = self.size()
-                width, height = max(1, width), max(2, height)
-                if self._resize_at is not None or (width, height) != self._geometry:
-                    rows = self._rows[-(height - 2) :] if height > 2 else ()
-                    self._rebuild(rows=rows, width=width, height=height)
-                if self._partial:
-                    self._emit('\n')
-                    self._partial = False
-                bottom = self._geometry[1] - len(self._rows)
-                # Resetting the margins homes the cursor, so keep the writer's own position.
-                parts = ['\x1b7\x1b[r']
-                for row in range(bottom + 1, self._geometry[1] + 1):
-                    parts.append(f'\x1b[{row};1H\x1b[2K')
-                parts.extend(['\x1b8', '\x1b[<u\x1b[>4;0m\x1b[0m\x1b[?2004l\x1b[?25h'])
-                self._transaction(''.join(parts))
-            finally:
-                if self._deferred is not None and not self._holds:
-                    self._deferred.close()
-                    self._deferred = None
+            if self._partial:
+                self.transcript.write('\n')
+                self._partial = False
+            if self._modes:
+                self.output.write(MODES_OFF)
+                self.output.flush()
+                self._modes = False
+            if self._rows:
                 self._rows = ()
-                self._active = False
-                self._resize_at = None
+                self._dirty = True
+            self.refresh()
+
+    def restore(self) -> None:
+        """Leave the alternate screen and print the session into the terminal's own scrollback.
+
+        Not `close`: `io.IOBase` calls that when the object is collected.
+        """
+        with self._lock:
+            self.release()
+            self._leave()
+            self._live = False
+            width, _ = self._geometry()
+            if printed := self.transcript.printed(width=width):
+                self.output.write(printed.replace('\n', '\r\n') if self.output.isatty() else printed)
+                self.output.flush()

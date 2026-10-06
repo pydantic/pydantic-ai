@@ -263,7 +263,10 @@ def config_completions(args: list[str]) -> Iterable[str]:
     return ()
 
 
-PLUGINS_USAGE = 'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
+PLUGINS_USAGE = (
+    'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
+    '\nGit repositories can be installed only inside a CLAI session: /plugins add GIT_URL'
+)
 
 
 def added_plugin(args: list[str]) -> PluginSettings:

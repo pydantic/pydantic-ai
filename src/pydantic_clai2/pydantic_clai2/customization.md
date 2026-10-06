@@ -142,6 +142,15 @@ clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 
+Inside a CLAI session only, /plugins add GIT_URL clones and loads a trusted
+repository over HTTPS or SSH (or a local file:// URL). Its root __init__.py or
+plugin.py must define one public Plugin subclass; dependencies must already be
+installed in CLAI's environment. Checkouts live in plugins/_git/ID under the
+configuration directory. Reload reads local code, not Git updates: pull into the
+checkout with Git first, then /plugins reload ID. Removing a Git plugin forgets
+its declaration but keeps its checkout; clear the printed checkout directory
+before reinstalling. Plugin code runs as the user; install only trusted repositories.
+
 The second built-in is ask_user (pydantic_clai2.builtin_plugins.ask_user_menu): the
 harness AskUser capability with an inline numbered picker as its answerer, so
 the model can ask the user multiple-choice questions mid-run through
@@ -176,7 +185,7 @@ default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
 Other options are service_name (default pydantic-clai2), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
-then receives the telemetry), and ui_events (default false: also record UI
+then receives the telemetry), and ui_events (default true; set false to opt out: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
 submissions, by name; while include_content is on, a submitted prompt also
 carries its text, but ! lines and slash-command arguments never do).
@@ -544,7 +553,8 @@ plugin_menu.py's bridge back to the main event loop.
 
 Pass during_turn=True to Command when the menu is safe to open mid-turn, so the
 bare command opens at once instead of queueing behind the running turn. While
-run_worker runs, CLAI holds the turn's output and prints it in order afterwards.
+run_worker runs, CLAI leaves the live panel temporarily. The turn's output stays
+in the transcript and paints when the menu closes.
 Only opt in when the running turn cannot observe what the menu changes.
 during_turn_subcommands=('add',) does the same for a bare subcommand such as
 /model add. Pass args_during_turn=True when every form of the command is safe

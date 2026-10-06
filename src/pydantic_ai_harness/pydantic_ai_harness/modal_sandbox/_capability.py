@@ -5,9 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
-
-from typing_extensions import Never
+from typing import TYPE_CHECKING, Never, cast
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError

@@ -127,6 +127,13 @@ def test_provider_catalog_and_back_navigation(tmp_path: Path) -> None:
         model.name for model in codex.models
     }
     assert menu.build_providers().highlighted == MenuItem('openai-codex', value='openai-codex')
+    profiled, _ = make_context(tmp_path / 'profiled')
+    profiled.settings = Settings(model='openai@work:gpt-5')
+    profiled_menu = ModelMenu(profiled)
+    assert profiled_menu.build_providers().highlighted == MenuItem('openai', value='openai')
+    # Another account's model is listed under its provider, not as a provider of its own.
+    assert 'openai@work' not in profiled_menu.providers()
+    assert 'openai@work:gpt-5' in [model.name for model in profiled_menu.for_provider('openai').models]
     script = Script(
         lists=[pick('anthropic'), MenuResult(cancelled=True), pick('openai-codex'), pick('openai-codex:gpt-5.6-luna')],
         choices=[],

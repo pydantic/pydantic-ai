@@ -844,8 +844,6 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 Pressing Ctrl-C during [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cancels the run too: catch the `KeyboardInterrupt` and pass it to `from_cancellation()` to recover the run state.
 
-On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
-
 When consuming [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], the yielded [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents] handle offers a first-party alternative that needs no task juggling: [`AgentRunEvents.cancel()`][pydantic_ai.agent.AgentRunEvents.cancel] is safe to call from another task (e.g. a UI's "stop" handler) and surfaces as `RunCancelled` on continued iteration:
 
 ```python {title="run_cancel_stream_events.py"}
@@ -937,7 +935,10 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
     - **Your application** decides to stop the run, through one of the dedicated cancellation methods. Pydantic AI issued that cancellation itself, so it can consume it before asyncio interprets it and raise `RunCancelled` instead: the run ends with an ordinary, catchable application error.
     - **The asyncio environment** cancels the task the run happens to be on: `asyncio.Task.cancel()`, `asyncio.timeout()` expiring, a [`TaskGroup`][asyncio.TaskGroup] tearing down after a sibling failed, a server shutting down, workflow cancellation under [durable execution](durable_execution/overview.md). All of these deliver the very same `CancelledError` signal, so Pydantic AI cannot tell a stop button from a timeout -- and the exception's type is load-bearing for everything built on it: `asyncio.timeout()` only produces `TimeoutError`, a `TaskGroup` only treats the task as cleanly cancelled, and Temporal only ends the workflow as *Cancelled* if `CancelledError` itself keeps propagating. Raising `RunCancelled` in its place would silently break each of those. So the run state is *attached to* the propagating `CancelledError` for [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation], rather than replacing it.
 
-Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success — on Python 3.11+ this holds even if user code absorbs the delivered cancellation; on Python 3.10 it is best-effort. When first-party and external cancellation race, external cancellation wins. On Python 3.10, that race cannot be distinguished, so first-party cancellation wins instead.
+Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success even if user code absorbs the delivered cancellation. When first-party and external cancellation race, external cancellation normally wins.
+
+!!! warning "Calling `Task.uncancel()` can interfere with cancellation attribution"
+    If user code catches a first-party cancellation and calls `Task.uncancel()`, an external cancellation arriving before the next run step can be consumed as first-party cancellation and surface as `RunCancelled`. This existing limitation is tracked in [#7240](https://github.com/pydantic/pydantic-ai/issues/7240).
 
 For fine-grained control over the agent graph, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter]:
 
