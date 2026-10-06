@@ -17,7 +17,7 @@ from dataclasses import replace as dc_replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, Never, TypeVar
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -26,7 +26,7 @@ import pytest
 from pydantic import BaseModel
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import NOT_HANDLED, AsyncMonty, MountDir, OSAccess, OsFunction
-from typing_extensions import Never, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     AbstractToolset,
@@ -3565,6 +3565,21 @@ class TestDynamicCatalog:
                 result=result,
             )
         # Only the first discovery of `weather` announces.
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
+
+    async def test_other_system_prompts_do_not_count_as_announcements(self) -> None:
+        """Only an authored announcement suppresses one: a system prompt naming the tool does not."""
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        ctx.messages.append(ModelRequest(parts=[SystemPromptPart(content='Prefer `weather` for forecasts.')]))
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result={'discovered_tools': [{'name': 'weather'}]},
+        )
         assert ctx.pending_messages is not None
         assert len(ctx.pending_messages) == 1
 

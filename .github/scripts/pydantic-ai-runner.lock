@@ -27,7 +27,7 @@ pydantic-settings = false
 pydantic-monty-client = false
 genai-prices = false
 pydantic-monty = false
-termflow-md = "2026-09-24T16:36:46Z"
+termflow-md = "2026-09-30T15:58:29Z"
 anthropic = "2026-09-28T18:04:04Z"
 openai = "2026-09-23T00:08:49Z"
 google-genai = "2026-09-22T17:23:02Z"
@@ -1220,7 +1220,6 @@ requires-dist = [
     { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.10.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
-    { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },

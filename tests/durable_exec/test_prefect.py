@@ -64,6 +64,7 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
     DynamicCapability,
+    Hooks,
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
@@ -92,6 +93,7 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelHTTPError,
     ModelRetry,
     RunCancelled,
     ToolFailed,
@@ -109,6 +111,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.tool_manager import ToolManager
@@ -480,6 +483,32 @@ async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
 
     output = await run_simple_agent()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> None:
+    """A model task's `ModelHTTPError` reaches flow code as itself, so error hooks can match on it."""
+
+    def overloaded(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(503, 'overloaded-model', body={'error': 'overloaded'}, headers={'Retry-After': '7'})
+
+    async def describe(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        assert isinstance(error, ModelHTTPError)
+        return ModelResponse(parts=[TextPart(f'{type(error).__name__} {error.status_code} {error.retry_after}')])
+
+    agent = Agent(
+        FunctionModel(overloaded),
+        name='prefect_durability_model_error',
+        deps_type=type(None),
+        capabilities=[Hooks[None](model_request_error=describe), PrefectDurability()],
+    )
+
+    @flow(name='test_prefect_durability_model_error')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello Prefect')).output
+
+    assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
 
 
 class Deps(BaseModel):
@@ -1326,6 +1355,8 @@ async def test_realtime_signaling_in_flow() -> None:
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
 class _FakeRealtimeConnection(RealtimeConnection):

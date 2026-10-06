@@ -5,9 +5,9 @@ description: "Save Pydantic AI agent run snapshots to memory, files, SQLite, or 
 
 # Step Persistence
 
-`StepPersistence` records what an agent did at each boundary, separate from whether the run can be safely resumed. It is the persistence substrate for orchestrators that delegate to sub-agents -- for example, an AICA orchestrator that spawns a `code_librarian` to investigate one symbol, then continues that delegate's investigation with a follow-up question.
+`StepPersistence` saves a snapshot of an agent run at every settled step and when the run fails, so you can resume the run, or fork it from an earlier step, in the same process or another one, from memory, files, SQLite, MongoDB, or your own store. Alongside the snapshots it keeps an append-only trail of step events and a ledger of tool side effects, so after a crash you can tell which tool calls completed and which may or may not have run. It is also the persistence layer for orchestrators that delegate to sub-agents, for example continuing a delegate's investigation with a follow-up question.
 
-It is not a full graph-state checkpoint. Capability-state restore, workspace snapshots, and graph-node resume are out of scope and tracked separately (see `pydantic-ai-harness` issues #149 and #196).
+A snapshot holds the run's message history, not everything around it: capability state outside the messages, workspace files, and resuming from the middle of a step are tracked separately (see `pydantic-ai-harness` issues #149 and #196). For recovery inside a step, run the agent on [durable execution](../durable_execution/overview.md), which `StepPersistence` works alongside.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/)
 

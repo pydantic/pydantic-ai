@@ -9,14 +9,14 @@ from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import field, replace
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, assert_never, cast
 
 import anyio
 from opentelemetry.trace import Tracer
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeVar
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
@@ -72,6 +72,7 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -90,6 +91,7 @@ from .models._continuation import (
     cancel_suspended_job,
     merge_mode,
     merge_responses,
+    report_continuation_segment,
 )
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -116,6 +118,7 @@ __all__ = (
     'build_run_context',
     'capture_run_messages',
     'HistoryProcessor',
+    'resolve_conversation',
     'resolve_conversation_id',
     'process_tool_calls',
     'resolve_run_id',
@@ -302,6 +305,41 @@ def resolve_conversation_id(
             if (cid := message.conversation_id) is not None:
                 return cid
     return str(uuid7())
+
+
+def resolve_conversation(
+    conversation: Conversation | None,
+    *,
+    message_history: Sequence[_messages.ModelMessage] | None,
+    usage: _usage.RunUsage | None,
+    conversation_id: str | None,
+) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None]:
+    """Resolve a `conversation` argument into the three arguments it stands in for.
+
+    The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
+    passing the conversation's own object would make running from a conversation change it —
+    double-counting across two runs started from the same one, and corrupting it as a point to
+    branch from. `copy` covers the mutable `details` mapping too, per `UsageBase.__copy__`.
+    """
+    if conversation is None:
+        return message_history, usage, conversation_id
+
+    if conflicts := [
+        name
+        for name, value in (
+            ('message_history', message_history),
+            ('usage', usage),
+            ('conversation_id', conversation_id),
+        )
+        if value is not None
+    ]:
+        listed = ' and '.join(f'`{name}`' for name in conflicts)
+        raise exceptions.UserError(
+            f'`conversation` already carries {listed}, so passing both is ambiguous. '
+            f'Pass the conversation on its own, or pass its pieces yourself.'
+        )
+
+    return conversation.messages, copy(conversation.usage), conversation.conversation_id
 
 
 def resolve_run_id(
@@ -1202,6 +1240,7 @@ async def model_request(
                 raise
 
             new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
+            report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
                 if response.state == 'suspended':
@@ -1285,6 +1324,7 @@ async def model_request_stream(
             # it here so re-attaching it around each segment keeps `get_current_span()`-driven span
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
+            request_context=request_context,
         )
         try:
             yield sr

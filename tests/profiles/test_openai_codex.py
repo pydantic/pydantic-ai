@@ -2,7 +2,8 @@
 
 Pins the Codex wire-dialect flags directly: the backend serves streaming responses only,
 requires `store=false`, rejects sampling/tuning request fields, and exposes no server-side
-input-token counting (all verified live on PR #6433).
+input-token counting (all verified live on PR #6433). Prompt cache diagnostics stay off because they
+have not been verified against the backend.
 """
 
 from __future__ import annotations as _annotations
@@ -27,6 +28,7 @@ def test_codex_wire_dialect_flags():
     assert profile.get('openai_responses_requires_streaming') is True
     assert profile.get('openai_responses_requires_store_false') is True
     assert profile.get('openai_supports_input_token_counting') is False
+    assert profile.get('openai_responses_supports_prompt_cache_diagnostics') is False
     assert profile.get('openai_unsupported_model_settings') == (
         'max_tokens',
         'temperature',
@@ -43,6 +45,7 @@ def test_codex_profile_extends_the_standard_openai_profile():
         'openai_responses_requires_streaming',
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
+        'openai_responses_supports_prompt_cache_diagnostics',
     }
     assert {k: v for k, v in codex.items() if k not in overridden} == {
         k: v for k, v in base.items() if k not in overridden
@@ -58,6 +61,7 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
         'openai_responses_requires_streaming',
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
+        'openai_responses_supports_prompt_cache_diagnostics',
     }
 
     assert {key: value for key, value in codex.items() if key not in dialect} == {

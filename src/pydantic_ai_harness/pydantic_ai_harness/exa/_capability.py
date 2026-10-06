@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.messages import ToolReturn
+from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.tools import AgentDepsT, Tool
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._durable import RetryRequest, retry_as_result
+from pydantic_ai_harness._web_search import native_web_search
 from pydantic_ai_harness.exa._toolset import (
     EXA_MAX_NUM_RESULTS,
     EXA_MAX_PAGE_TEXT_CHARS,
     ExaClient,
+    ExaSearchOperations,
     ExaSearchToolset,
+    default_client,
 )
 
 if TYPE_CHECKING:
@@ -51,6 +59,10 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
 
     Authentication comes from the `EXA_API_KEY` environment variable by
     default; pass `client` to configure it explicitly.
+
+    Each tool's Exa request runs as a durable operation, so under durable
+    execution a recovered run reuses the recorded result instead of making the
+    request again.
     """
 
     num_results: int = 5
@@ -113,6 +125,24 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     key explicitly, point at a different base URL, or substitute a fake in tests.
     """
 
+    native: bool = False
+    """Use the model's native web search where it has one, with Exa's `web_search` as the fallback. Off by default.
+
+    When enabled, the capability also adds the provider's native web search
+    tool, and Exa's `web_search` is only sent to models that do not support it,
+    so the two never share a request. `get_page` and `deep_search` stay Exa's
+    on every model. `include_domains` and `exclude_domains` are passed to the
+    native tool as `allowed_domains` and `blocked_domains`; `num_results` and
+    `text_summary` only apply to Exa's search.
+
+    To use Exa as the fallback of a core `WebSearch` instead, with its native
+    options and no `get_page`, pass `WebSearch(local=ExaSearch().web_search_tool())`.
+    """
+
+    _: KW_ONLY
+    id: str | None = 'exa_search'
+    """Stable identity for durable execution, which records each Exa request under it."""
+
     def __post_init__(self) -> None:
         """Validate configuration against the Exa API's documented bounds."""
         if not 1 <= self.num_results <= EXA_MAX_NUM_RESULTS:
@@ -138,17 +168,64 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
             instructions += _DEEP_INSTRUCTIONS_SUFFIX
         return instructions
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
+
     def get_toolset(self) -> ExaSearchToolset[AgentDepsT]:
         """Build the toolset providing `web_search`, `get_page`, and the optional `deep_search` tool."""
+        return self._build_toolset(
+            id=self.id,
+            operations=ExaSearchOperations(
+                web_search=self._web_search, get_page=self._get_page, deep_search=self._deep_search
+            ),
+        )
+
+    @durable_operation('web_search')
+    async def _web_search(self, query: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.web_search(query))
+
+    @durable_operation('get_page')
+    async def _get_page(self, url: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.get_page(url))
+
+    @durable_operation('deep_search')
+    async def _deep_search(self, question: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.deep_search(question))
+
+    @cached_property
+    def _client(self) -> ExaClient:
+        return self.client if self.client is not None else default_client()
+
+    @cached_property
+    def _requests(self) -> ExaSearchToolset[AgentDepsT]:
+        """The toolset whose tools make the Exa requests that the durable operations run."""
+        return self._build_toolset()
+
+    def _build_toolset(
+        self, *, id: str | None = None, operations: ExaSearchOperations | None = None
+    ) -> ExaSearchToolset[AgentDepsT]:
         return ExaSearchToolset[AgentDepsT](
-            client=self.client,
+            client=self._client,
             num_results=self.num_results,
             max_text_chars=self.max_text_chars,
             include_deep_search=self.include_deep_search,
             include_domains=self.include_domains,
             exclude_domains=self.exclude_domains,
             text_summary=self.text_summary,
+            defer_to_native=self.native,
+            id=id,
+            operations=operations,
         )
+
+    def get_native_tools(self) -> Sequence[AbstractNativeTool]:
+        """The native web search tool, when `native` is set."""
+        return [native_web_search(self.include_domains, self.exclude_domains)] if self.native else []
+
+    def web_search_tool(self) -> Tool[AgentDepsT]:
+        """Exa's `web_search` on its own, configured from this capability, to pass as `WebSearch(local=...)`."""
+        return Tool[AgentDepsT](self.get_toolset().web_search, name='web_search')
 
     @classmethod
     def from_spec(
@@ -161,6 +238,8 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         include_domains: Sequence[str] = (),
         exclude_domains: Sequence[str] = (),
         guidance: str | None = None,
+        native: bool = False,
+        id: str | None = 'exa_search',
     ) -> ExaSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -175,4 +254,6 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
             include_domains=list(include_domains),
             exclude_domains=list(exclude_domains),
             guidance=guidance,
+            native=native,
+            id=id,
         )

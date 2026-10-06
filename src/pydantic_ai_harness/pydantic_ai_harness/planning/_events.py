@@ -60,7 +60,8 @@ class PlanDeletedEvent(CapabilityEvent, namespace=PLANNING_EVENTS, name='deleted
     previous_state: PlanItem | None = None
 
 
-class PlanEventType(str, Enum):
+# Preserve string formatting of existing public enum members.
+class PlanEventType(str, Enum):  # noqa: UP042
     """The kinds of change a store can emit.
 
     Attributes:
