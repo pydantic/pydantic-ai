@@ -41,8 +41,8 @@ from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 
 ItemKind = Literal['skill', 'mcp_server', 'plugin', 'instruction']
-INSTRUCTION_PREFIX = 'fleet:'
-"""Pushed instruction blocks are named `fleet:<slug>`; AgentControl adds them rather than matching code blocks."""
+INSTRUCTION_PREFIX = 'logfire:'
+"""Pushed instruction blocks are named `logfire:<slug>`; AgentControl adds them rather than matching code blocks."""
 
 
 class FleetSkill(BaseModel):

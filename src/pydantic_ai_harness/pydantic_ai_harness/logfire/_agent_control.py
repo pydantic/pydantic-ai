@@ -337,7 +337,7 @@ def _instruction_key(part: InstructionPart) -> str | None:
     return str(part.id) if part.id is not None else None
 
 
-ADDITIVE_ID_PREFIX = 'fleet:'
+ADDITIVE_ID_PREFIX = 'logfire:'
 """Hackathon: an instruction entry whose `id` starts with this adds a *named* block instead of addressing one.
 
 A centrally pushed instruction needs a stable name -- to say what arrived, to roll it out and back, and to
@@ -654,6 +654,14 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     advertise different tools from one request to the next, so an entry that reaches nothing now is
     not necessarily wrong. Once per process rather than once per run for the same reason every other
     drop is: the config is resolved on every run, and the signal has to survive its own repetition.
+    """
+
+    client_features: Sequence[str] = field(default=(), kw_only=True)
+    """Hackathon: what this client supports beyond the contract, reported on `agent_control_config_hint`.
+
+    Every `AgentControl` reports `named_instructions` (it adds `logfire:<slug>` blocks); a client such as clai2
+    adds `catalog` when it delivers the opt-in catalog, so the Logfire UI offers delivery tiers only to agents
+    that can honor them.
     """
 
     # Override the inherited default ID: a stable id is what tells Pydantic AI an agent has one
@@ -1082,6 +1090,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             'agent_control.baseline_reduction': reduction,
             'agent_control.baseline_bytes': size,
             'agent_control.resolution_reason': resolution_reason(resolved),
+            'agent_control.client_features': ['named_instructions', *self.client_features],
             **_deployment_attributes(variable.logfire_instance),
         }
         if agent_name is not None:

@@ -187,6 +187,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             self.fleet.agent_variable,
             targeting_key=lambda _: tracing.email,
             attributes=lambda _: tracing.identity(),
+            client_features=('catalog',),
         )
         return (self._session_tracing, self.instrumentation, control, FleetControl(fleet=self.fleet))
 
