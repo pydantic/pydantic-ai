@@ -500,19 +500,18 @@ class ModelSettings(TypedDict, total=False):
     cache: CacheSetting
     """Enable, configure, or disable library-managed prompt caching for the model request.
 
-    Prompt caching is on by default (`True`) for the models that need the request to opt into it, so
-    long and multi-turn prompts are served from the provider's cache instead of being re-processed.
-    Cache writes cost more than uncached input (1.25x for Anthropic's 5-minute and OpenAI's GPT-5.6
-    caches, 2x for Anthropic's 1-hour cache) while cache reads cost about 0.1x, so caching pays off
-    as soon as a prefix is read back once.
+    Prompt caching lets the provider serve a long or multi-turn prompt's stable prefix from its cache
+    instead of re-processing it. Cache writes cost more than uncached input (1.25x for Anthropic's
+    5-minute and OpenAI's GPT-5.6 caches, 2x for Anthropic's 1-hour cache) while cache reads cost about
+    0.1x, so caching pays off as soon as a prefix is read back once.
 
-    - `True` (the default): Cache the stable prompt prefix (tool definitions and static instructions)
+    - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
       and the growing conversation, with the provider's default retention. Uses the provider's
       automatic caching mode where one exists; elsewhere the library places cache breakpoints.
-    - `False`: Disable library-managed caching (overrides a `cache` value in the model's default
-      settings). Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] markers and
-      provider-specific cache settings still apply, and providers that cache implicitly
-      (e.g. OpenAI, Gemini) still do.
+    - `False`: Disable library-managed caching, the same as leaving the setting unset but also
+      overriding a `cache` value in the model's default settings. Explicit
+      [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
+      still apply, and providers that cache implicitly (e.g. OpenAI, Gemini) still do.
     - `'5m'`/`'30m'`/`'1h'`: Cache with a specific retention, snapped to the nearest tier the
       provider supports (down where a shorter tier exists).
 
@@ -533,7 +532,8 @@ class ModelSettings(TypedDict, total=False):
       `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
     * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
       `openrouter_cache_tool_definitions` and `openrouter_cache_messages`)
-    * OpenAI (GPT-5.6 and later on the OpenAI API only; as `openai_prompt_cache_options`)
+    * OpenAI (GPT-5.6 and later on the OpenAI API only; as `openai_prompt_cache_options` and
+      `openai_cache_instructions`)
     """
 
     service_tier: ServiceTier

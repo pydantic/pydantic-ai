@@ -1019,6 +1019,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model name."""
         return self._model_name
 
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
         # Mirrors `prepare_request` precedence: when any explicit `anthropic_cache*` setting is present, the
         # unified value contributes nothing, since it also adds nothing to the request.

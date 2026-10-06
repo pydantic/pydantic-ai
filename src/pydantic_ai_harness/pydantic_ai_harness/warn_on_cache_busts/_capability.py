@@ -142,15 +142,14 @@ class CacheBustWarning(UserWarning):
         return rebuild, self.args
 
 
-class CacheDisabledWarning(UserWarning):
-    """Warned when a request long enough to cache went to a model whose prompt caching its settings turned off.
+class CacheNotEnabledWarning(UserWarning):
+    """Warned when a request long enough to cache went to a model whose prompt caching wasn't configured.
 
     Emitted by `WarnOnCacheBusts` once per conversation and model, when the model needs prompt caching
     to be configured on the request (Anthropic, Bedrock, OpenRouter's Anthropic and Gemini routes, and
-    OpenAI's GPT-5.6 and later), Pydantic AI's caching is on by default, but a provider-specific cache
-    setting (such as `anthropic_cache_instructions=False`) overrode it without enabling any caching of
-    its own, and the provider reported no cache usage. Turning caching off on purpose with the unified
-    `cache=False` setting doesn't warn.
+    OpenAI's GPT-5.6 and later), but neither the unified `cache` setting nor a provider-specific cache
+    setting was set, the history has no `CachePoint`, and the provider reported no cache usage. Setting
+    `cache=False` (or a provider-specific cache setting) says caching was considered, so it doesn't warn.
 
     Silence or escalate it with the stdlib `warnings` filters, like `CacheBustWarning`.
     """
@@ -218,9 +217,9 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     ```
 
     The collapse warning is silent when caching is off or unreported (`cache_read_tokens` stays 0),
-    so it never fires spuriously in tests that don't exercise caching. Separately, when a provider-specific
-    cache setting turned Pydantic AI's default-on prompt caching off on a model that needs it configured,
-    a request long enough to cache emits a `CacheDisabledWarning`, once per conversation and model.
+    so it never fires spuriously in tests that don't exercise caching. Separately, when a model that needs
+    prompt caching configured on the request has none configured, a request long enough to cache emits a
+    `CacheNotEnabledWarning`, once per conversation and model.
     Silencing and dev/CI escalation both go through the stdlib `warnings` filters -- see `CacheBustWarning`.
     """
 
@@ -347,20 +346,18 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
         state = self._state
         state.step += 1
         health = state.detector.observe(request_context, response)
-        if health is not None and health.disabled:
-            warnings.warn(_disabled_warning(response, step=state.step), stacklevel=2)
+        if health is not None and health.not_enabled:
+            warnings.warn(_not_enabled_warning(response, step=state.step), stacklevel=2)
         elif health is not None and (collapse := health.collapse) is not None and collapse.alert:
             warnings.warn(_bust_warning(collapse, step=state.step, run_id=state.detector.run_id), stacklevel=2)
         return response
 
 
-def _disabled_warning(response: ModelResponse, *, step: int) -> CacheDisabledWarning:
-    return CacheDisabledWarning(
-        f'Prompt caching is off at model request {step}: {response.usage.input_tokens} input tokens were sent to '
-        f'{response.model_name!r} uncached, because a provider-specific cache setting overrode the unified `cache` '
-        'setting without enabling caching itself. Remove the provider-specific setting to use the default '
-        "`cache=True`, enable caching through it (for example `anthropic_cache='5m'`), or set `cache=False` "
-        'to turn caching off on purpose.'
+def _not_enabled_warning(response: ModelResponse, *, step: int) -> CacheNotEnabledWarning:
+    return CacheNotEnabledWarning(
+        f'Prompt caching is not enabled at model request {step}: {response.usage.input_tokens} input tokens were sent '
+        f'to {response.model_name!r} uncached. Enable it with `model_settings={{"cache": True}}` or the `Caching()` '
+        'capability, or set `cache=False` to leave it off on purpose.'
     )
 
 

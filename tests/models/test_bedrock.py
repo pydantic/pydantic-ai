@@ -3721,9 +3721,7 @@ async def test_bedrock_delta_renders_announcement_and_plain_tool_spec(
                         }
                     },
                 }
-            },
-            # Prompt caching is on by default.
-            {'cachePoint': {'type': 'default'}},
+            }
         ],
         'toolChoice': {'auto': {}},
     }
@@ -3769,14 +3767,7 @@ async def test_bedrock_tool_results_lead_multi_reveal_turn(
     await model.request(model.prepare_messages(history, parameters), settings, parameters)
 
     *_, last_message = mock_converse.call_args.kwargs['messages']
-    # The trailing cache point is the default history breakpoint.
-    assert [next(iter(block)) for block in last_message['content']] == [
-        'toolResult',
-        'toolResult',
-        'text',
-        'text',
-        'cachePoint',
-    ]
+    assert [next(iter(block)) for block in last_message['content']] == ['toolResult', 'toolResult', 'text', 'text']
     assert [block['toolResult']['toolUseId'] for block in last_message['content'][:2]] == ['tooluse_1', 'tooluse_2']
 
 
@@ -4424,11 +4415,11 @@ async def test_unified_cache_writes_then_reads_real_api(
 
 
 @pytest.mark.vcr()
-async def test_cache_on_by_default_reads_history_after_wide_turn_real_api(
+async def test_unified_cache_reads_history_after_wide_turn_real_api(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """With no cache settings at all, a direct `model.request()` caches the conversation, and the next
-    request reads it back even after a turn with 12 parallel tool calls.
+    """With `cache=True`, a direct `model.request()` caches the conversation, and the next request reads it
+    back even after a turn with 12 parallel tool calls.
 
     Bedrock looks back only about 20 content blocks from a cache breakpoint for an earlier cache entry, and the
     wide turn adds 25, so the end of the previous request gets its own breakpoint
@@ -4455,8 +4446,8 @@ async def test_cache_on_by_default_reads_history_after_wide_turn_real_api(
     ]
 
     with _capture_bedrock_request_bodies(model) as sent_requests:
-        first = await model.request([first_request], None, params)
-        second = await model.request(history, None, params)
+        first = await model.request([first_request], ModelSettings(cache=True), params)
+        second = await model.request(history, ModelSettings(cache=True), params)
 
     def cache_point_positions(body: dict[str, Any]) -> list[tuple[int, int]]:
         return [
@@ -7585,8 +7576,7 @@ async def test_bedrock_anthropic_5_drops_sampling_settings(
     `top_p` must not reach `inferenceConfig`, and unified `top_k` must not reach
     `additionalModelRequestFields`.
     """
-    # `cache=False` keeps the request identical to the recording, made before caching was on by default.
-    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5, cache=False)
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3, top_k=5)
     model = BedrockConverseModel('eu.anthropic.claude-opus-5', provider=bedrock_provider)
     agent = Agent(model, model_settings=settings)
 
@@ -7606,7 +7596,7 @@ async def test_bedrock_anthropic_5_drops_sampling_settings(
     assert sent['inferenceConfig'] == snapshot({'maxTokens': 16})
     assert 'additionalModelRequestFields' not in sent
     # Filtering happens on a copy, so the caller's own settings dict is left intact.
-    assert settings == snapshot({'max_tokens': 16, 'temperature': 0.2, 'top_p': 0.3, 'top_k': 5, 'cache': False})
+    assert settings == snapshot({'max_tokens': 16, 'temperature': 0.2, 'top_p': 0.3, 'top_k': 5})
 
 
 @pytest.mark.vcr(additional_matchers=['body'])
@@ -7621,8 +7611,7 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     enough to pin it (the same reason `test_anthropic_sampling_settings_reach_the_wire` omits it).
     The body matcher proves the newly generated request still matches this expected wire shape.
     """
-    # `cache=False` keeps the request identical to the recording, made before caching was on by default.
-    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_k=5, cache=False)
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_k=5)
     model = BedrockConverseModel('eu.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
     agent = Agent(model, model_settings=settings)
 
@@ -7760,14 +7749,7 @@ def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
 
     prepared, _ = model.prepare_request(BedrockModelSettings(max_tokens=16), ModelRequestParameters())
 
-    assert prepared == snapshot(
-        {
-            'max_tokens': 16,
-            'bedrock_cache_instructions': True,
-            'bedrock_cache_tool_definitions': True,
-            'bedrock_cache_messages': True,
-        }
-    )
+    assert prepared == snapshot({'max_tokens': 16})
     assert not [w for w in recwarn if 'Sampling parameters' in str(w.message)]
 
 

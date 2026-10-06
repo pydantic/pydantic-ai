@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1789"
+      - "1711"
       content-type:
       - application/json
       host:
@@ -29,21 +29,18 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              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
+              CAQS9gUKEAgSGAI4AUIIdGhpbmtpbmcSDD4pPL00cPaSzG9u3BoMdmlWN24fzNf6GIPHIjDUYHGMEa1jez+enAnMfCKxXNOSiahx5OVnxoOezQ7pusg/Bhkb5L/iXYSg/kUvR4wqkwW9NoqwmM1/0xpILmyllI06TWP0fLCr5iSdzZFWpZrSC0XK4jREnt+v1EPiqVWdGBXZDP7ejGzUGfERxAzWOsVp6gegg9EXsYd1oZRpI0Plff2KN+HcL6WVu/V3/fClMODSjeBvJ4nRzor2dkBmmIR3q3PryG1ynAyZhozNowiWSr3mKzx127UTpjdhRe4RLw9p6D/BCHHjTQtL4jGipcf9gxULj7CgQ2/Aziqs/u9Vk/erdlJdfpSdnRn6xLLGnImgdKl4pX14VIeKdI67EqQIHrR3Cgpr/bRIJzzzJPuX4E35QDNkeh0ymKalmjLbRonGDfIYlQgCouw/cHW4YcFqBwzA0CA9mgPblLTfIcrw8waYVmdCMVyJfZ3rerG3UuqTfxVvXyqWILZjAIsn/X1y7Kkx8TsAqRmL0N2sqUJP13TKP6anxoFw3u4TFxA1vk5SlvWqzTDQuHjTcQO8OSMV8yHiyDdz4TDlg0tE15q8QTCTQHQJbYGru5Yp5/0eY0TOIOFB+2NCFZZDbMbav4z+tewxgJAofmIXtfvQ1AlIA31PrlqwPoa2MAuTCqEt/cbq/HU3azTfuLdv8e3tL+Z/z3j6N2Dt40Kq15Pfw3JfMYEVWMHG1q4uAraCKjpP+mwg8+zMV+ggKGVIQv59xdDrPoP4HqMO9YVb/zF5sZSMtj84/lIYOgPavOqSQfd/V9wrebTDfGQ4ZFSSypwpE4LhqyyDuzeMN6v4EjvCybGGpFDhLoXUnAJlShKK8nz5cDiHQi73dI8ojJyK32H3ieOFaBt8dyt/3aakwIaRH3aUS045olN1TDjFC103erNyppXR5i16YdAqyDP4y3huk/sVG52oEoIxLUNMe4RwrQyA6beiHBgB
             type: thinking
           - text: |-
               **4817 × 2963 = 14,272,771**
 
-              Working: 4817 × 3000 = 14,451,000, and 4817 × 37 = 178,229. Subtracting gives 14,451,000 − 178,229 = 14,272,771.
+              Check: 4817 × 3000 = 14,451,000, and 4817 × 37 = 178,229. Subtracting gives 14,451,000 − 178,229 = 14,272,771.
             type: text
         - role: user
           content:
           - text: And times two?
             type: text
         model: claude-sonnet-5-5
-        cache_control:
-          type: ephemeral
-          ttl: 5m
         stream: true
         system:
         - type: text
@@ -66,7 +63,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-2ca3d09c7b7b069423d4409c58efc842-8ff771ac0d233162-01
+      - 00-5f6398a7bb3951b0bd611f512c3def26-10725547aac71579-01
       transfer-encoding:
       - chunked
       vary:
@@ -75,48 +72,51 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CfjfmRW5JTcQWvY1Hhzjx","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":145,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"input_transformations":[{"type":"thinking_dropped","path":"messages.1.content.0","reason":"prefix_binding_mismatch"}],"diagnostics":null}          }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CfY4dhviQrf2dQFgozE8V","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":145,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"},"input_transformations":[{"type":"thinking_dropped","path":"messages.1.content.0","reason":"prefix_binding_mismatch"}],"diagnostics":null}  }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}               }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS3QUKEAgSGAI4AUIIdGhpbmtpbmcSDEXkdBQSwe9TyIMe8hoMR4UGcxIsXg7o0WB2IjCvvrfEl7ce+D20wXjE1RhqZh+STULT7OIxtNRFpNSOtQ74CfcxshCMsMbGBVRpZ9Mq+gTbv60vXTAorgZLPnY/c7z5eMGrdskSoxE+BIcaMoELAcj4TvBFVD1lKuMk4VUbwqFsZo1xucWfKx/HDuiJ+N/gCRH4iyvXrRYos3NEDa6LRN4RYy6FwjaNZ5HXRCHzy7Vpn+UyLfH9jbCrkZeJ8EJiIj3UTwTPA6tP3jJv5itjo0uut3pLb4Hm4omGva/x4qcpPND1Ua6dYUaAlwAH8uzqXomdjTcbfSV3Ckhpzipg2XiOW/fO4AE1eRy1ExKP/ZNeZF3GkxQtYqLsQf+bEhMNwU+2dSottsZx0Egs2NVYcYRF17v7EhOpPQmOfrK4OuQWtHXRhsdXrRI4YaAif15KBd/k6GWHPwhOfUSavcSZeapFttsH71UNgWrKDWmkI1pq/2xCuMrZXucPmZ2/wAzqUkOJ5HyoedFK1fDnnlIi3Qv2zv8BTG51DOjzA2bN1dheSpvc8rgfXSLrnaQSNZBWkpIZw+NDv0UcEaP6Nl/amngh5v5H5WaYQ8bjzZoRgKBEuyK94AkqD8tzwOao3IsbZ9+DkGiDydFxRtrqHeU0skl2f9exTT/b53ovJz5WknE9TitvSJINN3LblCr0Y5e5nA9obXWOnQs2Nguh2ENJuMR5I6JeBIu1uvQaUuJfnMGPEGH6XuVoMyluKRV1QlN6jY0r3H8g4l2ZTbKNFZI/NcypEYEmOb9YAHyX7rFNtJAFnsrtINVKhb+a3M0apzM/lvgPaU9u35G7AnnwQpFClEkzOQM+tTW/0nqeK199/A0mvpClsmfF/u9YL/OmaoV8U0SB3CQY+XUhctBwoDyg/nWOcQ15Comi2eBxYY4BoKnZ4CxUG7fUXc4CGAE="}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS4QUKEAgSGAI4AUIIdGhpbmtpbmcSDAtjt2HSGKK0eBNM2BoMZpgDfJB+L6bhJRBWIjBlkc581kQmjF6Gu1gZdvBsENsEckBFjWiDDMAhWLMvF3F31viMtfGByV8Eu4ZTgMYq/gSw+UUD3001Hp+vSIaNYzMmHs/cSiYBED4zMjQc/VbVib+bDUSq0KQcmKRuxT64T+FgE9IuPu69DUTbjPPCF8afC/Z1ZDnLcx68E1xyC6PuwhLIlTDHmWhKJru374lnChqNtqCEbNjXDIHdkW9cN40A7K0e78ZcnNSR99oP4Msx6D90lsdlGg8FGyczrO51THGY3RmA2aSMYgPNa9VVLeY8BFgYJAv5FgHoqgFD6y5gehwYdl5JTeKGUkhqiqn3QQQ88Cg6IzliYjfWt3MQ+pulAhzDCVoN2f0eNFLrwXi+l83uFejOnwQ/cW0NLDeTGAvPerMqeNIHhqRdbrRhugwCn6BRS//d1xQo0cIrD3wGFOFZb9BhdOu618E+G9KP0yE1cPiZjXflPXkb48X22mcmevt7A2uia/Z9rGm1ig9DTzW7PO/6JeMOo+/km9HF9VjfvkTOBfml+Vnisjr1dvTfAH3wwRW93rdAbTR6FDXsFG1+RTPLK2g60mBVCJgY5/5QpKfiQPgMNAfkMFtbg63JzqPKMo+SLMKHx9vqnq5mUWSFu9Md5wCNcD04eujwT288n3E8Chlm6BhOjkL0b/EFNxfgPPegPBApg3EoZqaHc/vVslUOY2fy+k3XmjTDGPoV3zEt/T2bbEQuT78QRzgrwMKkx8ylMOFZtG1YIKbiBUSf9QQ3vzcUL0Quqocj3tccEPMWHQ9ZfxinBsZDL7925t3e1N0f0+YpbTG/l3WUEODa5yhKAKk5guGs5vh+601rysVBzUYA6mPN9ZURX2qv0WiU2mY5SQZ5C1DvUTPUzX5XWAaQ3DjJqdvrOZzdMhdYvRSPeTpRoKW28328ShgB"}            }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0            }
+        data: {"type":"content_block_stop","index":0    }
 
         event: content_block_start
         data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**28"}              }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**28,"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",545,542**\n\n14"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"545,542**\n\nThat"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",272,771 × 2"}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = 28,545,542"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 14,272,771 ×"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 2."}       }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1        }
+        data: {"type":"content_block_stop","index":1 }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":145,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":104,"output_tokens_details":{"thinking_tokens":77}}         }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":145,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":121,"output_tokens_details":{"thinking_tokens":98}}               }
 
         event: message_stop
-        data: {"type":"message_stop"         }
+        data: {"type":"message_stop"        }
 
-  recorded_at: 2026-10-05T19:48:46.172770+00:00
+  recorded_at: 2026-09-29T16:41:31.094595+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -128,7 +128,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "341"
+      - "293"
       content-type:
       - application/json
       host:
@@ -143,9 +143,6 @@ interactions:
           - text: Think it through, then say what 4817 * 2963 is.
             type: text
         model: claude-sonnet-5-5
-        cache_control:
-          type: ephemeral
-          ttl: 5m
         output_config:
           effort: xhigh
         stream: true
@@ -166,7 +163,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5a4b8f80d1c1d13ccac62dc94597f825-961c0ee2e86e9782-01
+      - 00-94e912241e55004cc75c20ea49ee0fc2-4d01d6d3d4f8983b-01
       transfer-encoding:
       - chunked
       vary:
@@ -175,69 +172,69 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CfjfmG441boqxeQy2Rpyk","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CfY4dUVKirDmG9kttddp8","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"},"diagnostics":null} }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}    }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSigYKEAgSGAI4AUIIdGhpbmtpbmcSDM+6Dz2rXBmpG2d4WhoM9kItFlirny4otEueIjDYo/porusqmaWmnZ1HnzXek2c8CWanHWZ0K8yls0k/jEPdNNWlesUtTyYbVMI7UR0qpwV/FmtbHNE7ATL6QCJKZrUS4y4ta55xsAvhPQidueUmzbrKqPAx0lYiZXo/BsIETXYbBgMT/YOBZBJOLjRXMm6mGAIcwFBQDDWLKnB4GD3vJMof2eMDxAZGJZfJuegkiuDbB8ggcY4Zd2Biop9ZgnB4InZuvZS8k2BWeiw+SC9uGTJSHecrUB4V59xszF8jhlqw8vf5VxTqKJc7i/N04+MGG2ASvOzkfBmxyhLuCCOmKmUICUG2DJJALwjAHpseSNkaqpjTW8iCXKcf+7Nk1OopPAB7nldzjxgmnwZ55h1QHRlFHhXvmTdVG7Rf+8W0N6gWPNW6vHLYDq/H8C8WK02MXtzDT32Hyxyk7LbMa8w4Et7RJ5O7KdJoQhEYWyPFdyCrlB/KZm0vMXh4iH1Z/u4oEW1sjT4nr8sDirZZbb2H8zsUp5+Fdq3EhYz835hVG14wTpD92auL9xLyLCP3d8wZMGNaiolG50L6aei7d2uu9C+oHyxD8IU+l7F/YfMxh48lkd6sIK0H1D0Jvp2nZ4B0UDLmvGXoindcbtmURiRL3i24jVbsKkSoqFGwLyxkSytBpxSYS+X0eQnlZk0xvY/MAyNIV2/WmuahFWjQP0lQzm6Sdzo+HvgxmOHmPaEeb/uoRS4y+jBN0lB5nWtFF7SUUL2lW6VWC33qys3rYnZSzoMzDIeFkXd3gSeBDwFjyMfQqrBMuxCGnkMfV8CE+CM8CVHworaDahwBms/SPGfU8vZ+ZZLJarwZWVNlNz97uZxI8r89AjRDIoDCiO6lHcMwih6W061B4URVS6DcAuNMydM0Ip7Jk8tE1DmHxr7Inz60LRv217Ge6v8If7VWyRtVb5qq5RRHXalNd8XjivdaYjMRB25YJzMpkeD9WqHk4l7pxJaDWvrXGAE="}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS9gUKEAgSGAI4AUIIdGhpbmtpbmcSDD4pPL00cPaSzG9u3BoMdmlWN24fzNf6GIPHIjDUYHGMEa1jez+enAnMfCKxXNOSiahx5OVnxoOezQ7pusg/Bhkb5L/iXYSg/kUvR4wqkwW9NoqwmM1/0xpILmyllI06TWP0fLCr5iSdzZFWpZrSC0XK4jREnt+v1EPiqVWdGBXZDP7ejGzUGfERxAzWOsVp6gegg9EXsYd1oZRpI0Plff2KN+HcL6WVu/V3/fClMODSjeBvJ4nRzor2dkBmmIR3q3PryG1ynAyZhozNowiWSr3mKzx127UTpjdhRe4RLw9p6D/BCHHjTQtL4jGipcf9gxULj7CgQ2/Aziqs/u9Vk/erdlJdfpSdnRn6xLLGnImgdKl4pX14VIeKdI67EqQIHrR3Cgpr/bRIJzzzJPuX4E35QDNkeh0ymKalmjLbRonGDfIYlQgCouw/cHW4YcFqBwzA0CA9mgPblLTfIcrw8waYVmdCMVyJfZ3rerG3UuqTfxVvXyqWILZjAIsn/X1y7Kkx8TsAqRmL0N2sqUJP13TKP6anxoFw3u4TFxA1vk5SlvWqzTDQuHjTcQO8OSMV8yHiyDdz4TDlg0tE15q8QTCTQHQJbYGru5Yp5/0eY0TOIOFB+2NCFZZDbMbav4z+tewxgJAofmIXtfvQ1AlIA31PrlqwPoa2MAuTCqEt/cbq/HU3azTfuLdv8e3tL+Z/z3j6N2Dt40Kq15Pfw3JfMYEVWMHG1q4uAraCKjpP+mwg8+zMV+ggKGVIQv59xdDrPoP4HqMO9YVb/zF5sZSMtj84/lIYOgPavOqSQfd/V9wrebTDfGQ4ZFSSypwpE4LhqyyDuzeMN6v4EjvCybGGpFDhLoXUnAJlShKK8nz5cDiHQi73dI8ojJyK32H3ieOFaBt8dyt/3aakwIaRH3aUS045olN1TDjFC103erNyppXR5i16YdAqyDP4y3huk/sVG52oEoIxLUNMe4RwrQyA6beiHBgB"}            }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0  }
+        data: {"type":"content_block_stop","index":0            }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}      }
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**4817"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**4"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" × 2963 = "}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"817 × 2963 ="}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"14,272,771**"}   }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 14,272,771**"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nWorking:"}    }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nCheck: 4817 ×"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 4817 × 3000"}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 3000 = 14,"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = 14,451,000"} }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"451,000,"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", and 4817 × "}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and 4817 × 37"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"37 = 178,229."}     }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = 178,229."}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Subtracting g"}          }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Subtracting gives 14"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ives 14,451,000 "}            }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",451,000 − 178"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"− 178,229 = "}         }
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",229 = 14,272"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"14,272,771."}}
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",771."}               }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":1  }
+        data: {"type":"content_block_stop","index":1   }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":208,"output_tokens_details":{"thinking_tokens":125}}          }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":214,"output_tokens_details":{"thinking_tokens":131}}     }
 
         event: message_stop
-        data: {"type":"message_stop"             }
+        data: {"type":"message_stop"               }
 
-  recorded_at: 2026-10-05T19:48:44.351984+00:00
+  recorded_at: 2026-09-29T16:41:28.764034+00:00

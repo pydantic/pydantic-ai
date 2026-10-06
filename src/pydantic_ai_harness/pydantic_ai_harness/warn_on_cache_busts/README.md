@@ -112,9 +112,9 @@ While Pydantic AI Harness is on 0.x releases, the API may change between minor r
 
 It is the opt-in observe arm of the broader prompt-cache-prefix-stability work.
 
-## Caching turned off
+## Caching not enabled
 
-Pydantic AI turns [prompt caching](https://pydantic.dev/docs/ai/capabilities/caching/) on by default on the models that need it configured (Anthropic, Bedrock, OpenRouter's Anthropic and Gemini routes, and OpenAI's GPT-5.6 and later). A provider-specific cache setting takes precedence over that default even when it's `False`, so a setting like `anthropic_cache_instructions=False` silently turns all of it off. When a request of at least 4,096 input tokens goes to such a model with no caching in effect, no `CachePoint` in its history, and no cache usage reported, the monitor emits a `CacheDisabledWarning` saying how to turn caching back on, once per conversation and model. Turning caching off on purpose with `cache=False` doesn't warn. Silence or escalate it with the `warnings` filters, like `CacheBustWarning`.
+Models such as Anthropic's, Bedrock's Claude and Nova, OpenRouter's Anthropic and Gemini routes, and OpenAI's GPT-5.6 and later only cache what the request asks them to. When a request of at least 4,096 input tokens goes to such a model with no caching configured (neither the unified `cache` setting nor a provider-specific one), no `CachePoint` in its history, and no cache usage reported, the monitor emits a `CacheNotEnabledWarning` pointing to `cache=True` and the `Caching()` capability, once per conversation and model. Setting `cache=False` says caching was left off on purpose, so it doesn't warn. Silence or escalate it with the `warnings` filters, like `CacheBustWarning`.
 
 ## Minimal usage
 

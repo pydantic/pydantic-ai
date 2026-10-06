@@ -56,7 +56,7 @@ Supported effort values:
 
 ## Configure Prompt Caching Across Providers
 
-Prompt caching is on by default (`cache=True`) on the models that need it configured: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, OpenRouter's Anthropic and Gemini routes, and OpenAI GPT-5.6+. Use the `Caching` capability (or the unified `cache` model setting) to change the retention or turn it off, rather than reaching for provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
+Some models only cache what the request asks them to: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, OpenRouter's Anthropic and Gemini routes, and OpenAI GPT-5.6+. Enable caching on them with the `Caching` capability (or the unified `cache` model setting) rather than reaching for provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
 
 ```python
 from pydantic_ai import Agent
@@ -67,8 +67,10 @@ agent = Agent('anthropic:claude-opus-4-6', name='cached_agent', capabilities=[Ca
 
 Accepted values (the same for `model_settings={'cache': ...}`):
 
-- `True` (default): cache the tool definitions, static instructions and conversation with the provider's default retention, using its automatic caching mode where one exists and placing breakpoints elsewhere
-- `False`: disable library-managed caching; explicit `CachePoint`s and provider-specific settings still apply, and implicitly caching providers still cache. Use it for one-shot requests, since cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x
+- `True` (the capability's default): cache the tool definitions, static instructions and conversation with the provider's default retention, using its automatic caching mode where one exists and placing breakpoints elsewhere
+- `False`: disable library-managed caching (the same as unset, but overrides a model-level default); explicit `CachePoint`s and provider-specific settings still apply, and implicitly caching providers still cache
+
+Cache writes cost more than uncached input (1.25x; 2x for Anthropic's 1-hour cache) while reads cost about 0.1x, so caching pays off once a prefix is read back, but not for one-shot requests.
 - `'5m'`, `'30m'`, `'1h'`: cache with a specific retention, snapped to the nearest tier the provider supports (down where a shorter tier exists)
 
 Provider-specific cache settings (`anthropic_cache*`, `bedrock_cache_*`, `openrouter_cache_*`, `openai_prompt_cache_options`, `openai_cache_instructions`) take precedence: if any is set, even to `False`, the unified value is ignored entirely. Providers that cache implicitly (OpenAI before GPT-5.6, Gemini, DeepSeek, xAI) ignore the setting. Explicit `CachePoint` markers in the message history still work alongside it.

@@ -73,8 +73,8 @@ class CacheMark:
     alerted: bool = False
     """Whether a collapse was alerted on and the cache hasn't re-stabilized since, so a sustained collapse
     alerts once rather than on every request."""
-    disabled_alerted: bool = False
-    """Whether a request on this key was already reported as having caching disabled, so it's reported once."""
+    not_enabled_alerted: bool = False
+    """Whether a request on this key was already reported as having no caching enabled, so it's reported once."""
 
 
 CacheMarks: TypeAlias = dict[CacheKey, CacheMark]
@@ -163,13 +163,11 @@ class CacheHealth:
     established_tokens: int
     """The established prefix after this response: later requests are judged against it."""
     collapse: CacheCollapse | None
-    disabled: bool = False
-    """Whether the request was long enough to cache on a model that needs caching configured, but its settings
-    left caching off without `cache=False` asking for that, and the provider reported no cache usage.
-
-    Reported once per conversation and cache key: a provider-specific cache setting (such as
-    `anthropic_cache_instructions=False`) silently overrides the unified
-    [`cache`][pydantic_ai.settings.ModelSettings.cache] setting, which is on by default."""
+    not_enabled: bool = False
+    """Whether the request was long enough to cache on a model that needs caching configured on the request,
+    but no caching was configured (neither the unified [`cache`][pydantic_ai.settings.ModelSettings.cache]
+    setting nor a provider-specific one), its history has no `CachePoint`, and the provider reported no cache
+    usage. Reported once per conversation and cache key."""
 
 
 def cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
@@ -227,14 +225,14 @@ def _cache_retention(request_context: ModelRequestContext) -> timedelta | None:
     )
 
 
-def _caching_disabled(request_context: ModelRequestContext, input_tokens: int) -> bool:
-    """Whether a request that engaged no cache was long enough to, on a model whose caching its settings turned off.
+def _caching_not_enabled(request_context: ModelRequestContext, input_tokens: int) -> bool:
+    """Whether a request that engaged no cache was long enough to, on a model whose caching wasn't configured.
 
     A history with `CachePoint`s is managed by hand, so it never counts, nor does a request too short to cache.
     """
     return (
         input_tokens >= MIN_CACHEABLE_TOKENS
-        and request_context.model._caching_disabled_by_settings(request_context.model_settings)  # pyright: ignore[reportPrivateUsage]
+        and request_context.model._caching_not_enabled(request_context.model_settings)  # pyright: ignore[reportPrivateUsage]
         and not any(
             isinstance(content, CachePoint)
             for message in request_context.messages
@@ -296,11 +294,13 @@ class CacheHealthDetector:
         # A response reporting neither reads nor writes never engaged the provider's cache.
         unreported = not read and not write
         if unreported and not established:
-            if (mark is None or not mark.disabled_alerted) and _caching_disabled(request_context, usage.input_tokens):
+            if (mark is None or not mark.not_enabled_alerted) and _caching_not_enabled(
+                request_context, usage.input_tokens
+            ):
                 now = _utils.now_utc()
-                self.marks[key] = CacheMark(0, now, self.run_id, disabled_alerted=True)
+                self.marks[key] = CacheMark(0, now, self.run_id, not_enabled_alerted=True)
                 self.marks = self.store.update(self.conversation_id, self.marks, now)
-                return CacheHealth(hit_ratio=0.0, established_tokens=0, collapse=None, disabled=True)
+                return CacheHealth(hit_ratio=0.0, established_tokens=0, collapse=None, not_enabled=True)
             return None
 
         now = _utils.now_utc()
@@ -340,7 +340,7 @@ class CacheHealthDetector:
                 self.run_id,
                 compactions,
                 alerted,
-                disabled_alerted=mark is not None and mark.disabled_alerted,
+                not_enabled_alerted=mark is not None and mark.not_enabled_alerted,
             )
             self.marks = self.store.update(self.conversation_id, self.marks, now)
         # An unreported response tells us nothing about the provider's copy of the prefix -- it may

@@ -1,39 +1,32 @@
-version: 1
 interactions:
 - request:
-    method: POST
-    uri: https://api.openai.com/v1/responses
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "275"
+      - '235'
       content-type:
       - application/json
       host:
       - api.openai.com
-    body:
-      type: json
-      content:
-        include:
-        - reasoning.encrypted_content
-        input:
-        - role: user
-          content: What is the capital of France? Answer in one word.
-        model: gpt-5.6-sol
-        prompt_cache_options:
-          mode: implicit
-          ttl: 30m
-        reasoning:
-          effort: low
-          context: all_turns
-        stream: false
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of France? Answer in one word.
+        role: user
+      model: gpt-5.6-sol
+      reasoning:
+        context: all_turns
+        effort: low
+      stream: false
+    uri: https://api.openai.com/v1/responses
   response:
-    status: 200
     headers:
       access-control-expose-headers:
       - X-Request-ID
@@ -43,96 +36,94 @@ interactions:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
+      content-length:
+      - '1617'
       content-type:
       - application/json
       openai-processing-ms:
-      - "1078"
+      - '1432'
       openai-version:
-      - 2020-10-01
+      - '2020-10-01'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    body:
-      type: json
-      content:
-        id: resp_0d4aefd06ee412a8006ac3ff02ac5887d1aaac6a86b29f2f97
-        object: response
-        created_at: 1791229698
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785772787
+      created_at: 1785772786
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0c9461898af82f6a006a70baf23d7081988c52e0a7b44d8dae
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Paris
+          type: output_text
+        id: msg_0c9461898af82f6a006a70baf321cc81988d59a9a1ace785dd
+        phase: final_answer
+        role: assistant
         status: completed
-        access_programs:
-          cyber: daybreak_blue
-        background: false
-        billing:
-          payer: developer
-        completed_at: 1791229699
-        error: null
-        frequency_penalty: 0.0
-        incomplete_details: null
-        instructions: null
-        max_output_tokens: null
-        max_tool_calls: null
-        model: gpt-5.6-sol
-        moderation: null
-        output:
-        - id: msg_0d4aefd06ee412a8006ac3ff037fdc87d1a3b023a7b94d0034
-          type: message
-          status: completed
-          content:
-          - type: output_text
-            annotations: []
-            logprobs: []
-            text: Paris
-          phase: final_answer
-          role: assistant
-        parallel_tool_calls: true
-        presence_penalty: 0.0
-        previous_response_id: null
-        prompt_cache_key: null
-        prompt_cache_options:
-          mode: implicit
-          ttl: 30m
-        prompt_cache_retention: 24h
-        reasoning:
-          context: all_turns
-          effort: low
-          mode: standard
-          summary: null
-        safety_identifier: null
-        service_tier: default
-        store: true
-        temperature: 1.0
-        text:
-          format:
-            type: text
-          verbosity: medium
-        tool_choice: auto
-        tool_usage:
-          image_gen:
-            input_tokens: 0
-            input_tokens_details:
-              image_tokens: 0
-              text_tokens: 0
-            output_tokens: 0
-            output_tokens_details:
-              image_tokens: 0
-              text_tokens: 0
-            total_tokens: 0
-          web_search:
-            num_requests: 0
-        tools: []
-        top_logprobs: 0
-        top_p: 0.98
-        truncation: disabled
-        usage:
-          input_tokens: 18
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: low
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
           input_tokens_details:
-            cache_write_tokens: 0
-            cached_tokens: 0
-          output_tokens: 5
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
           output_tokens_details:
-            reasoning_tokens: 0
-          total_tokens: 23
-        user: null
-        metadata: {}
-  recorded_at: 2026-10-05T19:48:19.787247+00:00
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 18
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 23
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

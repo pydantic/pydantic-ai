@@ -697,6 +697,9 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
         # Mirrors `prepare_request` precedence: when any explicit `bedrock_cache_*` setting is present, the
         # unified value contributes nothing, since it also adds nothing to the request. Each setting only takes

@@ -10,12 +10,11 @@ from .abstract import AbstractCapability
 
 @dataclass
 class Caching(AbstractCapability[Any]):
-    """Configures prompt caching.
+    """Enables and configures prompt caching.
 
     Uses the unified `cache` setting in
     [`ModelSettings`][pydantic_ai.settings.ModelSettings] to work portably across providers.
-    Prompt caching is already on by default on the models that need it to be configured, so this
-    capability is mostly useful to request a longer retention, or to turn library-managed caching off.
+    On models that cache prompts implicitly, it has no effect.
     Provider-specific cache settings (e.g., `anthropic_cache`, `bedrock_cache_instructions`) take
     precedence when both are set.
     """

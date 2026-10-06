@@ -450,7 +450,7 @@ class FallbackModel(Model):
         """A fallback model can't know which model will serve the request, so no retention is claimed."""
         return None
 
-    def _caching_disabled_by_settings(self, model_settings: ModelSettings | None) -> bool:
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         # Which model serves the request isn't known here, so nothing is claimed about its caching either.
         return False
 

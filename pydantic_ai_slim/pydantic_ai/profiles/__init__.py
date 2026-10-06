@@ -140,7 +140,7 @@ class ModelProfile(TypedDict, total=False):
     supports_cache: bool
     """Whether prompt caching on this model needs request-side configuration that Pydantic AI can turn on. Default: `False`.
 
-    When True, the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting (on by default)
+    When True, the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting
     translates into the provider's caching configuration. When False, it is silently ignored: the model
     either doesn't support prompt caching, or caches implicitly without any request-side opt-in (as
     OpenAI's models before GPT-5.6 and Gemini do), so there is nothing for the setting to turn on.

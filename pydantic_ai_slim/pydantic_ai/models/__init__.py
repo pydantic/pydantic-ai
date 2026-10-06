@@ -253,9 +253,10 @@ class ModelRequestParameters:
     """Resolved unified prompt-caching configuration for this request.
 
     Set by the base `Model.prepare_request()` from the unified `cache` field in `ModelSettings`,
-    which defaults to `True`, after checking that the model's profile supports caching configuration
+    after checking that the model's profile supports caching configuration
     ([`supports_cache`][pydantic_ai.profiles.ModelProfile.supports_cache]) and snapping a retention
-    to a supported tier. `None` means the model's profile doesn't support caching configuration.
+    to a supported tier. `None` means the setting is unset or the model's profile doesn't support caching
+    configuration.
 
     Like [`thinking`][pydantic_ai.models.ModelRequestParameters.thinking], this is the requested
     unified value: provider-specific cache settings take precedence in the model's request mapping
@@ -565,7 +566,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Resolve prompt cache retention requested by model settings.
 
         The model's default settings are merged with the per-request `model_settings`. Both the unified
-        [`cache`][pydantic_ai.settings.ModelSettings.cache] setting (including its default) and provider-specific
+        [`cache`][pydantic_ai.settings.ModelSettings.cache] setting and provider-specific
         settings are considered, as far as they change what's sent to the provider. If multiple active settings
         request different retention periods, the longest period wins because any longer-lived cache breakpoint can
         keep the corresponding prompt prefix available. Models without an active retention setting return `None`,
@@ -581,46 +582,47 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         The base implementation only knows the unified `cache` setting. Models with provider-specific cache
         settings return those instead when any is present, since they take precedence over the unified one.
         """
-        cache = self._resolved_cache_setting(merged_settings.get('cache', True))
+        cache = self._resolved_cache_setting(merged_settings.get('cache'))
         if cache is True and (tiers := self.profile.get('supported_cache_retentions', ())):
             # The provider's default retention is its shortest tier.
             cache = tiers[0]
         return (cache,)
 
-    def _caching_disabled_by_settings(self, model_settings: ModelSettings | None) -> bool:
-        """Whether these settings leave a model that needs request-side caching configuration without any.
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
+        return False
 
-        Only `True` when caching wasn't turned off on purpose through the unified `cache=False`: then a
-        provider-specific setting (such as `anthropic_cache_instructions=False`) silently overrode the
-        default-on unified setting. Used by prompt-cache health to tell users their caching isn't enabled.
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
+
+        That is, neither the unified `cache` setting (including `cache=False`, which turns caching off on purpose)
+        nor a provider-specific cache setting. Used by prompt-cache health to tell users how to enable caching.
         """
         if not self.profile.get('supports_cache', False):
             return False
         merged = merge_model_settings(self.settings, model_settings) or {}
-        return merged.get('cache') is not False and not any(self._effective_cache_settings(merged))
+        return 'cache' not in merged and not self._has_provider_cache_settings(merged)
 
     def _resolve_cache(
         self, model_settings: ModelSettings | None, params: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         """Resolve the unified `cache` setting into `params.cache` and strip it from `model_settings`.
 
-        An absent setting means `True`, unless the parameters already carry a resolved value. The value
-        is snapped to a retention tier the model's profile supports, and `None` when the profile doesn't
-        support caching configuration.
+        Parameters that already carry a resolved value keep it when the settings have none. The value is
+        snapped to a retention tier the model's profile supports, and `None` when the profile doesn't support
+        caching configuration.
         """
         if model_settings and 'cache' in model_settings:
-            requested: CacheSetting = model_settings['cache']
+            requested: CacheSetting | None = model_settings['cache']
             stripped = {k: v for k, v in model_settings.items() if k != 'cache'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
-        elif params.cache is not None:
-            requested = params.cache
         else:
-            requested = True
+            requested = params.cache
         return model_settings, replace(params, cache=self._resolved_cache_setting(requested))
 
-    def _resolved_cache_setting(self, cache: CacheSetting) -> CacheSetting | None:
-        """The unified `cache` value snapped to this model's supported retentions, or `None` if caching isn't configurable."""
-        if not self.profile.get('supports_cache', False):
+    def _resolved_cache_setting(self, cache: CacheSetting | None) -> CacheSetting | None:
+        """The unified `cache` value snapped to this model's supported retentions, or `None` if unset or not configurable."""
+        if cache is None or not self.profile.get('supports_cache', False):
             return None
         if cache is False:
             return False

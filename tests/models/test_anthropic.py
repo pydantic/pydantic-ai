@@ -858,7 +858,7 @@ async def test_anthropic_cache_messages_marks_previous_request_after_wide_turn(a
     On Amazon Bedrock the cache lookback spans only about 20 content blocks and doesn't collapse runs of
     tool blocks, so the moving breakpoint alone would miss the previous request's cache entry
     (https://github.com/pydantic/pydantic-ai/issues/9404). The live miss is recorded in
-    `test_cache_on_by_default_reads_history_after_wide_turn_real_api` in `test_bedrock.py`.
+    `test_unified_cache_reads_history_after_wide_turn_real_api` in `test_bedrock.py`.
     """
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
@@ -13787,52 +13787,17 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
             ),
             id='1h',
         ),
-        pytest.param(
-            None,
-            '5m',
-            snapshot(
-                (
-                    RunUsage(
-                        details={
-                            'input_tokens': 2,
-                            'output_tokens': 5,
-                            'cache_creation_input_tokens': 7836,
-                            'cache_read_input_tokens': 0,
-                        },
-                        output_tokens=5,
-                        cache_write_tokens=7836,
-                        input_tokens=7838,
-                        cost=Decimal('0.019644'),
-                        requests=1,
-                    ),
-                    RunUsage(
-                        details={
-                            'input_tokens': 2,
-                            'output_tokens': 5,
-                            'cache_creation_input_tokens': 0,
-                            'cache_read_input_tokens': 7836,
-                        },
-                        output_tokens=5,
-                        cache_read_tokens=7836,
-                        input_tokens=7838,
-                        cost=Decimal('0.0016212'),
-                        requests=1,
-                    ),
-                )
-            ),
-            id='on-by-default',
-        ),
     ],
 )
 async def test_unified_cache_writes_then_reads_real_api(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
     request_capture: RequestCapture,
-    cache: Literal[True, '1h'] | None,
+    cache: Literal[True, '1h'],
     expected_ttl: str,
     expected_usage: tuple[RunUsage, RunUsage],
 ):
-    """The unified `cache` setting turns on Anthropic's automatic caching, with the requested TTL, and is on by default.
+    """The unified `cache` setting turns on Anthropic's automatic caching, with the requested TTL.
 
     The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
     """
@@ -13842,7 +13807,7 @@ async def test_unified_cache_writes_then_reads_real_api(
         # Distinct per case, so that recording one case doesn't read the cache the other wrote.
         instructions=f'You are a concise Python assistant (cache setting: {cache!r}). '
         + 'Answer questions about Python concisely. ' * 650,
-        model_settings=None if cache is None else ModelSettings(cache=cache),
+        model_settings=ModelSettings(cache=cache),
     )
     prompt = 'Name one Python web framework, in one word.'
 

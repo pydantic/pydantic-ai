@@ -154,9 +154,9 @@ class WrapperModel(Model):
         # attribute lookup succeeds and `__getattr__` never forwards.
         return self.wrapped.resolve_cache_retention(model_settings)
 
-    def _caching_disabled_by_settings(self, model_settings: ModelSettings | None) -> bool:
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.
-        return self.wrapped._caching_disabled_by_settings(model_settings)  # pyright: ignore[reportPrivateUsage]
+        return self.wrapped._caching_not_enabled(model_settings)  # pyright: ignore[reportPrivateUsage]
 
     @property
     def base_url(self) -> str | None:

@@ -135,12 +135,11 @@ class TestPrepareRequestCacheResolution:
         assert cache is False
         assert settings is None
 
-    def test_cache_on_by_default(self):
-        """With no `cache` setting at all, a model that supports caching configuration gets `True`."""
-        _, params = _make_model(supports_cache=True).prepare_request(None, ModelRequestParameters())
-        assert params.cache is True
-        _, params = _make_model(supports_cache=False).prepare_request(None, ModelRequestParameters())
+    def test_cache_unset_by_default(self):
+        """Without a `cache` setting, caching isn't configured."""
+        settings, params = _make_model(supports_cache=True).prepare_request(None, ModelRequestParameters())
         assert params.cache is None
+        assert settings is None
 
     def test_pre_resolved_cache_kept(self):
         """Parameters that already carry a resolved value (a caller that prepared them before) keep it."""
@@ -239,10 +238,10 @@ class TestAnthropicCacheTranslation:
         assert settings == {'anthropic_cache': '5m'}
         assert params.cache is True
 
-    def test_cache_on_by_default(self):
+    def test_cache_unset_sends_nothing(self):
         settings, params = self._model().prepare_request(None, ModelRequestParameters())
-        assert settings == {'anthropic_cache': '5m'}
-        assert params.cache is True
+        assert settings is None
+        assert params.cache is None
 
     def test_cache_false_sends_nothing(self):
         settings, params = self._model().prepare_request(ModelSettings(cache=False), ModelRequestParameters())
@@ -322,7 +321,9 @@ class TestBedrockCacheTranslation:
 
     def test_cache_true_translates_to_breakpoints(self, bedrock_provider: BedrockProvider):
         """`True` stays `True` in the injected settings so no explicit `ttl` reaches the wire."""
-        settings, params = self._model(bedrock_provider).prepare_request(None, ModelRequestParameters())
+        settings, params = self._model(bedrock_provider).prepare_request(
+            ModelSettings(cache=True), ModelRequestParameters()
+        )
         assert settings == {
             'bedrock_cache_instructions': True,
             'bedrock_cache_tool_definitions': True,
@@ -458,8 +459,7 @@ class TestResolveCacheRetentionUnified:
         assert model.resolve_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
         assert model.resolve_cache_retention(ModelSettings(cache=True)) == timedelta(minutes=5)
         assert model.resolve_cache_retention(ModelSettings(cache=False)) is None
-        # On by default, at the shortest tier.
-        assert model.resolve_cache_retention(None) == timedelta(minutes=5)
+        assert model.resolve_cache_retention(None) is None
 
     def test_30m_retention_on_supporting_profile(self):
         model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '30m'))
@@ -562,19 +562,19 @@ class TestCachingCapability:
         assert [child for child in children if isinstance(child, Caching)] == [Caching('1h')]
 
 
-class TestCachingDisabledBySettings:
-    def test_unified_false_is_on_purpose(self):
+class TestCachingNotEnabled:
+    def test_unset_is_not_enabled(self):
         model = _make_model(supports_cache=True)
-        assert not model._caching_disabled_by_settings(ModelSettings(cache=False))
-        assert not model._caching_disabled_by_settings(None)
+        assert model._caching_not_enabled(None)
+        assert not model._caching_not_enabled(ModelSettings(cache=False))
+        assert not model._caching_not_enabled(ModelSettings(cache=True))
 
-    def test_unsupported_model_never_disabled(self):
-        assert not _make_model(supports_cache=False)._caching_disabled_by_settings(None)
+    def test_unsupported_model_never_reported(self):
+        assert not _make_model(supports_cache=False)._caching_not_enabled(None)
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-    def test_provider_setting_false_disables(self):
+    def test_provider_setting_counts_as_configured(self):
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
-        settings = AnthropicModelSettings(anthropic_cache_instructions=False)
-        assert model._caching_disabled_by_settings(settings)
-        assert WrapperModel(model)._caching_disabled_by_settings(settings)
-        assert not model._caching_disabled_by_settings(AnthropicModelSettings(anthropic_cache_instructions=True))
+        assert model._caching_not_enabled(None)
+        assert WrapperModel(model)._caching_not_enabled(None)
+        assert not model._caching_not_enabled(AnthropicModelSettings(anthropic_cache_instructions=False))

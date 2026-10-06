@@ -726,6 +726,10 @@ class OpenRouterModel(OpenAIChatModel):
         return super().resolve_cache_retention(model_settings)
 
     @override
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    @override
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
         # Mirrors the unified-cache translation precedence: when any explicit `openrouter_cache_*` setting is
         # present, the unified value contributes nothing, since it also adds nothing to the request. Each

@@ -111,8 +111,8 @@ class Instrumentation(AbstractCapability[Any]):
     once, until a healthy read-back re-stabilizes the cache. The established prefix is tracked
     per conversation and per provider, endpoint, and model, so the first request of a run that
     continues a conversation is judged against what the previous run cached. A request long enough
-    to cache on a model whose prompt caching its settings turned off without `cache=False` sets
-    `pydantic_ai.cache.disabled` and emits a `pydantic_ai.cache.disabled` span event, once per
+    to cache on a model that needs prompt caching configured, but has none configured, sets
+    `pydantic_ai.cache.not_enabled` and emits a `pydantic_ai.cache.not_enabled` span event, once per
     conversation.
     """
 
@@ -476,14 +476,14 @@ class Instrumentation(AbstractCapability[Any]):
         span.set_attribute('pydantic_ai.cache.hit_ratio', health.hit_ratio)
         span.set_attribute('pydantic_ai.cache.established_tokens', health.established_tokens)
 
-        if health.disabled:
-            span.set_attribute('pydantic_ai.cache.disabled', True)
-            disabled_attributes: dict[str, str | int] = {'input_tokens': response.usage.input_tokens}
+        if health.not_enabled:
+            span.set_attribute('pydantic_ai.cache.not_enabled', True)
+            not_enabled_attributes: dict[str, str | int] = {'input_tokens': response.usage.input_tokens}
             if response.provider_name is not None:
-                disabled_attributes['provider_name'] = response.provider_name
+                not_enabled_attributes['provider_name'] = response.provider_name
             if response.model_name is not None:  # pragma: no branch
-                disabled_attributes['model_name'] = response.model_name
-            span.add_event('pydantic_ai.cache.disabled', attributes=disabled_attributes)
+                not_enabled_attributes['model_name'] = response.model_name
+            span.add_event('pydantic_ai.cache.not_enabled', attributes=not_enabled_attributes)
             return
 
         collapse = health.collapse

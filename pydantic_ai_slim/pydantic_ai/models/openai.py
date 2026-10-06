@@ -1221,8 +1221,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Resolve the prompt cache retention requested by OpenAI settings or the unified `cache` setting."""
         return _resolve_cache_retention(self, model_settings)
 
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
-        if any(key in merged_settings for key in _CACHE_SETTINGS_KEYS) and self.profile.get('supports_cache', False):
+        if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
             return _openai_effective_cache_settings(cast(OpenAIChatModelSettings, merged_settings))
         return super()._effective_cache_settings(merged_settings)
 
@@ -2310,8 +2313,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Resolve the prompt cache retention requested by OpenAI settings or the unified `cache` setting."""
         return _resolve_cache_retention(self, model_settings)
 
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
-        if any(key in merged_settings for key in _CACHE_SETTINGS_KEYS) and self.profile.get('supports_cache', False):
+        if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
             return _openai_effective_cache_settings(cast(OpenAIChatModelSettings, merged_settings))
         return super()._effective_cache_settings(merged_settings)
 
