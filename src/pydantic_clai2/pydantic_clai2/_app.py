@@ -580,26 +580,21 @@ def create_shell(
         Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
     )
 
-    new_session = 'New session started. Previous session remains saved.'
-
     def clear(_: list[str]) -> str:
         session.clear()
         console.clear()
-        # Forget the old conversation too, or the next resize would replay it.
+        # Forget the old output too, or a resize or the exit printout would show it again.
         transcript.clear()
         _print_welcome(project, console)
         return ''
 
-    commands.register(
-        Command(
-            name='new',
-            description='Start a new session; preserve the previous session',
-            handler=lambda _: session.clear() or new_session,
-        )
+    clear_ = Command(
+        name='clear',
+        description='Start a new session on a clear screen; the previous session stays saved',
+        handler=clear,
     )
-    commands.register(
-        Command(name='clear', description='Like /new, and also clear the screen back to the banner', handler=clear),
-    )
+    commands.register(clear_)
+    commands.register(replace(clear_, name='new', description='Alias of /clear'))
     commands.register(
         Command(
             name='usage',

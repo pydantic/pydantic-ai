@@ -195,7 +195,7 @@ async def test_close_prints_the_session_into_the_main_screen_once() -> None:
     assert screen.lines()[:4] == ['$ clai2', 'banner', 'linked answer', '']
 
 
-def test_close_keeps_lines_hidden_by_clear_in_scrollback() -> None:
+def test_close_leaves_lines_forgotten_by_clear_out_of_scrollback() -> None:
     output = io.StringIO()
     surface = PromptSurface(output=output, size=lambda: (80, 24))
     surface.write('before clear\n')
@@ -206,7 +206,7 @@ def test_close_keeps_lines_hidden_by_clear_in_scrollback() -> None:
         '',
     ]
     surface.restore()
-    assert output.getvalue() == 'before clear\nafter clear\n'
+    assert output.getvalue() == 'after clear\n'
 
 
 @pytest.mark.parametrize('terminator', ['\x07', '\x1b\\'])

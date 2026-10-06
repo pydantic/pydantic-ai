@@ -262,7 +262,7 @@ def test_markdown_part_starts_on_its_own_row_and_keeps_its_id() -> None:
     assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['streamed', 'partial']
 
 
-def test_printed_skips_output_already_in_scrollback_and_includes_cleared_output() -> None:
+def test_printed_skips_output_already_in_scrollback_and_cleared_output() -> None:
     buffer = TranscriptBuffer()
     buffer.write('startup\n')
     buffer.mark_printed()
@@ -272,7 +272,7 @@ def test_printed_skips_output_already_in_scrollback_and_includes_cleared_output(
     block.write('answer\n')
     buffer.clear()
     buffer.write('after clear\n')
-    assert Text.from_ansi(buffer.printed(width=40)).plain == ('        conversation\nanswer\nafter clear')
+    assert Text.from_ansi(buffer.printed(width=40)).plain == 'after clear'
     assert buffer.printed(width=40) == ''
     block.freeze()
     assert plain(buffer) == ['after clear', '']
