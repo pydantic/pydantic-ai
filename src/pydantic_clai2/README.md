@@ -1484,12 +1484,15 @@ to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
 window by default). `/compact` runs the same chain between turns regardless of that
-threshold. Add free text to say what the summary must keep, for example
+threshold, but it protects at most half the conversation, so it always has older
+messages to summarise. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
 as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
-You get one line with the message counts before and after and an estimate of the tokens saved.
-An empty conversation, or one that fits inside the protected tail, says so and
-sends nothing.
+You get one line with the message counts before and after and an estimate of the
+tokens saved out of the total. When compacting would not make the conversation
+smaller, for example because the summary is longer than what it replaces, the
+conversation is left as it was and you are told so. An empty or one-message
+conversation sends nothing.
 
 The window comes from genai-prices, the same catalog the `/model add` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
@@ -1620,8 +1623,9 @@ Definition files are read as data and never executed.
   for reviewing the child's result.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
-counts. Successful rows disappear on completion; failed and stopped rows remain
-for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
+counts. The footer shows the context of the newest foreground child; see
+[Status line](#status-line). Successful rows disappear on completion; failed
+and stopped rows remain for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
 completed tasks for inspection. Live previews retain the latest 65,536 characters
 of an unfinished text part; settled responses retain their full history.
 Questions asked by children use the main
@@ -1977,6 +1981,17 @@ output count, updated after each turn and hidden until a response has price data
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
 
+While the main run waits on a subagent, the footer shows that subagent's own
+figures instead: its name and short task ID, the model it is using, its context
+over that model's window, its streamed output estimate, and its activity, such
+as `Explore [abcd1234]: claude-sonnet-4-5 | context: 8k/200k tokens | ~1,204
+streamed tokens | running: grep`. The newest such subagent wins, so a nested
+child takes the row from its parent. When it settles, the row returns to the
+next one still running, then to the main conversation, with its figures as they
+were. Background tasks, and children below one, stay in the task panel and
+leave the footer to the main run. A subagent's figures show `?` until its model
+reports them.
+
 The shell owns a pinned editor below a Termflow live transcript panel. It uses
 Termflow's cell buffer and changed-cell painter, not a second terminal canvas or
 a prompt-toolkit renderer. The hardware cursor stays hidden during input; a
@@ -2123,8 +2138,8 @@ The stock CLI enables the built-in `observability` plugin by default. It adds Py
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
 spans, including timing, token usage, and failures. It adds CLAI's own UI spans
-only when `ui_events` is on (see below), and does not instrument HTTP clients or
-unrelated agents globally.
+only when `ui_events` is on (see below). HTTP client instrumentation is off by
+default; agent instrumentation does not affect unrelated agents globally.
 
 Startup plugin load failures reported in the terminal are also sent through the configured
 Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
@@ -2188,12 +2203,15 @@ its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `true`),
-`include_binary_content` (default `true`), and `send_to_logfire` (either
+`include_binary_content` (default `true`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
-scrubbing remains enabled.
+scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made with
+`httpx` and `httpx2` while the plugin is active. With `include_content=true`,
+Logfire also captures HTTP headers and request and response bodies; with it off,
+those are not captured. HTTP instrumentation is process-wide, unlike agent tracing.
 
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
