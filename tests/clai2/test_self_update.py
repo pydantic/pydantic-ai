@@ -24,7 +24,8 @@ from pydantic_clai2 import _app, chat
 from pydantic_clai2.cli import _cli, self_update
 from pydantic_clai2.cli._cli import relaunch_argv
 from pydantic_clai2.cli.self_update import (
-    COMMITS_URL,
+    BLEEDING_URL,
+    PACKAGES,
     PYPI_URL,
     Installed,
     Relaunch,
@@ -33,6 +34,7 @@ from pydantic_clai2.cli.self_update import (
     _in_thread,  # pyright: ignore[reportPrivateUsage]
     _run_uv,  # pyright: ignore[reportPrivateUsage]
     after_exit_script,
+    bleeding_url,
     find_update,
     find_uv,
     install_after_exit,
@@ -98,6 +100,7 @@ class _Distribution:
             ),
             SHA,
         ),
+        (json.dumps({'url': f'{BLEEDING_URL}/pydantic_clai2-{SHA}.tar.gz', 'archive_info': {}}), SHA),
         ('{"url":"https://example.com/archive/x.tar.gz","archive_info":{}}', None),
     ],
 )
@@ -122,26 +125,40 @@ def test_labels() -> None:
     assert Update(channel='stable', target='0.53.0').label == '0.53.0'
 
 
-def test_latest_reads_pypi_and_github() -> None:
-    seen: list[httpx.URL] = []
+def test_latest_reads_pypi_and_the_bleeding_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
-        seen.append(request.url)
+        seen.append(str(request.url))
         if str(request.url) == PYPI_URL:
             return httpx.Response(200, json={'info': {'version': '0.53.0', 'summary': 'ignored'}})
-        return httpx.Response(200, json=[{'sha': NEWER, 'commit': {}}])
+        return httpx.Response(200, json={'commit': NEWER})
 
     transport = httpx.MockTransport(respond)
+    monkeypatch.delenv('CLAI_BLEEDING_URL', raising=False)
     assert latest('stable', transport=transport) == '0.53.0'
     assert latest('bleeding', transport=transport) == NEWER
-    bleeding = seen[1]
-    assert str(bleeding.copy_with(query=None)) == COMMITS_URL
-    assert dict(bleeding.params) == {'sha': 'main', 'path': 'src/pydantic_clai2', 'per_page': '1'}
+    monkeypatch.setenv('CLAI_BLEEDING_URL', 'http://localhost:8000/')
+    assert latest('bleeding', transport=transport) == NEWER
+    # A release download, not a GitHub API request.
+    assert seen[1:] == [
+        'https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding/clai2-bleeding.json',
+        'http://localhost:8000/clai2-bleeding.json',
+    ]
+
+
+def test_bleeding_url() -> None:
+    assert bleeding_url(environ={}) == BLEEDING_URL
+    assert bleeding_url(environ={'CLAI_BLEEDING_URL': ''}) == BLEEDING_URL
+    fork = 'https://github.com/me/pydantic-ai/releases/download/clai2-bleeding'
+    assert bleeding_url(environ={'CLAI_BLEEDING_URL': f'{fork}/'}) == fork
 
 
 def test_latest_reports_failures() -> None:
-    with pytest.raises(ValueError, match='no CLAI commits'):
-        latest('bleeding', transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])))
+    with pytest.raises(ValueError, match='commit'):
+        latest('bleeding', transport=httpx.MockTransport(lambda request: httpx.Response(200, json={'commit': 'main'})))
+    with pytest.raises(httpx.HTTPStatusError):
+        latest('bleeding', transport=httpx.MockTransport(lambda request: httpx.Response(404)))
     with pytest.raises(httpx.HTTPStatusError):
         latest('stable', transport=httpx.MockTransport(lambda request: httpx.Response(403)))
 
@@ -156,11 +173,11 @@ def test_find_update() -> None:
     assert find_update('bleeding', release, SHA) == Update(channel='bleeding', target=SHA)
 
 
-def test_install_commands(tmp_path: Path) -> None:
+def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     stable = Update(channel='stable', target='0.53.0')
     assert stable.command(uv='uv', overrides=None) == ['uv', 'tool', 'install', '--force', 'pydantic-clai2==0.53.0']
-    assert stable.environment() == {}
-    archive = f'https://github.com/pydantic/pydantic-ai/archive/{NEWER}.tar.gz#subdirectory='
+    monkeypatch.delenv('CLAI_BLEEDING_URL', raising=False)
+    release = 'https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding'
     bleeding = Update(channel='bleeding', target=NEWER)
     overrides = tmp_path / 'overrides.txt'
     assert bleeding.command(uv='/bin/uv', overrides=overrides) == [
@@ -173,12 +190,24 @@ def test_install_commands(tmp_path: Path) -> None:
         'pydantic-clai2',
     ]
     assert bleeding.overrides() == (
-        f'pydantic-clai2 @ {archive}src/pydantic_clai2\n'
-        f'pydantic-ai-harness[coder] @ {archive}src/pydantic_ai_harness\n'
-        f'pydantic-ai-slim[anthropic,mcp,openai] @ {archive}pydantic_ai_slim\n'
-        f'pydantic-graph @ {archive}pydantic_graph\n'
+        f'pydantic-clai2 @ {release}/pydantic_clai2-{NEWER}.tar.gz\n'
+        f'pydantic-ai-harness[coder] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
+        f'pydantic-ai-slim[anthropic,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
+        f'pydantic-graph @ {release}/pydantic_graph-{NEWER}.tar.gz\n'
     )
-    assert bleeding.environment() == {'UV_DYNAMIC_VERSIONING_BYPASS': f'0.0.0+{NEWER}'}
+    monkeypatch.setenv('CLAI_BLEEDING_URL', 'http://localhost:8000')
+    assert (
+        bleeding.requirement('pydantic-graph')
+        == f'pydantic-graph @ http://localhost:8000/pydantic_graph-{NEWER}.tar.gz'
+    )
+
+
+def test_build_script_builds_every_package() -> None:
+    script = Path(__file__).parents[2] / 'src' / 'pydantic_clai2' / 'scripts' / 'build_bleeding.sh'
+    [line] = [line for line in script.read_text(encoding='utf-8').splitlines() if line.startswith('for package in ')]
+    assert line.removeprefix('for package in ').removesuffix('; do').split() == [
+        requirement.partition('[')[0] for requirement in PACKAGES
+    ]
 
 
 def test_archive_overrides_preserve_declared_extras() -> None:
@@ -206,16 +235,13 @@ def _updates(
 ) -> tuple[Updates, list[Sequence[str]]]:
     ran: list[Sequence[str]] = []
 
-    async def run(command: Sequence[str], environment: dict[str, str]) -> int:
+    async def run(command: Sequence[str]) -> int:
         ran.append(command)
         if '--overrides' in command:
             # The overrides file exists while uv runs and preserves the packages' required extras.
             text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
             assert 'pydantic-ai-harness[coder] @ ' in text
             assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
-            assert environment == {'UV_DYNAMIC_VERSIONING_BYPASS': f'0.0.0+{NEWER}'}
-        else:
-            assert environment == {}
         return (codes or [0]).pop(0)
 
     async def locate(uv: str) -> str | None:
@@ -302,10 +328,10 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert lost.relaunch is None
     manual, _ = _updates(['bleeding'], uv=None)
     printed = (await manual.command([])).splitlines()[-1]
-    assert printed.startswith(f'UV_DYNAMIC_VERSIONING_BYPASS=0.0.0+{NEWER} uv tool install --force --overrides ')
+    assert printed.startswith('uv tool install --force --overrides ')
     assert printed.endswith(' pydantic-clai2')
     # The printed command still needs its overrides file.
-    overrides = Path(shlex.split(printed)[6])
+    overrides = Path(shlex.split(printed)[5])
     assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
     overrides.unlink()
     assert ran == []
@@ -313,15 +339,14 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
         await current.command(['now'])
 
 
-async def test_run_uv_passes_the_environment_and_returns_the_exit_status() -> None:
-    script = 'import os; raise SystemExit(int(os.environ["CLAI_TEST_CODE"]))'
-    assert await _run_uv([sys.executable, '-c', script], {'CLAI_TEST_CODE': '3'}) == 3
+async def test_run_uv_returns_the_exit_status() -> None:
+    assert await _run_uv([sys.executable, '-c', 'raise SystemExit(3)']) == 3
 
 
 async def test_failed_install_removes_the_overrides_file() -> None:
     seen: list[Path] = []
 
-    async def run(command: Sequence[str], environment: dict[str, str]) -> int:
+    async def run(command: Sequence[str]) -> int:
         seen.append(Path(command[5]))
         raise OSError('uv vanished')
 
@@ -353,20 +378,20 @@ def test_find_uv_skips_relative_path_entries(tmp_path: Path, monkeypatch: pytest
 
 
 def test_powershell_quotes_every_part() -> None:
-    line = powershell([r'C:\uv\uv.exe', 'tool', "it's"], {'NAME': "o'k"})
-    assert line == "$env:NAME = 'o''k'; & 'C:\\uv\\uv.exe' 'tool' 'it''s'"
-    assert powershell(['uv'], {}) == "& 'uv'"
+    line = powershell([r'C:\uv\uv.exe', 'tool', "it's"])
+    assert line == "& 'C:\\uv\\uv.exe' 'tool' 'it''s'"
+    assert powershell(['uv']) == "& 'uv'"
 
 
 def test_after_exit_script(tmp_path: Path) -> None:
     overrides = tmp_path / "o'verrides.txt"
-    script = after_exit_script(['uv', 'tool'], {'NAME': 'v'}, pid=42, overrides=overrides)
+    script = after_exit_script(['uv', 'tool'], pid=42, overrides=overrides)
     lines = script.splitlines()
     assert lines[0] == 'Wait-Process -Id 42 -ErrorAction SilentlyContinue'
-    assert lines[2] == "$env:NAME = 'v'; & 'uv' 'tool'"
+    assert lines[2] == "& 'uv' 'tool'"
     assert f"Remove-Item -LiteralPath '{str(overrides).replace(chr(39), chr(39) * 2)}'" in lines
     assert lines[-1] == "Read-Host 'Press Enter to close'"
-    assert 'Remove-Item' not in after_exit_script(['uv'], {}, pid=42, overrides=None)
+    assert 'Remove-Item' not in after_exit_script(['uv'], pid=42, overrides=None)
 
 
 def test_install_after_exit_starts_windows_powershell() -> None:
@@ -399,7 +424,7 @@ async def test_windows_hands_the_install_off_and_exits() -> None:
     assert ran == []
     [script] = scripts
     assert f'Wait-Process -Id {os.getpid()} ' in script
-    assert f"$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+{NEWER}'; & '/bin/uv' 'tool' 'install'" in script
+    assert "& '/bin/uv' 'tool' 'install' '--force' '--overrides' " in script
     # The overrides file outlives CLAI; the script removes it after uv reads it.
     overrides = Path(script.split("Remove-Item -LiteralPath '")[1].split("'")[0])
     assert overrides.read_text(encoding='utf-8') == Update(channel='bleeding', target=NEWER).overrides()
@@ -415,9 +440,7 @@ async def test_windows_manual_command_is_powershell(channel: UpdateChannel) -> N
     if channel == 'stable':
         assert printed == "& 'uv' 'tool' 'install' '--force' 'pydantic-clai2==0.53.0'"
     else:
-        assert printed.startswith(
-            f"$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+{NEWER}'; & 'uv' 'tool' 'install' '--force' '--overrides' "
-        )
+        assert printed.startswith("& 'uv' 'tool' 'install' '--force' '--overrides' ")
         assert printed.endswith(" 'pydantic-clai2'")
         overrides = Path(printed.split("'--overrides' '")[1].split("'")[0])
         assert overrides.read_text(encoding='utf-8') == Update(channel='bleeding', target=NEWER).overrides()

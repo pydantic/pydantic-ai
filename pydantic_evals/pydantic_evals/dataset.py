@@ -731,7 +731,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             row.evaluators = evaluators
             cases.append(row)
         if errors:
-            # Ruff still targets Python 3.10 across the repository.
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
         name = dataset_model.name if dataset_model.name is not None else default_name
         if name is None:

@@ -192,7 +192,9 @@ one that is not.
   already run with the editor suspended. Do not start a second input reader
   alongside the live editor.
 - Adding a plugin is not in the menu. It needs free text, so it stays
-  `/plugins add`.
+  `/plugins add ID MODULE[:ATTR] [JSON]` or `/plugins add GIT_URL`. Git installs
+  use the existing file loader, with HTTPS/SSH for network sources; see
+  `PLUGINS.md` for the repository layout, trust boundary, and checkout management.
 - Anything that is "edit named, validated fields" uses `field_menu.py`: a
   `FieldSource` supplies rows, current values, validation, apply, and reset;
   `FieldMenu` builds the widgets; `run_flow` is the loop. `/set` and per-model
@@ -260,7 +262,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 |---|---|
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
-| `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the newest CLAI commit on `main` (`bleeding`, an HTTPS source archive with `--overrides`, no git), reinstalled with `uv tool install --force` |
+| `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`bleeding`: sdists built from `main` by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force` |
 | `_app.py` | the prompt loop and built-in `/commands` |
 | `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
@@ -276,6 +278,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `ui/menus/slash_search.py` | `slash_search`: plain-letter hotkeys plus `/` to search, for any termflow menu |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
+| `plugins/_git.py` | Git installation for `/plugins add GIT_URL`, with checkout rollback until its declaration is saved |
+| `runtime/_processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
@@ -283,6 +287,13 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models; protects the current model and saved default |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
+| `models/profiles.py` | auth profiles: parse `PROVIDER@PROFILE:NAME`, the profile's credential account; read providers through `provider_of`/`base_model`, never `partition(':')` |
+| `models/key_profiles.py` | `/login PROVIDER@PROFILE` for connection and API-key providers, and building a core model from a profile's key |
+| `models/accounts.py` | accounts per provider for `/accounts` and `PROVIDER@*`: found from credential files or recorded at `/login`, ordered in the `accounts` table (no secrets) |
+| `ui/menus/accounts_menu.py` | `/accounts` (`AccountsMenu`, `open_accounts_menu`), the add-account flow, and `choose_account`, the account step in `/model add` |
+| `models/usage.py` | account usage fetchers: Codex through the core provider's own client (so tokens refresh as for model requests), Copilot with the saved GitHub login, plugins through `PluginLogin.usage` |
+| `ui/menus/account_usage.py` | `UsageBoard`: `/accounts` usage loaded in the background while the menu is open; the menu thread redraws itself from `read_key`, never another thread |
+| `models/chains.py` | `/chain`, `chain:NAME` fallback chains over core `FallbackModel`; a chain takes its first model's settings |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
@@ -400,21 +411,27 @@ History-changing plugins use `await conversation.commit_messages`, not the legac
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 
 The interactive editor owns its layout explicitly. Do not reintroduce a
-PromptSession renderer or mutate generated layout children. Transcript writes
-go directly to the scroll region, never through an erase/redraw of the editor.
-The hardware cursor stays hidden until release; the input cursor is a painted
-reverse-video cell. Keep terminal mutations in `PromptSurface`, and detach the
-key reader before a menu owns the screen. The remaining prompt-toolkit decoder
-preserves paste and modified keys not yet exposed by Termflow's `read_key`.
+PromptSession renderer. `PromptSurface` composes a termflow.live `ScreenBuffer`,
+`TranscriptView` draws its transcript region, and `render_diff` paints changed
+cells. Do not invent a parallel canvas. The hardware cursor stays hidden;
+the input cursor is a painted reverse-video cell. Keep terminal mutations in
+`PromptSurface`, and detach the key reader before a menu owns the screen.
+The prompt-toolkit decoder preserves paste, modified keys, and SGR mouse reports.
+PageUp/PageDown and wheel input scroll the transcript, not the draft.
 
-Physical resize blanks the viewport and defers output until size notifications
-have been quiet for 250 ms. Rebuild from `TranscriptBuffer`, not guessed old row
-coordinates or cursor reports. Never send erase-scrollback (CSI 3 J). Keep editor
-height changes separate from physical resize, preserve the draft, and close the
-resize output spool on both normal handoff and failure. `SIGWINCH` only marks the
-resize and schedules a paint; the signal handler must not perform terminal IO.
+Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
+reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
+anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
+Full-screen menus leave the live panel temporarily. Inline questions borrow it
+with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source
+for width/theme repaint; tool output keeps styled lines. On exit, `restore`
+prints retained output into native scrollback once, skipping startup output
+already printed there. Transcript memory is bounded, including Markdown parts.
+Reload rebinds the retained transcript and its nested classes in place after a
+successful shell rebuild, including migration from the pre-live Text-line buffer.
+The suspended `chat` coroutine still holds that transcript; do not only replace
+it on the new shell or mutate it before a rebuild that can fail.
 
-The `ask_user` picker is an inline exception to the full-screen menu convention.
-It borrows the released `PromptSurface` while the editor is suspended, retaining
-the shared transcript for resize replay. Keep its numbered choices and Enter
-toggles; do not reintroduce alternate-screen switching or Space-to-toggle.
+The `ask_user` picker borrows the released `PromptSurface` while the editor is
+suspended. Keep its numbered choices and Enter toggles; do not switch screens
+inside the picker or reintroduce Space-to-toggle.
