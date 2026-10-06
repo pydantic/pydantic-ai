@@ -88,9 +88,7 @@ https://github.com/pydantic/pydantic-ai/issues/9404
 """
 
 
-def previous_tail_needing_breakpoint(
-    roles: Sequence[Literal['user', 'assistant']], block_counts: Sequence[int]
-) -> int | None:
+def previous_tail_needing_breakpoint(roles: Sequence[str], block_counts: Sequence[int]) -> int | None:
     """The index of the message that ended the previous request, if the next breakpoint is out of its lookback.
 
     A library-placed history breakpoint sits at the end of the last message, so the previous request put its
@@ -99,13 +97,14 @@ def previous_tail_needing_breakpoint(
     something the lookback has to reach.
 
     Args:
-        roles: Each wire message's side of the conversation, oldest first. Tool results are on the user side.
+        roles: Each wire message's role, oldest first. Anything but `'assistant'` (tool results included) counts as
+            the user side.
         block_counts: Each wire message's number of content blocks (tool calls included).
     """
     last_assistant = next((i for i in range(len(roles) - 1, -1, -1) if roles[i] == 'assistant'), None)
     if last_assistant is None:
         return None
-    previous_tail = next((i for i in range(last_assistant - 1, -1, -1) if roles[i] == 'user'), None)
+    previous_tail = next((i for i in range(last_assistant - 1, -1, -1) if roles[i] != 'assistant'), None)
     if previous_tail is None or sum(block_counts[previous_tail + 1 :]) < LOOKBACK_SAFE_BLOCKS:
         return None
     return previous_tail

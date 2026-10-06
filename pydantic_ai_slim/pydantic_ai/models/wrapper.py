@@ -156,7 +156,7 @@ class WrapperModel(Model):
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         # Defined on the base class too, so it must forward explicitly, like `resolve_cache_retention`.
-        return self.wrapped._caching_not_enabled(model_settings)  # pyright: ignore[reportPrivateUsage]
+        return self.wrapped._caching_not_enabled(model_settings)
 
     @property
     def base_url(self) -> str | None:

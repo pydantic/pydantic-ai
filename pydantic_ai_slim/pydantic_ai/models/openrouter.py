@@ -1035,7 +1035,7 @@ class OpenRouterModel(OpenAIChatModel):
             # spans only about 20 content blocks, so after a wide turn the end of the previous request gets a
             # breakpoint too. On other downstreams it's redundant but harmless.
             previous_tail = previous_tail_needing_breakpoint(
-                ['assistant' if message['role'] == 'assistant' else 'user' for message in openai_messages],
+                [message['role'] for message in openai_messages],
                 [_chat_message_block_count(message) for message in openai_messages],
             )
             if previous_tail is not None:
