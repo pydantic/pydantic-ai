@@ -51,8 +51,8 @@ except UserError as e:
 ## Coder
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
-`FallbackCompaction` (above 85% of the window the run's model summarizes all but the newest 50,000 tokens;
-on a model error or usage limit they are dropped instead; `compaction=False` leaves it out), a `ToolOutputLimits`
+`FallbackCompaction` (above 85% of the window the run's model summarizes all but the newest 50,000 tokens,
+at most 40% of the window; when it can't summarize they are dropped; `compaction=False` leaves it out), a `ToolOutputLimits`
 that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`.
 
 ```bash

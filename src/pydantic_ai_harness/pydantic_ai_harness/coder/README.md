@@ -134,8 +134,9 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 Then the plumbing, which the agent never calls directly:
 
 6. [`FallbackCompaction`](https://pydantic.dev/docs/ai/harness/compaction/) over `SummarizingCompaction` then `SlidingWindowCompaction`: above 85% of the
-   model's context window, the run's model summarizes older messages, keeping the most recent 50,000 tokens;
-   when summarizing fails with a model API error or a usage limit, those messages are dropped instead.
+   model's context window, the run's model summarizes older messages, keeping the most recent 50,000 tokens
+   (at most 40% of the window, so a small window still gets room back). When summarizing fails with a model API
+   error or a usage limit, or the model cannot write text, those messages are dropped instead.
    Pass `compaction=False` to leave it out when the agent binds its own compaction.
 7. A private [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
