@@ -899,12 +899,14 @@ repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
 [Project settings](README.md#project-settings).
 
-Some plugins already include others. `coder` includes context management and
-task delegation, so while `coder` is on, `compaction` stays off, and so does a
-harness `SubAgents` row (such as `subagents`) unless `coder` has `sub_agents`
-turned off: `/plugins` shows them greyed out with
-`in coder`, `/plugins list` says `included in coder`, and enabling one says to
+Some plugins already include others. `coder` includes task delegation, so while
+`coder` is on, a harness `SubAgents` row (such as `subagents`) stays off unless
+`coder` has `sub_agents` turned off: `/plugins` shows it greyed out with
+`in coder`, `/plugins list` says `included in coder`, and enabling it says to
 disable `coder` first. Turning `coder` off loads any of them you had enabled.
+`coder` only clears old tool results, so `compaction` runs beside it. Were `coder`
+to bind its own history compaction, `compaction` would be greyed out the same way,
+so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
@@ -915,8 +917,8 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the README) and reloads it for the next turn; it refuses
-while `coder` includes the plugin. A declaration under the same name changes them too:
+`summarization_model`; see the README) and reloads it for the next turn. A
+declaration under the same name changes them too:
 
 ```text
 /plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "context_window": 200000}'
