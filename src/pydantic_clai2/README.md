@@ -725,9 +725,10 @@ value, default, what it does). Type to filter. Enter edits: booleans and the
 model get a picker (the model list is searchable, with "Type a value..." for
 anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`.
+edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+an alias of `/set` and accepts the same arguments.
 
-While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
+While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
 `/accounts`, `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
 `/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
 arguments open right away instead of queueing.
@@ -993,7 +994,7 @@ and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
 first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
-`plugins` takes the same declarations as `/plugins add`: an `id`, a `factory`
+`plugins` takes the module declarations used by `/plugins add NAME module[:Class] [JSON]`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
 relative `path` is relative to the folder that holds `.clai`, whichever
 subdirectory you launch from. A
@@ -1024,7 +1025,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
@@ -1849,9 +1850,13 @@ class Search(Plugin):
         self.host.console.bell()
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
-next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
+Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
+importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
+repository with `/plugins add https://github.com/your-org/my-plugin.git`.
+Git repositories need an `__init__.py` or `plugin.py` at their root; install
+any dependencies in CLAI's Python environment first. See
+[where plugins live](PLUGINS.md#where-plugins-live) for supported URLs and checkout management.
+The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove: Space toggles the highlighted plugin, and `c`, `r`, and `d`
 configure, reload, and remove it. Press `/` to search plugin names; while you
 search, every key you type filters, Enter keeps the matches so the keys act on

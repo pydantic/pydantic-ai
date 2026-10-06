@@ -47,6 +47,7 @@ from pydantic_clai2.plugins import (
     collect,
 )
 from pydantic_clai2.plugins._factories import build, import_file, settings_capability
+from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
 from pydantic_clai2.plugins.compatibility import INCLUDED, included_by
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
@@ -613,9 +614,13 @@ class PluginLoader(Generic[DepsT]):
         _requested('enable', name)
         declaration = entry.declaration.model_copy(update={'enabled': True})
         self._store.save_plugin(declaration, requires=self._requirements(entry))
-        await self.load(name)
+        await self._load_enabled(entry)
+
+    async def _load_enabled(self, entry: PluginEntry[DepsT]) -> None:
+        """Load an enabled declaration and remember requirements learned from its plugin."""
+        await self.load(entry.name)
         # `load` refreshed the entries; only a loaded plugin can say what its settings need.
-        loaded = self._entries[name].loaded
+        loaded = self._entries[entry.name].loaded
         host = loaded.plugin.host if loaded is not None else None
         if host is not None and host.requirements:
             self._store.save_plugin(self._saved(entry), requires=host.requirements)
@@ -635,11 +640,20 @@ class PluginLoader(Generic[DepsT]):
         _requested('remove', name)
         requires = self._requirements(entry)
         await self.unload(name)
+        checkout_notice = ''
         # A relative path never names a drop-in, only an approval saved before paths were anchored: forget it.
         if entry.path is not None and entry.path.is_absolute() and not entry.shipped:
-            self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
-            await self._load_released(entry)
-            return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
+            # Unrelated file plugins remain removable even when the drop-in directory cannot be resolved.
+            if entry.path.parent.parent.name == CHECKOUTS_DIR and entry.path.parent == checkout_dir(
+                self.plugins_dir, name
+            ):
+                checkout_notice = (
+                    f' Checkout kept at {entry.path.parent}. Delete that directory before reinstalling from Git.'
+                )
+            else:
+                self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
+                await self._load_released(entry)
+                return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
         shipped = self._project.get(name) or self._builtin.get(name)
         if shipped is not None and shipped.enabled and self._entry(name).included_in is None:
@@ -647,9 +661,11 @@ class PluginLoader(Generic[DepsT]):
         else:
             await self._load_released(entry)
         if shipped is None:
-            return f'Removed {name}.'
+            return f'Removed {name}.{checkout_notice}'
         origin = 'declared by the project' if name in self._project else 'built in'
-        return f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.'
+        return (
+            f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.{checkout_notice}'
+        )
 
     async def _load_released(self, owner: PluginEntry[DepsT]) -> None:
         """Load the enabled plugins `owner` could include that it no longer keeps off."""
@@ -763,13 +779,25 @@ class PluginLoader(Generic[DepsT]):
                 '\n'.join(f'{entry.name}: {entry.source} ({entry.state})' for entry in self.entries()) or 'No plugins.'
             )
         action, *rest = args
+        if action == 'add' and not rest:
+            raise ValueError(ADD_USAGE)
+        if action == 'add' and len(rest) == 1:
+            async with install_git_plugin(
+                rest[0], plugins_dir=self.plugins_dir, names=[entry.name for entry in self.entries()]
+            ) as declaration:
+                if any(entry.name == declaration.id for entry in self.entries()):
+                    raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
+                self._store.save_plugin(declaration, overwrite=False)
+            _requested('add', declaration.id)
+            await self._load_enabled(self._entry(declaration.id))
+            return await self._configure_new(declaration.id, f'Added and loaded {declaration.id}.')
         if rest:
             rest[0] = canonical_plugin_id(rest[0])
         if action == 'add':
             return await self._add(rest)
         if len(rest) != 1:
             raise ValueError(
-                'Usage: /plugins [list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID'
+                'Usage: /plugins [list|add GIT_URL|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID'
                 '|configure ID]'
             )
         name = rest[0]

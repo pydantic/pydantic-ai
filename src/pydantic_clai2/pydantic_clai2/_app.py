@@ -5,7 +5,7 @@ import math
 import sys
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from threading import Thread
@@ -534,15 +534,15 @@ def create_shell(
             during_turn=True,
         )
     )
-    commands.register(
-        Command(
-            name='set',
-            description='Change settings; no arguments opens the menu',
-            handler=lambda args: set_command(context, args),
-            complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
-            during_turn=True,
-        )
+    set_ = Command(
+        name='set',
+        description='Change settings; no arguments opens the menu',
+        handler=lambda args: set_command(context, args),
+        complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
+        during_turn=True,
     )
+    commands.register(set_)
+    commands.register(replace(set_, name='settings', description='Alias of /set'))
     commands.register(
         Command(
             name='theme',
