@@ -6248,6 +6248,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "termflow-md" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -6271,6 +6272,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "rich", specifier = ">=14" },
     { name = "termflow-md", specifier = ">=1.0.0,<2" },
+    { name = "websockets", specifier = ">=13.0" },
 ]
 provides-extras = ["typesafe"]
 

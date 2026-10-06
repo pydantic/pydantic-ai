@@ -29,6 +29,10 @@ dependencies = [
     "pydantic-monty>=1.0.0,<2",
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    # FastMCP's browser sign-in (`/mcp` OAuth and the day_ai, notion, ordinal, posthog, pylon, and grain
+    # plugins) runs a uvicorn callback server with `ws="websockets-sansio"`, which imports `websockets`
+    # on start. `fastmcp-slim[client]` does not declare it, so without this the sign-in fails.
+    "websockets>=13.0",
     "genai-prices>=0.1.7",
     # 1.0 adds `termflow.live` (ScreenBuffer, render_diff, Widget), which paints the transcript panel.
     "termflow-md>=1.0.0,<2",
