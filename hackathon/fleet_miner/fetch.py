@@ -38,6 +38,8 @@ WHERE r.span_name = 'prompt submitted'
   AND r.attributes->>'prompt' IS NOT NULL
   AND coalesce(r.attributes->>'kind', 'prompt') = 'prompt'
   AND coalesce(r.attributes->>'route', '') != 'discarded queued'
+  -- Records from before clai2 tagged sources are typed by definition: the UI only records what was submitted.
+  AND coalesce(r.attributes->>'clai2.prompt.source', 'typed') = 'typed'
 ORDER BY r.start_timestamp
 """
 
@@ -50,8 +52,14 @@ FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.service_name = 'pydantic-clai2'
   AND r.attributes->>'pydantic_ai.all_messages' IS NOT NULL
+  AND {{source_filter}}
 ORDER BY r.start_timestamp
 """
+
+# Runs clai2 tagged as typed are always mined. Untagged (older) runs may hold plugin-, headless- or subagent-dispatched
+# prompts that cannot be told apart from typed ones, so they are only mined on request.
+_TYPED_RUNS = "r.attributes->>'clai2.prompt.source' = 'typed'"
+_TYPED_OR_UNTAGGED_RUNS = "coalesce(r.attributes->>'clai2.prompt.source', 'typed') = 'typed'"
 
 # Text clai2 itself puts in user messages, which is not something the user typed.
 _INJECTED = ('The user ran a local shell command', '<system-reminder>', 'Summary of the conversation so far')
@@ -60,14 +68,15 @@ _prompts_adapter = TypeAdapter(list[UserPrompt])
 
 
 async def fetch_prompts(
-    read_token: str, *, base_url: str, since: datetime, include_agent_runs: bool = False
+    read_token: str, *, base_url: str, since: datetime, include_untagged_agent_runs: bool = False
 ) -> list[UserPrompt]:
     async with AsyncLogfireQueryClient(read_token, base_url=base_url, timeout=120) as client:
         rows = (await client.query_json_rows(PROMPTS_SQL, min_timestamp=since, limit=10_000))['rows']
         prompts = [_from_prompt_row(row) for row in rows]
-        if include_agent_runs:
-            run_rows = (await client.query_json_rows(AGENT_RUNS_SQL, min_timestamp=since, limit=2_000))['rows']
-            prompts += _from_agent_rows(run_rows, seen={(p.session_id or p.trace_id, p.text) for p in prompts})
+        source_filter = _TYPED_OR_UNTAGGED_RUNS if include_untagged_agent_runs else _TYPED_RUNS
+        sql = AGENT_RUNS_SQL.format(source_filter=source_filter)
+        run_rows = (await client.query_json_rows(sql, min_timestamp=since, limit=2_000))['rows']
+        prompts += _from_agent_rows(run_rows, seen={(p.session_id or p.trace_id, p.text) for p in prompts})
     return _resolve_users(prompts)
 
 

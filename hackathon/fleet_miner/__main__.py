@@ -31,7 +31,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--min-users', type=int, default=3, help='distinct users a pattern needs')
     parser.add_argument('--fixture', type=Path, help='read prompts from this JSON instead of Logfire')
     parser.add_argument('--save-fixture', type=Path, help='also save the fetched prompts here')
-    parser.add_argument('--agent-runs', action='store_true', help='also mine user text on agent run spans')
+    parser.add_argument('--agent-runs', action='store_true', help='also mine user text on agent runs from before clai2 tagged prompt sources (may include agent-dispatched prompts)')
     parser.add_argument('--dry-run', action='store_true', help='print, write nothing')
     parser.add_argument('--reuse-clusters', action='store_true', help='re-draft from the cached groups, skip clustering')
     parser.add_argument('--drop', action='append', default=[], help='remove this proposal id from the live document')
@@ -55,7 +55,7 @@ async def main(args: argparse.Namespace) -> None:
             os.environ.get('LOGFIRE_CLAI2_READ_TOKEN') or os.environ['LOGFIRE_CLAI2_API_KEY'],
             base_url=args.base_url,
             since=args.since,
-            include_agent_runs=args.agent_runs,
+            include_untagged_agent_runs=args.agent_runs,
         )
         if args.save_fixture:
             fetch.save_fixture(args.save_fixture, prompts)
@@ -92,11 +92,15 @@ async def main(args: argparse.Namespace) -> None:
     if not qualifying:
         print(f'\nNo pattern reached {args.min_users} distinct users.')
     drafted = await patterns_mod.draft_proposals(qualifying, model=args.pattern_model) if qualifying else []
-    merged, actions = patterns_mod.merge(existing, drafted)
+    merged, actions = patterns_mod.merge(existing, drafted, stale_if_missing=True)
     for proposal in drafted:
         print(f'\n--- [{actions[proposal.id]}] {proposal.kind} `{proposal.name}` -> {proposal.suggested_tier}')
         print(proposal.description)
         print(proposal.text)
+
+    for id_, action in actions.items():
+        if action == 'stale':
+            print(f'\n--- [stale] `{id_}` no longer reaches {args.min_users} distinct users')
 
     start = min((p.timestamp for p in prompts), default=args.since if isinstance(args.since, datetime) else now)
     doc = ProposalsDoc(generated_at=now, window=Window(start=start, end=now), proposals=merged)

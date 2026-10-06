@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field, field_validator
 
 Tier = Literal['required', 'default_on', 'optional']
 ProposalKind = Literal['skill', 'instruction']
-ProposalStatus = Literal['pending', 'accepted', 'dismissed']
+ProposalStatus = Literal['pending', 'accepted', 'dismissed', 'stale']
+"""`stale`: was pending, but the latest run no longer finds the pattern often enough. Kept, not deleted."""
 
 
 class UserPrompt(BaseModel):

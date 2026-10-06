@@ -301,11 +301,16 @@ def _evidence(pattern: Pattern, limit: int) -> list[Evidence]:
     ]
 
 
-MergeAction = Literal['new', 'updated', 'skipped']
+MergeAction = Literal['new', 'updated', 'skipped', 'stale']
 
 
-def merge(existing: list[Proposal], fresh: list[Proposal]) -> tuple[list[Proposal], dict[str, MergeAction]]:
-    """Never re-propose an accepted or dismissed id; refresh a pending one's evidence and draft."""
+def merge(
+    existing: list[Proposal], fresh: list[Proposal], *, stale_if_missing: bool = False
+) -> tuple[list[Proposal], dict[str, MergeAction]]:
+    """Never re-propose an accepted or dismissed id; refresh a pending (or stale) one's evidence and draft.
+
+    With `stale_if_missing` (a full run), a pending proposal the run no longer qualifies becomes `stale`.
+    """
     by_id = {p.id: p for p in existing}
     actions: dict[str, MergeAction] = {}
     for proposal in fresh:
@@ -313,9 +318,14 @@ def merge(existing: list[Proposal], fresh: list[Proposal]) -> tuple[list[Proposa
         if old is None:
             by_id[proposal.id] = proposal
             actions[proposal.id] = 'new'
-        elif old.status == 'pending':
+        elif old.status in ('pending', 'stale'):
             by_id[proposal.id] = proposal
             actions[proposal.id] = 'updated'
         else:
             actions[proposal.id] = 'skipped'
+    if stale_if_missing:
+        for id_, proposal in by_id.items():
+            if id_ not in actions and proposal.status == 'pending':
+                by_id[id_] = proposal.model_copy(update={'status': 'stale'})
+                actions[id_] = 'stale'
     return list(by_id.values()), actions
