@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, Union, cast
 
 import anyio
 import logfire_api
@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_seria
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from rich.progress import Progress
-from typing_extensions import Self, TypeVar
+from typing_extensions import TypeVar
 
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_ai._utils import await_maybe, is_async_callable
@@ -731,8 +731,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             row.evaluators = evaluators
             cases.append(row)
         if errors:
-            # Ruff still targets Python 3.10 across the repository.
-            raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])  # noqa: F821
+            raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
         name = dataset_model.name if dataset_model.name is not None else default_name
         if name is None:
             raise ValueError('Dataset name is required: provide one in the serialized data or via `default_name`.')

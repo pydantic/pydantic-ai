@@ -6,9 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning

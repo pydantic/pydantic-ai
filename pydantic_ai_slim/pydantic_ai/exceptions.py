@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
@@ -594,14 +594,14 @@ class ModelHTTPError(ModelAPIError):
             assert isinstance(retry_time, datetime)
             # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
             if retry_time.tzinfo is None:
-                retry_time = retry_time.replace(tzinfo=timezone.utc)
-            wait = (retry_time - datetime.now(timezone.utc)).total_seconds()
+                retry_time = retry_time.replace(tzinfo=UTC)
+            wait = (retry_time - datetime.now(UTC)).total_seconds()
             return max(0.0, wait)
         except (ValueError, TypeError, AssertionError):
             return None
 
 
-class FallbackExceptionGroup(ExceptionGroup[Any]):  # noqa: F821
+class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
 
 

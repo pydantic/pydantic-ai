@@ -227,7 +227,7 @@ async def chat(
                             reason = await shell.run()
                         finally:
                             workers.cancel_scope.cancel()
-                except BaseExceptionGroup as exc:  # noqa: F821
+                except BaseExceptionGroup as exc:
                     if len(exc.exceptions) == 1:
                         raise exc.exceptions[0] from None
                     raise

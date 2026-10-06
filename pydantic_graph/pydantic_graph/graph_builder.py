@@ -21,7 +21,9 @@ from typing import (
     Any,
     Generic,
     Literal,
+    Never,
     TypeGuard,
+    assert_never,
     cast,
     get_args,
     get_origin,
@@ -32,7 +34,7 @@ from typing import (
 from anyio import BrokenResourceError, CancelScope, ClosedResourceError, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from typing_extensions import Never, TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_graph import _utils, exceptions
 from pydantic_graph._utils import UNSET, AbstractSpan, Unset, get_traceparent, infer_obj_name, logfire_span
@@ -1124,7 +1126,7 @@ def _unwrap_exception_groups():
     else:
         try:
             yield
-        except BaseExceptionGroup as e:  # noqa: F821
+        except BaseExceptionGroup as e:
             exception = e.exceptions[0]
             if exception.__cause__ is None:
                 # bizarrely, this prevents recursion errors when formatting the exception for logfire

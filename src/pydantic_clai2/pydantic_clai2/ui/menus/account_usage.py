@@ -5,7 +5,7 @@ The fetches run on the event loop and only record results; the menu thread redra
 """
 
 from collections.abc import Callable, Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Event
 
 import anyio
@@ -27,7 +27,7 @@ _BAR = 10
 class UsageBoard:
     """Each listed account's usage state, keyed by its `/login` name."""
 
-    def __init__(self, *, now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
+    def __init__(self, *, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
         """`now` dates reset times; tests pass a fixed clock."""
         self._states: dict[str, UsageState] = {}
         self._running: dict[str, tuple[CancelScope, anyio.Event]] = {}

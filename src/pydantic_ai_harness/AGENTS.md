@@ -93,7 +93,7 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 
 ## Coding standards
 
-- Python 3.11+ (Pyright target; Ruff retains `py310` pending a separate style migration)
+- Python 3.11+ (Pyright and Ruff targets)
 - **pyright strict** mode -- no `Any` types, full type annotations
 - **ruff**: line-length=120, single quotes, max-complexity=15
 - CI enforces 100% branch coverage from combined matrix data.

@@ -6,7 +6,7 @@ the saved GitHub login. A plugin account reports its own through `PluginLogin.us
 """
 
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING
 
 from anyio import to_thread
@@ -88,7 +88,7 @@ async def codex_usage(provider: 'OpenAICodexProvider') -> AccountUsage:
         UsageWindow(
             label=window_label(window.limit_window_seconds),
             used_percent=window.used_percent,
-            resets_at=None if window.reset_at is None else datetime.fromtimestamp(window.reset_at, timezone.utc),
+            resets_at=None if window.reset_at is None else datetime.fromtimestamp(window.reset_at, UTC),
         )
         for window in (limit.primary_window, limit.secondary_window)
         if window is not None
@@ -137,7 +137,7 @@ async def copilot_usage(account: str, *, transport: 'httpx2.AsyncBaseTransport |
     except ValidationError:
         raise UserError('GitHub returned Copilot usage CLAI cannot read.') from None
     resets_at = user.quota_reset_date_utc or (
-        None if user.quota_reset_date is None else datetime.combine(user.quota_reset_date, time(), timezone.utc)
+        None if user.quota_reset_date is None else datetime.combine(user.quota_reset_date, time(), UTC)
     )
     windows = tuple(
         UsageWindow(label=label, used_percent=100 - quota.percent_remaining, resets_at=resets_at)

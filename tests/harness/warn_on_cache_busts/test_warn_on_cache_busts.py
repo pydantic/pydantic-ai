@@ -17,7 +17,7 @@ from __future__ import annotations
 import copy
 import pickle
 import warnings
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -51,7 +51,7 @@ from pydantic_ai_harness.warn_on_cache_busts import (
     WarnOnCacheBusts,
 )
 
-T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 def _usage(*, read: int = 0, write: int = 0, passes: int | None = None) -> RequestUsage:
