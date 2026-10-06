@@ -22,7 +22,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import logfire
 from logfire.variables import Variable
@@ -40,8 +40,18 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai_harness.logfire import AgentControlConfig
-from pydantic_ai_harness.policy import Approver, Policy, PolicyDecision, PolicyRules
+from pydantic_ai_harness.policy import (
+    Approver,
+    Policy,
+    PolicyDecision,
+    PolicyRule,
+    PolicyRules,
+    default_blocked_message,
+)
 from pydantic_clai2 import policy_state
+
+if TYPE_CHECKING:
+    from pydantic_clai2.builtin_plugins.fleet_ui import CatalogRow
 
 ItemKind = Literal['skill', 'mcp_server', 'plugin', 'instruction']
 
@@ -55,6 +65,9 @@ class FleetSkill(BaseModel):
     instructions: str = ''
     source: str | None = None
     proposal_id: str | None = None
+    why: str | None = None
+    """A short reason, such as the miner's rationale ("4 teammates kept asking for this")."""
+    pushed_by: str | None = None
 
 
 class FleetMCPServer(BaseModel):
@@ -64,6 +77,9 @@ class FleetMCPServer(BaseModel):
     name: str
     url: str
     description: str | None = None
+    source: str | None = None
+    why: str | None = None
+    pushed_by: str | None = None
     headers: dict[str, str] = Field(default_factory=dict[str, str])
 
 
@@ -82,6 +98,11 @@ class CatalogItem(BaseModel):
     name: str
     description: str = ''
     default: Literal['on', 'off'] = 'off'
+    source: str | None = None
+    why: str | None = None
+    pushed_by: str | None = None
+    adoption: int | None = None
+    """How many teammates use it, when the catalog says."""
     payload: dict[str, Any] = Field(default_factory=dict[str, Any])
 
 
@@ -132,6 +153,30 @@ def _resolve_env(value: str) -> str:
 
 
 @dataclass(frozen=True)
+class Provenance:
+    """Where a pushed item came from, for notices and `/catalog why`."""
+
+    source: str | None = None
+    why: str | None = None
+    pushed_by: str | None = None
+
+    @classmethod
+    def of(cls, item: BaseModel) -> Provenance:
+        return cls(
+            source=getattr(item, 'source', None),
+            why=getattr(item, 'why', None),
+            pushed_by=getattr(item, 'pushed_by', None),
+        )
+
+    def describe(self) -> str:
+        """`from 4 teammates' sessions, pushed by Douwe`, or `''`."""
+        parts = [self.why or ("suggested from teammates' sessions" if self.source == 'fleet-miner' else '')]
+        if self.pushed_by:
+            parts.append(f'pushed by {self.pushed_by}')
+        return ', '.join(part for part in parts if part)
+
+
+@dataclass(frozen=True)
 class ActiveItem:
     """An item in force for this user, with where it came from."""
 
@@ -140,6 +185,7 @@ class ActiveItem:
     description: str
     tier: Literal['company', 'catalog']
     payload: Mapping[str, Any]
+    provenance: Provenance = field(default_factory=lambda: Provenance())
 
     @property
     def key(self) -> str:
@@ -205,6 +251,8 @@ class Change:
     kind: str
     name: str
     tier: str
+    description: str = ''
+    provenance: Provenance = field(default_factory=lambda: Provenance())
 
     def describe(self) -> str:
         verb = {'added': 'New', 'updated': 'Updated', 'removed': 'Removed'}[self.action]
@@ -281,11 +329,18 @@ class Fleet:
                 for name, text in _named_instructions(config)
             ),
             *(
-                ActiveItem('skill', skill.name, skill.description, 'company', skill.model_dump())
+                ActiveItem('skill', skill.name, skill.description, 'company', skill.model_dump(), Provenance.of(skill))
                 for skill in config.skills or ()
             ),
             *(
-                ActiveItem('mcp_server', server.name, server.description or '', 'company', server.model_dump())
+                ActiveItem(
+                    'mcp_server',
+                    server.name,
+                    server.description or '',
+                    'company',
+                    server.model_dump(),
+                    Provenance.of(server),
+                )
                 for server in config.mcp_servers or ()
             ),
         ]
@@ -295,7 +350,9 @@ class Fleet:
             key = _key(item.kind, item.name)
             if key in company or not self._enabled(item, state, snapshot.locked):
                 continue
-            items.append(ActiveItem(item.kind, item.name, item.description, 'catalog', item.payload))
+            items.append(
+                ActiveItem(item.kind, item.name, item.description, 'catalog', item.payload, Provenance.of(item))
+            )
         return items
 
     def compliance(self, snapshot: Snapshot, active: Sequence[ActiveItem]) -> dict[str, str]:
@@ -457,6 +514,7 @@ class Fleet:
         # Failed and consent-pending items are neither news nor removals: the user sees why instead.
         failed = {item.key for item, _ in build.failed} | {consent.item.key for consent in build.pending}
         current: dict[str, tuple[str, str, str, str]] = {}
+        by_key = {item.key: item for item in build.loaded}
         for item in build.loaded:
             current[item.key] = (item.kind, item.name, item.tier, _digest(dict(item.payload)))
         named_texts = {text for _, text in _named_instructions(config)}
@@ -473,10 +531,12 @@ class Fleet:
         changes: list[Change] = []
         for key, (kind, name, tier, digest) in current.items():
             previous = user.seen.get(key)
+            item = by_key.get(key)
+            details = (item.description, item.provenance) if item is not None else ('', Provenance())
             if previous is None:
-                changes.append(Change('added', kind, name, tier))
+                changes.append(Change('added', kind, name, tier, *details))
             elif previous != digest:
-                changes.append(Change('updated', kind, name, tier))
+                changes.append(Change('updated', kind, name, tier, *details))
         for key in user.seen.keys() - current.keys() - failed:
             kind, _, name = key.partition(':')
             changes.append(Change('removed', kind, name, ''))
@@ -486,18 +546,59 @@ class Fleet:
             self._save(state)
         return changes
 
+    def rows(self, snapshot: Snapshot) -> list[CatalogRow]:
+        """Everything for the `/catalog` picker: organization items, then optional add-ons with their state."""
+        from pydantic_clai2.builtin_plugins.fleet_ui import CatalogRow
+
+        state = self._user_state()
+        rows: list[CatalogRow] = []
+        for item in self.active(snapshot):
+            if item.tier != 'company':
+                continue
+            rows.append(
+                CatalogRow(
+                    key=item.key,
+                    kind=item.kind,
+                    name=item.name,
+                    description=item.description or item.payload.get('instructions', '')[:120],
+                    delivery='organization',
+                    on=True,
+                    locked=item.key in snapshot.locked,
+                    new=item.key not in state.seen,
+                    adoption=None,
+                    provenance=item.provenance,
+                )
+            )
+        for entry in snapshot.catalog.items:
+            key = _key(entry.kind, entry.name)
+            rows.append(
+                CatalogRow(
+                    key=key,
+                    kind=entry.kind,
+                    name=entry.name,
+                    description=entry.description,
+                    delivery='default on' if entry.default == 'on' else 'optional',
+                    on=self._enabled(entry, state, snapshot.locked),
+                    locked=key in snapshot.locked,
+                    new=key not in state.seen and key not in state.opted_in and key not in state.opted_out,
+                    adoption=entry.adoption,
+                    provenance=Provenance.of(entry),
+                )
+            )
+        return rows
+
     def listing(self) -> str:
         """The `/catalog` listing: company items, then the catalog with each item's state for this user."""
         snapshot = self.snapshot()
         config, version = snapshot.config, snapshot.version
         state = self._user_state()
-        lines = [f'Company config from Logfire (agent__{self.name}{f" v{version}" if version else ""}):']
+        lines = [f'From your organization{f" (v{version})" if version else ""}:']
         company = [
             *(f'  skill       {skill.name}: {skill.description}' for skill in config.skills or ()),
             *(f'  mcp_server  {server.name}: {server.url}' for server in config.mcp_servers or ()),
         ]
         lines.extend(company or ['  (none)'])
-        lines.append(f'Catalog (catalog__{self.name}):')
+        lines.append('Optional add-ons:')
         items = snapshot.catalog.items
         for item in items:
             on = self._enabled(item, state, snapshot.locked)
@@ -556,6 +657,7 @@ class FleetControl(AbstractCapability[None]):
 
     approver: Approver | None = None
     record: Callable[[PolicyDecision], None] | None = None
+    blocked_message: Callable[[PolicyRule], str] = default_blocked_message
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
         build = self.fleet.take()
@@ -567,7 +669,11 @@ class FleetControl(AbstractCapability[None]):
         }
         # The run's policy is the one this run resolved, so a push mid-run applies from the next run.
         rules = PolicyRules(
-            policy=lambda: snapshot.policy, approver=self.approver, record=self.record, attribute_prefix='clai2.policy'
+            policy=lambda: snapshot.policy,
+            approver=self.approver,
+            record=self.record,
+            attribute_prefix='clai2.policy',
+            blocked_message=self.blocked_message,
         )
         return CombinedCapability([_AdoptionBaggage(baggage=baggage), rules, _PluginMCPAllowlist(), *capabilities])
 

@@ -64,7 +64,10 @@ async def test_observe_records_and_runs() -> None:
 async def test_enforce_deny_tells_the_model() -> None:
     ran, content, recorded = await _run(_rule(mode='enforce'))
     assert ran == []
-    assert content == "Blocked by your organization policy 'no-force-push': Never force-push."
+    assert content == (
+        'Blocked by policy: Never force-push (policy no-force-push). Do not retry it or work around it; '
+        'suggest a safe alternative to the user instead.'
+    )
     assert recorded[0].outcome == 'denied'
 
 

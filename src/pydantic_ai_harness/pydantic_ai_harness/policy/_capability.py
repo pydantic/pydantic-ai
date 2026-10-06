@@ -137,6 +137,8 @@ class PolicyRules(AbstractCapability[Any]):
     record: Callable[[PolicyDecision], None] | None = None
     attribute_prefix: str = 'policy'
     monty_timeout: float = 2.0
+    blocked_message: Callable[[PolicyRule], str] = field(default_factory=lambda: default_blocked_message)
+    """The tool result the model gets for a denied call: say why briefly and steer it to a safe alternative."""
     id: str | None = field(default='policy_rules')
 
     def get_ordering(self) -> CapabilityOrdering:
@@ -171,10 +173,12 @@ class PolicyRules(AbstractCapability[Any]):
                 self._emit(ctx, rule, decision, outcome, call.tool_name, subject, error, monty_ms)
                 if approved:
                     continue
-                raise SkipToolExecution(f'The user did not approve this call (policy {rule.name!r}).')
+                raise SkipToolExecution(
+                    f'The user did not approve this call (policy {rule.name}). Do not retry it; '
+                    'suggest a safe alternative instead.'
+                )
             self._emit(ctx, rule, decision, 'denied', call.tool_name, subject, error, monty_ms)
-            reason = f': {rule.description}' if rule.description else '.'
-            raise SkipToolExecution(f'Blocked by your organization policy {rule.name!r}{reason}')
+            raise SkipToolExecution(self.blocked_message(rule))
         return args
 
     async def _decide(
@@ -229,6 +233,15 @@ class PolicyRules(AbstractCapability[Any]):
         if self.record is not None:
             self.record(recorded)
         emit_decision(ctx.tracer, recorded, prefix=self.attribute_prefix)
+
+
+def default_blocked_message(rule: PolicyRule) -> str:
+    """`Blocked by policy: <description> (policy <name>). ...`, with the description first and the slug second."""
+    what = rule.description.rstrip('.') if rule.description else 'this call is not allowed'
+    return (
+        f'Blocked by policy: {what} (policy {rule.name}). Do not retry it or work around it; '
+        'suggest a safe alternative to the user instead.'
+    )
 
 
 def decision_attributes(decision: PolicyDecision, *, prefix: str) -> dict[str, str | float]:

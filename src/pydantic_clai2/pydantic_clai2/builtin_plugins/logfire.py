@@ -23,15 +23,26 @@ import logfire
 from anyio import CancelScope, to_thread
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from rich.console import RenderableType
 
+from pydantic_ai import AgentStreamEvent, FunctionToolResultEvent
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai_harness.ask_user import AskUserRequest, Question, QuestionOption
 from pydantic_ai_harness.logfire import AgentControl
-from pydantic_ai_harness.policy import PolicyDecision, decision_attributes
+from pydantic_ai_harness.policy import PolicyDecision, PolicyRule, decision_attributes
 from pydantic_clai2 import policy_state
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
-from pydantic_clai2.builtin_plugins.fleet import Build, Change, Fleet, FleetControl
+from pydantic_clai2.builtin_plugins.fleet import Build, Change, Consent, Fleet, FleetControl
+from pydantic_clai2.builtin_plugins.fleet_ui import (
+    BLOCKED_PREFIX,
+    CatalogRow,
+    blocked_panel,
+    catalog_menu,
+    notice_panel,
+    why_text,
+)
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.commands import Command
@@ -47,6 +58,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
+from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
@@ -99,6 +111,9 @@ class LogfireSettings(BaseModel):
         '(`catalog__<agent_control_name>`) from Logfire managed variables. Needs an API key that can read variables.',
     )
     agent_control_name: str = Field(default='clai2', min_length=1)
+    project: str | None = Field(
+        default=None, description='`organization/project` that setup picked, for links to Logfire.'
+    )
     api_key: KeyReference | None = Field(
         default=None,
         description='A /keys entry holding a Logfire API key with `project:read_variables`. Unset, '
@@ -163,7 +178,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             team=settings.team or os.getenv('CLAI2_TEAM'),
         )
         self.fleet: Fleet | None = None
-        self._notice = ''
+        self._pending = 0
+        self._asked: set[tuple[str, str]] = set()
         self._announced: set[str] = set()
         """Notices already printed by the idle watcher, which the next turn start must not repeat."""
         self._reported_failures: set[tuple[str, str]] = set()
@@ -198,6 +214,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                     'team',
                     'allowed_catalog_plugins',
                     'fleet_env_allow',
+                    'project',
                 ),
                 ['fleet-control'],
             ),
@@ -214,8 +231,16 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             attributes=lambda _: tracing.identity(),
             client_features=('catalog', 'policy'),
         )
-        fleet_control = FleetControl(fleet=self.fleet, approver=self._approve)
+        fleet_control = FleetControl(fleet=self.fleet, approver=self._approve, blocked_message=self._blocked_message)
         return (self._session_tracing, self.instrumentation, control, fleet_control)
+
+    def _blocked_message(self, rule: PolicyRule) -> str:
+        """What the model reads for a denied call; the user sees it as a panel with a Learn more link."""
+        what = rule.description.rstrip('.') if rule.description else 'this is not allowed'
+        return (
+            f'{BLOCKED_PREFIX}: {what} (policy {rule.name}). Ask your admin to change it. '
+            'Do not retry it or work around it; suggest a safe alternative to the user instead.'
+        )
 
     async def _approve(self, decision: PolicyDecision) -> bool:
         """Put an `ask` rule's call to the user with the `ask_user` picker; no terminal means no."""
@@ -224,8 +249,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         question = Question(
             header='Policy',
             question=(
-                f'Your organization policy {decision.rule!r} asks before this {decision.tool_name} call: '
-                f'{decision.subject}'
+                f'Your organization asks before this: {decision.description or decision.rule} '
+                f'(policy {decision.rule}). Run `{decision.subject}`?'
             )[:400],
             options=(
                 QuestionOption(label='Allow', description='Run it this once.'),
@@ -249,39 +274,93 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             return ()
         fleet = self.fleet
 
-        def catalog(args: list[str]) -> str:
+        async def catalog(args: list[str]) -> str:
             if len(args) == 2 and args[0] in ('enable', 'disable'):
                 return fleet.set_opt(args[1], args[0] == 'enable')
-            return fleet.listing()
+            if len(args) == 2 and args[0] == 'why':
+                row = next((row for row in fleet.rows(fleet.snapshot()) if row.name == args[1]), None)
+                return why_text(row, link=self._link()) if row else f'Nothing called {args[1]} from your organization.'
+            if args or not sys.stdin.isatty():
+                return fleet.listing()
+            return await self._catalog_picker()
 
         return (
             Command(
                 name='catalog',
-                description='Company skills and MCP servers from Logfire, and the catalog you can opt into',
+                description='What your organization provides, and optional add-ons you can turn on',
                 handler=catalog,
-                complete=lambda _: ('enable', 'disable'),
+                complete=lambda _: ('enable', 'disable', 'why'),
             ),
         )
 
+    async def _catalog_picker(self) -> str:
+        """Enter toggles an optional add-on and reopens the picker on the same row; Esc closes."""
+        assert self.fleet is not None
+        fleet, index = self.fleet, 0
+        changed: list[str] = []
+        while True:
+            snapshot = fleet.snapshot()
+            rows = fleet.rows(snapshot)
+            menu = catalog_menu(rows, version=snapshot.version, link=self._link(), index=index)
+            result = await run_worker(lambda: RUNNERS.run_choice(menu))
+            if result.cancelled or result.item is None or not isinstance(result.item.value, CatalogRow):
+                return '\n'.join(changed) or 'Catalog unchanged.'
+            row = result.item.value
+            index = rows.index(row)
+            if row.toggleable:
+                changed.append(fleet.set_opt(row.key, not row.on))
+
     def get_status_segments(self) -> Sequence[Callable[[], str]]:
-        return (lambda: self._notice,) if self.fleet is not None else ()
+        return (self._status,) if self.fleet is not None else ()
+
+    def _status(self) -> str:
+        """`◆ Logfire config v10`, plus how many pushed items await the user's OK."""
+        assert self.fleet is not None
+        snapshot = self.fleet.latest
+        if snapshot is None or snapshot.version is None:
+            return ''
+        pending = f' · {self._pending} awaiting your OK' if self._pending else ''
+        return f'◆ Logfire config v{snapshot.version}{pending}'
+
+    def _link(self) -> str | None:
+        """This agent's page in Logfire, when setup recorded the project."""
+        if not self.settings.project or self.fleet is None:
+            return None
+        base = (self.settings.base_url or 'https://logfire-us.pydantic.dev').rstrip('/')
+        return f'{base}/{self.settings.project}/agents/{self.settings.agent_control_name}'
+
+    def render(self, event: AgentStreamEvent) -> RenderableType | None:
+        """A policy block gets a panel for the user; the model already has the plain message."""
+        if isinstance(event, FunctionToolResultEvent) and isinstance(event.part, ToolReturnPart):
+            content = event.part.content
+            if isinstance(content, str) and content.startswith(BLOCKED_PREFIX):
+                return blocked_panel(content, link=self._link())
+        return None
 
     async def on_turn_start(self, event: TurnStart) -> None:
         await self._ask_consent()
         self._announce_changes()
 
-    async def _ask_consent(self) -> None:
-        """Ask once about each pushed MCP server or plugin whose target or env changed; headless never asks."""
+    async def _ask_consent(self, pending: Sequence[Consent] | None = None) -> bool:
+        """Ask about each pushed MCP server or plugin whose target or env changed; headless never asks.
+
+        Returns whether anything was decided. At a turn start every pending item is asked; from the idle
+        watcher only ones not yet asked this session.
+        """
         if self.fleet is None or not sys.stdin.isatty():
-            return
-        try:
-            pending = self.fleet.build().pending
-        except Exception:  # noqa: BLE001 -- the turn-start pass reports a broken config
-            return
+            return False
+        if pending is None:
+            try:
+                pending = self.fleet.build().pending
+            except Exception:  # noqa: BLE001 -- the turn-start pass reports a broken config
+                return False
+        decided = False
         for consent in pending:
+            self._asked.add((consent.item.key, consent.fingerprint))
+            why = consent.item.provenance.describe()
             question = Question(
                 header='Logfire',
-                question=consent.question()[:400],
+                question=(consent.question() + (f' ({why})' if why else ''))[:400],
                 options=(
                     QuestionOption(label='Allow', description='Turn it on; asked again if its target or env changes.'),
                     QuestionOption(label='Deny', description='Keep it off.'),
@@ -293,6 +372,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 continue  # Asked again next turn.
             allow = bool(response.answers) and response.answers[0].selected == ('Allow',)
             self.fleet.decide(consent, allow=allow)
+            decided = True
+        return decided
 
     def _announce_changes(self) -> None:
         """At turn start: show what Logfire pushed since the user last looked, and mark it seen."""
@@ -309,21 +390,11 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     def _show(self, build: Build, changes: Sequence[Change]) -> None:
         """Print each change and load failure once; the status row keeps the latest change."""
-        for change in changes:
-            text = change.describe()
-            if text not in self._announced:
-                self._announced.add(text)
-                self.host.console.print(f'◆ {text}', style=theme.color(theme.ACCENT), markup=False)
-        if changes:
-            self._notice = changes[-1].describe()
-        for consent in build.pending:
-            if (consent.item.key, consent.fingerprint) not in self._reported_failures:
-                self._reported_failures.add((consent.item.key, consent.fingerprint))
-                self.host.console.print(
-                    f'{consent.question()} It stays off until you approve it at your next prompt.',
-                    style=theme.color(theme.WARNING),
-                    markup=False,
-                )
+        fresh = [change for change in changes if change.describe() not in self._announced]
+        self._announced.update(change.describe() for change in fresh)
+        if fresh:
+            self.host.console.print(notice_panel(fresh, version=build.snapshot.version, link=self._link()))
+        self._pending = len(build.pending)
         for item, error in build.failed:
             # A broken item fails on every build; say so once per version of it, not on every prompt.
             if (item.key, error) in self._reported_failures:
@@ -353,6 +424,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 last = current
                 build = self.fleet.build()
                 self._show(build, self.fleet.changes(build, mark_seen=False))
+                unasked = [c for c in build.pending if (c.item.key, c.fingerprint) not in self._asked]
+                if unasked and await self._ask_consent(unasked):
+                    build = self.fleet.build()
+                    self._show(build, self.fleet.changes(build, mark_seen=False))
             except Exception:  # noqa: BLE001 -- a watcher hiccup is retried on the next tick
                 continue
 
@@ -435,8 +510,8 @@ def _variables_options(api_key: str | None) -> dict[str, Any]:
     return {'api_key': api_key, 'variables': logfire.VariablesOptions()} if api_key else {}
 
 
-WATCH_INTERVAL = 5.0
-"""Seconds between idle checks for a push from Logfire."""
+WATCH_INTERVAL = 2.0 if os.getenv('CLAI2_FLEET_DEMO') else 5.0
+"""Seconds between idle checks for a push from Logfire; `CLAI2_FLEET_DEMO=1` makes it snappier on stage."""
 
 
 def _install_id() -> str:
@@ -654,6 +729,7 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'account': LogfireAccount(email=email, token=chosen.token) if email else None,
         'send_to_logfire': 'if-token-present',
         'api_key': chosen.variables_key or config.api_key,
+        'project': f'{chosen.project.organization_name}/{chosen.project.project_name}',
         'team': chosen.team,
     }
     host.save_settings(config.model_copy(update=update))
