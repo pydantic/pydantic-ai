@@ -348,8 +348,8 @@ class Session(Generic[DepsT, OutputT]):
             if self.conversations is None:
                 raise ValueError('Session persistence is not configured')
             saved = await self.conversations.get(conversation_id=conversation_id)
-            if saved.summary.workspace != self.workspace and not allow_other_workspace:
-                raise ValueError(f'Session belongs to {saved.summary.workspace}. Select it in /resume to confirm.')
+            if not allow_other_workspace:
+                self.check_workspace(saved.summary.workspace)
             ensure_inactive(saved.summary)
             messages = saved.messages
             warning = ''
@@ -373,6 +373,11 @@ class Session(Generic[DepsT, OutputT]):
             return f'Resumed {saved.summary.title} ({saved.summary.id}).{warning}'
         finally:
             self._running = False
+
+    def check_workspace(self, workspace: str) -> None:
+        """Refuse a conversation from another directory unless the `/resume` browser confirmed it."""
+        if workspace != self.workspace:
+            raise ValueError(f'Session belongs to {workspace}. Select it in /resume to confirm.')
 
     def _mark_interrupted(self) -> None:
         # Let core close unanswered calls without replaying them on the next prompt.
@@ -536,8 +541,7 @@ class Session(Generic[DepsT, OutputT]):
                             with move_on_after(5, shield=True):
                                 await self._save_turn(outcome='cancelled')
                         except Exception as exc:  # noqa: BLE001 -- persistence failure must not swallow cancellation.
-                            if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
-                                cancelled.add_note(f'Could not save cancelled turn: {exc}')
+                            cancelled.add_note(f'Could not save cancelled turn: {exc}')
                             logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
                         raise
                     except Exception as exc:

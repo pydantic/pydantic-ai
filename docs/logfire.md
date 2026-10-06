@@ -239,24 +239,6 @@ print(result.output)
 
 Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
 
-The following providers have dedicated documentation on Pydantic AI:
-
-<!--Feel free to add other platforms here. They MUST be added to the bottom of the list, and may only be a name with link.-->
-- [Langfuse](https://langfuse.com/docs/integrations/pydantic-ai)
-- [W&B Weave](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai/)
-- [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
-- [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
-- [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
-- [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
-- [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
-- [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
-- [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
-- [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
-- [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
-- [Respan](https://respan.ai/docs/integrations/pydantic-ai)
-- [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
-- [Sentry](https://docs.sentry.io/platforms/python/integrations/pydantic-ai/)
-
 ## Advanced usage
 
 ### Prompt-cache health

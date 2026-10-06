@@ -10,9 +10,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncIterable, Generator
 from contextlib import contextmanager
-from typing import Generic, TypeVar
-
-from typing_extensions import Self
+from typing import Generic, Self, TypeVar
 
 from ..exceptions import ModelAPIError
 

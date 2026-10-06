@@ -1,4 +1,4 @@
-from typing_extensions import assert_never
+from typing import assert_never
 
 from .._operation import (
     CapabilityOperationId,

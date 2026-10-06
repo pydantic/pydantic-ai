@@ -33,8 +33,8 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 `~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
-`/new` clears model conversation history, not input recall. `/clear`, or bare
-`clear`, does the same and also clears the screen back to the startup banner.
+`/clear` (alias `/new`), or bare `clear`, clears model conversation history, not
+input recall, and clears the screen back to the startup banner.
 Model responses and tool results are not saved to this file.
 
 ## CI coverage
@@ -229,9 +229,10 @@ value, default, what it does). Type to filter. Enter edits: booleans and the
 model get a picker (the model list is searchable, with "Type a value..." for
 anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`.
+edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+an alias of `/set` and accepts the same arguments.
 
-While a turn is running, `/set`, `/model`, `/model add`, `/model settings`,
+While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
 `/theme`, and `/spinner` typed without further arguments open their menu right
 away instead of queueing.
 The turn keeps running: its output is held while the menu is open
@@ -318,7 +319,7 @@ Settings are validated before writes. `/set` updates the active settings snapsho
 legacy `/config` writes apply on restart; plugin changes apply on the next prompt.
 `--request-limit` controls the full prompt's model-request budget.
 
-Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/help`, `/new`, `/clear`, `/exit`, `/config`, `/plugins`, and `/reload`.
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/help`, `/clear` (alias `/new`), `/exit`, `/config`, `/plugins`, and `/reload`.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history
@@ -447,6 +448,15 @@ muted compact-JSON values. Each value shows at most 40 characters by default; `/
 changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
+With `/set display.tool_calls grouped`, each call adds to a streak of the same tool on one line instead
+of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is redrawn from column zero
+as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
+In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
+mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
+The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
+`edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
+`/set` previews both styles when you pick one. The setting applies to the next turn; the default is `detailed`.
+
 ## Grep previews
 
 Grep calls display the expression and path. Results show the first 20 logical
@@ -537,9 +547,14 @@ class Bell(Plugin):
         self.host.console.bell()
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
-next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
+Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
+importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
+repository with `/plugins add https://github.com/your-org/my-plugin.git` inside
+CLAI. Git repositories need an `__init__.py` or `plugin.py` at their root; install
+any dependencies in CLAI's Python environment first. See
+[where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md#where-plugins-live)
+for supported URLs and checkout management.
+The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Plugins are trusted code running as you.
 
 [PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
