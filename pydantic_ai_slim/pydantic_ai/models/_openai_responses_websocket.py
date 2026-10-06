@@ -60,7 +60,7 @@ class ResponsesWebSocket:
         except (OSError, WebSocketException, TimeoutError) as exc:
             raise ModelAPIError(model_name=model_name, message=f'WebSocket connection failed: {exc}') from exc
 
-        return cls(connection, model_name, headers)
+        return cls(connection, model_name, dict(headers))
 
     async def request(self, body: Mapping[str, object], timeout: Timeout) -> ResponsesWebSocketStream:
         if self.closed:

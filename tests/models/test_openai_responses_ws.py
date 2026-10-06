@@ -472,7 +472,7 @@ async def test_missing_websocket_dependency(monkeypatch: pytest.MonkeyPatch):
             pytest.fail('The optional dependency is required')
 
 
-@pytest.mark.parametrize('invalid', ['headers', 'background', 'body', 'envelope', 'resume'])
+@pytest.mark.parametrize('invalid', ['headers', 'mutated_headers', 'background', 'body', 'envelope', 'resume'])
 async def test_incompatible_options(allow_model_requests: None, sockets: SocketHarness, invalid: str):
     settings: OpenAIResponsesModelSettings = {}
     history: list[ModelRequest | ModelResponse] = []
@@ -484,7 +484,7 @@ async def test_incompatible_options(allow_model_requests: None, sockets: SocketH
         settings['extra_body'] = ['invalid']
     elif invalid == 'envelope':
         settings['extra_body'] = {'stream': True}
-    else:
+    elif invalid == 'resume':
         history.append(
             ModelResponse(
                 parts=[TextPart('partial')],
@@ -495,6 +495,10 @@ async def test_incompatible_options(allow_model_requests: None, sockets: SocketH
         )
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     async with source.connect() as connected:
+        if invalid == 'mutated_headers':
+            assert connected.settings is not None
+            assert 'extra_headers' in connected.settings
+            connected.settings['extra_headers']['x-change'] = 'new'
         with pytest.raises(UserError):
             await Agent(connected, model_settings=settings).run(
                 message_history=history or [ModelRequest(parts=[UserPromptPart('hello')])]
