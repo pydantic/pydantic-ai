@@ -1034,6 +1034,36 @@ class TestLauncherProgram:
         # The message `pai` prints instead of a traceback when its own load fails.
         assert 'Could not load agent' not in completed.stderr + completed.stdout
 
+    @requires_cli
+    def test_cli_argument_error_finishes_the_generated_recorder_without_run_events(self, tmp_path: Path) -> None:
+        invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
+        invalid_argument = '--gh-aw-invalid'
+        completed = subprocess.run(
+            [
+                sys.executable,
+                '-P',
+                '-c',
+                invocation.program,
+                invocation.target,
+                *invocation.cli_args,
+                invalid_argument,
+            ],
+            cwd=invocation.cwd,
+            env=invocation.env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 2
+        assert f'unrecognized arguments: {invalid_argument}' in completed.stderr
+        assert 'AttributeError' not in completed.stderr
+        parsed = parse_log(tmp_path, f'{invocation.stdout}{completed.stdout}{completed.stderr}')
+        assert len(parsed.log_entries) == 1
+        event = parsed.log_entries[0]
+        assert event.type == 'session.result'
+        assert event.data == {'status': 'failure', 'sourceType': 'pydantic-ai'}
+
     def test_a_custom_agent_import_failure_keeps_one_full_traceback(self, tmp_path: Path) -> None:
         workspace = tmp_path / 'workspace'
         workspace.mkdir()
