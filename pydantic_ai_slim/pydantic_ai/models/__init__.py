@@ -720,6 +720,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_request_parameters
 
+    def _prepare_model_settings(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        """Customize merged model settings after generic request preparation."""
+        return model_settings
+
     def _request_thinks(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> bool:
@@ -868,6 +874,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 tool_visibility={t.name: 'visible' for t in params.function_tools},
             )
 
+        model_settings = self._prepare_model_settings(model_settings, params)
         return model_settings, params
 
     def prepare_messages(

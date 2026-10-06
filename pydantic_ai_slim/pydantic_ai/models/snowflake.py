@@ -185,16 +185,16 @@ class SnowflakeModel(OpenAIChatModel):
         return cast(SnowflakeModelProfile, self.profile)
 
     @override
-    def prepare_request(
+    def _prepare_model_settings(
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _snowflake_settings_to_openai_settings(
-            cast(SnowflakeModelSettings, merged_settings or {}), customized_parameters, profile=self._resolved_profile
+    ) -> ModelSettings:
+        return _snowflake_settings_to_openai_settings(
+            cast(SnowflakeModelSettings, model_settings or {}),
+            model_request_parameters,
+            profile=self._resolved_profile,
         )
-        return new_settings, customized_parameters
 
     @override
     def _translate_thinking(

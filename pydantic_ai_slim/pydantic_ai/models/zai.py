@@ -161,21 +161,19 @@ class ZaiModel(OpenAIChatModel):
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
 
     @override
-    def prepare_request(
+    def _prepare_model_settings(
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+    ) -> ModelSettings:
         profile = cast(ZaiModelProfile, self.profile)
-        new_settings = _zai_settings_to_openai_settings(
-            cast(ZaiModelSettings, merged_settings or {}),
-            customized_parameters,
+        return _zai_settings_to_openai_settings(
+            cast(ZaiModelSettings, model_settings or {}),
+            model_request_parameters,
             supports_thinking=profile.get('supports_thinking', False),
             supports_reasoning_effort=profile.get('zai_supports_reasoning_effort', False),
             reasoning_effort_mapping=profile.get('zai_reasoning_effort_mapping', {}),
         )
-        return new_settings, customized_parameters
 
     @override
     def _translate_thinking(
