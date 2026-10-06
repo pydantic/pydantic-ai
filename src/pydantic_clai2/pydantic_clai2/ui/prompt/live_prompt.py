@@ -1,7 +1,6 @@
 """Pinned editor and scrollback ownership, without a PromptSession renderer."""
 
 import asyncio
-import re
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
@@ -28,7 +27,7 @@ from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import SCROLL_KEYS, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -182,8 +181,9 @@ class LivePrompt:
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
-        if key in ('pageup', 'pagedown', 'mouse'):
-            self.scroll(key, data)
+        if key in SCROLL_KEYS:
+            # Leave the draft and the notice alone.
+            self.output.scroll_key(key, data)
             return
         self.notice = ''
         if key != 'escape':
@@ -223,19 +223,6 @@ class LivePrompt:
             self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
-
-    def scroll(self, key: str, data: str) -> None:
-        """Page or wheel through the transcript, leaving the draft and the notice alone."""
-        if key == 'mouse':
-            wheel = _WHEEL.fullmatch(data)
-            # Shift, Alt, and Ctrl add 4, 8, and 16 to the button; anything else is a click.
-            button = int(wheel[1]) & ~(4 | 8 | 16) if wheel else None
-            if button not in (64, 65):
-                return
-            rows = WHEEL_ROWS if button == 64 else -WHEEL_ROWS
-        else:
-            rows = self.output.page if key == 'pageup' else -self.output.page
-        self.output.scroll(rows)
 
     def escape(self) -> None:
         """Cancel or dismiss first; only consecutive idle presses request a rewind."""
@@ -627,10 +614,6 @@ class LivePrompt:
             self._completion_worker.close()
             self.console.file = original
             self.output.restore()
-
-
-WHEEL_ROWS = 3
-_WHEEL = re.compile(r'\x1b\[<(\d+);\d+;\d+[mM]')
 
 
 def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:

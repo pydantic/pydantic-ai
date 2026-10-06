@@ -32,6 +32,10 @@ _UNFINISHED_OSC = re.compile(r'(?:\x1b\][^\x07\x1b]*\x1b?|\x1b)\Z')
 """An OSC, or a lone ESC that may start one, still waiting for its terminator at the end of a write."""
 MAX_HELD_OSC = 4096
 """An unterminated control longer than this is malformed and dropped, as the transcript does."""
+SCROLL_KEYS = frozenset({'pageup', 'pagedown', 'mouse'})
+"""Decoded keys that move the transcript rather than whatever widget is pinned under it."""
+WHEEL_ROWS = 3
+_WHEEL = re.compile(r'\x1b\[<(\d+);\d+;\d+[mM]')
 
 
 class PromptSurface(io.StringIO):
@@ -160,6 +164,19 @@ class PromptSurface(io.StringIO):
             self.view.scroll(rows)
             if self._live and not self._holds:
                 self._paint()
+
+    def scroll_key(self, key: str, data: str = '') -> None:
+        """Page or wheel through the transcript for one of `SCROLL_KEYS`; clicks scroll nothing."""
+        if key == 'mouse':
+            wheel = _WHEEL.fullmatch(data)
+            # Shift, Alt, and Ctrl add 4, 8, and 16 to the button; anything else is a click.
+            button = int(wheel[1]) & ~(4 | 8 | 16) if wheel else None
+            if button not in (64, 65):
+                return
+            rows = WHEEL_ROWS if button == 64 else -WHEEL_ROWS
+        else:
+            rows = self.page if key == 'pageup' else -self.page
+        self.scroll(rows)
 
     @property
     def page(self) -> int:
