@@ -1979,7 +1979,9 @@ output without changing the draft. New output does not move a scrolled view.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme; tool and command
-output rewraps with its original colours. The transcript includes startup and
+output rewraps, and a theme change repaints its colours role by role. Output
+coloured with `theme.color(...)` or the theme's diff and syntax colours follows
+`/theme`; other colours stay as printed. The transcript includes startup and
 plugin lifecycle output. `/reload` preserves it, including when a running session
 upgrades from the older scrollback implementation. It keeps styling, not arbitrary
 terminal controls.

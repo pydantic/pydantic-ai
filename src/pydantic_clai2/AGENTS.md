@@ -226,8 +226,10 @@ renderer would do.
 
 `/theme` offers the unchanged `default` appearance and `termflow.themes.PALETTES`.
 Do not define new palettes. Resolve brand roles with `theme.color(...)` for Rich;
-`theme.sgr(...)` resolves raw ANSI itself. `theme.current()` returns a Termflow
-palette or `None` for the original appearance. Termflow owns palette application
+`theme.sgr(...)` resolves raw ANSI itself. A theme change repaints retained
+transcript lines by translating these roles, so colour output through them,
+and print logo branding inside `theme.branded()` so it keeps its colours.
+`theme.current()` returns a Termflow palette or `None` for the original appearance. Termflow owns palette application
 and reset; `theme.use(...)` leaves the terminal untouched in the default session.
 Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
@@ -331,7 +333,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
-| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
+| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
+| `ui/rendering/recolor.py` | repaints retained styled transcript lines in a newly selected theme |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 | `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `get_spinners`, the user's `spinners.json`, `Spinners` |
 | `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
@@ -426,7 +429,9 @@ reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
 with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source
-for width/theme repaint; tool output keeps styled lines. On exit, `restore`
+for width/theme repaint; tool output keeps styled lines, each tagged with the
+theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
+when the theme changes. On exit, `restore`
 prints retained output into native scrollback once, skipping startup output
 already printed there. Transcript memory is bounded, including Markdown parts.
 Reload rebinds the retained transcript and its nested classes in place after a

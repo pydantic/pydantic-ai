@@ -5,7 +5,7 @@ import io
 import pytest
 from rich.console import Console
 from rich.text import Text
-from termflow.themes import reset_palette
+from termflow.themes import PALETTES, reset_palette
 
 from pydantic_clai2.ui.prompt.prompt_surface import (
     ENTER,
@@ -316,6 +316,23 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
     block.freeze()
     screen.surface.paint(ROWS)
     assert screen.lines()[0] == 'streamed bold', 'an aborted part keeps what it showed'
+
+
+def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> None:
+    def truecolor(colour: str) -> str:
+        red, green, blue = (int(colour[index : index + 2], 16) for index in (1, 3, 5))
+        return f'38;2;{red};{green};{blue}m'
+
+    selected = ['default']
+    screen = Screen(width=40)
+    with theme.use(lambda: selected[0]):
+        screen.write(f'\x1b[{truecolor(theme.color(theme.MUTED))}earlier tool output\x1b[0m\n')
+        screen.surface.paint(ROWS)
+        painted = len(screen.terminal.getvalue())
+        selected[0] = 'tokyo_night'
+        screen.surface.paint(ROWS)
+    assert truecolor(PALETTES['tokyo_night'].ansi[8]) in screen.terminal.getvalue()[painted:]
+    assert screen.lines()[0] == 'earlier tool output'
 
 
 async def test_drain_settles_a_partial_line_once() -> None:

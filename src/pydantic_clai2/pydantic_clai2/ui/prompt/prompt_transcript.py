@@ -16,6 +16,7 @@ from rich.text import Text
 from termflow.ansi.utils import ANSI_ESCAPE_RE, visible_length
 
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.recolor import recolor
 
 # Rich does not recognize palette OSC commands and renders their payload as text.
 _OSC = re.compile(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)')
@@ -149,19 +150,38 @@ class TranscriptDecoder(AnsiDecoder):
 
 
 class _Line:
-    """One completed line, with its rows cached for the last width painted."""
+    """One line and the theme that painted it, with rows cached for the last width and theme.
 
-    def __init__(self, text: Text) -> None:
+    `theme_name` is `None` for branding, which no theme recolours.
+    """
+
+    def __init__(self, text: Text, *, theme_name: str | None) -> None:
         self.text = text
-        self._rows: tuple[int, tuple[str, ...]] = (0, ())
+        self.theme_name = theme_name
+        self._rows: tuple[tuple[int, str], tuple[str, ...]] = ((0, ''), ())
+
+    @classmethod
+    def rebind(cls, line: '_Line') -> '_Line':
+        line.__class__ = cls
+        # Lines retained before themes were recorded were painted in the theme of the reload.
+        vars(line).setdefault('theme_name', theme.name())
+        return line
+
+    def _themed(self) -> Text:
+        """The line in the current theme, translated role by role from the theme that painted it."""
+        current = theme.name()
+        if self.theme_name is None or current == self.theme_name:
+            return self.text
+        return recolor(self.text, source=self.theme_name, target=current)
 
     def rows(self, *, width: int) -> tuple[str, ...]:
-        if self._rows[0] != width:
-            self._rows = (width, wrap(self.text, width=width))
+        key = (width, theme.name())
+        if self._rows[0] != key:
+            self._rows = (key, wrap(self._themed(), width=width))
         return self._rows[1]
 
     def printed(self, *, width: int) -> str:
-        return _encode(_clean(self.text)) + '\n'
+        return _encode(_clean(self._themed())) + '\n'
 
 
 class _Lines:
@@ -173,24 +193,30 @@ class _Lines:
         self.revision = 0
         self.lines: list[_Line] = []
         self.pending = ''
+        self.pending_theme = theme.painted_in()
+        """The theme the unfinished line started in, which its completion keeps."""
         self._decoder = TranscriptDecoder()
 
     @classmethod
     def rebind(cls, stream: '_Lines') -> '_Lines':
         stream.__class__ = cls
         stream._decoder.__class__ = TranscriptDecoder
+        vars(stream).setdefault('pending_theme', theme.name())
         for line in stream.lines:
-            line.__class__ = _Line
+            _Line.rebind(line)
         return stream
 
     def write(self, text: str) -> None:
         self.revision += 1
+        started = self.pending_theme if self.pending else theme.painted_in()
         self.pending = _OSC.sub(replay_osc, self.pending + text)
         *done, self.pending = self.pending.split('\n')
         for line in done:
             decoded = self._decoder.decode_line(line.removesuffix('\r'))[-self.max_chars :]
-            self.lines.append(_Line(decoded))
+            self.lines.append(_Line(decoded, theme_name=started))
             self.chars += len(decoded)
+            started = theme.painted_in()
+        self.pending_theme = started
         self.pending = self.pending[-self.max_chars :]
         while len(self.lines) > self.max_lines or self.chars + len(self.pending) > self.max_chars:
             self.chars -= len(self.lines.pop(0).text)
@@ -203,7 +229,7 @@ class _Lines:
         return decoder.decode_line(complete if escape < 0 else complete[:escape])
 
     def all(self) -> list[_Line]:
-        return [*self.lines, _Line(self.tail())] if self.pending else self.lines
+        return [*self.lines, _Line(self.tail(), theme_name=self.pending_theme)] if self.pending else self.lines
 
 
 class Render(Protocol):
@@ -309,6 +335,8 @@ class TranscriptBuffer:
         """Items before this id are already in the terminal's own scrollback."""
         self._chars = 0
         self._pending = ''
+        self._pending_theme = theme.painted_in()
+        """The theme the unfinished line started in, which its completion keeps."""
         self._discard_until_newline = False
         self._decoder = TranscriptDecoder()
 
@@ -324,7 +352,7 @@ class TranscriptBuffer:
         if '_items' not in vars(transcript):
             retained = cls(max_lines=transcript.max_lines, max_chars=transcript.max_chars)
             for line in cast(deque[Text], vars(transcript)['_lines']):
-                retained._append(_Line(line))
+                retained._append(_Line(line, theme_name=theme.name()))
             retained._pending = transcript._pending
             retained._discard_until_newline = transcript._discard_until_newline
             retained._decoder.style = transcript._decoder.style
@@ -333,12 +361,13 @@ class TranscriptBuffer:
             vars(transcript).update(vars(retained))
         transcript.__class__ = cls
         transcript._decoder.__class__ = TranscriptDecoder
+        vars(transcript).setdefault('_pending_theme', theme.name())
         for item in transcript._items:
             # StringIO is a stable dependency type across CLAI reloads.
             if isinstance(item, io.StringIO):
                 MarkdownBlock.rebind(item)
             else:
-                item.__class__ = _Line
+                _Line.rebind(item)
         return transcript
 
     @property
@@ -365,13 +394,16 @@ class TranscriptBuffer:
                 return
             text = '\n' + text
             self._discard_until_newline = False
+        started = self._pending_theme if self._pending else theme.painted_in()
         self._pending = _OSC.sub(replay_osc, self._pending + text)
         lines = self._pending.split('\n')
         self._pending = lines.pop()
         for line in lines:
             # CRLF is a line ending, not a progress-line overwrite.
             decoded = self._decoder.decode_line(line.removesuffix('\r'))
-            self._append(_Line(decoded[-self.max_chars :]))
+            self._append(_Line(decoded[-self.max_chars :], theme_name=started))
+            started = theme.painted_in()
+        self._pending_theme = started
         if len(self._pending) > self.max_chars:
             cutoff = len(self._pending) - self.max_chars
             for escape in ANSI_ESCAPE_RE.finditer(self._pending):
@@ -443,7 +475,7 @@ class TranscriptBuffer:
     def rows(self, item: int, *, width: int) -> tuple[str, ...]:
         """One item's rows; the unfinished line always has one, the writer's position."""
         if item == self.end:
-            return wrap(self._tail(), width=width)
+            return _Line(self._tail(), theme_name=self._pending_theme).rows(width=width)
         return self._items[item - self._first].rows(width=width)
 
     def _tail(self) -> Text:
