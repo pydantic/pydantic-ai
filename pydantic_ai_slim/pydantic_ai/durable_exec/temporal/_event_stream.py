@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -203,7 +202,7 @@ class AgentEventStream:
         """Wait for a subscriber to drain the stream, then release any that are still polling."""
         try:
             await workflow.wait_condition(lambda: not self._pending_drains, timeout=self._drain_timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         # A subscription is a long-poll update, and a workflow can't return while one is parked.
         # Detaching releases the waiters (and rejects new polls) so the run can finish.

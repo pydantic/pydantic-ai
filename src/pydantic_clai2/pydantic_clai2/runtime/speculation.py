@@ -1,12 +1,14 @@
 """The Speculative Execution switch, its session counters, and the pinned row they paint.
 
 The switch is the `run.speculative_code_mode` setting, off by default. `Ctrl+X Ctrl+S` flips
-it; the next turn honours the new value and a run already in flight keeps the tools it started
-with. The wiring itself lives in `speculative_mode`, imported only while the switch is on so
-Monty stays out of startup.
+it and saves it at once. Core binds a run's tools when it starts, so a turn already running keeps
+the tools it started with and the next prompt uses the new value; meanwhile the pinned row keeps
+counting for the running turn and says the change is pending. The wiring itself lives in
+`speculative_mode`, imported only while the switch is on so Monty stays out of startup.
 """
 
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from rich.console import Console
@@ -67,22 +69,48 @@ class Speculation:
     context: CommandContext
     console: Console
     counters: SpeculationCounters = field(default_factory=SpeculationCounters)
+    _running: bool | None = field(default=None, init=False, repr=False)
+    """The switch as the running turn bound it, or `None` between turns."""
 
     @property
     def enabled(self) -> bool:
         """Read the saved setting each time, so `/set` and the chord agree."""
         return self.context.settings.speculative_code_mode
 
+    @property
+    def _pending(self) -> bool:
+        """Whether the switch differs from what the running turn bound."""
+        return self._running is not None and self._running != self.enabled
+
+    @contextmanager
+    def turn(self) -> Generator[None]:
+        """Remember the switch as the turn starting now binds it, until the turn ends."""
+        self._running = self.enabled
+        try:
+            yield
+        finally:
+            self._running = None
+
     def toggle(self) -> str:
         """Flip and persist the switch; return the footer notice."""
         enabled = not self.enabled
         self.context.set_setting([SETTING, 'true' if enabled else 'false'])
         state = 'on' if enabled else 'off'
-        return f'Speculative execution {state} from the next turn. {TOGGLE_KEYS} toggles it.'
+        if self._pending:
+            return f'Speculative execution {state} from the next prompt; this turn keeps its tools.'
+        return f'Speculative execution {state}. {TOGGLE_KEYS} toggles it.'
 
     def row(self) -> str:
-        """The pinned stats row while the switch is on; nothing while it is off."""
-        return self.counters.row() if self.enabled else ''
+        """The pinned stats row while the switch or the running turn has speculation on.
+
+        When the two differ, the row says what the next prompt gets.
+        """
+        if not (self.enabled or self._running):
+            return ''
+        if not self._pending:
+            return self.counters.row()
+        state = 'on' if self.enabled else 'off'
+        return f'{self.counters.row()}    {theme.sgr(theme.MUTED)}{state} from the next prompt\x1b[0m'
 
     def capabilities(self, granted: Sequence[AgentCapability[AgentDepsT]]) -> 'list[AbstractCapability[AgentDepsT]]':
         """The speculative CodeMode bundle for one run, or nothing while the switch is off.

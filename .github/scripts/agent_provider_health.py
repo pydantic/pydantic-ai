@@ -23,6 +23,9 @@ MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
+_RETIRED_PROVIDER_REASON = (
+    'Workflow passes retired `MINIMAX_API_KEY` instead of `ZAI_API_KEY`; update the workflow from `main`'
+)
 
 Scope = Literal['provider', 'workflow', 'task']
 QuotaStatus = Literal['healthy', 'exhausted', 'unknown']
@@ -699,16 +702,29 @@ def _check_command(args: argparse.Namespace) -> int:
     token = os.environ.get('GITHUB_TOKEN', '')
     if not repo or not token:
         raise ValueError('GITHUB_REPOSITORY and GITHUB_TOKEN are required')
-    quota = _fetch_zai_quota(api_key) if api_key else Quota('unknown')
-    client = GitHubClient(repo, token)
-    health = check_health(
-        workflow or 'unknown',
-        task_key or 'unknown',
-        trigger_event or 'unknown',
-        run_attempt,
-        quota,
-        client.open_incidents(),
-    )
+    # Old compiled workflows fetch this controller from main but still pass MiniMax's environment.
+    if 'MINIMAX_API_KEY' in os.environ and 'ZAI_API_KEY' not in os.environ:
+        health = Health(
+            workflow or 'unknown',
+            task_key or 'unknown',
+            trigger_event or 'unknown',
+            run_attempt,
+            False,
+            _RETIRED_PROVIDER_REASON,
+            _timestamp(_now()),
+            Quota('unknown'),
+        )
+    else:
+        quota = _fetch_zai_quota(api_key) if api_key else Quota('unknown')
+        client = GitHubClient(repo, token)
+        health = check_health(
+            workflow or 'unknown',
+            task_key or 'unknown',
+            trigger_event or 'unknown',
+            run_attempt,
+            quota,
+            client.open_incidents(),
+        )
     if not workflow or not task_key or not trigger_event:
         health = Health(
             health.workflow,
@@ -769,6 +785,9 @@ def _monitor_command(args: argparse.Namespace) -> int:
     health = _health_from_artifact(args.health_artifact)
     if health.run_attempt != run_attempt:
         raise ValueError('provider-health artifact run attempt does not match the triggering workflow_run attempt')
+    if not health.ready and health.reason == _RETIRED_PROVIDER_REASON:
+        print(f'Skipping retired provider configuration: {health.workflow}')
+        return 0
     result = parse_run_result(args.agent_artifact) if args.agent_artifact is not None else None
     if result is not None and (
         result.workflow != health.workflow

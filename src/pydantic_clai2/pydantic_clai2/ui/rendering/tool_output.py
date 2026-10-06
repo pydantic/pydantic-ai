@@ -7,12 +7,13 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
-from rich.console import Console
+from rich.console import Console, Group
 from rich.text import Text
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -21,20 +22,53 @@ def terminal_text(text: str, *, keep: str = '\n\t') -> str:
     return ''.join(char if char.isprintable() or char in keep else f'\\x{ord(char):02x}' for char in text)
 
 
-def print_tool_header(console: Console, *, name: str, argument: str | Text = '') -> None:
-    """Highlight the tool name, leaving its marker and a plain-string argument muted.
+def tool_header(*, name: str, argument: str | Text = '') -> Group:
+    """Highlight the tool name, leaving its marker and a plain-string argument muted, on one row.
 
-    A `Text` argument is appended as-is, so it must already be styled and terminal-safe.
+    A `Text` argument is appended as-is, so it must already be styled and terminal-safe. Line
+    breaks in a string are escaped, so model-supplied text cannot add a forged transcript row. The
+    `Group` keeps the row unwrapped: `Console.print` copies a bare `Text` without its `no_wrap`.
     """
-    text = Text('● ', style=theme.color(theme.MUTED))
-    text.append(terminal_text(name), style=theme.color(theme.ACCENT))
+    text = Text('● ', style=theme.color(theme.MUTED), overflow='ellipsis', no_wrap=True)
+    text.append(terminal_text(name, keep=''), style=theme.color(theme.ACCENT))
     if isinstance(argument, Text):
         if argument:
             text.append(' ')
             text.append_text(argument)
     elif argument:
-        text.append(f' {terminal_text(argument)}', style=theme.color(theme.MUTED))
-    console.print(text, overflow='ellipsis', no_wrap=True)
+        text.append(f' {terminal_text(argument, keep="")}', style=theme.color(theme.MUTED))
+    return Group(text)
+
+
+def print_tool_header(console: Console, *, name: str, argument: str | Text = '') -> None:
+    """Print `tool_header` and the blank line that separates it from what follows."""
+    console.print(tool_header(name=name, argument=argument))
+    console.print()
+
+
+SHELL_COMMAND_ROWS = 10
+"""Most terminal rows a shell command header may take before the rest is summarized."""
+
+
+def print_shell_header(console: Console, command: str) -> None:
+    """Wrap the whole command under a hanging indent, so long one-liners and scripts stay readable.
+
+    Rows beyond `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged.
+    """
+    if not command.strip():
+        print_tool_header(console, name='shell')
+        return
+    muted = theme.color(theme.MUTED)
+    head = Text('● ', style=muted)
+    head.append('shell ', style=theme.color(theme.ACCENT))
+    indent = Text(' ' * head.cell_len)
+    body = Text(terminal_text(command.strip('\n')), style=muted)
+    rows = body.wrap(console, max(console.width - head.cell_len, 1), overflow='fold')
+    for index, row in enumerate(rows[:SHELL_COMMAND_ROWS]):
+        row.rstrip()
+        console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)
+    if len(rows) > SHELL_COMMAND_ROWS:
+        console.print(indent + Text(f'… +{len(rows) - SHELL_COMMAND_ROWS} lines', style=muted), no_wrap=True)
     console.print()
 
 
@@ -96,21 +130,41 @@ class ShellPreview:
 class ToolOutput:
     """Present bounded shell chunks and Termflow-highlighted file diffs."""
 
-    def __init__(self, console: Console, *, shell_lines: int = 20, show_output: bool = False) -> None:
-        """Use the conversation's output stream, not global stdout."""
+    def __init__(
+        self,
+        console: Console,
+        *,
+        shell_lines: int = 20,
+        show_output: bool = False,
+        tool_calls: ToolCallDisplay = 'detailed',
+    ) -> None:
+        """Use the conversation's output stream, not global stdout.
+
+        A `grouped` tool-call style counts shell calls, so it shows no shell header or output.
+        """
         self.console = console
         self.shell_lines = shell_lines
-        self.show_output = show_output
+        self.show_output = show_output and tool_calls == 'detailed'
+        self.tool_calls = tool_calls
         self._shells: dict[str | None, ShellPreview] = {}
         self._headers: set[tuple[str | None, str]] = set()
         self._writes: dict[tuple[str | None, str, str], FileChangeRequestEvent] = {}
 
     def _header(self, name: str, argument: str) -> None:
+        if name == 'shell':
+            print_shell_header(self.console, argument)
+            return
         lines = argument.splitlines()
         summary = lines[0] if lines else ''
         if len(lines) > 1:
             summary += f' (+{len(lines) - 1} command lines)'
         print_tool_header(self.console, name=name, argument=summary)
+
+    def prints_diff(self, event: AgentStreamEvent) -> bool:
+        """Whether `event` is a file's diff, or a call to a tool that prints one, in every tool-call style."""
+        if isinstance(event, FunctionToolCallEvent):
+            return event.part.tool_name in ('write_file', 'edit_file')
+        return isinstance(event, FileWrittenEvent)
 
     def render_call(self, event: FunctionToolCallEvent) -> bool:
         """Show arguments once, before execution, including for failed calls."""
@@ -225,7 +279,7 @@ class ToolOutput:
         if isinstance(event, CommandStartedEvent):
             self._shells[event.tool_call_id] = ShellPreview()
             key = (event.tool_call_id, 'shell')
-            if key not in self._headers:
+            if key not in self._headers and self.tool_calls == 'detailed':
                 self._header('shell', event.command)
             self._headers.discard(key)
         elif isinstance(event, CommandOutputEvent):
