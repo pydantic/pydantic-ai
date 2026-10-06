@@ -24,17 +24,22 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session, chat
 from pydantic_clai2._app import create_shell
+from pydantic_clai2.builtin_plugins.google_workspace import GoogleWorkspacePlugin
+from pydantic_clai2.builtin_plugins.grain import GrainPlugin
+from pydantic_clai2.builtin_plugins.pylon import PylonPlugin
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.plugins.loader import TURN_NOTICE
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from tests.clai2.test_tasks import task
 
@@ -67,19 +72,56 @@ def test_only_bare_opted_in_commands_run_during_a_turn() -> None:
     assert not commands.runs_during_turn('menu')
 
 
+async def test_key_login_resume_and_plugin_settings_menus_open_mid_turn(tmp_path: Path) -> None:
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=Settings(model='test'),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    assert all(shell.commands.runs_during_turn(text) for text in ('/keys', '/login', '/resume'))
+    assert not any(shell.commands.runs_during_turn(text) for text in ('/login openai-codex', '/resume ID'))
+
+    def host(name: str) -> PluginHost[None]:
+        return PluginHost(name=name, console=Console(file=io.StringIO()), settings={})
+
+    for name, loaded in (
+        ('google_workspace', load_plugin(GoogleWorkspacePlugin, host('google_workspace'))),
+        ('grain', load_plugin(GrainPlugin, host('grain'))),
+        ('pylon', load_plugin(PylonPlugin, host('pylon'))),
+    ):
+        assert loaded.commands.runs_during_turn(f'/{name}')
+        assert not loaded.commands.runs_during_turn(f'/{name} status')
+
+
 async def test_run_worker_holds_output_only_while_the_widget_runs() -> None:
     log: list[str] = []
 
     @contextmanager
-    def hold() -> Generator[None]:
-        log.append('hold')
+    def hold(*, leave_screen: bool) -> Generator[None]:
+        log.append(f'hold leave_screen={leave_screen}')
         yield
         log.append('replay')
 
     with holding_output(hold):
         assert await run_worker(lambda: log.append('menu') or 'done') == 'done'
+        await run_worker(lambda: log.append('inline'), inline=True)
     await run_worker(lambda: log.append('unheld'))
-    assert log == ['hold', 'menu', 'replay', 'unheld']
+    assert log == [
+        'hold leave_screen=True',
+        'menu',
+        'replay',
+        'hold leave_screen=False',
+        'inline',
+        'replay',
+        'unheld',
+    ]
 
 
 async def test_overlay_takes_turns_with_widgets_without_pausing_the_stream() -> None:
@@ -131,14 +173,12 @@ async def test_model_settings_saved_mid_turn_reach_the_running_models_next_reque
 ) -> None:
     """An edit saved from a menu worker thread while a tool runs applies to the same turn's next request."""
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
-    written: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if 'Finished work' in ''.join(written):
+        def changed(self) -> None:
+            super().changed()
+            if 'Finished work' in _plain(self.transcript):
                 streamed.set()
-            return super().write(text)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     store = SettingsStore(tmp_path / 'config.db')
@@ -218,14 +258,12 @@ def test_menu_opens_mid_turn_on_a_plain_asyncio_loop(tmp_path: Path, monkeypatch
 async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     working, finish, streamed, done = anyio.Event(), anyio.Event(), anyio.Event(), anyio.Event()
     opened, close = threading.Event(), threading.Event()
-    written: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if 'Finished work' in ''.join(written):
+        def changed(self) -> None:
+            super().changed()
+            if 'Finished work' in _plain(self.transcript):
                 streamed.set()
-            return super().write(text)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
 
@@ -270,7 +308,7 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
             close.set()
             pipe.send_text('/exit\r')
             await done.wait()
-    text = output.getvalue()
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert text.index('> /menu') < text.index('Finished work') < text.index('menu closed') < text.index('Goodbye.')
 
 
@@ -401,20 +439,23 @@ async def test_plugins_typed_mid_turn_apply_at_once_and_end_after_the_run(
         assert text.index(reply) < text.index('alpha ended') < text.index('> /exit')
 
 
+def _plain(transcript: TranscriptBuffer) -> str:
+    """Streamed Markdown lands in the transcript, not in `write`."""
+    return Text.from_ansi('\n'.join(transcript.frame(width=200, height=500).rows)).plain
+
+
 async def test_speculation_toggled_mid_turn_shows_at_once_and_binds_on_the_next_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`Ctrl+X Ctrl+S` saves the switch and repaints at once; the running turn keeps its tools."""
     working, finish, noticed, answered, done = (anyio.Event() for _ in range(5))
-    written: list[str] = []
     frames: list[str] = []
 
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            written.append(text)
-            if ''.join(written).count('Finished work') >= 2:
+        def changed(self) -> None:
+            super().changed()
+            if _plain(self.transcript).count('Finished work') >= 2:
                 answered.set()
-            return super().write(text)
 
         def paint(self, rows: tuple[str, ...]) -> None:
             frames.append('\n'.join(Text.from_ansi(row).plain for row in rows))

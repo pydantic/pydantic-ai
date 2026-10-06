@@ -693,7 +693,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 # Installed only for a record, and a record exists only under the owner that `current` returns.
                 if owner is not None and record is not None:  # pragma: no branch
                     record.messages = child_ctx.messages
-                    await owner.notify(record, event)
+                    # The model streaming this request, so an observer can show the child's context usage.
+                    model = child_ctx.model
+                    await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
                 yield event
 
         if self._event_stream_handler is not None:
@@ -719,7 +721,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         timeout = sub_agent.timeout_seconds
         try:
             result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             if timeout is None or isinstance(exc, HookTimeoutError):
                 # The child itself timed out: a hook overran its own budget, or no
                 # delegation budget is set at all. That is a child crash, so the

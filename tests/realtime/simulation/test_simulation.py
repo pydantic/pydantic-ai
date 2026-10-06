@@ -888,6 +888,21 @@ def test_known_live_parallel_calls_leak_reservations() -> None:
     reproduce('SIM-6', LiveSimulation(), scenario)
 
 
+@known('SIM-6')
+def test_known_live_results_of_delegations_in_a_row_answered_together() -> None:
+    """Two delegations each call a tool; the model answers both results with one reply, which leaves one owed."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        sim.delegate()
+        sim.backend_call()
+        sim.settle()
+
+    reproduce('SIM-6', LiveSimulation(), scenario)
+
+
 @known('SIM-7')
 def test_known_live_queued_text_answered_together() -> None:
     def scenario(sim: LiveSimulation) -> None:
@@ -1332,6 +1347,24 @@ def test_scenario_openai_connection_faults() -> None:
         sim.speech_stop()
 
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
+def test_scenario_failed_audio_commit_after_an_unacknowledged_commit() -> None:
+    """A failed second commit removes only its own bookkeeping before the socket reconnects."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.commit_audio()
+        sim.send_audio()
+        sim.fail_next_send()
+        sim.commit_audio()
+        commits = [operation for operation in sim.operations if operation.name == 'commit_audio']
+        assert len(commits) == 2
+        assert commits[0].done and commits[0].error is None
+        assert commits[1].done and commits[1].error is not None
+        assert sim.server.network.failed_sends[-1][0] == 'input_audio_buffer.commit'
+
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
 
 
 def test_scenario_xai_resumption() -> None:

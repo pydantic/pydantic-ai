@@ -13,6 +13,7 @@ module stays usable without `pymongo` installed.
 
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness.media._postgres import PostgresConnection, PostgresMediaStore, PostgresPool
 from pydantic_ai_harness.media._s3 import S3MediaStore
 from pydantic_ai_harness.media._store import (
     DiskMediaStore,
@@ -37,6 +38,9 @@ __all__ = [
     'MediaContext',
     'MediaStore',
     'MongoMediaStore',
+    'PostgresConnection',
+    'PostgresMediaStore',
+    'PostgresPool',
     'PublicUrlResolver',
     'S3MediaStore',
     'SqliteMediaStore',

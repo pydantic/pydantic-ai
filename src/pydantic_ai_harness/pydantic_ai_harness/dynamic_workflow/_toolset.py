@@ -15,11 +15,11 @@ import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Annotated, Any, Generic, Literal, cast
+from typing import Annotated, Any, Generic, Literal, Self, cast
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
-from typing_extensions import Self, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent

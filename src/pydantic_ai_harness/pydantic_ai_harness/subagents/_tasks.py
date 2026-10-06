@@ -73,6 +73,10 @@ class DelegationTaskEvent:
 
     task: DelegationTask
     event: AgentStreamEvent | None = None
+    model_name: str | None = None
+    """The model the child run is using, for events from the child's own stream; `None` otherwise."""
+    context_window: int | None = None
+    """That model's context window, when its profile knows one, so a UI can show the child's context usage."""
 
 
 Observer = Callable[[DelegationTaskEvent], Awaitable[None]]
@@ -198,10 +202,19 @@ class DelegationTasks:
         """Capture child steps using the application's existing persistence store."""
         return [StepPersistence(store=self.step_store, capture_frontier=True)] if self.step_store is not None else []
 
-    async def notify(self, record: DelegationTask, event: AgentStreamEvent | None = None) -> None:
-        """Send correlated activity to the application's observer."""
+    async def notify(
+        self,
+        record: DelegationTask,
+        event: AgentStreamEvent | None = None,
+        *,
+        model_name: str | None = None,
+        context_window: int | None = None,
+    ) -> None:
+        """Send correlated activity, and the child's model when known, to the application's observer."""
         if self.observer is not None:
-            await self.observer(DelegationTaskEvent(task=record, event=event))
+            await self.observer(
+                DelegationTaskEvent(task=record, event=event, model_name=model_name, context_window=context_window)
+            )
 
     async def save(self, record: DelegationTask) -> None:
         """Atomically replace one child's persisted history."""

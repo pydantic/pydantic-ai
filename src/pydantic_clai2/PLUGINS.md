@@ -326,7 +326,7 @@ there are no background workers to stop.
 
 The built-in `observability` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
-isolated Logfire instance, not process-wide instrumentation or custom tracing
+isolated Logfire instance, not process-wide agent instrumentation or custom tracing
 hooks. Agent/model/tool spans include timing, token usage, failures, text content,
 and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
@@ -367,7 +367,7 @@ credentials file was found. Scripts can replace the declaration instead:
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
-`include_binary_content` (both default `true`), and `send_to_logfire` (default
+`include_binary_content` (both default `true`), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
 over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
@@ -375,7 +375,11 @@ whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
 exports nothing rather than falling back to another project.
 Content flags do not suppress all metadata: tool names and definitions may still
-be recorded. Logfire's usual scrubbing is enabled.
+be recorded. Logfire's usual scrubbing is enabled. Set `httpx` to `true` to
+instrument `httpx` and `httpx2` requests process-wide while this plugin is loaded.
+With `include_content=true`, Logfire captures HTTP headers and request and response
+bodies too; with it off, those are not captured. HTTP instrumentation is removed
+on unload unless it was already installed by another owner.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
 `LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
@@ -403,18 +407,25 @@ again. `git-email` uses `git config user.email` (Git is queried only then), and
 `false` turns the tag off. Set **User tag** in
 `/plugins configure observability`.
 
-`ui_events` (default `false`) also records CLAI's UI interactions on the same
+`ui_events` (default `true`; set `false` to opt out) also records CLAI's UI interactions on the same
 instance, as spans and logs in the `clai2` instrumentation scope, which session
 roots and plugin load failures share: menus opened and how they closed, slash
 commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
-resume. Attributes carry names and listed choices, never prompt text, typed
-values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
+resume. Attributes carry names and listed choices, never typed values or
+secrets. The exception follows `include_content`, like agent spans: while it is
+on, a `prompt submitted` record also carries the prompt's text as `prompt`, cut
+to 64,000 characters (`chars` keeps the full length). A `!` line records only
+its kind and length: it never reaches the agent, and it can hold a secret such
+as `!export KEY=...`. A slash command records only its name, never its
+arguments, because any plugin can add a command and its arguments can hold a
+secret. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
 `run_worker` opens every menu's span, so a new menu is covered without extra
 code.
 With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `setting`, `key_name`, ...) are exempt from scrubbing, since names like
-`OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.
+`OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted. So is
+`prompt`, which agent spans already record unscrubbed.
 
 Unload flushes and shuts down only this plugin's providers. Reload creates a new
 instance. The supplied agent and global providers are unchanged, and the existing
@@ -545,7 +556,8 @@ spans.
 
 The built-in `logfire_mcp` plugin (`pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
 the tools of Logfire's hosted MCP server through harness
-[`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
+[`LogfireMCP`](../../docs/harness/logfire-mcp.md), each named `logfire_` plus the
+server's name for it (`logfire_query_run`). It starts disabled.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
 `/plugins configure logfire_mcp` or `c` in `/plugins`.
@@ -670,7 +682,7 @@ this directory is an executable startup configuration, not a sandbox. The defaul
 Coder runs as your OS user and can modify it, just as it can modify your shell
 startup files. Use a separate OS identity or sandbox for untrusted agent work.
 
-Two ways to install one:
+Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
@@ -682,6 +694,41 @@ Two ways to install one:
    clai2 plugins add notify my_package.notify
    /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": true}'
    ```
+3. From inside CLAI, clone a trusted Git repository:
+
+   ```text
+   /plugins add https://github.com/your-org/my-plugin.git
+   /plugins add git@github.com:your-org/my-plugin.git
+   ```
+
+   Git must be installed and available on `PATH`. On Windows, CLAI resolves
+   `git.exe` only from absolute `PATH` directories outside the working directory.
+   The repository must have an `__init__.py` or `plugin.py`
+   at its root that defines one public `Plugin` subclass. If both exist,
+   `__init__.py` is used. Relative imports can load other files from the checkout.
+   Install the plugin's dependencies in CLAI's Python environment first; this
+   command does not install packages or run build scripts.
+
+   CLAI clones the default branch into `plugins/_git/my_plugin/` under its
+   configuration directory. The repository name becomes the plugin ID, with
+   hyphens and dots replaced by underscores. Names must start with a letter and
+   contain only letters, digits, dots, hyphens, or underscores. Existing plugins
+   and checkouts are never replaced. Network URLs must use HTTPS or SSH (including
+   `git@host:path`); these may also start with `git+`. SCP-style URLs require
+   `user@host:path`; use `ssh://host/path` for an SSH alias without an explicit user.
+   Local `file://` URLs work too.
+   Plaintext `http://` and `git://` transports are rejected because they cannot
+   authenticate the plugin code being downloaded.
+   Authentication uses your existing Git credentials without terminal prompts.
+   CLAI removes failed or cancelled clones. If the operating system prevents
+   cleanup, clear the leftover checkout directory before retrying.
+   If the plugin itself fails to load,
+   its checkout and declaration remain so you can fix it and `/plugins enable my_plugin`.
+   To update, run `!git -C <checkout-directory> pull --ff-only`, then
+   `/plugins reload my_plugin`. Reloading by itself does not fetch from Git.
+   `/plugins remove my_plugin` unloads it and forgets its declaration, but keeps
+   the checkout so local changes are not lost. To reinstall, delete the checkout
+   directory named in the response, then run `/plugins add GIT_URL` again.
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
@@ -856,12 +903,14 @@ repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
 [Project settings](README.md#project-settings).
 
-Some plugins already include others. `coder` includes context management and
-task delegation, so while `coder` is on, `compaction` stays off, and so does a
-harness `SubAgents` row (such as `subagents`) unless `coder` has `sub_agents`
-turned off: `/plugins` shows them greyed out with
-`in coder`, `/plugins list` says `included in coder`, and enabling one says to
+Some plugins already include others. `coder` includes task delegation, so while
+`coder` is on, a harness `SubAgents` row (such as `subagents`) stays off unless
+`coder` has `sub_agents` turned off: `/plugins` shows it greyed out with
+`in coder`, `/plugins list` says `included in coder`, and enabling it says to
 disable `coder` first. Turning `coder` off loads any of them you had enabled.
+`coder` only clears old tool results, so `compaction` runs beside it. Were `coder`
+to bind its own history compaction, `compaction` would be greyed out the same way,
+so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
@@ -872,8 +921,8 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the README) and reloads it for the next turn; it refuses
-while `coder` includes the plugin. A declaration under the same name changes them too:
+`summarization_model`; see the README) and reloads it for the next turn. A
+declaration under the same name changes them too:
 
 ```text
 /plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "context_window": 200000}'
@@ -889,8 +938,9 @@ visible. Up/Down moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
 several. Esc or Ctrl-C declines the whole request and lets the model continue.
-The picker uses `host.full_screen()` only to flush streaming output and suspend
-the editor's input reader. It does not switch to the alternate screen. The draft
+The plugin's `render` replaces the tool's argument dump with a header that lists
+the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
+the editor's input reader. It keeps the live panel's alternate screen. The draft
 is restored on exit, and your picks are printed to the transcript afterwards.
 `/plugins disable ask_user` takes the tool away.
 
@@ -1181,9 +1231,12 @@ Tokens are kept out of plugin settings, which are stored in plaintext:
   `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so later sessions
   reuse and refresh them. Choosing it saves `{"auth": "oauth"}`, which keeps
   using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. If you are not
-  signed in yet, the browser opens when the menu closes. A failed sign-in fails
-  the load, so nothing is added. A headless run that is not signed in fails to
-  load rather than opening a browser.
+  signed in yet, the browser opens right away, behind a waiting screen. Esc
+  cancels it, and a failed sign-in is reported in the menu. Either way Day AI
+  stays signed out and CLAI keeps working. Loading never opens the browser.
+  While browser sign-in is chosen but not finished, the plugin loads without
+  Day AI tools and prints how to sign in, so a sign-in you cannot finish never
+  holds up a session.
 
 Until you choose one, with no `DAY_AI_ACCESS_TOKEN` and no earlier sign-in,
 the plugin loads without Day AI tools and prints how to connect. A key named
@@ -1513,18 +1566,19 @@ failed. A plugin that is installed but fails to import one of its dependencies
 is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
 
-With arguments `/plugins` is a plain command, and `clai2 plugins ...` outside
-CLAI does the same thing:
+With arguments `/plugins` is a plain command. The standalone `clai2 plugins ...`
+commands edit saved declarations without loading plugin code. Git installation,
+configuration menus, and live reloading are available only inside a CLAI session:
 
 | Command | Does |
 |---|---|
 | `/plugins list` | show every plugin and whether it is on |
 | `/plugins add NAME module[:Class] [JSON]` | save it and load it now |
-| `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
+| `/plugins add GIT_URL` | clone a trusted repository and load its plugin (in a CLAI session only); see [where plugins live](#where-plugins-live) |
+| `/plugins remove NAME` | forget an installed declaration, keeping any Git checkout on disk; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
-| `/plugins configure NAME` | open a loaded plugin's settings menu (in a CLAI session only) |
-| `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
-| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure`; `enable` and `add` open it too |
+| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure` (in a CLAI session only); `enable` and `add` open it too |
+| `/plugins reload NAME` | re-import the file and load it again (in a CLAI session only; does not fetch Git updates) |
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,
@@ -1809,6 +1863,9 @@ list when there is none); `/fork` does this so prompts keep their apostrophes.
 It may be `async`. Add `complete=` to offer Tab suggestions. The registry filters
 command names and returned candidates by case-sensitive substring, replacing the
 whole typed fragment when selected. Return full candidates, not just suffixes.
+Command names are listed exact match first, then names that start with the typed
+fragment; the first is highlighted as you type. Candidates keep the order
+`complete=` returns them in, and none is highlighted until Tab or Up/down picks one.
 Set `available=` to a zero-argument callable returning a boolean to gate dispatch,
 help, and completion on live session state. It defaults to always available.
 Unavailable commands retain their registered names and ownership, so they still
@@ -1863,11 +1920,14 @@ Redirected Markdown output does not emit hyperlinks. Destinations longer than
 Built-in tool rendering shows one summary line per call by default, clipped to
 the terminal width and followed by a blank line. Tool names are pink; arguments
 and bullet markers are muted grey. Successful file writes and edits show their
-diffs even in compact mode. Shell output and completion details and grep results
+diffs even with `display.tool_output` off. Shell output and completion details and grep results
 are hidden from the terminal, not from the model. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
-diffs, plugin renderers, or interactive questions.
+diffs, plugin renderers, or interactive questions. With `/set display.tool_calls grouped`,
+calls no renderer claims are counted by tool on one line instead, except `edit_file` and
+`write_file`, which still print their summary and diff; `display.tool_output`
+has no effect, and anything a renderer draws ends that line.
 
 CLAI shows unknown tool calls as `● tool_name`, with the name in pink. To show something
 better, return a Rich renderable (a `str` is fine). Return `None` to say "not mine,
@@ -1890,6 +1950,11 @@ class Writes(Plugin):
 
 CLAI flushes any streaming text before it prints what you return, so your output
 never lands in the middle of a paragraph.
+
+`/resume` shows the restored conversation through the same renderers. It sends
+`FunctionToolCallEvent` and `FunctionToolResultEvent` built from the saved
+messages, so a renderer for those also draws resumed turns. Events that only
+streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
@@ -1927,19 +1992,23 @@ The spinner uses the same pink `ACCENT` as tool names, while the label and borde
 stay muted. The indicator appears
 without adding an input row or changing the draft. The indicator uses the editor's refresh cycle, adds no
 background task, and is hidden while a full-screen interface owns the terminal.
-The editor reserves bottom rows with terminal scrolling margins. Both partial
-and complete output go straight to the transcript region, without suspending or
-repainting the input box. The shell paints changed editor rows itself, using
-Termflow layout helpers; it does not run a prompt-toolkit renderer. Its cursor
-is a nonblinking highlighted cell, separate from the transcript cursor.
-Resize blanks the visible viewport and buffers transcript writes until the size
-has been stable for 250 ms. It then replays a bounded recent transcript tail and
-restores the draft; it does not erase terminal scrollback or conversation history.
-The buffer includes startup and plugin lifecycle output. It retains ANSI styling,
-not arbitrary terminal-control operations.
-Use `self.host.full_screen()` for widgets instead of printing cursor-control sequences
-into the transcript. Large output bursts during resize spill to a private temporary
-file and are flushed in order after the viewport is rebuilt.
+The editor and transcript share a Termflow live cell buffer on the alternate
+screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
+output without changing the draft. New output does not move a scrolled view.
+A mouse drag selects painted cells, and releasing it copies them to the clipboard.
+On exit, the retained transcript prints into native terminal scrollback.
+Resize, theme changes, and returning from a menu repaint from the transcript.
+Assistant Markdown renders again at the new width and theme; tool and command
+output rewraps, and a theme change repaints its colours role by role. Output
+coloured with `theme.color(...)` or the theme's diff and syntax colours follows
+`/theme`; other colours stay as printed. The transcript includes startup and
+plugin lifecycle output. `/reload` preserves it, including when a running session
+upgrades from the older scrollback implementation. It keeps styling, not arbitrary
+terminal controls.
+Use `self.host.full_screen()` for widgets instead of printing cursor-control
+sequences into the transcript. `run_worker` temporarily leaves the live panel
+for full-screen widgets; output continues into the transcript without painting
+until the widget closes. Inline questions keep the panel on screen.
 The Termflow smoothing defaults match Code Puppy: responses use 12 ms ticks, a 0.5-second
 catch-up window, and at least one character per tick; thinking uses 20 ms ticks,
 a 0.4-second window, and at least two characters per tick, and renders as dimmed
@@ -2181,11 +2250,13 @@ again. Services with Dynamic Client Registration need none of this: add them as
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
-`await commit_messages(...)` persists and swaps it between turns, and
-`resolved_model()` is the model the next prompt will use. Local `!command`
-executions append a user message with the command, stdout, stderr, and
-completion status. They do not start an agent turn or fire turn hooks; the
-context reaches the model on the next prompt.
+`await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
+model CLAI or the user selected for the next prompt. A capability that selects a model, such as
+Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
+status row still name the selected one, and `/compact` and session naming (without a
+`sessions.naming_model`) run on it. Local `!command` executions append a user message
+with the command, stdout, stderr, and completion status. They do not start an
+agent turn or fire turn hooks; the context reaches the model on the next prompt.
 
 `host.session_id` is the current saved conversation ID, following `/clear` and
 `/resume`. During a run it identifies that run's conversation, including a
@@ -2201,7 +2272,9 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 explicit window override, and clears the window when unloaded. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
-with `get_status_segments`.
+with `get_status_segments`. While the main run waits on a subagent, the row
+shows that subagent's figures instead. These fields keep the main conversation's
+values meanwhile and show again when it settles; segments stay on the row.
 
 The double-Esc rewind menu also uses `commit_messages` between turns. It removes
 the selected prompt and later history, but does not undo plugin state, file
@@ -2306,6 +2379,12 @@ CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'
 models get that provider's controls instead, such as Claude's thinking mode and
 effort. Any other value raises `ValueError`.
 
+The built-in `/effort [VALUE|reset]` shortcut uses the active model's
+`/model settings` effort control, including a plugin provider's `settings_from`
+mapping. It saves values under the plugin model identifier, not the mapped provider.
+Custom effort body parameters take precedence; `/effort` identifies these overrides
+and asks you to remove them before saving a native effort value.
+
 ### Add a sign-in to `/login`: `get_logins()`
 
 `/login NAME` signs in to a subscription: `openai-codex` and `github-copilot`
@@ -2343,6 +2422,68 @@ add one name, the later one wins. Unloading the plugin removes it.
 Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
 `names`) are added to the saved model list, so `/model` and `/model settings`
 offer them without adding them first. A failed sign-in adds nothing.
+
+### Several accounts: `resolve_profile` and `profile_handler`
+
+Users can sign in to more than one account per provider. An account other than
+the default is a profile: `/login NAME@PROFILE` signs in to it, and
+`PREFIX@PROFILE:MODEL` runs on it. A fallback chain (made in `/model`) can then pool
+accounts, moving to the next one when a request fails. To support profiles, set
+both optional fields:
+
+```python
+PROVIDER = ModelProvider(
+    prefix='my-service', resolve=resolve, resolve_profile=resolve_profile, models=('fast', 'smart')
+)
+PluginLogin(name='my-service', handler=sign_in, profile_handler=sign_in_profile, models=PROVIDER.names)
+```
+
+`resolve_profile(NAME, PROFILE)` builds the model for that account, in a worker
+thread like `resolve`. `profile_handler(PROFILE)` signs in to it; on success the
+`models` are saved with the profile, as `PREFIX@PROFILE:NAME`. Keep each profile's
+tokens apart, for example one keyring entry per profile, and keep the default
+profile where it was so existing sign-ins still work. A profile name is 1 to 32
+lowercase letters, digits, hyphens, or underscores, and never `default`, so you can
+keep the default account under that name. CLAI checks it before calling you. Without these fields, a model or sign-in naming a profile fails with a
+message saying the plugin has one account.
+
+Each successful `/login NAME` or `/login NAME@PROFILE` puts the account in
+`/accounts`, under your first model's prefix (`claude-code`, not `claude`), so
+users can add, order, and pick your accounts without typing a profile, and
+`PREFIX@*:MODEL` tries them in that order. So does `PREFIX:MODEL` once two or more
+are listed, unless the user turns `accounts.pool` off; `PREFIX@default:MODEL`
+reaches your `resolve`, never `resolve_profile`. CLAI cannot see your tokens, so it
+lists an account from the time it signed in until the user removes it there;
+removing one does not sign it out of your plugin, and the menu says so. Offer your
+own logout for that.
+
+### Account usage: `usage`
+
+Set `usage` on your `PluginLogin` to show each account's current usage in
+`/accounts`, as CLAI does for ChatGPT/Codex and Copilot. CLAI calls
+`usage(PROFILE)` (`None` for the default account) in the background while the
+menu is open, every account at once, and stops waiting after a few seconds.
+Return an `AccountUsage`: its `windows` (each a `UsageWindow` with a short
+`label`, `used_percent` from 0 to 100, and an optional timezone-aware
+`resets_at`), most pressing first, and its `plan` when you know it. Raise
+`UserError` with a short reason when usage is unavailable; the menu shows it.
+
+```python
+from pydantic_clai2.plugins import AccountUsage, PluginLogin, UsageWindow
+
+
+async def usage(profile: str | None) -> AccountUsage:
+    limits = await my_service.limits(profile)  # your own client, with your tokens
+    return AccountUsage(
+        windows=(UsageWindow(label='5h', used_percent=limits.session, resets_at=limits.session_resets),),
+    )
+
+
+PluginLogin(name='my-service', handler=sign_in, models=PROVIDER.names, usage=usage)
+```
+
+The row shows the first two windows, such as `5h 92% · 7d 43%`; the details
+panel shows a bar and reset time for each.
 
 ## Rules that keep plugins predictable
 
@@ -2474,8 +2615,8 @@ checking that the provider serves it, so a wrong name fails on the next prompt.
 `/model add PROVIDER:NAME` does the same. Adding a model also selects it for the
 next prompt. `/model settings [NAME]` edits a model's settings. Tab suggests the
 `add` and `settings` subcommands and added models; model names normally start
-with a provider, so no real model is called `add` or `settings`. `/add_model`
-and `/model_settings` remain as deprecated spellings.
+with a provider, so no real model is called `add` or `settings`. `/model add`
+and `/model settings` remain as deprecated spellings.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 
@@ -2582,7 +2723,13 @@ GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
 default to `thinking=true`, `service_tier=default`, reasoning effort `medium`,
 context `all_turns`, mode `standard`, summary `detailed`, and verbosity `low`.
 Explicit per-model values win; reset restores the family default without saving
-it as an override. Other models keep their existing defaults. Provider-specific
+it as an override. Other models keep their existing defaults. Family defaults
+follow the model each request uses and sit beneath the settings of
+capabilities, a plugin's or your agent's, so a capability can change them; an
+agent's own `model_settings` stay beneath the defaults. The values you saved for
+the session's model (the one you chose, or CLAI's default) are passed to each run
+and win over everything else on requests to that model; a request on a model a
+capability selected instead gets only that model's family defaults. Provider-specific
 fields are consumed only by APIs that support them; this does not add Responses
 controls to Chat Completions or other protocols.
 
@@ -2703,3 +2850,12 @@ replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or
 printing directly to stdout. `--resume SESSION-ID` restores history without a
 browser or tool replay.
+
+## The stock agent from code
+
+`open_stock_agent` loads only the `coder`, `repo_context`, and `compaction` built-ins,
+with `plugin_settings` merged over their stock settings. Saved, drop-in, and project
+plugins never load. Each plugin gets `session_start` when the context opens and
+`session_end` when it closes, with reason `error` if the block raised. No turn hooks
+fire, no `/commands` run, and nothing renders: the host runs the agent. See
+[The stock agent in your own code](README.md#the-stock-agent-in-your-own-code).

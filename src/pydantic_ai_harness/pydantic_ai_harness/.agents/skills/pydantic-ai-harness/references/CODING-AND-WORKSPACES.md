@@ -407,6 +407,13 @@ CLI can read and write host files (`file://`, `s3 cp`).
 `clai2 --worktree NAME` starts in a new git worktree (not a sandbox). To chat with your own agent:
 `asyncio.run(chat(agent, deps=None))` with `from pydantic_clai2 import chat`.
 
+To run CLAI's stock coding agent from code or over ACP, without the terminal:
+`async with open_stock_agent(workspace=path, model=...) as agent:` from `pydantic_clai2`. It binds the
+`coder`, `repo_context`, and `compaction` built-ins plus your `capabilities`, and ignores the user's
+saved CLAI configuration. `plugin_settings={'coder': {...}}` overrides built-in settings. With a
+capability that requires approval over ACP, pass `{'coder': {'sub_agents': False}}`: a delegated
+task's approval fails the run.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/coder/

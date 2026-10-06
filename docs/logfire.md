@@ -239,24 +239,6 @@ print(result.output)
 
 Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
 
-The following providers have dedicated documentation on Pydantic AI:
-
-<!--Feel free to add other platforms here. They MUST be added to the bottom of the list, and may only be a name with link.-->
-- [Langfuse](https://langfuse.com/docs/integrations/pydantic-ai)
-- [W&B Weave](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai/)
-- [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
-- [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
-- [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
-- [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
-- [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
-- [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
-- [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
-- [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
-- [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
-- [Respan](https://respan.ai/docs/integrations/pydantic-ai)
-- [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
-- [Sentry](https://docs.sentry.io/platforms/python/integrations/pydantic-ai/)
-
 ## Advanced usage
 
 ### Prompt-cache health
@@ -293,7 +275,7 @@ The established prefix is tracked per [conversation](message-history.md#correlat
 
 Model switches never register as collapses: the established prefix is tracked per provider, endpoint, and model, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover starts a fresh mark, and switching back is judged against the original one.
 
-The retention window is the one the request's settings ask for, such as `anthropic_cache='1h'` or [`openai_prompt_cache_retention='24h'`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention], as resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], or else the provider's documented [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]. Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend it; when there is no known retention, collapses stay `unknown` even if cache points carry TTLs.
+The retention window is the one the request's settings ask for, such as `anthropic_cache='1h'` or [`openai_prompt_cache_retention='24h'`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] on models before GPT-5.6, as resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], or else the provider's documented [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]. Explicit [`CachePoint`][pydantic_ai.messages.CachePoint] TTLs extend it; when there is no known retention, collapses stay `unknown` even if cache points carry TTLs.
 
 To surface the same collapses as Python warnings during development and in CI, use Pydantic AI Harness's [Warn On Cache Busts](harness/warn-on-cache-busts.md) capability: it shares this detector and classification, and warns on `unexpected` and `unknown` collapses.
 
