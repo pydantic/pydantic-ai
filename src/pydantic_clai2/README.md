@@ -1296,7 +1296,9 @@ for that.
 The built-in `compaction` plugin is on by default, with or without `coder`.
 It uses harness's `FallbackCompaction` with
 `SummarizingCompaction` first and `SlidingWindowCompaction` as the fallback.
-It protects the most recent 50,000 tokens. `ModelAPIError`,
+It protects the most recent 50,000 tokens (`protected_tokens`) from summarising and
+truncation. `coder`'s own tool-result clearing is separate: above 70% of the window it
+still empties tool results older than its last three tool calls. `ModelAPIError`,
 `FallbackExceptionGroup`, and `UsageLimitExceeded` during summarisation fall
 back to truncation; other exceptions propagate. The summary request is billed
 to the current model unless `summarization_model` selects another.
