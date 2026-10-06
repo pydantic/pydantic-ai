@@ -117,7 +117,7 @@ jobs:
               return 0
             fi
             case "$1" in
-              .agents/*.md|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
+              .agents/*.md|.agents/*.tsv|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
               *.md) [[ "$1" != */* ]] ;;
               *) return 1 ;;
             esac
