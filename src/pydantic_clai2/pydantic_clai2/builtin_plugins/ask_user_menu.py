@@ -29,7 +29,7 @@ from pydantic_clai2.plugins import FullScreen, Plugin
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
-from pydantic_clai2.ui.prompt.question_input import Paste, question_input
+from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, Scroll, question_input
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -132,7 +132,7 @@ class QuestionMenu:
             theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
         )
 
-    def run(self, *, console: Console, key_source: Callable[[], str | Paste]) -> tuple[str, ...] | str | None:
+    def run(self, *, console: Console, key_source: Callable[[], QuestionKey]) -> tuple[str, ...] | str | None:
         """Borrow the released editor's live panel, or open one for this question alone."""
         surface = console.file
         owned = not isinstance(surface, PromptSurface)
@@ -145,6 +145,10 @@ class QuestionMenu:
                 while True:
                     surface.paint(self.frame(width=console.width, height=console.height))
                     key = key_source()
+                    if isinstance(key, Scroll):
+                        # Reading back through the transcript must not answer or edit the question.
+                        surface.scroll_key(key.key, key.data)
+                        continue
                     if key == 'ctrl-c' or (key == 'escape' and not self.editing_custom):
                         return None
                     result = self.choose(key)
@@ -183,7 +187,7 @@ class TerminalAnswerer:
                 return await self.answer_questions(request=request, key_source=key_source)
 
     async def answer_questions(
-        self, *, request: AskUserRequest, key_source: Callable[[], str | Paste] | None
+        self, *, request: AskUserRequest, key_source: Callable[[], QuestionKey] | None
     ) -> AskUserResponse:
         """Keep one decoder for the batch so pasted text cannot escape to the next question."""
         answers: list[AskUserAnswer] = []

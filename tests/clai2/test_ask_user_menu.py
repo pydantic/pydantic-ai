@@ -40,6 +40,7 @@ from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste
+from tests.clai2.surface_terminal import SurfaceTerminal
 
 
 @pytest.fixture
@@ -570,9 +571,17 @@ async def test_custom_decoder_cancellation_detaches_before_editor_resumes(
     assert screen.events == ['taken', 'attached', 'detached', 'released']
 
 
-async def test_wheel_reports_do_not_type_into_a_custom_answer(question_pipe: PipeInput) -> None:
-    question_pipe.send_text('3\x1b[<64;10;5Mx\r')
-    response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=io.StringIO()))(
+async def test_wheel_and_page_keys_scroll_the_transcript_while_answering(question_pipe: PipeInput) -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    surface = PromptSurface(output=terminal, size=lambda: (80, 24))
+    for index in range(60):
+        surface.write(f'line {index}\n')
+    # Wheel up, a click, then a page back and forth: none of them type into the custom answer.
+    question_pipe.send_text('3\x1b[<64;10;5M\x1b[<0;10;5M\x1b[5~\x1b[6~x\r')
+    response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=surface, width=80, height=24))(
         AskUserRequest(questions=(APPROACH,))
     )
     assert response.answers == (AskUserAnswer(header='Approach', custom_answer='x'),)
+    assert surface.view.anchor is not None, 'the view stays where the user scrolled'
+    assert 'How should we do it?' not in terminal.lines()
+    assert 'line 50' in terminal.lines()
