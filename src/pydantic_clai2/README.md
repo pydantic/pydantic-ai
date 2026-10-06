@@ -511,7 +511,8 @@ On normal interactive exit, CLAI checks the linked worktree for changes:
 uncommitted or untracked files, or a different commit checked out than at launch.
 Ignored files do not count. If nothing changed in a worktree this launch created,
 CLAI removes it without asking, and deletes its `clai-NAME` branch too when this
-launch created that branch and Git agrees it is merged (`git branch -d`). An
+launch created that branch and Git agrees it is merged (`git branch -d`). This
+still applies after `/update` restarts CLAI in the worktree. An
 unchanged worktree that CLAI reopened, or one you launched inside, is kept without
 asking.
 

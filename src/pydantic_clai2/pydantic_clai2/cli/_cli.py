@@ -13,6 +13,9 @@ from pydantic_clai2.ui.rendering.splash import Splash
 if TYPE_CHECKING:
     from pydantic_clai2.runtime.worktrees import Worktree
 
+_RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
+"""Carries a removable checkout's launch `HEAD` across `/update`; an environment variable, so older builds ignore it."""
+
 
 def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
@@ -59,11 +62,12 @@ def run(*, splash: Splash | None = None) -> None:
         from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
-        from pydantic_clai2.runtime.worktrees import current_worktree, offer_worktree_cleanup
+        from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup
     finally:
         if splash is not None:
             splash.stop()
-    worktree = None
+    relaunched = os.environ.pop(_RELAUNCH_WORKTREE, None)  # Popped so tools and later launches never see it.
+    worktree = launched = None
     try:
         store = SettingsStore(args.database)
         store.path = store.path.resolve()
@@ -99,6 +103,8 @@ def run(*, splash: Splash | None = None) -> None:
                     )
                 )
             )
+        # Before the session, so commits made during it count as changes on exit.
+        launched = worktree or _launched_worktree(relaunched=relaunched)
         asyncio.run(
             chat(
                 create_agent() if agent is None else agent,
@@ -113,10 +119,11 @@ def run(*, splash: Splash | None = None) -> None:
                 worktree=worktree,
             )
         )
-        offer_worktree_cleanup(worktree=worktree or current_worktree())
+        offer_worktree_cleanup(worktree=launched)
     except Relaunch as relaunch:
         # Replace this process with the new build; the working directory, a worktree included, carries over.
         argv = relaunch_argv(args, executable=relaunch.executable, session_id=relaunch.session_id)
+        _remember_worktree(launched)
         sys.stdout.flush()
         os.execv(relaunch.executable, argv)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
@@ -142,6 +149,25 @@ def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
         worktree = replace(worktree, remove_if_unchanged=worktree.created and sys.stdin.isatty())
     os.chdir(worktree.path)
     return worktree
+
+
+def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
+    """The linked checkout CLAI starts inside, restoring the first launch's snapshot after `/update`."""
+    from pydantic_clai2.runtime.worktrees import current_worktree
+
+    worktree = current_worktree()
+    if worktree is None or relaunched is None:
+        return worktree
+    head, _, new_branch = relaunched.partition(' ')
+    return replace(
+        worktree, head=head, created=True, new_branch=new_branch == 'new-branch', remove_if_unchanged=sys.stdin.isatty()
+    )
+
+
+def _remember_worktree(worktree: 'Worktree | None') -> None:
+    """Hand a checkout exit would remove to the relaunched build, which starts without `--worktree`."""
+    if worktree is not None and worktree.remove_if_unchanged:
+        os.environ[_RELAUNCH_WORKTREE] = f'{worktree.head} new-branch' if worktree.new_branch else worktree.head
 
 
 def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str | None) -> list[str]:
