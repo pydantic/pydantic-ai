@@ -10,11 +10,11 @@ A workflow has to write the `imports:` line itself. gh-aw's engine catalog maps
 the `pydantic-ai` id to this path, but only to suggest it: naming the engine
 without the import fails to compile with a tip carrying the line to add.
 
-The engine runs the [Pydantic AI](https://ai.pydantic.dev) CLI (`pai`) with `Coder`
-by default, in a `LocalWorkspace` on the checkout, providing filesystem access and
-unrestricted shell commands inside the sandbox, plus the gh-aw gateway's MCP tools. Shell
-commands get the step's environment minus provider credential variables (`OPENAI_*`,
-`ANTHROPIC_*` and the like).
+The engine runs [CLAI 2](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2)
+with the harness's `Coder` composition by default, in a `LocalWorkspace` on the checkout,
+providing filesystem access and unrestricted shell commands inside the sandbox, plus the
+gh-aw gateway's MCP tools. Shell commands get the step's environment minus provider credential variables
+(`OPENAI_*`, `ANTHROPIC_*` and the like).
 
 ## Quick start
 
@@ -58,52 +58,33 @@ OpenAI-shaped and use Chat Completions.
 
 ## What actually runs
 
-`pai -a` takes one target and its agent-spec format cannot name harness
-capabilities, so the engine writes the composition as `gh_aw_agent.py` in a
-private directory it creates inside the sandbox, puts that directory on
-`PYTHONPATH`, and passes `-a gh_aw_agent:agent`. The CLI and its
-dependencies are installed before the agent starts, with
-`pip install --user "pydantic-ai-harness[cli]==<engine version>"
-"pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.44.0"`. The pinned harness version is
-`engine.version` in `pydantic.md`, and it always names a published release: lint
-refuses a pull request whose pin is not on PyPI. `pai --mcp-config` arrived in 2.36.0;
-the floor is 2.44.0 because that is where `Agent.from_spec()` stopped requiring a
-`model:`, which is what lets a `PAI_AGENT` spec omit one. The `anthropic` extra is what
-an `anthropic/` model runs on.
+The engine creates a generated module with a private wrapper around either the harness's
+`Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
+JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
+`engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
+`pydantic-clai2==0.54.0`, `pydantic-ai-harness==0.54.0`, and
+`pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`; the explicit provider extras keep
+Anthropic and OpenAI model support available. Gateway MCP tools are attached
+through Pydantic AI's public dynamic toolset interface, preserving the agent's existing
+tools. gh-aw writes the MCP server configuration outside the checkout and mounts it
+read-only inside the sandbox; repository-controlled files cannot select an MCP server
+that runs with the gateway's credentials.
 
-The CLI itself is started by the interpreter that owns that install, which imports
-the agent target and then runs `pydantic_ai` as `__main__`, rather than by spawning
-`pai`. The agent module is therefore imported exactly once, in the process that
-runs it. Two things follow. An agent that raises on import fails the step with its
-traceback, instead of the single line `pai` prints for a failed `-a` load. And
-`load_agent`, which prepends the checkout to `sys.path` before it resolves the
-target, finds the module already in `sys.modules`, so a repository file named
-`gh_aw_agent.py` cannot stand in for the generated one. That insert still applies to
-everything imported after it, which is how the CLI behaves for all of its users.
-
-MCP servers arrive as `${RUNNER_TEMP}/gh-aw/mcp-config/mcp-servers.json` in the
-`mcpServers` shape Claude Desktop and Cursor use, and the engine hands that file to
-`pai --mcp-config`, which loads it with `pydantic_ai.mcp.load_mcp_toolsets` and
-passes the toolsets into the run alongside whatever the agent already carries. Tools
-carry their server name as a prefix, so safe outputs are reachable as
-`safeoutputs_create_issue` and so on. HTTP servers are carried over; CLI-mounted
-servers remain on the agent's `PATH` as executables. gh-aw's config adapter writes
-that file in the `Start MCP Gateway` step on the host runner, next to the file the
-built-in Claude engine gets, and the agent step mounts `${RUNNER_TEMP}/gh-aw`
-read-only.
-
-Neither file is in the checkout, and that is deliberate. A file committed at a path
-the engine reads is repository-controlled input to a process that runs with the
-gateway's credentials: an MCP config could name a stdio server for the CLI to spawn,
-and a package under a directory the engine puts on `PYTHONPATH` would shadow an
-installed one for the whole run. Repository code reaches the agent only through
-`PAI_AGENT`, below.
+The engine subscribes to typed core events through the public `Agent.on_event` API. The
+inline parser selects their framed JSONL records from captured engine stdio, and the gh-aw
+runtime bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
+`user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
+`tool.execution_complete`, and `session.result`. The result includes reported usage when
+available; startup failures still record status without usage when none is available. Errors
+and tool calls still pending at interruption are represented as observed. The engine does not synthesize tool IDs, completions, or turn
+counts. A compatible gh-aw conclusion also collects usage and `aw_session.jsonl`, including
+gateway and safe-output activity.
 
 ## Running your own agent
 
-`PAI_AGENT` in `engine.env` replaces the composed coder agent with one your
-repository defines. It takes exactly what `pai -a` takes: a `module:variable`
-import path, or a `.yml`, `.yaml` or `.json` agent spec file.
+`PAI_AGENT` in `engine.env` selects an agent your repository defines in place of the
+default coder composition. It accepts a `module:variable` or dotted `MODULE.ATTRIBUTE`
+import target, or a `.yml`, `.yaml` or `.json` agent spec file.
 
 ```yaml
 ---
@@ -150,22 +131,17 @@ Five things to know.
   emits `generateRuntimeAndWorkspaceSetupSteps` before
   `generateEngineInstallAndPreAgentSteps`). `-P` keeps the checkout off `sys.path`
   for the install itself.
-- **MCP tools arrive the same way they do for the coder agent.** The engine passes
-  `--mcp-config` whenever the gateway wrote a config, so the gateway's servers are
-  added to your agent's own toolsets. Your agent does not load the config itself,
-  and does not need to know where it is.
-- **The engine always passes `-m`.** An explicit `-m` replaces the model a loaded
-  agent declares, so your agent runs on the workflow's `engine.model` whatever it
-  was constructed with. Configure the model in the workflow, not in the agent.
+- **Gateway tools are added to the agent.** The engine attaches them through a public
+  dynamic toolset, preserving the tools and capabilities already on the configured agent.
+- **The workflow selects the model.** The engine applies `engine.model` to the run, so
+  configure the model in the workflow rather than relying on the target's model setting.
 - **Endpoint and provider handling are unchanged.** `PAI_BASE_URL`, `/reflect`
   discovery and the `provider/` prefix behave exactly as they do for the coder
   agent, described below.
 
-A `module:variable` target is imported once, by the process that goes on to run the
-CLI, so module-level work in your agent runs once too. An agent that fails to import
-or is not an `Agent` fails the step with the Python traceback. A spec file, and the
-dotted `module.attribute` form `pai` also accepts, are left to the CLI, which reports
-its own error.
+A `module:variable` target is imported once, so module-level work runs once too. An
+agent that fails to import or is not an `Agent` fails the step with the Python
+traceback. Spec files use the same `PAI_AGENT` setting.
 
 The target does not have to live in the repository. The harness exports assembled
 agents as importable variables, so `PAI_AGENT: pydantic_ai_harness.researcher:researcher_agent`
@@ -173,13 +149,10 @@ runs `Researcher` with no agent code in the repository at all, given a `steps:` 
 installing the `researcher` extra. `pydantic_ai_harness.coder:coder_agent` names the
 default composition explicitly.
 
-The engine installs the `spec` extra for YAML parsing. A `.yml`, `.yaml` or `.json` spec
-covers instructions plus built-in capabilities, and the gateway's MCP servers still reach
-it through `--mcp-config`. Like a module it carries no `model:`: the engine always passes
-`-m` from the workflow's `engine.model`, which replaces whatever a loaded agent declares.
-A spec cannot name a harness capability: spec capability names resolve through a closed
-registry that the harness is not part of, and the CLI passes no `custom_capability_types`
-(pydantic/pydantic-ai#8334). Nor can it define a function tool. Either needs a module.
+The engine installs the dependencies needed to parse a spec. A `.yml`, `.yaml` or `.json`
+spec covers instructions plus built-in capabilities, and gateway tools are attached to it
+in the same way as to an imported agent. The workflow selects the model. A spec cannot
+name a harness capability or define a Python function tool; use a module for either.
 
 ## Observability
 
@@ -224,8 +197,8 @@ These choices are not defaults, and each is load-bearing.
   and `LOGFIRE_CREDENTIALS_DIR`; `LOGFIRE_TOKEN` in the environment remains supported.
   The directory stays alive through the process and is removed at interpreter shutdown,
   after exporter shutdown handlers run.
-- **`console=False`.** logfire's console exporter writes every span to stderr, which is the
-  stream this definition's `log-parser` reads.
+- **`console=False`.** logfire's console exporter writes every span to stderr. Keeping it
+  off prevents spans and their content from entering captured engine stdio.
 - **The `TRACEPARENT` attach, with `distributed_tracing=True`.** gh-aw sets the variable for
   behavior-defined engines (`applyTraceContextEnvToMap` in
   `pkg/workflow/behavior_defined_engine.go`) so that an engine can nest its spans under the
@@ -250,9 +223,9 @@ credentials, and a run log is not a private place to put one.
 
 A `PAI_AGENT` module that calls `logfire.configure()` itself runs after the engine's call
 and replaces it, whole rather than argument by argument, so it has to restate the three
-settings above: `send_to_logfire="if-token-present"` or it raises, `console=False` or the
-`log-parser` reads spans, and `distributed_tracing=True` or it warns on every run. The
-context attached from `TRACEPARENT` survives the reconfiguration. Reconfiguration must also
+settings above: `send_to_logfire="if-token-present"` or it raises, `console=False` or spans
+appear in captured engine stdio, and `distributed_tracing=True` or it warns on every run.
+The context attached from `TRACEPARENT` survives the reconfiguration. Reconfiguration must also
 supply private `config_dir` and `data_dir` values with process-lifetime cleanup; omitting
 these re-enables checkout configuration and credentials. Such a module also has
 to install `logfire` through the workflow's own `steps:` if it imports it on runs that
@@ -260,15 +233,18 @@ configure no endpoint.
 
 ## gh-aw compatibility
 
-This definition requires the gh-aw action/runtime at
-[v0.86.3](https://github.com/github/gh-aw/releases/tag/v0.86.3) or newer. Its
-endpoint discovery uses `deriveBaseUrlFromModelsURL`, which that release exports for
-converting the reflected `/models` URL into the chat-completions base URL while
-preserving the firewall host bridge.
+This definition requires gh-aw [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
+or a newer compatible release for canonical session records and merged usage that match
+the unified-session schema. Install the pinned extension with:
 
-Existing workflows must be recompiled with a compatible gh-aw pin and have their
-generated lockfile committed. Installing a newer `gh aw` CLI locally does not alter
-an already committed lockfile or the action/runtime it pins.
+```bash
+gh extension install github/gh-aw --pin v0.91.1
+```
+
+The default stable release is below this runtime floor. Existing workflows must be
+recompiled with a compatible gh-aw pin and have their generated lockfile committed.
+Installing a newer `gh aw` CLI locally does not alter an already committed lockfile or
+the runtime it selects.
 
 ## Pointing the engine at your own endpoint
 
