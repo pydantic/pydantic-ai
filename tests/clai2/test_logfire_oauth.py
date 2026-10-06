@@ -546,15 +546,7 @@ class TestDeviceAuth:
 
     async def test_sign_in_failures_are_reported_under_fastmcp_4(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The device flow keeps its own client: FastMCP 4's SDK builds `httpx2` ones, whose errors it would miss."""
-
-        def fastmcp_4_client(
-            headers: dict[str, str] | None = None,
-            timeout: httpx2.Timeout | None = None,
-            auth: httpx2.Auth | None = None,
-        ) -> httpx2.AsyncClient:
-            return httpx2.AsyncClient(headers=headers, timeout=timeout, auth=auth)
-
-        monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', fastmcp_4_client)
+        monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', httpx2.AsyncClient)
         auth = DeviceAuth(resource='http://127.0.0.1:1/mcp', read_only=True, announce=print)
         with pytest.raises(SignInError, match='Logfire sign-in failed: ConnectError'):
             await auth.sign_in()
