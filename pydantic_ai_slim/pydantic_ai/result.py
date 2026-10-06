@@ -1155,7 +1155,7 @@ def _get_usage_checking_stream_response(
 
         async def _usage_checking_iterator():
             async for item in stream_response:
-                limits.check_tokens(get_usage())
+                limits.check_tokens(get_usage(), warn_if_usage_unavailable=False)
                 limits.check_per_request_input_tokens(stream_response.usage.input_tokens)
                 yield item
 

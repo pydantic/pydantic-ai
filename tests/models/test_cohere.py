@@ -148,14 +148,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -166,7 +166,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -184,7 +184,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -227,6 +227,32 @@ async def test_request_simple_usage(allow_model_requests: None):
             cost=Decimal('1.875E-7'),
         )
     )
+
+
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    usage = None
+    if not missing_usage:
+        usage = cohere.Usage(
+            tokens=cohere.UsageTokens(input_tokens=0, output_tokens=0),
+            billed_units=cohere.UsageBilledUnits(input_tokens=0, output_tokens=0),
+        )
+    completion = completion_message(
+        AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='hello')], role='assistant'),
+        usage=usage,
+    )
+    model = CohereModel(
+        'command-r7b-12-2024', provider=CohereProvider(cohere_client=MockAsyncClientV2.create_mock(completion))
+    )
+
+    result = await Agent(model).run('hello')
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
 
 
 async def test_request_usage_without_tokens(allow_model_requests: None):
@@ -357,7 +383,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -517,7 +543,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -537,6 +563,7 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
             tool_calls=1,
             cost=Decimal('6.375E-7'),
+            unmeasured_requests=1,
         )
     )
 

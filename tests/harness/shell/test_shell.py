@@ -1707,6 +1707,21 @@ class _NeverReady(LocalWorkspaceBackend):
 
 
 class TestSignalling:
+    async def test_finished_wrapper_still_escalates_a_live_process_group(self, shell_dir: Path) -> None:
+        backend = _RecordingKill(shell_dir, kill_result=CommandResult(exit_code=0, stdout='', stderr=''))
+        job = Job(workspace=Workspace(backend), directory=str(shell_dir), pid=123, pgid=456, combined=True)
+
+        with patch.object(Job, 'status', return_value=(False, 0)):
+            await job.kill()
+
+        signals = [argv for argv in backend.argv if argv[:3] == ['sh', '-c', _KILL_SCRIPT]]
+        stop_file = posixpath.join(str(shell_dir), 'stop')
+        assert [argv[-3:] for argv in signals] == [
+            ['TERM', '-456', stop_file],
+            ['0', '-456', stop_file],
+            ['KILL', '-456', stop_file],
+        ]
+
     async def test_signals_go_through_the_shell_builtin(self, shell_dir: Path) -> None:
         # Slim images ship no `kill` executable, so no argv may start with a bare `kill`.
         backend = _RecordingKill(shell_dir)

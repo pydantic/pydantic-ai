@@ -17,7 +17,7 @@ Provider usage APIs do not close that gap. They are billing and observability pi
 
 ## The solution
 
-`SpendLimits` prices each model response it records with [`ModelResponse.cost()`](https://pydantic.dev/docs/ai/api/messages/), adds it to each window you configure, and refuses the next request once a window is spent.
+`SpendLimits` adds each response's price to every configured window and refuses the next request once a window is spent. When `price` is unset or returns `None`, complete responses are priced with [`ModelResponse.cost()`](https://pydantic.dev/docs/ai/api/messages/), while responses with omitted usage contribute any known `response.usage.cost` subtotal.
 
 ```python
 from decimal import Decimal
@@ -234,7 +234,7 @@ Any object with `get_many` and `add_many` works, so a Postgres or DynamoDB count
 
 ## Pricing
 
-Prices come from [genai-prices](https://github.com/pydantic/genai-prices) via `ModelResponse.cost()`, per response: cache and tier pricing are per request, so summing usage across requests and pricing the total gives the wrong number.
+When `price` is unset or returns `None`, complete responses are priced per response with [genai-prices](https://github.com/pydantic/genai-prices) via `ModelResponse.cost()`. For a response with omitted usage, `SpendLimits` records any known `response.usage.cost` subtotal instead. Cache and tier pricing are per request, so summing usage across requests and pricing the total gives the wrong number.
 
 A model the registry does not know -- a local deployment, a negotiated rate -- is handled by `price`:
 
@@ -250,7 +250,7 @@ An amount returned by `price` must be finite and not negative. Anything else -- 
 
 Under durable execution, `price` and each budget's `scope` callable must be deterministic for the same response and run context. Pricing runs in orchestration outside the journaled accrual, so a changed result can make `on_spend` disagree with the recorded counter or turn a successful recovery into a pricing error. Moving it into a durable operation would require the durability backend to serialize the complete provider response, including arbitrary metadata, so the callable remains outside that boundary. A changed scope selects a different store key from the one in the recorded accrual; `SpendLimits` reports that mismatch as a `UserError` naming the determinism requirement.
 
-Returning `None` falls through to the registry. When nothing can price a response, `on_unpriced` decides: `'zero'` (the default) counts it as free and increments `Spent.unpriced_requests` so the gap is visible, and `'raise'` fails the run with `UnpricedModelError`. Either way the response is recorded first and the tokens are counted, so a token ceiling still holds for a model with no price and an application that catches the error does not carry on against an understated counter. Under `'zero'` a USD ceiling is the one that cannot hold: nothing priceable accrues, so no number of such requests reaches it. That combination -- `'zero'` plus a `usd` budget -- warns once per model with `UnpricedModelWarning`, rather than once per request. If callers choose the model, prefer `'raise'` or supply `price`.
+`SpendLimits` calls `price` first. A finite, non-negative amount it returns is treated as the complete response price, including when usage is incomplete. Returning `None` falls through to the registry. When usage is incomplete, the registry can still supply a known cost subtotal, which `SpendLimits` records, but the response remains unpriced because its full cost is unknown. The `on_unpriced` policy still applies: `'zero'` (the default) increments `Spent.unpriced_requests` and continues with the known subtotal, while `'raise'` records the subtotal and fails the run with `UnpricedModelError`. Known token totals for incomplete usage are lower bounds. With `'zero'` and a `usd` budget, `UnpricedModelWarning` is emitted once per model when no complete price is available. If callers choose the model, prefer `'raise'` or supply `price`.
 
 ## Composition
 
@@ -293,10 +293,12 @@ Admission is all that call does: it reserves nothing. The durable operations the
 For a ceiling that covers one run and nothing else, Pydantic AI's own
 [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) does the same job
 in-process with no store and no capability: `total_tokens_limit` for tokens and `cost_limit` for
-money, both over a single `run()`. An unpriced response adds nothing to `RunUsage.cost`, so
-`cost_limit` measures a run against whichever part of it could be priced: a `CostNotFoundWarning`
-after the run when none of it was, and silence when only some of it was. `SpendLimits` counts the
-same gap and lets `on_unpriced` decide what to do about it. `UsageLimits` also carries the two
+money, both over a single `run()`. An unpriced response with no known cost adds nothing to
+`RunUsage.cost`; `cost_limit` measures against the part that could be priced and emits
+`CostNotFoundWarning` when `RunUsage.cost` remains `None`. A response that omitted usage can
+still add its known cost subtotal, but `UsageLimitUnavailableWarning` reports that configured
+token and cost limits only see lower-bound totals. `SpendLimits` retains that subtotal and still
+applies `on_unpriced` to the incomplete response. `UsageLimits` also carries the two
 input-token granularities `SpendLimits` has no equivalent for: `input_tokens_limit` is cumulative
 over the run, and `per_request_input_tokens_limit` caps one request against the provider-reported
 input tokens of the response that already paid for it. `count_tokens_before_request=True` counts

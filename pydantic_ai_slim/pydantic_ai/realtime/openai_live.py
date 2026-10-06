@@ -1149,7 +1149,7 @@ class OpenAILiveConnection(RealtimeConnection):
             return [RealtimeSessionErrorEvent(message=message, code=code)]
         events: list[RealtimeCodecEvent] = []
         for delegation in in_flight:
-            events.extend(self._response_ended_without_usage())
+            events.extend(self._response_ended_without_usage(unmeasured_requests=1))
             self._settle_delegation(delegation, gave_up=True)
         events.append(
             RealtimeSessionErrorEvent(
@@ -1251,7 +1251,7 @@ class OpenAILiveConnection(RealtimeConnection):
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
             if delegation is not None:
                 if not events:
-                    events = self._response_ended_without_usage()
+                    events = self._response_ended_without_usage(unmeasured_requests=int(event.response.usage is None))
                 self._settle_delegation(delegation, gave_up=not isinstance(event, ResponseCompletedEvent))
             if not isinstance(event, ResponseCompletedEvent):
                 events.append(_delegation_stopped(event))
@@ -1312,14 +1312,17 @@ class OpenAILiveConnection(RealtimeConnection):
         return events
 
     @staticmethod
-    def _response_ended_without_usage() -> list[RealtimeCodecEvent]:
-        """The empty usage report a backend response that ended without one still makes.
+    def _response_ended_without_usage(*, unmeasured_requests: int = 0) -> list[RealtimeCodecEvent]:
+        """The usage report a backend response that ended without mapped usage still makes.
 
         Every backend response is reported exactly once, usage or not: it is a request the backend made
         (see `responses_are_requests` on the profile), and the calls it asked for are reported as
         `response_usage_follows`, so their `ModelResponse` stays open until it arrives.
+
+        Args:
+            unmeasured_requests: Number of responses whose terminal omitted usage information.
         """
-        return [SessionUsage(RequestUsage())]
+        return [SessionUsage(RequestUsage(unmeasured_requests=unmeasured_requests))]
 
     def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> None:
         """Account for one finished backend response, closing the delegation once it owes nothing.

@@ -171,14 +171,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -189,6 +189,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -210,6 +211,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -238,6 +240,46 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
+
+
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    usage = None if missing_usage else CompletionUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+    completion = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=usage)
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock(completion)))
+
+    result = await Agent(model).run('hello')
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
+
+
+@pytest.mark.parametrize('missing_usage', [True, False], ids=['omitted', 'reported-zero'])
+async def test_agent_stream_distinguishes_omitted_usage_from_reported_zero(
+    allow_model_requests: None, missing_usage: bool
+) -> None:
+    base_chunk = text_chunk('hello', finish_reason='stop')
+    groq_usage = (
+        {'id': None, 'error': None, 'usage': {'completion_tokens': 0, 'prompt_tokens': 0, 'total_tokens': 0}}
+        if not missing_usage
+        else None
+    )
+    chunk_with_usage = chat.ChatCompletionChunk.model_validate(base_chunk.model_dump() | {'x_groq': groq_usage})
+    model = GroqModel(
+        'llama-3.3-70b-versatile', provider=GroqProvider(groq_client=MockGroq.create_mock_stream([chunk_with_usage]))
+    )
+
+    async with Agent(model).run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    assert result.usage.requests == 1
+    assert result.usage.input_tokens == 0
+    assert result.usage.output_tokens == 0
+    assert result.usage.unmeasured_requests == int(missing_usage)
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -276,6 +318,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -442,6 +485,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5472,7 +5516,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(cost=Decimal('0.000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5726,7 +5770,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                     ),
                     TextPart(content='maybe'),
                 ],
-                usage=RequestUsage(cost=Decimal('0.000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5936,7 +5980,7 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ')],
-                usage=RequestUsage(cost=Decimal('0.00')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
