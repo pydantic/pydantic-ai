@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncIterable, Coroutine, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any, Generic
 
@@ -812,7 +812,7 @@ def _owned_tasks(owner: DelegationTasks, ctx: RunContext[Any]) -> list[Delegatio
 
 
 def _task_line(record: DelegationTask, *, nested: bool) -> str:
-    started = datetime.fromtimestamp(record.started_at, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    started = datetime.fromtimestamp(record.started_at, UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
     status = 'running' if record.status == 'running' else f'finished ({record.outcome})'
     mode = 'background' if record.background else 'foreground'
     prompt = ' '.join(record.prompt.split())
