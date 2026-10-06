@@ -62,6 +62,7 @@ from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.runtime._session import Session, StockAgent, current_session_id
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES, ImportSource
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
@@ -173,6 +174,7 @@ async def chat(
     builtin_plugins: Sequence[PluginSettings] = (),
     project: ProjectSettings | None = None,
     resume: str | None = None,
+    resume_from: ImportSource | None = None,
     load_plugins: bool = True,
     worktree: Worktree | None = None,
 ) -> None:
@@ -180,6 +182,7 @@ async def chat(
 
     Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
+    `resume_from` imports `resume` from Claude Code or Codex instead; an empty `resume` browses its sessions.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
@@ -223,8 +226,10 @@ async def chat(
                                 await shell.loader.load_all(fresh=fresh)
                                 _report_project_plugins(shell.loader, console)
                                 if resume is not None:
+                                    source = [resume_from] if resume_from else []
                                     console.print(
-                                        await shell.sessions.command([resume] if resume else []), markup=False
+                                        await shell.sessions.command([*source, resume] if resume else source),
+                                        markup=False,
                                     )
                                     resume = None
                             warming = warming or warm_imports.start()
@@ -501,7 +506,11 @@ def create_shell(
     )
     commands.register(
         Command(
-            name='resume', description='Browse or restore a saved session', handler=sessions.command, during_turn=True
+            name='resume',
+            description='Browse or restore a saved session; claude or codex imports theirs',
+            handler=sessions.command,
+            complete=lambda args: IMPORT_SOURCES if len(args) <= 1 else (),
+            during_turn=True,
         )
     )
     commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))

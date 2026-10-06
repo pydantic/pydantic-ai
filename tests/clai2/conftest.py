@@ -68,6 +68,9 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)
+    # Claude Code and Codex sessions are read from the isolated home, never the developer's own.
+    monkeypatch.delenv('CLAUDE_CONFIG_DIR', raising=False)
+    monkeypatch.delenv('CODEX_HOME', raising=False)
     for name in (
         'LOGFIRE_TOKEN',
         'LOGFIRE_API_KEY',

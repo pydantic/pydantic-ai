@@ -12,9 +12,18 @@ from pydantic_clai2.ui.rendering.splash import Splash
 def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
     parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
-    parser.add_argument(
+    resume_flags = parser.add_mutually_exclusive_group()
+    resume_flags.add_argument(
         '--resume', nargs='?', const='', metavar='SESSION-ID', help='Restore a saved session; no ID opens the browser'
     )
+    for flag, name in (('--resume-claude', 'Claude Code'), ('--resume-codex', 'Codex')):
+        resume_flags.add_argument(
+            flag,
+            nargs='?',
+            const='',
+            metavar='SESSION-ID',
+            help=f'Import and restore a {name} session; no ID browses {name} sessions',
+        )
     parser.add_argument(
         '--worktree',
         '-w',
@@ -41,6 +50,7 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument('command', nargs='?', choices=('config', 'plugins'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    _resume_source(args)
     _validate_args(args, parser)
     if args.database is not None:
         # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
@@ -94,6 +104,7 @@ def run(*, splash: Splash | None = None) -> None:
                         store=store,
                         project=project,
                         resume=args.resume,
+                        resume_from=args.resume_from,
                         agent=agent,
                     )
                 )
@@ -108,6 +119,7 @@ def run(*, splash: Splash | None = None) -> None:
                 builtin_plugins=DEFAULT_PLUGINS if args.agent else STOCK_PLUGINS,
                 project=project,
                 resume=args.resume,
+                resume_from=args.resume_from,
                 load_plugins=agent is None,
                 worktree=worktree,
             )
@@ -142,6 +154,14 @@ def relaunch_argv(args: argparse.Namespace, *, executable: str, session_id: str 
     if session_id is not None:
         argv += ['--resume', session_id]
     return argv
+
+
+def _resume_source(args: argparse.Namespace) -> None:
+    """Fold `--resume-claude` and `--resume-codex` into `resume`, so the same rules check all three."""
+    args.resume_from = None
+    for source, session_id in (('claude', args.resume_claude), ('codex', args.resume_codex)):
+        if session_id is not None:
+            args.resume_from, args.resume = source, session_id
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:

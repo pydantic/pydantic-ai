@@ -232,7 +232,7 @@ Follow-up: Add tests for the change
 Command: /usage
 ─ Working ⠋ ────────────────────────────────────
 /
-/resume Browse or restore a saved session
+/resume Browse or restore a saved session; claude or codex imports theirs
 /set Change settings; no arguments opens menu
 ────────────────────────────────────────────────
 model | context: ... | running: shell
@@ -1240,6 +1240,46 @@ reasoning, or content removed by compaction.
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
 case-insensitive and includes text instructions in multimodal prompts.
+
+### Claude Code and Codex sessions
+
+CLAI can continue a session you started in Claude Code or Codex. It reads their
+saved transcripts: Claude Code's under `~/.claude/projects` (or
+`$CLAUDE_CONFIG_DIR/projects`), and Codex's under `~/.codex/sessions` (or
+`$CODEX_HOME/sessions`).
+
+```bash
+clai2 --resume-claude              # browse Claude Code sessions
+clai2 --resume-claude SESSION-ID   # import and restore one
+clai2 --resume-codex               # browse Codex sessions
+clai2 --resume-codex SESSION-ID    # import and restore one
+```
+
+The session ID is the one Claude Code or Codex shows, such as the ID in
+`claude --resume ID` or `codex resume ID`. Inside CLAI, `/resume claude` and
+`/resume codex` work the same way, with or without an ID. `-p` accepts both flags
+with an ID. Only one of `--resume`, `--resume-claude`, and `--resume-codex` can be
+given.
+
+Plain `/resume` lists them too, beside CLAI's own sessions, in the project they
+were started in. A card that says **to import** has not been imported yet:
+Enter imports and resumes it, and Right previews it. Rename or delete it after
+importing it.
+
+Importing copies the conversation into CLAI's saved sessions. The originals are
+only read, never changed. CLAI keeps what the model saw: prompts, answers,
+reasoning summaries, tool calls, and their results. It skips context the other
+agent added itself, such as Claude Code's command notices and Codex's environment
+and `AGENTS.md` messages; CLAI adds its own. After compaction, it keeps the
+compacted history, and after a Claude Code rewind, it keeps the branch you ended
+on. A tool call with no recorded result gets one saying it was interrupted. The
+tools in the old calls belong to the other agent; the model sees them as history,
+and CLAI's own tools handle what comes next.
+
+Resuming the same session again opens the same copy. If you have not continued
+it in CLAI yet and the original has changed, CLAI imports it again. Once you
+send a prompt in CLAI, the copy is CLAI's own and later turns in Claude Code or
+Codex are not merged into it.
 
 ### Background names
 
