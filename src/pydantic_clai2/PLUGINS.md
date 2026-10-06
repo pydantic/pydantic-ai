@@ -326,7 +326,7 @@ there are no background workers to stop.
 
 The built-in `observability` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
-isolated Logfire instance, not process-wide instrumentation or custom tracing
+isolated Logfire instance, not process-wide agent instrumentation or custom tracing
 hooks. Agent/model/tool spans include timing, token usage, failures, text content,
 and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
@@ -367,7 +367,7 @@ credentials file was found. Scripts can replace the declaration instead:
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
-`include_binary_content` (both default `true`), and `send_to_logfire` (default
+`include_binary_content` (both default `true`), `httpx` (default `false`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
 over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
 `token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
@@ -375,7 +375,11 @@ whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
 project receives the telemetry. If that key is missing, the plugin warns and
 exports nothing rather than falling back to another project.
 Content flags do not suppress all metadata: tool names and definitions may still
-be recorded. Logfire's usual scrubbing is enabled.
+be recorded. Logfire's usual scrubbing is enabled. Set `httpx` to `true` to
+instrument `httpx` and `httpx2` requests process-wide while this plugin is loaded.
+With `include_content=true`, Logfire captures HTTP headers and request and response
+bodies too; with it off, those are not captured. HTTP instrumentation is removed
+on unload unless it was already installed by another owner.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
 `LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row

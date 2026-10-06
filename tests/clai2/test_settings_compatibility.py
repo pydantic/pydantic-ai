@@ -51,6 +51,7 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         assert loaded is not None
         settings = loaded.plugin.host.settings(LogfireSettings)
         assert (settings.user_tag, settings.account) == ('logfire-account', None)  # No identity to tag with.
+        assert settings.httpx is False
         assert store.plugins() == [previous]  # Loading an old declaration does not rewrite it.
         source = LogfireSource(loaded.plugin.host)
         rows = {row.key: row for row in source.rows()}
@@ -64,12 +65,16 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         )
         assert saved.settings['account'] is None
         requirements = store.plugin_requirements('observability')
-        assert requirements == {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        assert requirements == {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'httpx': ['logfire-httpx'],
+        }
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account')
+            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account', 'httpx')
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -82,6 +87,34 @@ async def test_logfire_user_tag_settings_survive_older_builds(
     finally:
         await loader.close('exit')
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
+async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder: Recorder) -> None:
+    loader, store = observability_loader(tmp_path)
+    try:
+        await loader.load_all()
+        host = _observability_host(loader)
+        source = LogfireSource(host)
+        row = next(row for row in source.rows() if row.key == 'httpx')
+        source.apply(row, 'true')
+        [saved] = store.plugins()
+        assert saved.settings['httpx'] is True
+        requirements = store.plugin_requirements('observability')
+        assert requirements == {
+            'httpx': ['logfire-httpx'],
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+        }
+        old_view = apply_requirements(
+            saved.settings,
+            stored_requirements(requirements, saved.settings),
+            defaults={'httpx': False},
+            supported=frozenset({'logfire-user-tag'}),
+        )
+        assert old_view.settings['httpx'] is False
+        assert store.plugins() == [saved]
+    finally:
+        await loader.close('exit')
 
 
 @pytest.mark.parametrize('ui_events', [None, False, True])

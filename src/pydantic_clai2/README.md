@@ -2135,8 +2135,8 @@ The stock CLI enables the built-in `observability` plugin by default. It adds Py
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
 spans, including timing, token usage, and failures. It adds CLAI's own UI spans
-only when `ui_events` is on (see below), and does not instrument HTTP clients or
-unrelated agents globally.
+only when `ui_events` is on (see below). HTTP client instrumentation is off by
+default; agent instrumentation does not affect unrelated agents globally.
 
 Startup plugin load failures reported in the terminal are also sent through the configured
 Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
@@ -2200,12 +2200,15 @@ its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `true`),
-`include_binary_content` (default `true`), and `send_to_logfire` (either
+`include_binary_content` (default `true`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags control
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
-scrubbing remains enabled.
+scrubbing remains enabled. Set `httpx` to `true` to trace HTTP requests made with
+`httpx` and `httpx2` while the plugin is active. With `include_content=true`,
+Logfire also captures HTTP headers and request and response bodies; with it off,
+those are not captured. HTTP instrumentation is process-wide, unlike agent tracing.
 
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
