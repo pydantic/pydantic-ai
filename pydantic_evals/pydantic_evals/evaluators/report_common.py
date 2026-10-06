@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass
-from typing import Any, Literal, cast
-
-from typing_extensions import assert_never
+from typing import Any, Literal, assert_never, cast
 
 from ..reporting import ReportCase
 from ..reporting.analyses import (

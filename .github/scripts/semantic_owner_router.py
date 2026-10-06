@@ -189,7 +189,7 @@ def _recently_unassigned(item: Mapping[str, Any]) -> bool:
     looked at the item, and routing must not redo what they undid. Malformed
     timeline data counts as recent, failing toward not assigning.
     """
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     window = dt.timedelta(days=attention.ROUTING_UNASSIGN_BACKOFF_DAYS)
     timeline = item.get('timelineItems')
     if not isinstance(timeline, Mapping) or not isinstance(cast(Mapping[str, object], timeline).get('nodes'), list):

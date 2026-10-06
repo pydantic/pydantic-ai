@@ -19,12 +19,12 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
+from typing import Any, Literal, Never, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, Protocol, TypedDict, assert_never
+from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
@@ -1101,8 +1101,14 @@ def _resolve_openai_service_tier(
 
 
 def _resolve_cache_retention(
-    default_settings: ModelSettings | None, model_settings: ModelSettings | None
+    profile: ModelProfile, default_settings: ModelSettings | None, model_settings: ModelSettings | None
 ) -> timedelta | None:
+    if profile.get('openai_supports_prompt_cache_breakpoints', False):
+        # On GPT-5.6 and later, `prompt_cache_retention` is a deprecated *maximum* that doesn't extend the
+        # 30-minute minimum OpenAI guarantees, so it says nothing about how long the prefix stays cached:
+        # the profile's `default_cache_retention` remains the expected window.
+        # https://developers.openai.com/api/docs/guides/prompt-caching
+        return None
     settings = merge_model_settings(default_settings, model_settings) or {}
     if settings.get('openai_prompt_cache_retention') == '24h':
         return timedelta(hours=24)
@@ -1172,7 +1178,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.profile, self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -2255,7 +2261,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.profile, self.settings, model_settings)
 
     @property
     def system(self) -> str:
