@@ -2084,13 +2084,14 @@ async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: N
 @pytest.mark.parametrize(
     ('settings', 'cache_point_ttl'),
     [
-        pytest.param(AnthropicModelSettings(anthropic_cache=True), '1h', id='automatic-5m-explicit-1h'),
-        pytest.param(AnthropicModelSettings(anthropic_cache='1h'), '5m', id='automatic-1h-explicit-5m'),
-        pytest.param(ModelSettings(cache='1h'), '5m', id='unified-1h-explicit-5m'),
+        # Plain dicts: parameters are built at collection time, also on installs without `anthropic`.
+        pytest.param({'anthropic_cache': True}, '1h', id='automatic-5m-explicit-1h'),
+        pytest.param({'anthropic_cache': '1h'}, '5m', id='automatic-1h-explicit-5m'),
+        pytest.param({'cache': '1h'}, '5m', id='unified-1h-explicit-5m'),
     ],
 )
 async def test_automatic_caching_yields_to_explicit_breakpoint_on_last_block(
-    allow_model_requests: None, settings: ModelSettings, cache_point_ttl: Literal['5m', '1h']
+    allow_model_requests: None, settings: dict[str, Any], cache_point_ttl: Literal['5m', '1h']
 ):
     """A `CachePoint` on the last block takes the breakpoint automatic caching would place, so no top-level
     `cache_control` is sent: Anthropic rejects automatic caching when the last block's explicit breakpoint has a
@@ -2101,7 +2102,9 @@ async def test_automatic_caching_yields_to_explicit_breakpoint_on_last_block(
     mock_client = MockAnthropic.create_mock(c)
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
 
-    await Agent(model, model_settings=settings).run(['Some context', CachePoint(ttl=cache_point_ttl)])
+    await Agent(model, model_settings=cast(AnthropicModelSettings, settings)).run(
+        ['Some context', CachePoint(ttl=cache_point_ttl)]
+    )
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert completion_kwargs['cache_control'] is OMIT
