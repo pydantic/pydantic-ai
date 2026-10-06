@@ -21,9 +21,9 @@ _Streak = tuple[str, int]
 """A tool name and how many consecutive calls it received."""
 
 
-def _line(runs: Sequence[_Streak]) -> Text:
+def _line(streaks: Sequence[_Streak]) -> Text:
     text = Text('● ', style=theme.color(theme.MUTED))
-    for index, (name, count) in enumerate(runs):
+    for index, (name, count) in enumerate(streaks):
         if index:
             text.append(', ', style=theme.color(theme.MUTED))
         text.append(name, style=theme.color(theme.ACCENT))
@@ -62,7 +62,7 @@ class ToolCallGroup:
         self._block: MarkdownBlock | None = None
 
     def add(self, name: str) -> None:
-        """Count one call, extending the last run when it is the same tool."""
+        """Count one call, extending the last streak when it is the same tool."""
         name = terminal_text(name, keep='')
         if not self._rows[-1] and self.console.is_terminal and isinstance(self.console.file, PromptSurface):
             self._block = self.console.file.markdown(render=self._render, width=self.console.width)

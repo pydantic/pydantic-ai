@@ -1643,7 +1643,7 @@ muted compact-JSON values. Each value shows at most 40 characters by default; `/
 changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
-With `/set display.tool_calls grouped`, each call adds to a run of the same tool on one line instead
+With `/set display.tool_calls grouped`, each call adds to a streak of the same tool on one line instead
 of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is redrawn from column zero
 as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
 In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
