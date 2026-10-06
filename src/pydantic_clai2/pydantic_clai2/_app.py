@@ -68,7 +68,6 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.ui.menus.key_menu import keys_command
-from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
@@ -95,6 +94,7 @@ from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
 if TYPE_CHECKING:
     from pydantic_clai2.auth import CodexAuth
     from pydantic_clai2.models.accounts import Account
+    from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -484,7 +484,9 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
-    def effort_source() -> ModelSettingsSource:
+    def effort_source() -> 'ModelSettingsSource':
+        from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+
         model = session.model or _model_label(agent)
         return ModelSettingsSource(store, model, settings_as=context.settings_model(model))
 
