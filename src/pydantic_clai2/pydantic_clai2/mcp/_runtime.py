@@ -4,6 +4,9 @@ Enabled servers are offered to every run. The first prompt (or `/mcp start`) con
 server and holds the connection open between prompts, which the dashboard reports as `running`.
 A server that fails to connect is marked `error` and left out, so it cannot fail the prompt.
 `stop` releases the connection and disables the server.
+
+An OAuth server connects with its stored sign-in only; `/mcp auth NAME` is the one place that opens the browser.
+Signed out, it is marked `error` with that hint instead of holding the prompt up for a sign-in.
 """
 
 import time
@@ -19,9 +22,19 @@ from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHt
 from pydantic_ai import RunContext
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
-from pydantic_clai2.mcp._settings import Server, Servers, SSEServer, StdioServer, http_client, missing, resolve
+from pydantic_clai2.mcp._settings import (
+    RemoteServer,
+    Server,
+    Servers,
+    SSEServer,
+    StdioServer,
+    http_client,
+    missing,
+    resolve,
+)
 from pydantic_clai2.mcp._store import MCPStore
-from pydantic_clai2.mcp._tokens import TokenStore, oauth
+from pydantic_clai2.mcp._tokens import OAuthSignIn, TokenStore
+from pydantic_clai2.plugins.sign_in import SignInRequired, not_signed_in
 
 Source = Literal['user', 'plugin', 'project']
 State = Literal['running', 'ready', 'stopped', 'error']
@@ -135,18 +148,24 @@ class MCPServers:
             return f'{name} is enabled but cannot connect: {self.problem(entry)}.'
         problem = await self._open(name, connection)
         if problem:
-            return f'Could not start {name}: {problem}. See /mcp logs {name}.'
+            return f'Could not start {name}: {problem.rstrip(".")}. See /mcp logs {name}.'
         return f'Started {name} with {len(connection.tools)} tools. The agent can use them on your next prompt.'
 
     async def _open(self, name: str, connection: _Connection) -> str | None:
         """Hold the connection and record its tools; the failure, logged, or `None`."""
+        method = sign_in(name, connection.server)
+        if method is not None and not await to_thread.run_sync(method.signed_in, abandon_on_cancel=True):
+            connection.error = not_signed_in(method)
+            self.log(name, f'start failed: {connection.error}')
+            return connection.error
         stack = AsyncExitStack()
         try:
             await stack.enter_async_context(connection.toolset)
             listed = await connection.toolset.list_tools()
         except Exception as exc:  # noqa: BLE001 -- any connection failure is reported, not raised.
             await stack.aclose()
-            connection.error = f'{type(exc).__name__}: {exc}'
+            required = _sign_in_required(exc)
+            connection.error = str(required) if required else f'{type(exc).__name__}: {exc}'
             self.log(name, f'start failed: {connection.error}')
             return connection.error
         connection.stack, connection.started, connection.error = stack, time.monotonic(), None
@@ -264,25 +283,47 @@ class MCPServers:
                 log_file=self.log_path(entry.name),
             )
             timeout = server.timeout
-        elif isinstance(server, SSEServer):
-            transport = SSETransport(
-                url=str(server.url),
-                headers=resolve(server.headers),
-                auth=oauth(entry.name, server),
-                httpx_client_factory=http_client,
-            )
-            timeout = server.init_timeout()
         else:
-            transport = StreamableHttpTransport(
-                url=str(server.url),
-                headers=resolve(server.headers),
-                auth=oauth(entry.name, server),
-                httpx_client_factory=http_client,
-            )
-            timeout = server.init_timeout()
+            method = sign_in(entry.name, server)
+            if method is not None:
+                transport = method.transport()
+            elif isinstance(server, SSEServer):
+                transport = SSETransport(
+                    url=str(server.url), headers=resolve(server.headers), httpx_client_factory=http_client
+                )
+            else:
+                transport = StreamableHttpTransport(
+                    url=str(server.url), headers=resolve(server.headers), httpx_client_factory=http_client
+                )
+            timeout = server.timeout
         if timeout is None:
             return MCPToolset(transport, id=f'mcp_{entry.name}')
         return MCPToolset(transport, id=f'mcp_{entry.name}', init_timeout=timeout)
+
+
+def sign_in(name: str, server: Server) -> OAuthSignIn | None:
+    """The server's browser sign-in, when it uses OAuth; `/mcp auth NAME` runs it."""
+    if not isinstance(server, RemoteServer) or server.auth is None:
+        return None
+    return OAuthSignIn(
+        name=name,
+        service=name,
+        setup=f'/mcp auth {name}',
+        url=str(server.url),
+        headers=resolve(server.headers),
+        sse=isinstance(server, SSEServer),
+        init_timeout=server.timeout,
+    )
+
+
+def _sign_in_required(error: BaseException) -> SignInRequired | None:
+    """The `SignInRequired` FastMCP wrapped, when the stored sign-in was rejected."""
+    current: BaseException | None = error
+    while current is not None:
+        if isinstance(current, SignInRequired):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def not_owned(entry: ServerEntry) -> str | None:

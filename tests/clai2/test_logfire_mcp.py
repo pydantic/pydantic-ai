@@ -17,10 +17,11 @@ from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LogfireMCP
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPPlugin, LogfireMCPSource
@@ -28,12 +29,12 @@ from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, DeviceAuth, SignInError, Tokens
+from pydantic_clai2.logfire_oauth import DeviceAuth, LogfireSignIn, SignInError, Tokens
 from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import CUSTOM, is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
-from tests.clai2.menu_script import Script, pick, typed
+from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'logfire_mcp')
 CLOSE = MenuResult(cancelled=True)
@@ -67,6 +68,14 @@ class Shell:
         plugin = factory.__self__
         assert isinstance(plugin, LogfireMCPPlugin) and plugin.capability is not None
         return plugin.capability
+
+    async def run_capability(self) -> LogfireMCP[None] | None:
+        """What a run gets."""
+        [factory] = self.loader.capabilities()
+        assert inspect.ismethod(factory)
+        plugin = factory.__self__
+        assert isinstance(plugin, LogfireMCPPlugin)
+        return await plugin._for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))  # pyright: ignore[reportPrivateUsage]
 
 
 def script(
@@ -227,7 +236,7 @@ def test_menu_validates_resets_and_notes_where_the_key_comes_from(monkeypatch: p
 
     rows = {row.key: row for row in source.rows()}
     assert (source.current(rows['key']), note()) == ('(none)', 'browser sign-in, if on')
-    assert rows['oauth'].note == 'signed out: signs in on the next run'
+    assert rows['oauth'].note == 'signed out: /logfire_mcp login signs in'
     assert (rows['url'].note, rows['read_only'].note) == ('', '')
     api_keys.save_key(name='LOGFIRE_API_KEY', value='saved')
     assert note() == 'LOGFIRE_API_KEY from /keys'
@@ -336,15 +345,24 @@ async def test_an_environment_key_gives_an_agent_run_the_logfire_tools(
     assert connected == [None]
 
 
-async def test_browser_sign_in_is_the_default_and_waits_long_enough_for_the_code(tmp_path: Path) -> None:
+async def test_browser_sign_in_is_the_default_and_runs_get_no_tools_until_signed_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     shell = Shell(tmp_path, {'url': LOGFIRE_EU_MCP_URL})
-    await shell.loader.enable('logfire_mcp')
-    assert shell.output.getvalue() == ''
+    with anyio.fail_after(5):
+        await shell.loader.enable('logfire_mcp')
+    assert shell.output.getvalue() == 'Not signed in to Logfire. Run /logfire_mcp login to sign in.\n'
     client = shell.capability().client
     assert isinstance(client, Client)
-    assert client._init_timeout == SIGN_IN_TIMEOUT  # pyright: ignore[reportPrivateUsage]
     assert str(client.transport.url) == LOGFIRE_EU_MCP_URL
     assert isinstance(client.transport.auth, DeviceAuth)
+    assert await shell.run_capability() is None
+
+    def signed_in(self: LogfireSignIn) -> bool:
+        return True
+
+    monkeypatch.setattr(LogfireSignIn, 'signed_in', signed_in)
+    assert await shell.run_capability() is shell.capability(), 'signing in applies to the next prompt'
 
 
 async def test_with_sign_in_off_and_no_key_the_menu_still_loads_and_runs_fail_closed(tmp_path: Path) -> None:
@@ -373,42 +391,40 @@ def logfire_command(
     return run, output
 
 
-async def test_login_signs_in_now_through_the_browser(monkeypatch: pytest.MonkeyPatch, opened: list[str]) -> None:
+async def test_login_signs_in_now_behind_the_waiting_screen(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, bool]] = []
 
-    async def sign_in(auth: DeviceAuth) -> Tokens:
-        calls.append((auth._resource, auth._read_only))  # pyright: ignore[reportPrivateUsage]
-        auth._announce('Enter code: ABCD-EFGH')  # pyright: ignore[reportPrivateUsage]
+    async def sign_in(method: LogfireSignIn, *, show: Callable[[str], object]) -> Tokens:
+        calls.append((method.resource, method.read_only))
         return Tokens(client_id='c', token_endpoint='https://t', access_token='a', expires_at=0)
 
-    monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
+    monkeypatch.setattr(LogfireSignIn, 'sign_in', sign_in)
+    script(monkeypatch, lists=[], choices=[UNTIL_CLOSED])
     command, output = logfire_command({'url': LOGFIRE_EU_MCP_URL, 'read_only': False})
-    assert await command(['login']) == 'Logfire runs use this sign-in when no API key is chosen, set, or saved.'
+    assert await command(['login']) == 'Signed in to Logfire.'
     assert calls == [(LOGFIRE_EU_MCP_URL, False)]
-    assert output.getvalue() == 'Enter code: ABCD-EFGH\n'
+    assert output.getvalue() == ''
+    assert await command([]) == 'Not signed in to Logfire. Run /logfire_mcp login to sign in.'
 
 
-async def test_sign_in_text_from_the_server_cannot_drive_the_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def sign_in(auth: DeviceAuth) -> Tokens:
-        auth._announce('Enter code: \x1b]52;c;eA==\x07')  # pyright: ignore[reportPrivateUsage]
-        raise SignInError('Logfire refused browser sign-in: \x1b[2J')
-
-    monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
-    command, output = logfire_command()
-    with pytest.raises(ValueError) as raised:
-        await command(['login'])
-    assert str(raised.value) == 'Logfire refused browser sign-in: \\x1b[2J'
-    assert output.getvalue() == 'Enter code: \\x1b]52;c;eA==\\x07\n'
-
-
-async def test_login_failures_are_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def sign_in(auth: DeviceAuth) -> Tokens:
+async def test_login_failures_and_cancellation_are_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def denied(method: LogfireSignIn, *, show: Callable[[str], object]) -> Tokens:
         raise SignInError('Logfire sign-in was denied. Run /logfire_mcp login to retry.')
 
-    monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
+    async def waits(method: LogfireSignIn, *, show: Callable[[str], object]) -> Tokens:
+        await anyio.sleep_forever()
+        raise AssertionError  # pragma: no cover -- cancelled first
+
+    monkeypatch.setattr(LogfireSignIn, 'sign_in', denied)
+    script(monkeypatch, lists=[], choices=[UNTIL_CLOSED, CLOSE])
     command, _ = logfire_command()
-    with pytest.raises(ValueError, match='Logfire sign-in was denied'):
-        await command(['login'])
+    assert await command(['login']) == (
+        'Could not sign in to Logfire: Logfire sign-in was denied. Run /logfire_mcp login to retry. '
+        'Run /logfire_mcp login to try again.'
+    )
+    monkeypatch.setattr(LogfireSignIn, 'sign_in', waits)
+    with anyio.fail_after(5):
+        assert await command(['login']) == 'Logfire sign-in cancelled. Run /logfire_mcp login to try again.'
 
 
 async def test_logout_forgets_only_the_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -419,8 +435,8 @@ async def test_logout_forgets_only_the_sign_in(monkeypatch: pytest.MonkeyPatch) 
     assert await command(['logout']) == 'Forgot the Logfire browser sign-in. Keys in /keys are kept.'
     assert await command(['logout']) == 'There was no Logfire browser sign-in to forget.'
     assert 'LOGFIRE_API_KEY' in api_keys.load_keys()
-    with pytest.raises(ValueError, match=r'Usage: /logfire_mcp login\|logout'):
-        await command([])
+    with pytest.raises(ValueError, match=r'Usage: /logfire_mcp \[login \| logout \| status\]'):
+        await command(['key'])
 
 
 @pytest.mark.parametrize('error', [KeyringError('locked'), OSError('read-only')], ids=['keyring', 'file'])

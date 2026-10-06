@@ -15,7 +15,8 @@ or workspace to choose. Its non-secret options are `include_instructions` and, h
 - `key`, `environment`, or `browser`: only that one, failing closed when it is missing.
 
 A browser sign-in keeps its OAuth tokens in the OS keyring, as `/mcp` servers' do. Harness `Ordinal(auth='oauth')`
-would keep them in memory, so every launch would sign in again.
+would keep them in memory, so every launch would sign in again. The sign-in runs only from the settings menu or
+`/ordinal login`, never while loading or in a prompt; see `pydantic_clai2.plugins.sign_in`.
 """
 
 import asyncio
@@ -27,8 +28,6 @@ from functools import partial
 from typing import Generic, Literal
 
 from anyio import to_thread
-from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel, ConfigDict, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
@@ -47,10 +46,19 @@ from pydantic_clai2.config.api_keys import (
     save_key_connection,
 )
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
-from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore, http_client, sign_in
-from pydantic_clai2.plugins import DepsT, Plugin, PluginHost
+from pydantic_clai2.mcp import OAuthSignIn
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins.keys import on_loop
+from pydantic_clai2.plugins.sign_in import (
+    SUBCOMMANDS,
+    run_subcommand,
+    sign_in_now,
+    status as sign_in_status,
+    warn_if_signed_out,
+)
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 URL = 'https://app.tryordinal.com/mcp'
@@ -62,7 +70,9 @@ KEY_ACCOUNT = 'ordinal'
 TOKENS = 'plugin_ordinal'
 """The keyring entry for browser tokens (`mcp-plugin_ordinal`). `/mcp` server names cannot contain `_`."""
 SETUP = 'Run /plugins configure ordinal to choose how it signs in.'
-USAGE = 'Usage: /ordinal [logout]'
+USAGE = 'Usage: /ordinal [login | logout | status]'
+SIGN_IN = OAuthSignIn(name=TOKENS, service='Ordinal', setup='/ordinal login', url=URL)
+"""The browser sign-in; its tokens are the keyring credential `mcp-plugin_ordinal`."""
 RUNNERS: Runners = TERMINAL
 """How the settings menu's widgets are shown; tests swap in scripted ones."""
 
@@ -99,7 +109,7 @@ def saved_key() -> KeyReference | None:
 def source(method: SignIn) -> KeyReference | Literal['environment', 'browser', 'none']:
     """The credential a run with `method` uses; `'none'` only when `key` has nothing chosen.
 
-    Runs, `/ordinal`, and the no-terminal check all decide here, so they cannot disagree.
+    Runs, `/ordinal`, the session-start notice, and the no-terminal check all decide here, so they cannot disagree.
     """
     if method in ('auto', 'key'):
         reference = saved_key()
@@ -112,34 +122,26 @@ def source(method: SignIn) -> KeyReference | Literal['environment', 'browser', '
     return 'browser'
 
 
-def ready(method: SignIn, tokens: TokenStore) -> bool:
-    """Whether a run can authenticate with `method` without asking anyone."""
+def missing(method: SignIn) -> bool:
+    """Whether `method` names a key or variable that is not there. A browser sign-in is never missing at load."""
     match source(method):
-        case KeyReference():
-            return True
         case 'environment':
-            return bool(os.environ.get(KEY_NAME))
-        case 'browser':
-            return bool(tokens.signed_in())
-        case 'none':  # pragma: no branch -- the cases cover every `source` result.
+            return not os.environ.get(KEY_NAME)
+        case 'none':
+            return True
+        case _:
             return False
 
 
 class OrdinalAuth(Generic[DepsT]):
-    """Hands each run an `Ordinal` for the current credential, so a `/keys` change applies without a reload.
+    """Hands each run an `Ordinal` for the current credential, so a `/keys` change or a sign-in applies without a reload."""
 
-    Once connected, FastMCP's `OAuth` keeps the access token in memory, so clearing the keyring alone would leave
-    this session signed in. `logout` therefore replaces the browser `Ordinal`, client and sign-in handler included.
-    """
-
-    def __init__(self, settings: OrdinalSettings, tokens: TokenStore) -> None:
+    def __init__(self, settings: OrdinalSettings) -> None:
         """Changed settings reload the plugin, so they are fixed for this instance."""
         self.settings = settings
-        self.tokens = tokens
-        self.browser = self._browser()
 
-    async def __call__(self, ctx: RunContext[DepsT]) -> Ordinal[DepsT]:
-        """The capability for this run; a missing chosen credential raises instead of connecting."""
+    async def __call__(self, ctx: RunContext[DepsT]) -> Ordinal[DepsT] | None:
+        """The capability for this run; `None` without a browser sign-in, and a missing chosen key raises."""
         instructions = self.settings.include_instructions
         match await to_thread.run_sync(source, self.settings.sign_in):
             case KeyReference() as reference:
@@ -149,31 +151,22 @@ class OrdinalAuth(Generic[DepsT]):
                 # Harness reads the variable when it connects and fails closed when it is unset.
                 return Ordinal[DepsT](include_instructions=instructions)
             case 'browser':
-                return self.browser
+                # Each run builds its own client from the stored tokens, so a sign-out reaches the next run.
+                if not await to_thread.run_sync(SIGN_IN.signed_in, abandon_on_cancel=True):
+                    return None
+                return Ordinal[DepsT](client=SIGN_IN.client(), include_instructions=instructions)
             case 'none':  # pragma: no branch -- the cases cover every `source` result.
                 raise UserError(f'Ordinal has no /keys entry. {SETUP}')
 
-    def logout(self) -> None:
-        """Forget the saved browser tokens and the in-memory ones, so the next browser run signs in again."""
-        self.tokens.forget()
-        self.browser = self._browser()
-
-    def _browser(self) -> Ordinal[DepsT]:
-        transport = StreamableHttpTransport(url=URL, auth=sign_in(self.tokens.name), httpx_client_factory=http_client)
-        # A bare transport gets `MCPToolset`'s 5 second handshake timeout, which would end a browser sign-in early.
-        client = Client(transport, init_timeout=OAUTH_TIMEOUT)
-        return Ordinal[DepsT](client=client, include_instructions=self.settings.include_instructions)
-
 
 class OrdinalPlugin(Plugin[OrdinalSettings, DepsT]):
-    """`Ordinal` and its settings menu; refuses to load when no one could sign in."""
+    """`Ordinal` and its settings menu; without a terminal, refuses to load when its chosen key is missing."""
 
     def __init__(self, host: PluginHost[DepsT], settings: OrdinalSettings) -> None:
         super().__init__(host, settings)
-        self.tokens = TokenStore(TOKENS)
-        if not sys.stdin.isatty() and not ready(settings.sign_in, self.tokens):
+        if not sys.stdin.isatty() and missing(settings.sign_in):
             raise UserError(f'Ordinal has no credential for sign-in `{settings.sign_in}` and no terminal. {SETUP}')
-        self.auth = OrdinalAuth[DepsT](settings, self.tokens)
+        self.auth = OrdinalAuth[DepsT](settings)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         return (self.auth,)
@@ -182,27 +175,34 @@ class OrdinalPlugin(Plugin[OrdinalSettings, DepsT]):
         return (
             Command(
                 name='ordinal',
-                description='Show how Ordinal signs in, or end its browser session (/ordinal logout).',
+                description='Show how Ordinal signs in, or sign in or out in the browser (/ordinal login|logout).',
                 handler=self._command,
-                complete=lambda args: ['logout'] if len(args) <= 1 else [],
+                complete=lambda args: SUBCOMMANDS if len(args) <= 1 else (),
             ),
         )
 
     async def configure(self) -> str:
         return await configure(OrdinalSource(self.host))
 
+    async def on_session_start(self, event: SessionStart) -> None:
+        console = self.host.console
+        try:
+            method = await to_thread.run_sync(source, self.settings.sign_in, abandon_on_cancel=True)
+        except UserError as exc:
+            # Loading anyway keeps the menu available to choose again; runs fail closed meanwhile.
+            console.print(str(exc), style=theme.color(theme.WARNING), markup=False)
+            return
+        if method == 'browser':
+            await warn_if_signed_out(SIGN_IN, console)
+
     async def _command(self, args: list[str]) -> str:
-        match args:
-            case []:
-                return await to_thread.run_sync(status, self.settings, self.tokens)
-            case ['logout']:
-                await to_thread.run_sync(self.auth.logout)
-                return 'Signed out of the Ordinal browser session; a /keys entry or the environment is unaffected.'
-            case _:
-                return USAGE
+        if args in ([], ['status']):
+            return await to_thread.run_sync(status, self.settings, abandon_on_cancel=True)
+        message = await run_subcommand(SIGN_IN, args)
+        return USAGE if message is None else message
 
 
-def status(settings: OrdinalSettings, tokens: TokenStore) -> str:
+def status(settings: OrdinalSettings) -> str:
     """One line on which credential the next run uses, and whether that run will fail for want of it."""
     match source(settings.sign_in):
         case KeyReference(name=name) if name in load_keys():
@@ -216,14 +216,10 @@ def status(settings: OrdinalSettings, tokens: TokenStore) -> str:
         case 'environment':
             return f'Ordinal uses `{KEY_NAME}`, which is not set, so runs fail. {SETUP}'
         case 'browser':  # pragma: no branch -- the cases cover every `source` result.
-            return {
-                True: 'Ordinal: signed in through the browser. /ordinal logout signs out.',
-                False: 'Ordinal: not signed in; the browser opens on first use.',
-                None: 'Ordinal: sign-in unknown; the keyring could not be read.',
-            }[tokens.signed_in()]
+            return sign_in_status(SIGN_IN)
 
 
-SIGN_IN = FieldRow(
+METHOD = FieldRow(
     key='sign_in',
     label='Sign-in',
     description='Which credential runs use. Automatic tries a /keys entry, then the environment, then the browser.',
@@ -275,8 +271,8 @@ class OrdinalSource(Generic[DepsT]):
     def rows(self) -> list[FieldRow]:
         """Every option, with the key marked when it is gone from `/keys`."""
         name = self._key_name()
-        missing = name not in (KEY.default, INVALID) and name not in load_keys()
-        return [SIGN_IN, replace(KEY, note='missing from /keys') if missing else KEY, INSTRUCTIONS]
+        gone = name not in (KEY.default, INVALID) and name not in load_keys()
+        return [METHOD, replace(KEY, note='missing from /keys') if gone else KEY, INSTRUCTIONS]
 
     def current(self, row: FieldRow) -> str:
         """The value as the user would pick it."""
@@ -325,8 +321,22 @@ class OrdinalSource(Generic[DepsT]):
 
 
 async def configure(source: OrdinalSource[DepsT]) -> str:
-    """The settings menu: list, edit, back, until Esc; the key row opens the `/keys` picker."""
+    """The settings menu: list, edit, back, until Esc; the key row opens the `/keys` picker.
+
+    Choosing the browser signs in now, behind a waiting screen, unless a sign-in is already stored.
+    """
     loop = asyncio.get_running_loop()
+    menu = FieldMenu(source)
+
+    def pick_method() -> list[str]:
+        pick = RUNNERS.run_choice(menu.build_choices(METHOD))
+        if pick.cancelled or pick.item is None:
+            return []
+        messages = [menu.apply(METHOD, str(pick.item.value))]
+        if pick.item.value == 'browser' and not SIGN_IN.signed_in():
+            message = on_loop(lambda: sign_in_now(SIGN_IN, RUNNERS), loop)
+            messages += [] if message is None else [message]
+        return messages
 
     def pick_key() -> list[str]:
         # The key picker is async, so the menu's thread hands it back to the event loop.
@@ -338,11 +348,11 @@ async def configure(source: OrdinalSource[DepsT]) -> str:
         messages = [f'Ordinal uses {reference.name} from /keys. Manage it there.']
         if source.settings.sign_in in ('environment', 'browser'):
             source.save(source.settings.model_copy(update={'sign_in': 'key'}))
-            messages.append(f'Saved {SIGN_IN.label}: {SIGN_IN.display("key")}.')
+            messages.append(f'Saved {METHOD.label}: {METHOD.display("key")}.')
         return messages
 
-    menu = FieldMenu(source)
-    messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus={KEY.key: pick_key}))
+    submenus = {METHOD.key: pick_method, KEY.key: pick_key}
+    messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus=submenus))
     return '\n'.join(messages) or 'Ordinal settings unchanged.'
 
 

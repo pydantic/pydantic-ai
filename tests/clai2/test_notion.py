@@ -2,13 +2,15 @@
 
 import inspect
 import io
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
 import pytest
 from fastmcp import Client
-from fastmcp.client.auth import OAuth
+from fastmcp.client.auth.oauth import TokenStorageAdapter
 from fastmcp.client.transports import StreamableHttpTransport
+from mcp.shared.auth import OAuthToken
 from pydantic import JsonValue, SecretStr
 from rich.console import Console
 from termflow.tui import MenuItem
@@ -27,19 +29,53 @@ from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus import key_picker
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.conftest import stored_accounts
-from tests.clai2.menu_script import Script, pick, typed
+from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
 Vault = dict[tuple[str, str], str]
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'notion')
 CLOSE = MenuResult(cancelled=True)
 CANCEL = TextInputResult(cancelled=True)
 LABEL = 'Notion OAuth access token (saved in /keys as NOTION_API_KEY)'
+SIGNED_OUT = 'Not signed in to Notion. Run /notion login to sign in.'
+
+
+class SignIn:
+    """Stands in for `OAuthSignIn.sign_in`, which would open the browser; it stores tokens as FastMCP would."""
+
+    attempts: int = 0
+    error: Exception | None = None
+    unfinished: bool = False
+    """The browser sign-in is never completed, so it waits until cancelled."""
+
+    @staticmethod
+    async def sign_in(method: OAuthSignIn, *, show: Callable[[str], object]) -> None:
+        assert method is notion.SIGN_IN
+        SignIn.attempts += 1
+        if SignIn.error is not None:
+            raise SignIn.error
+        if SignIn.unfinished:
+            await anyio.sleep_forever()
+        await store_sign_in()
+
+
+@pytest.fixture(autouse=True)
+def sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(OAuthSignIn, 'sign_in', SignIn.sign_in)
+    monkeypatch.setattr(SignIn, 'attempts', 0)
+    monkeypatch.setattr(SignIn, 'error', None)
+    monkeypatch.setattr(SignIn, 'unfinished', False)
+
+
+async def store_sign_in() -> None:
+    tokens = TokenStorageAdapter(TokenStore(notion.TOKEN_ACCOUNT), server_url=notion.NOTION_MCP_URL)
+    await tokens.set_tokens(OAuthToken(access_token='access', token_type='Bearer', expires_in=3600))
 
 
 class Shell:
@@ -67,14 +103,20 @@ class Shell:
         assert inspect.isawaitable(result), '`/notion` reaches the keyring off the event loop'
         return await result
 
-    async def built(self) -> Notion[None]:
-        """The run's `Notion`, from the per-run factory the plugin registers."""
+    async def capability(self) -> Notion[None] | None:
+        """What a run gets from the per-run factory the plugin registers."""
         [capability] = self.loader.capabilities()
         assert callable(capability)
         result = capability(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
         assert inspect.isawaitable(result)
         connected = await result
-        assert isinstance(connected, Notion)
+        assert connected is None or isinstance(connected, Notion)
+        return connected
+
+    async def built(self) -> Notion[None]:
+        """The run's `Notion`, which must connect."""
+        connected = await self.capability()
+        assert connected is not None
         return connected
 
 
@@ -157,7 +199,7 @@ async def test_reopening_repicks_a_saved_key_and_resets_options_without_reinstal
     assert await shell.loader.configure('notion') == (
         'Notion no longer uses a saved key. The key itself stays in /keys.'
     )
-    assert (await shell.built()).auth is None
+    assert await shell.capability() is None, 'without a key or a sign-in, the run gets no Notion tools'
     assert set(api_keys.load_keys()) == {'NOTION_API_KEY', 'TEAM_NOTION'}
 
 
@@ -221,7 +263,8 @@ async def test_cancelled_or_blank_entry_changes_nothing(
     assert load_codex_credentials(account='notion') is None and api_keys.load_keys() == {}
 
 
-async def test_browser_sign_in_without_a_chosen_key(tmp_path: Path) -> None:
+async def test_stored_browser_sign_in_without_a_chosen_key(tmp_path: Path) -> None:
+    await store_sign_in()
     shell = Shell(tmp_path, {'read_only': True})
     await shell.loader.enable('notion')
     capability = await shell.built()
@@ -230,8 +273,109 @@ async def test_browser_sign_in_without_a_chosen_key(tmp_path: Path) -> None:
     assert isinstance(client, Client)
     transport = client.transport
     assert isinstance(transport, StreamableHttpTransport)
-    assert transport.url == notion.NOTION_MCP_URL and isinstance(transport.auth, OAuth)
+    assert transport.url == notion.NOTION_MCP_URL and isinstance(transport.auth, MCPSignIn)
+    assert transport.httpx_client_factory is http_client
     assert (await shell.built()).client is not client, 'each run reloads the sign-in, so logout applies to the next'
+    assert SignIn.attempts == 0 and SIGNED_OUT not in shell.output.getvalue()
+
+
+@pytest.mark.parametrize('settings', [{}, {'auth': 'oauth'}])
+async def test_signed_out_adds_no_tools_and_says_how_to_sign_in_without_a_browser(
+    tmp_path: Path, settings: dict[str, JsonValue]
+) -> None:
+    """Loading and runs never open the browser, so an unfinished sign-in cannot hold up every prompt."""
+    SignIn.unfinished = True
+    shell = Shell(tmp_path, settings)
+    with anyio.fail_after(5):
+        await shell.loader.enable('notion')
+        assert await shell.capability() is None
+    assert shell.output.getvalue().count(SIGNED_OUT) == 1
+    assert SignIn.attempts == 0
+
+
+async def test_notion_login_signs_in_and_the_next_run_connects_without_a_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        'pydantic_clai2.plugins.sign_in.RUNNERS', Script(lists=[], choices=[UNTIL_CLOSED], texts=[]).runners
+    )
+    shell = Shell(tmp_path)
+    await shell.loader.enable('notion')
+    assert await shell.run('/notion') == SIGNED_OUT
+    assert await shell.run('/notion login') == 'Signed in to Notion.'
+    assert isinstance((await shell.built()).client, Client), 'no reload needed'
+    assert await shell.run('/notion status') == 'Signed in to Notion.'
+    assert SignIn.attempts == 1
+
+
+@pytest.mark.parametrize(
+    ('error', 'unfinished', 'message'),
+    [
+        (None, True, 'Notion sign-in cancelled. Run /notion login to try again.'),
+        (
+            RuntimeError('authorization denied'),
+            False,
+            'Could not sign in to Notion: authorization denied. Run /notion login to try again.',
+        ),
+    ],
+)
+async def test_notion_login_cancelled_or_failed_stays_signed_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception | None, unfinished: bool, message: str
+) -> None:
+    SignIn.error, SignIn.unfinished = error, unfinished
+    monkeypatch.setattr('pydantic_clai2.plugins.sign_in.RUNNERS', Script(lists=[], choices=[CLOSE], texts=[]).runners)
+    shell = Shell(tmp_path)
+    await shell.loader.enable('notion')
+    with anyio.fail_after(5):
+        assert await shell.run('/notion login') == message
+    assert await shell.capability() is None
+
+
+async def test_choosing_the_browser_in_the_menu_signs_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    shell = Shell(tmp_path)
+    await shell.loader.enable('notion')
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), UNTIL_CLOSED])
+    assert await shell.loader.configure('notion') == 'Saved Sign-in.\nSigned in to Notion.'
+    assert shell.saved() == {'auth': 'oauth', 'read_only': False, 'include_instructions': True}
+    assert isinstance((await shell.built()).client, Client)
+    assert SignIn.attempts == 1
+
+
+@pytest.mark.parametrize(
+    ('error', 'unfinished', 'message'),
+    [
+        (None, True, 'Notion sign-in cancelled. Run /notion login to try again.'),
+        (
+            RuntimeError('authorization denied'),
+            False,
+            'Could not sign in to Notion: authorization denied. Run /notion login to try again.',
+        ),
+    ],
+)
+async def test_menu_sign_in_cancelled_or_failed_stays_signed_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception | None, unfinished: bool, message: str
+) -> None:
+    SignIn.error, SignIn.unfinished = error, unfinished
+    shell = Shell(tmp_path)
+    await shell.loader.enable('notion')
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth'), CLOSE])
+    with anyio.fail_after(5):
+        assert await shell.loader.configure('notion') == f'Saved Sign-in.\n{message}'
+    assert SignIn.attempts == 1
+    assert await shell.capability() is None
+
+
+async def test_menu_signs_in_only_for_the_browser_when_not_signed_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shell = Shell(tmp_path)
+    await shell.loader.enable('notion')
+    script(monkeypatch, lists=[pick('auth'), pick('auth')], choices=[CLOSE, pick('key')])
+    assert await shell.loader.configure('notion') == 'Saved Sign-in.'
+    await store_sign_in()
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('oauth')])
+    assert await shell.loader.configure('notion') == 'Saved Sign-in.'
+    assert SignIn.attempts == 0
 
 
 async def test_key_only_mode_warns_and_never_opens_a_browser(tmp_path: Path) -> None:
@@ -242,19 +386,25 @@ async def test_key_only_mode_warns_and_never_opens_a_browser(tmp_path: Path) -> 
     )
     with pytest.raises(UserError, match='No Notion key is selected'):
         await shell.built()
+    assert await shell.run('/notion status') == 'No Notion key is selected. Choose one with /plugins configure notion.'
     api_keys.save_key(name='NOTION_API_KEY', value='ntn-token')
     notion.select_key(KeyReference(name='NOTION_API_KEY'))
     await shell.loader.reload('notion')
     assert shell.output.getvalue().count('no key selected') == 1, 'a chosen key silences the warning'
+    assert await shell.run('/notion') == 'Notion connects with NOTION_API_KEY from /keys.'
+    assert SIGNED_OUT not in shell.output.getvalue()
+    assert SignIn.attempts == 0
 
 
 async def test_browser_mode_ignores_a_chosen_key(tmp_path: Path) -> None:
     api_keys.save_key(name='NOTION_API_KEY', value='ntn-token')
     notion.select_key(KeyReference(name='NOTION_API_KEY'))
+    await store_sign_in()
     shell = Shell(tmp_path, {'auth': 'oauth'})
     await shell.loader.enable('notion')
     capability = await shell.built()
     assert capability.auth is None and isinstance(capability.client, Client)
+    assert await shell.run('/notion status') == 'Signed in to Notion.'
 
 
 async def test_invalid_selection_fails_closed_and_the_menu_offers_a_new_choice(tmp_path: Path) -> None:
@@ -263,6 +413,7 @@ async def test_invalid_selection_fails_closed_and_the_menu_offers_a_new_choice(t
     await shell.loader.enable('notion')
     with pytest.raises(UserError, match='selection is invalid'):
         await shell.built()
+    assert SIGNED_OUT not in shell.output.getvalue(), 'the run reports the invalid selection instead'
     menu = source()
     assert [menu.current(row) for row in menu.rows()] == ['(invalid; choose again)', 'auto', 'false', 'true']
 
@@ -285,6 +436,7 @@ async def test_settings_cannot_hold_a_secret_or_unknown_options(tmp_path: Path, 
 
 
 async def test_plugins_menu_enabling_opens_the_settings_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    await store_sign_in()
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('read_only')], choices=[pick('true')])
     notices: list[str | None] = []
@@ -357,18 +509,21 @@ async def test_logout_forgets_the_sign_in_and_the_choice(
 ) -> None:
     api_keys.save_key(name='NOTION_API_KEY', value='ntn-token')
     notion.select_key(KeyReference(name='NOTION_API_KEY'))
-    await notion.TOKENS.put('token', {'access_token': 'a'}, collection='mcp-oauth-token')
+    await store_sign_in()
     shell = Shell(tmp_path)
     await shell.loader.enable('notion')
     [command] = [command for command in shell.commands if command.name == 'notion']
-    assert list(command.complete([''])) == ['logout'] and list(command.complete(['logout', ''])) == []
-    with pytest.raises(ValueError, match='/plugins configure notion'):
+    assert list(command.complete([''])) == ['login', 'logout', 'status']
+    assert list(command.complete(['logout', ''])) == []
+    with pytest.raises(ValueError, match=r'Usage: /notion \[login \| logout \| status\]'):
         await shell.run('/notion key')
     assert await shell.run('/notion logout') == (
-        'Signed out of Notion and cleared the selected key. The key itself stays in /keys.'
+        'Signed out of Notion. Run /notion login to sign in again. '
+        'Cleared the selected key; the key itself stays in /keys.'
     )
     assert stored_accounts() == {'api-keys'}, 'only the named key remains'
-    assert (await shell.built()).client is not None
+    assert await shell.capability() is None
+    assert SignIn.attempts == 0
 
 
 class Redraw:

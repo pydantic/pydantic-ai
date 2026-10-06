@@ -1,7 +1,6 @@
 """A plugin settings menu's credential rows: a `/keys` entry, or a browser sign-in, never in plugin settings.
 
-A browser sign-in runs here, behind a screen Esc closes, never while a plugin loads: loading waits for every
-plugin, so a sign-in nobody finishes would hold up the whole session.
+Browser sign-ins go through `pydantic_clai2.plugins.sign_in`.
 """
 
 import asyncio
@@ -15,6 +14,7 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, prompt_api_key, save_key
 from pydantic_clai2.pkce import PKCESignIn, finish_write
+from pydantic_clai2.plugins.sign_in import wait_for_sign_in
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
 from pydantic_clai2.ui.rendering._rendering import markdown_style
@@ -106,45 +106,21 @@ async def browser_sign_in(session: PKCESignIn, runners: Runners) -> bool:
     The screen closes by itself when the callback arrives: cancelling `run_worker` stops its widget.
     Sign-in errors, such as a denial in the browser or a timeout, propagate as `UserError`.
     """
-    flow = session.start()
-    url = flow.authorization_url()
-    minutes = round(session.timeout / 60)
-    return await wait_for_sign_in(
-        session.sign_in(flow, show=lambda url: None),
-        service=session.service,
-        note=f'Waiting up to {minutes} minutes. If no browser opened, open this URL:\n\n{url}',
-        runners=runners,
-    )
+    return await wait_for_sign_in(_ShowsLink(session), runners)
 
 
-async def wait_for_sign_in(
-    sign_in: Coroutine[object, object, object], *, service: str, note: str, runners: Runners
-) -> bool:
-    """Run `sign_in` behind a waiting screen showing `note`; whether it finished (Esc cancels it).
+class _ShowsLink:
+    """A `PKCESignIn` for the waiting screen, always showing its link, not only when no browser opens."""
 
-    The screen closes by itself when `sign_in` returns. Its errors propagate.
-    """
-    screen = (
-        MenuBuilder(f'Finish signing in to {service} in your browser')
-        .style(markdown_style())
-        .items([MenuItem('Cancel sign-in', value=None)])
-        .preview(lambda item: note)
-        .footer_hint('Enter or Esc cancel')
-        .key_source(menu_key)
-        .build()
-    )
-    signing = asyncio.ensure_future(sign_in)
-    waiting = asyncio.ensure_future(run_worker(lambda: runners.run_choice(screen)))
-    try:
-        await asyncio.wait({signing, waiting}, return_when=asyncio.FIRST_COMPLETED)
-    finally:
-        signing.cancel()
-        waiting.cancel()
-        await asyncio.gather(signing, waiting, return_exceptions=True)
-    if signing.cancelled():
-        return False
-    signing.result()
-    return True
+    def __init__(self, session: PKCESignIn) -> None:
+        self.session = session
+        self.service = session.service
+
+    async def sign_in(self, *, show: Callable[[str], object]) -> None:
+        flow = self.session.start()
+        minutes = round(self.session.timeout / 60)
+        show(f'Waiting up to {minutes} minutes. If no browser opened, open this URL:\n\n{flow.authorization_url()}')
+        await self.session.sign_in(flow, show=lambda url: None)
 
 
 def on_loop(

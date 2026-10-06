@@ -405,7 +405,7 @@ def test_remote_options_build_the_right_transport(tmp_path: Path) -> None:
     store.put('plain', HTTPServer(type='http', url=HttpUrl('http://localhost:9/mcp'), auth='oauth', timeout=5))
     servers = MCPServers(store, {'legacy': StdioServer(type='stdio', command='x', timeout=7)})
     signin = servers.get('signin').server
-    assert isinstance(signin, HTTPServer) and signin.init_timeout() == 330
+    assert isinstance(signin, HTTPServer) and signin.auth == 'oauth' and signin.timeout is None
     assert servers.get('plain').server.model_dump()['timeout'] == 5
     assert [entry.server.type for entry in servers.entries()] == ['sse', 'http', 'http', 'stdio']
 
