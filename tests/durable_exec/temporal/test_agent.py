@@ -84,6 +84,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
 from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
@@ -327,7 +328,7 @@ class AnyioScopeActivityCancellationWorkflow:
 
         try:
             await asyncio.wait_for(run_in_task_group(), timeout=0.1)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'timed out cleanly'
         return 'completed'  # pragma: no cover
 
@@ -361,7 +362,7 @@ class WaitForNonStreamingAgentTimeoutWorkflow:
     async def run(self) -> str:
         try:
             result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'clean-timeout'
         return f'unexpected-success:{result.output}'  # pragma: no cover
 
@@ -435,7 +436,7 @@ class WaitForAgentTimeoutWorkflow:
     async def run(self) -> str:
         try:
             await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'timed out cleanly'
         return 'completed'  # pragma: no cover
 
@@ -1906,6 +1907,8 @@ async def test_temporal_agent_realtime_signaling_in_workflow():
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
 class _FakeRealtimeConnection(RealtimeConnection):

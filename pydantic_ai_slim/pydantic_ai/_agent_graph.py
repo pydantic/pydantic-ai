@@ -12,11 +12,11 @@ from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, assert_never, cast
 
 import anyio
 from opentelemetry.trace import Tracer
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeVar
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
@@ -91,6 +91,7 @@ from .models._continuation import (
     cancel_suspended_job,
     merge_mode,
     merge_responses,
+    report_continuation_segment,
 )
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
@@ -1227,6 +1228,7 @@ async def model_request(
                 raise
 
             new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
+            report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
                 if response.state == 'suspended':
@@ -1310,6 +1312,7 @@ async def model_request_stream(
             # it here so re-attaching it around each segment keeps `get_current_span()`-driven span
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
+            request_context=request_context,
         )
         try:
             yield sr

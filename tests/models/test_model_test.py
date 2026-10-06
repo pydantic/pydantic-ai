@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import re
-from datetime import timezone
+from datetime import UTC
 from typing import Annotated, Any, Literal
 
 import pytest
@@ -62,7 +62,7 @@ def test_response_metadata_consistent_between_run_and_run_stream():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -187,7 +187,7 @@ def test_custom_output_args():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -205,7 +205,7 @@ def test_custom_output_args():
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -215,7 +215,7 @@ def test_custom_output_args():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -240,7 +240,7 @@ def test_custom_output_args_model():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -258,7 +258,7 @@ def test_custom_output_args_model():
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -268,7 +268,7 @@ def test_custom_output_args_model():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -289,7 +289,7 @@ def test_output_type():
                 parts=[
                     UserPromptPart(
                         content='x',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -307,7 +307,7 @@ def test_output_type():
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -317,7 +317,7 @@ def test_output_type():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -347,7 +347,7 @@ def test_tool_retry():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -357,7 +357,7 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -366,7 +366,7 @@ def test_tool_retry():
                     RetryPromptPart(
                         content='First call failed',
                         tool_name='my_ret',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         tool_call_id=IsStr(),
                     )
                 ],
@@ -379,16 +379,12 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=61, output_tokens=8),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
-                    )
-                ],
+                parts=[ToolReturnPart(tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -398,7 +394,7 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=62, output_tokens=12),
                 model_name='test',
                 provider_name='test',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),

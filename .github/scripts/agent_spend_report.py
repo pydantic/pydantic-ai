@@ -34,7 +34,7 @@ import urllib.request
 import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from http.client import HTTPMessage
 from typing import IO, Any, cast
 from urllib.parse import urlparse
@@ -525,7 +525,7 @@ def gather(
     client: GitHubClient, workflows: list[str], days: int, per_workflow_limit: int
 ) -> tuple[list[RunRecord], dict[str, int]]:
     """Collect run records for each workflow within the window, plus any truncation caps."""
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    since = (datetime.now(UTC) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
     records: list[RunRecord] = []
     truncated: dict[str, int] = {}
     for workflow in workflows:
