@@ -62,7 +62,9 @@ async def test_effort_command(tmp_path: Path, model: str, key: str | None, choic
             assert 'No reasoning effort control' in await shell.commands.execute_async(command)
         assert store.model_settings(model) == saved
         return
-    assert completions == [*choices, 'reset']
+    # GLM choices come from Literal introspection, whose cached order varies between Python versions.
+    assert sorted(completions[:-1]) == sorted(choices)
+    assert completions[-1] == 'reset'
     assert f'({key})' in await shell.commands.execute_async('/effort')
     assert store.model_settings(model) == saved  # Viewing never materializes defaults.
     for value in choices:
