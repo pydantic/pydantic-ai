@@ -320,8 +320,9 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 `~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
-`/new` starts a new saved conversation, without deleting the previous one or
-input recall. `/clear`, or bare `clear`, does the same and also clears the screen back to the startup banner. Model responses and tool results are not saved to this file.
+`/clear` (alias `/new`), or bare `clear`, starts a new saved conversation, without
+deleting the previous one or input recall, and clears the screen back to the startup
+banner. Model responses and tool results are not saved to this file.
 
 ## CI coverage
 
@@ -1029,7 +1030,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
@@ -1806,8 +1807,8 @@ the menu closes. Inline questions borrow the panel. The transcript includes
 startup and plugin lifecycle notices and is carried across shell reloads.
 It retains up to 10,000 items and four million characters, plus a bounded partial
 line. Old output is dropped at those limits; oversized Markdown parts keep their
-rendered tail instead of their source. `/clear` hides earlier output from the
-panel but retains it for the exit printout within these limits. Hyperlinks are
+rendered tail instead of their source. `/clear` and `/new` forget earlier output,
+so neither the panel nor the exit printout shows it again. Hyperlinks are
 preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.

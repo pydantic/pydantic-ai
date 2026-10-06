@@ -342,7 +342,8 @@ async def test_prompt_loop_commands(tmp_path: Path) -> None:
         )
     assert '/config' in output.getvalue()
     assert 'hello back' in output.getvalue()
-    assert '\n\nNew session started. Previous session remains saved.' in output.getvalue()
+    # `/new` is `/clear`: the banner again, with nothing after it.
+    assert output.getvalue().count('/new starts a session') == 2
 
 
 def test_cli_settings(tmp_path: Path) -> None:
