@@ -1890,7 +1890,7 @@ scrubbing remains enabled.
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `false`) adds spans and logs in the
+rather than falling back. `ui_events` (default `true`; set `false` to opt out) adds spans and logs in the
 `clai2` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never typed values or
@@ -1922,7 +1922,8 @@ credentials file.
 `@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire
 project: run `/plugins configure observability`, choose **Logfire project**, pick
 Logfire US, sign in with your Pydantic account, and pick the shared CLAI project.
-Then set **UI events** to recorded in the same menu, or:
+UI events are recorded by default. If you previously turned them off, set
+**UI events** to recorded in the same menu, or:
 
 ```text
 /plugins add observability pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
