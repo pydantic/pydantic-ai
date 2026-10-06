@@ -66,7 +66,6 @@ RISKS: dict[str, re.Pattern[str]] = {
     'destructive-sql': re.compile(r'(?i)\b(drop\s+(table|database)|truncate\s+table)\b'),
     'kill-all': re.compile(r'\b(pkill|killall)\b|\bkill\s+-9\s+-1\b'),
 }
-_RISKY_ENOUGH_FOR_ONE_USER = {'force-push', 'hard-reset', 'rm-rf', 'pipe-to-shell', 'secrets-files', 'admin-merge'}
 
 
 @dataclass
@@ -322,8 +321,8 @@ async def mine_policy(
         segments = {c.span_id: seg for c in calls if c.command and (seg := matching_segment(c.command, draft.command))}
         matched = Group(draft.name, [c for c in calls if c.span_id in segments])
         users = len(matched.users)
-        single_user_ok = users == 1 and draft.category in _RISKY_ENOUGH_FOR_ONE_USER
-        if users < min_users and not single_user_ok:
+        # Never suggest from one person: a rule needs `min_users` distinct developers like every other suggestion.
+        if users < min_users:
             continue
         # Keyed by what the rule is about, not the LLM's wording, so reruns update it instead of adding a twin.
         proposal_id = f'policy-{draft.category}-{draft.action}'
@@ -342,7 +341,7 @@ async def mine_policy(
                 # The UI leads with the human sentence; the glob lives in `rule.match.command`.
                 description=draft.title,
                 text=draft.description,
-                suggested_tier=None if users < min_users else 'required',
+                suggested_tier='required',
                 rationale=f'{draft.rationale} Measured: {len(matched.calls)} matching calls by {users} '
                 f'developer(s) in {len({c.session_id for c in matched.calls})} sessions.',
                 pattern=f'{groups[draft.category].key if draft.category in groups else draft.category}: {draft.command}',

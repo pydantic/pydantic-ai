@@ -30,6 +30,13 @@ def say(*values: object) -> None:
         print(*values)
 
 
+def _min_users(value: str) -> int:
+    n = int(value)
+    if n < 2:
+        raise argparse.ArgumentTypeError('at least 2: a suggestion never comes from one person')
+    return n
+
+
 def _since(value: str) -> datetime:
     if match := re.fullmatch(r'(\d+)([hd])', value):
         amount, unit = int(match[1]), match[2]
@@ -40,7 +47,9 @@ def _since(value: str) -> datetime:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog='fleet_miner', description=__doc__)
     parser.add_argument('--since', type=_since, default='7d', help='window start: 24h, 7d or an ISO timestamp')
-    parser.add_argument('--min-users', type=int, default=3, help='distinct users a pattern needs')
+    parser.add_argument(
+        '--min-users', type=_min_users, default=3, help='distinct users a pattern needs (at least 2: never suggest from one person)'
+    )
     parser.add_argument('--fixture', type=Path, help='read prompts from this JSON instead of Logfire')
     parser.add_argument('--save-fixture', type=Path, help='also save the fetched prompts here')
     parser.add_argument(
