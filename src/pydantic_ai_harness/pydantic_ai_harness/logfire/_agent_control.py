@@ -353,6 +353,7 @@ class AgentControlConfig(AgentConfig):
     """Hackathon: tool-call rules, an MCP allowlist and locked items, applied by `PolicyRules` (and clients)."""
 
     _instruction_names: dict[str, str] = PrivateAttr(default_factory=dict[str, str])
+    _instruction_scopes: dict[str, dict[str, Any]] = PrivateAttr(default_factory=dict[str, dict[str, Any]])
 
     @model_validator(mode='wrap')
     @classmethod
@@ -367,9 +368,16 @@ class AgentControlConfig(AgentConfig):
                     if fields.get('id') is not None:
                         continue
                     name, text = fields.get('name'), fields.get('instructions')
+                    scope = fields.get('applies_to')
+                    if isinstance(text, str) and isinstance(scope, dict):
+                        config._instruction_scopes[text] = cast(dict[str, Any], scope)
                     if isinstance(name, str) and name and isinstance(text, str):
                         config._instruction_names[text] = name
         return config
+
+    def instruction_scope(self, text: str) -> dict[str, Any] | None:
+        """The `applies_to` an added entry with this text was published with, if any."""
+        return self._instruction_scopes.get(text)
 
     def instruction_name(self, text: str) -> str | None:
         """The `name` an added entry with this text was published under, if any."""
@@ -667,6 +675,8 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     drop is: the config is resolved on every run, and the signal has to survive its own repetition.
     """
 
+    applies: Callable[[Mapping[str, Any] | None], bool] | None = field(default=None, kw_only=True)
+    """Hackathon: whether an added instruction's `applies_to` covers this client; `None` applies them all."""
     client_features: Sequence[str] = field(default=(), kw_only=True)
     """Hackathon: what this client supports beyond the contract, reported on `agent_control_config_hint`.
 
@@ -969,6 +979,23 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         config = self._current_config()
         if config is None or not config.instructions:
             return request_context
+        if (
+            self.applies is not None
+            and isinstance(config, AgentControlConfig)
+            and isinstance(config.instructions, list)
+        ):
+            # Hackathon: an added block scoped to other teams or repos is left out for this client.
+            applies, scoped = self.applies, config
+            kept = [
+                entry
+                for entry in config.instructions
+                if isinstance(entry, str)
+                or entry.id is not None
+                or entry.instructions is None
+                or applies(scoped.instruction_scope(entry.instructions))
+            ]
+            if len(kept) != len(config.instructions):
+                config = config.model_copy(update={'instructions': kept or None})
         parameters = request_context.model_request_parameters
         parts = list(parameters.instruction_parts or [])
         blocks = _blocks(parts)

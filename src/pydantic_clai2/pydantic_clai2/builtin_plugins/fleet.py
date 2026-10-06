@@ -56,6 +56,27 @@ if TYPE_CHECKING:
 ItemKind = Literal['skill', 'mcp_server', 'plugin', 'instruction']
 
 
+class AppliesTo(BaseModel):
+    """Who a pushed item is for; a listed dimension must match, an omitted one matches everyone."""
+
+    model_config = ConfigDict(extra='ignore')
+    teams: list[str] | None = None
+    repos: list[str] | None = None
+    """Repo slugs or globs, such as `pydantic/pydantic-ai` or `pydantic/*`."""
+
+
+def applies(scope: AppliesTo | Mapping[str, Any] | None, *, team: str | None, repo: str | None) -> bool:
+    """Whether an item's `applies_to` covers this client's team and repo."""
+    if scope is None:
+        return True
+    parsed = scope if isinstance(scope, AppliesTo) else AppliesTo.model_validate(scope)
+    if parsed.teams is not None and team not in parsed.teams:
+        return False
+    if parsed.repos is not None and (repo is None or not any(fnmatch.fnmatchcase(repo, glob) for glob in parsed.repos)):
+        return False
+    return True
+
+
 class FleetSkill(BaseModel):
     """A skill pushed to every agent: the model sees its name and description and loads the body on demand."""
 
@@ -68,6 +89,7 @@ class FleetSkill(BaseModel):
     why: str | None = None
     """A short reason, such as the miner's rationale ("4 teammates kept asking for this")."""
     pushed_by: str | None = None
+    applies_to: AppliesTo | None = None
 
 
 class FleetMCPServer(BaseModel):
@@ -77,6 +99,9 @@ class FleetMCPServer(BaseModel):
     name: str
     url: str
     description: str | None = None
+    env: list[str] = Field(default_factory=list[str])
+    """Environment variables this server may send; every `${env:NAME}` in its headers must be listed here."""
+    applies_to: AppliesTo | None = None
     source: str | None = None
     why: str | None = None
     pushed_by: str | None = None
@@ -85,6 +110,9 @@ class FleetMCPServer(BaseModel):
 
 class FleetAgentConfig(AgentControlConfig):
     """Agent Control's config (with named added instructions) plus company `skills` and `mcp_servers` sections."""
+
+    display_name: str | None = None
+    """Who is pushing this, as notices name it ("Pydantic"); unset, notices name the Logfire project."""
 
     skills: list[FleetSkill] | None = None
     mcp_servers: list[FleetMCPServer] | None = None
@@ -103,6 +131,7 @@ class CatalogItem(BaseModel):
     pushed_by: str | None = None
     adoption: int | None = None
     """How many teammates use it, when the catalog says."""
+    applies_to: AppliesTo | None = None
     payload: dict[str, Any] = Field(default_factory=dict[str, Any])
 
 
@@ -137,18 +166,28 @@ def _digest(value: object) -> str:
 _ENV_REF = re.compile(r'\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}')
 
 
+def _full_text(kind: str, payload: Mapping[str, Any]) -> str:
+    """What an item would actually do, for the `/catalog` preview: the text, or the URL and env it sends."""
+    if kind == 'mcp_server':
+        env = sorted(set(payload.get('env') or ()) | set(_ENV_REF.findall(json.dumps(payload.get('headers') or {}))))
+        return f'URL: {payload.get("url", "")}' + (f'\nSends: {", ".join(f"${name}" for name in env)}' if env else '')
+    if kind == 'plugin':
+        return f'Factory: {payload.get("factory", "")}\nSettings: {json.dumps(payload.get("settings") or {})}'
+    return str(payload.get('instructions') or '')
+
+
 def _declined(state: _UserState, key: str) -> bool:
     decision = state.consents.get(key)
     return decision is not None and not decision[1]
 
 
-def _check_env(names: Sequence[str], allowed: Sequence[str]) -> None:
-    """Refuse a reference outside the allowlist, or to a variable that is not set."""
+def _check_env(names: Sequence[str], *, declared: Sequence[str], local: Sequence[str]) -> None:
+    """Refuse a reference the server doesn't declare in `env`, one outside a local allowlist, or an unset one."""
     for name in names:
-        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in allowed):
-            raise ValueError(
-                f"Logfire config references ${name}, which isn't allowed (fleet_env_allow / policy.env_allow)"
-            )
+        if name not in declared:
+            raise ValueError(f"Logfire config references ${name}, which isn't in this server's env list")
+        if local and not any(fnmatch.fnmatchcase(name, pattern) for pattern in local):
+            raise ValueError(f"Logfire config references ${name}, which isn't allowed by your fleet_env_allow")
         if name not in os.environ:
             raise ValueError(f'Logfire config references ${name}, which is not set in your environment')
 
@@ -219,10 +258,6 @@ class Snapshot:
     def policy(self) -> Policy | None:
         return self.config.policy
 
-    @property
-    def locked(self) -> frozenset[str]:
-        return frozenset(self.config.policy.locked) if self.config.policy is not None else frozenset()
-
 
 @dataclass(frozen=True)
 class Build:
@@ -289,8 +324,10 @@ class Fleet:
     name: str
     state_file: Path
     allowed_plugins: Sequence[str] = ()
+    scope: Callable[[], tuple[str | None, str | None]] = lambda: (None, None)
+    """This client's (team, repo slug), read afresh for every build since the workspace can change."""
     env_allow: Sequence[str] = ()
-    """Local globs over environment variable names pushed config may reference (`fleet_env_allow`)."""
+    """Local globs (`fleet_env_allow`) that, when set, every pushed env reference must also match: the user's net."""
     attributes: Callable[[], Mapping[str, Any]] = dict
     targeting_key: Callable[[], str | None] = lambda: None
     user: Callable[[], str] = lambda: 'local'
@@ -340,12 +377,26 @@ class Fleet:
         """The policy as last resolved, for decisions outside a run."""
         return (self.latest or self.snapshot()).policy
 
+    def applies_here(self, scope: AppliesTo | Mapping[str, Any] | None) -> bool:
+        """Whether an item's `applies_to` covers this client now."""
+        team, repo = self.scope()
+        return applies(scope, team=team, repo=repo)
+
     def active(self, snapshot: Snapshot) -> list[ActiveItem]:
-        """Company items, then catalog items the user has on."""
+        """Company items, then catalog items the user has on, among those scoped to this team and repo."""
+        return [item for item in self._all(snapshot) if self.applies_here(item.payload.get('applies_to'))]
+
+    def _all(self, snapshot: Snapshot) -> list[ActiveItem]:
         config = snapshot.config
         items = [
             *(
-                ActiveItem('instruction', name, '', 'company', {'instructions': text})
+                ActiveItem(
+                    'instruction',
+                    name,
+                    '',
+                    'company',
+                    {'instructions': text, 'applies_to': config.instruction_scope(text)},
+                )
                 for name, text in _named_instructions(config)
             ),
             *(
@@ -368,30 +419,32 @@ class Fleet:
         company = {item.key for item in items}
         for item in snapshot.catalog.items:
             key = _key(item.kind, item.name)
-            if key in company or not self._enabled(item, state, snapshot.locked):
+            if key in company or not self._enabled(item, state):
                 continue
-            items.append(
-                ActiveItem(item.kind, item.name, item.description, 'catalog', item.payload, Provenance.of(item))
-            )
+            payload = {**item.payload, 'applies_to': item.applies_to.model_dump() if item.applies_to else None}
+            items.append(ActiveItem(item.kind, item.name, item.description, 'catalog', payload, Provenance.of(item)))
         return items
 
     def compliance(self, snapshot: Snapshot, active: Sequence[ActiveItem]) -> dict[str, str]:
-        """The compliance attributes for a run: policy version, what the user opted out of, locked items held."""
+        """The compliance attributes for a run: versions, Default-on items the user turned off, Required items held.
+
+        `locked_ok` covers Required (organization) items that apply here, plus the observability plugin. Turning
+        off a Default-on add-on is the user's choice, recorded in `opted_out`, not a compliance failure.
+        """
         state = self._user_state()
         defaults_on = {_key(item.kind, item.name) for item in snapshot.catalog.items if item.default == 'on'}
         opted_out = sorted(key for key in state.opted_out if key in defaults_on)
         keys = {item.key for item in active} | {f'plugin:{name}' for name in policy_state.loaded_plugins()}
+        required = {item.key for item in self.active(snapshot) if item.tier == 'company'} | {'plugin:observability'}
         return {
             'clai2.policy.version': snapshot.version or '',
             'clai2.catalog.version': snapshot.catalog_version or '',
             'clai2.catalog.opted_out': ','.join(opted_out),
-            'clai2.policy.locked_ok': 'true' if snapshot.locked <= keys else 'false',
+            'clai2.policy.locked_ok': 'true' if required <= keys else 'false',
         }
 
-    def _enabled(self, item: CatalogItem, state: _UserState, locked: frozenset[str]) -> bool:
+    def _enabled(self, item: CatalogItem, state: _UserState) -> bool:
         key = _key(item.kind, item.name)
-        if key in locked:
-            return True
         if item.default == 'on':
             return key not in state.opted_out
         return key in state.opted_in
@@ -407,10 +460,9 @@ class Fleet:
         state = self._user_state()
         pending: list[Consent] = []
         declined: list[ActiveItem] = []
-        allowed_env = (*self.env_allow, *(snapshot.policy.env_allow if snapshot.policy else ()))
         for item in self.active(snapshot):
             try:
-                consent = self._consent_needed(item, allowed_env)
+                consent = self._consent_needed(item)
                 if consent is not None:
                     decided = state.consents.get(item.key)
                     if decided is None or decided[0] != consent.fingerprint:
@@ -435,13 +487,13 @@ class Fleet:
             declined=declined,
         )
 
-    def _consent_needed(self, item: ActiveItem, allowed_env: Sequence[str]) -> Consent | None:
+    def _consent_needed(self, item: ActiveItem) -> Consent | None:
         """The consent a pushed MCP server or plugin needs; raises when it references env it may not."""
         if item.kind == 'mcp_server':
             server = FleetMCPServer.model_validate({'name': item.name, **item.payload})
             names = sorted({name for value in server.headers.values() for name in _ENV_REF.findall(value)})
-            _check_env(names, allowed_env)
-            return Consent(item=item, target=server.url, env=tuple(names))
+            _check_env(names, declared=server.env, local=self.env_allow)
+            return Consent(item=item, target=server.url, env=tuple(sorted(set(server.env) | set(names))))
         if item.kind == 'plugin':
             return Consent(item=item, target=str(item.payload.get('factory', '')), env=())
         return None
@@ -515,8 +567,6 @@ class Fleet:
                 return f'No catalog item {key!r}. Run /catalog to list them.'
             key = matches[0]
         item = catalog[key]
-        if not on and key in snapshot.locked:
-            return f'{item.name} is {policy_state.LOCKED_MESSAGE}; it cannot be disabled.'
         state = self._load()
         user = state.users.setdefault(self.user(), _UserState())
         user.opted_in = [k for k in user.opted_in if k != key]
@@ -576,12 +626,12 @@ class Fleet:
         return changes
 
     def rows(self, snapshot: Snapshot) -> list[CatalogRow]:
-        """Everything for the `/catalog` picker: organization items, then optional add-ons with their state."""
+        """Everything for the `/catalog` picker: Required items, then add-ons; items scoped elsewhere greyed."""
         from pydantic_clai2.builtin_plugins.fleet_ui import CatalogRow
 
         state = self._user_state()
         rows: list[CatalogRow] = []
-        for item in self.active(snapshot):
+        for item in self._all(snapshot):
             if item.tier != 'company':
                 continue
             rows.append(
@@ -589,18 +639,21 @@ class Fleet:
                     key=item.key,
                     kind=item.kind,
                     name=item.name,
-                    description=item.description or item.payload.get('instructions', '')[:120],
+                    description=item.description or str(item.payload.get('instructions', ''))[:120],
                     delivery='organization',
                     on=not _declined(state, item.key),
                     declined=_declined(state, item.key),
-                    locked=item.key in snapshot.locked,
+                    locked=True,
                     new=item.key not in state.seen,
                     adoption=None,
                     provenance=item.provenance,
+                    elsewhere=not self.applies_here(item.payload.get('applies_to')),
+                    full_text=_full_text(item.kind, item.payload),
                 )
             )
         for entry in snapshot.catalog.items:
             key = _key(entry.kind, entry.name)
+            on = self._enabled(entry, state)
             rows.append(
                 CatalogRow(
                     key=key,
@@ -608,12 +661,14 @@ class Fleet:
                     name=entry.name,
                     description=entry.description,
                     delivery='default on' if entry.default == 'on' else 'optional',
-                    on=self._enabled(entry, state, snapshot.locked) and not _declined(state, key),
-                    declined=self._enabled(entry, state, snapshot.locked) and _declined(state, key),
-                    locked=key in snapshot.locked,
+                    on=on and not _declined(state, key),
+                    declined=on and _declined(state, key),
+                    locked=False,
                     new=key not in state.seen and key not in state.opted_in and key not in state.opted_out,
                     adoption=entry.adoption,
                     provenance=Provenance.of(entry),
+                    elsewhere=not self.applies_here(entry.applies_to),
+                    full_text=_full_text(entry.kind, entry.payload),
                 )
             )
         return rows
@@ -632,7 +687,7 @@ class Fleet:
         lines.append('Optional add-ons:')
         items = snapshot.catalog.items
         for item in items:
-            on = self._enabled(item, state, snapshot.locked)
+            on = self._enabled(item, state)
             default = 'default on' if item.default == 'on' else 'optional'
             lines.append(f'  [{"x" if on else " "}] {item.kind:<10} {item.name} ({default}): {item.description}')
         if not items:
@@ -700,6 +755,7 @@ class FleetControl(AbstractCapability[None]):
         }
         # The run's policy is the one this run resolved, so a push mid-run applies from the next run.
         rules = PolicyRules(
+            applies=self.fleet.applies_here,
             policy=lambda: snapshot.policy,
             approver=self.approver,
             record=self.record,

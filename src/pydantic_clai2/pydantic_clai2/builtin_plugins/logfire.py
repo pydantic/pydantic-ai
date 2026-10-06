@@ -24,6 +24,7 @@ from anyio import CancelScope, to_thread
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from rich.console import RenderableType
+from termflow.tui import MenuItem, MenuResult
 
 from pydantic_ai import AgentStreamEvent, FunctionToolResultEvent
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
@@ -34,16 +35,17 @@ from pydantic_ai_harness.logfire import AgentControl
 from pydantic_ai_harness.policy import PolicyDecision, PolicyRule, decision_attributes
 from pydantic_clai2 import policy_state
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
-from pydantic_clai2.builtin_plugins.fleet import Build, Change, Consent, Fleet, FleetControl
+from pydantic_clai2.builtin_plugins.fleet import Build, Change, Consent, Fleet, FleetControl, Snapshot
 from pydantic_clai2.builtin_plugins.fleet_ui import (
     BLOCKED_PREFIX,
     CatalogRow,
     blocked_panel,
     catalog_menu,
     notice_panel,
+    preview_panel,
     why_text,
 )
-from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
+from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email, repo_attributes
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
@@ -176,6 +178,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             instance=self.instance,
             session_id=lambda: self.host.session_id,
             team=settings.team or os.getenv('CLAI2_TEAM'),
+            include_repo=settings.include_content,
         )
         self.fleet: Fleet | None = None
         self._pending = 0
@@ -196,6 +199,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 attributes=tracing.identity,
                 targeting_key=lambda: tracing.email or install_id,
                 user=lambda: tracing.email or 'local',
+                scope=lambda: (tracing.team, repo_attributes(Path.cwd()).get('clai2.repo_slug')),
             )
         # UI records and plugin errors are CLAI's own, so they share the session root's scope.
         self._clai2 = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
@@ -229,7 +233,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             self.fleet.agent_variable,
             targeting_key=lambda _: tracing.email or self._install_id,
             attributes=lambda _: tracing.identity(),
-            client_features=('catalog', 'policy'),
+            client_features=('catalog', 'policy', 'applies_to'),
+            applies=self.fleet.applies_here,
         )
         fleet_control = FleetControl(fleet=self.fleet, approver=self._approve, blocked_message=self._blocked_message)
         return (self._session_tracing, self.instrumentation, control, fleet_control)
@@ -301,12 +306,23 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         while True:
             snapshot = fleet.snapshot()
             rows = fleet.rows(snapshot)
-            menu = catalog_menu(rows, snapshot=snapshot, link=self._link(), index=index)
+            previewed: list[bool] = []
+
+            def preview(menu: object, item: MenuItem) -> MenuResult:
+                previewed.append(True)
+                return MenuResult(item=item)
+
+            menu = catalog_menu(rows, snapshot=snapshot, link=self._link(), index=index, hotkeys={'p': preview})
             result = await run_worker(lambda: RUNNERS.run_choice(menu))
             if result.cancelled or result.item is None or not isinstance(result.item.value, CatalogRow):
                 return '\n'.join(changed) or 'Catalog unchanged.'
             row = result.item.value
             index = rows.index(row)
+            if previewed:
+                self.host.console.print(preview_panel(row))
+                continue
+            if row.elsewhere:
+                continue
             if row.declined:
                 changed.append(fleet.forget_consent(row.key))
             elif row.toggleable:
@@ -324,6 +340,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             return ''
         pending = f' · {self._pending} awaiting your OK' if self._pending else ''
         return f'Logfire {versions}{pending}'
+
+    def _source(self, snapshot: Snapshot) -> str:
+        """Who the config is from: its `display_name`, else the Logfire project, else just Logfire."""
+        return snapshot.config.display_name or self.settings.project or 'Logfire'
 
     def _link(self, anchor: str = '') -> str | None:
         """This agent's configuration page in Logfire (Behavior, where policy lives too), when setup recorded the project."""
@@ -396,7 +416,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         fresh = [change for change in changes if change.describe() not in self._announced]
         self._announced.update(change.describe() for change in fresh)
         if fresh:
-            self.host.console.print(notice_panel(fresh, snapshot=build.snapshot, link=self._link()))
+            self.host.console.print(
+                notice_panel(fresh, snapshot=build.snapshot, source=self._source(build.snapshot), link=self._link())
+            )
         self._pending = len(build.pending)
         for item, error in build.failed:
             # A broken item fails on every build; say so once per version of it, not on every prompt.

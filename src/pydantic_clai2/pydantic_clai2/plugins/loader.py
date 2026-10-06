@@ -628,9 +628,10 @@ class PluginLoader(Generic[DepsT]):
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now and remember it as disabled."""
-        if policy_state.locked(f'plugin:{name}'):
-            # Hackathon: client-side, so it stops accidents rather than a user determined to edit their config.
-            raise ValueError(f'{name} is {policy_state.LOCKED_MESSAGE}.')
+        if name == 'observability' and policy_state.current() is not None:
+            # Hackathon: while Logfire manages this agent, the plugin that connects it stays on. Client-side,
+            # so it stops accidents rather than a user determined to edit their config.
+            raise ValueError(f'{name} stays on while your organization manages this agent from Logfire.')
         entry = self._entry(name)
         _requested('disable', name)
         requires = self._requirements(entry)

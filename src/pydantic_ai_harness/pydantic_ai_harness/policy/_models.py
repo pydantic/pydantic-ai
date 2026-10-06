@@ -38,6 +38,8 @@ class PolicyRule(BaseModel):
     """
     source: str | None = None
     proposal_id: str | None = None
+    applies_to: dict[str, list[str]] | None = None
+    """Optional scope, such as `{"teams": [...], "repos": ["pydantic/*"]}`; the client decides what matches."""
 
 
 class MCPPolicy(BaseModel):
@@ -55,10 +57,3 @@ class Policy(BaseModel):
     model_config = ConfigDict(extra='ignore')
     rules: list[PolicyRule] = Field(default_factory=list[PolicyRule])
     mcp: MCPPolicy | None = None
-    env_allow: list[str] = Field(default_factory=list[str])
-    """Globs over environment variable names pushed config may reference as `${env:NAME}`.
-
-    A client should also have the user consent before sending one (clai2 asks per pushed server).
-    """
-    locked: list[str] = Field(default_factory=list[str])
-    """`kind:name` keys the user may not turn off, such as `skill:logfire-query` or `plugin:observability`."""

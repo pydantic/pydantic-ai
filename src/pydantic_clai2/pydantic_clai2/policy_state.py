@@ -42,15 +42,6 @@ def current() -> PolicySource | None:
     return _source
 
 
-def locked(key: str) -> bool:
-    """Whether the organization locked `kind:name`, so the user cannot turn it off."""
-    source = _source
-    policy = source.policy() if source is not None else None
-    return policy is not None and key in policy.locked
-
-
-LOCKED_MESSAGE = 'locked by your organization'
-
 _gated: 'weakref.WeakSet[object]' = weakref.WeakSet()
 
 

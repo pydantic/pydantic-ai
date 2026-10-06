@@ -138,6 +138,8 @@ class PolicyRules(AbstractCapability[Any]):
     attribute_prefix: str = 'policy'
     monty_timeout: float = 2.0
     blocked_message: Callable[[PolicyRule], str] = field(default_factory=lambda: default_blocked_message)
+    applies: Callable[[Mapping[str, Any] | None], bool] | None = None
+    """Whether a rule's `applies_to` covers this client (its team, its repo); `None` applies every rule."""
     """The tool result the model gets for a denied call: say why briefly and steer it to a safe alternative."""
     id: str | None = field(default='policy_rules')
 
@@ -156,6 +158,8 @@ class PolicyRules(AbstractCapability[Any]):
         if policy is None:
             return args
         for rule in policy.rules:
+            if self.applies is not None and not self.applies(rule.applies_to):
+                continue
             if not matches(rule, call.tool_name, args):
                 continue
             decision, error, monty_ms = await self._decide(rule, call.tool_name, args)

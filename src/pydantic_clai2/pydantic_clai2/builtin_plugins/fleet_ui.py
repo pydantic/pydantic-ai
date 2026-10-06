@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from rich.console import Group, RenderableType
@@ -13,47 +13,57 @@ from termflow.tui.menu import Menu
 
 from pydantic_clai2.builtin_plugins.fleet import Change, Provenance, Snapshot
 from pydantic_clai2.ui.menus.menu_worker import menu_key
-from pydantic_clai2.ui.menus.slash_search import slash_search
+from pydantic_clai2.ui.menus.slash_search import KeyHandler, slash_search
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 NOUNS = {'skill': 'skill', 'mcp_server': 'MCP server', 'plugin': 'plugin', 'instruction': 'instruction'}
-BLOCKED_PREFIX = 'Blocked by your organization'
+BLOCKED_PREFIX = 'Blocked by policy'
 
 
 def _mark(action: str) -> str:
     return {'added': '+', 'updated': '~', 'removed': '-'}[action]
 
 
-def notice_panel(changes: Sequence[Change], *, snapshot: Snapshot, link: str | None) -> RenderableType:
-    """One compact panel per batch: what changed, why, and where to look."""
+PLURALS = {'skill': 'skills', 'mcp_server': 'MCP servers', 'plugin': 'plugins', 'instruction': 'instructions'}
+
+
+def notice_panel(changes: Sequence[Change], *, snapshot: Snapshot, source: str, link: str | None) -> RenderableType:
+    """One compact panel per batch: names only, grouped, then one line with versions and where to look.
+
+    `source` is who it is from: a pushed `display_name` ("Pydantic"), else the Logfire project ("logfire/clai2").
+    `/catalog why NAME` has the details.
+    """
     lines: list[RenderableType] = []
-    for change in changes:
-        line = Text()
-        line.append(f'{_mark(change.action)} ', style=theme.color(theme.ACCENT))
-        if change.kind == 'instructions':
-            line.append('company instructions')
-        else:
-            line.append(f'{NOUNS.get(change.kind, change.kind)} ', style=theme.color(theme.MUTED))
-            line.append(change.name, style='bold')
-        if change.description and change.action != 'removed':
-            line.append(f': {change.description}')
+    for action in ('added', 'updated', 'removed'):
+        groups: dict[str, list[str]] = {}
+        for change in changes:
+            if change.action != action:
+                continue
+            if change.kind == 'instructions':
+                groups.setdefault('instructions', []).append('company instructions')
+            elif change.tier == 'catalog':
+                groups.setdefault('catalog', []).append(change.name)
+            else:
+                groups.setdefault(PLURALS.get(change.kind, change.kind), []).append(change.name)
+        if not groups:
+            continue
+        line = Text(f'{_mark(action)} ', style=theme.color(theme.ACCENT))
+        for index, (group, names) in enumerate(groups.items()):
+            if index:
+                line.append(' · ', style=theme.color(theme.MUTED))
+            line.append(f'{group}: ', style=theme.color(theme.MUTED))
+            line.append(', '.join(names), style='bold')
         lines.append(line)
-        why = change.provenance.describe()
-        if why:
-            lines.append(Text(f'    {why}', style=theme.color(theme.MUTED)))
-    footer = Text('/catalog to browse', style=theme.color(theme.MUTED))
-    if link:
-        footer.append(f'  ·  {link}', style=theme.color(theme.MUTED))
-    lines.append(footer)
-    # Name the version of what changed: a catalog-only push must not look like a new company config.
     tiers = {change.tier for change in changes}
     unknown = '' in tiers  # A removal no longer says where it came from.
     versions = snapshot.versions(config='company' in tiers or unknown, catalog='catalog' in tiers or unknown)
-    title = f'◆ From your organization{f" ({versions})" if versions else ""}'
+    footer = Text(' · '.join(part for part in (versions, '/catalog to browse', link or '') if part))
+    footer.stylize(theme.color(theme.MUTED))
+    lines.append(footer)
     return Panel(
         Group(*lines),
-        title=Text(title, style=theme.color(theme.ACCENT)),
+        title=Text(f'◆ Updated from Logfire · {source}', style=theme.color(theme.ACCENT)),
         title_align='left',
         border_style=theme.color(theme.MUTED),
         expand=False,
@@ -65,8 +75,9 @@ def blocked_panel(message: str, *, link: str | None) -> RenderableType:
     """The user-facing side of a policy block; the model gets the plain message as the tool result."""
     # The user doesn't need the model's instructions ("Do not retry ..."), only what happened and why.
     body = Text(message.split(' Do not retry', 1)[0])
+    body.append('\nEnforced by clai2 on this machine.', style=theme.color(theme.MUTED))
     if link:
-        body.append(f'\nLearn more: {link}', style=theme.color(theme.MUTED))
+        body.append(f' Learn more: {link}', style=theme.color(theme.MUTED))
     return Panel(
         body,
         title=Text('◆ Policy', style=theme.color(theme.WARNING)),
@@ -92,6 +103,9 @@ class CatalogRow:
     new: bool
     declined: bool = False
     """The user declined the consent prompt for it, so it stays off until they turn it on again."""
+    elsewhere: bool = False
+    """Scoped (`applies_to`) to other teams or repos, so it does not apply here."""
+    full_text: str = ''
     adoption: int | None
     provenance: Provenance
 
@@ -106,7 +120,8 @@ def row_label(row: CatalogRow) -> str:
     lock = ' 🔒' if row.locked else ''
     new = ' • new' if row.new else ''
     declined = ' · declined' if row.declined else ''
-    return f'{state} {NOUNS.get(row.kind, row.kind):<10} {row.name}{lock}{new}{declined}'
+    elsewhere = ' · not for this repo/team' if row.elsewhere else ''
+    return f'{state} {NOUNS.get(row.kind, row.kind):<10} {row.name}{lock}{new}{declined}{elsewhere}'
 
 
 def row_preview(row: CatalogRow, *, link: str | None) -> str:
@@ -118,17 +133,25 @@ def row_preview(row: CatalogRow, *, link: str | None) -> str:
     if why:
         parts.append(f'Why: {why}.')
     if row.locked:
-        parts.append('Locked by your organization: it stays on.')
-    elif row.delivery == 'organization':
-        parts.append('Pushed to everyone by your organization.')
+        parts.append('Required by your organization: it stays on.')
     else:
         parts.append(f'Enter turns it {"off" if row.on else "on"}.')
+    if row.elsewhere:
+        parts.append('Scoped to other teams or repos, so it does not apply here.')
+    parts.extend(['', 'p shows everything it would add.'])
     if link:
         parts.extend(['', link])
     return '\n'.join(parts)
 
 
-def catalog_menu(rows: Sequence[CatalogRow], *, snapshot: Snapshot, link: str | None, index: int = 0) -> Menu:
+def catalog_menu(
+    rows: Sequence[CatalogRow],
+    *,
+    snapshot: Snapshot,
+    link: str | None,
+    index: int = 0,
+    hotkeys: Mapping[str, KeyHandler] | None = None,
+) -> Menu:
     """The `/catalog` picker: organization items, then optional add-ons; Enter toggles an add-on."""
     versions = snapshot.versions()
     title = f'From your organization and optional add-ons{f" ({versions})" if versions else ""}'
@@ -139,7 +162,19 @@ def catalog_menu(rows: Sequence[CatalogRow], *, snapshot: Snapshot, link: str | 
         .initial_index(min(index, max(len(rows) - 1, 0)))
         .preview(lambda item: row_preview(item.value, link=link) if isinstance(item.value, CatalogRow) else '')
     )
-    return slash_search(builder, footer='enter toggle · esc close', key_source=menu_key)
+    return slash_search(builder, footer='enter toggle · p preview · esc close', key_source=menu_key, hotkeys=hotkeys)
+
+
+def preview_panel(row: CatalogRow) -> RenderableType:
+    """Everything an item would add: the full skill or instruction text, or the server URL and env it sends."""
+    return Panel(
+        Text(row.full_text or '(nothing to show)'),
+        title=Text(f'{NOUNS.get(row.kind, row.kind)} {row.name}', style=theme.color(theme.ACCENT)),
+        title_align='left',
+        border_style=theme.color(theme.MUTED),
+        expand=False,
+        padding=(0, 1),
+    )
 
 
 def why_text(row: CatalogRow, *, link: str | None) -> str:

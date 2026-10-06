@@ -48,8 +48,7 @@ def test_an_item_that_fails_to_load_is_reported_not_announced(tmp_path: Path) ->
     assert [(item.key, error) for item, error in build.failed] == [
         (
             'mcp_server:bad',
-            "ValueError: Logfire config references $AWS_SECRET_ACCESS_KEY, which isn't allowed "
-            '(fleet_env_allow / policy.env_allow)',
+            "ValueError: Logfire config references $AWS_SECRET_ACCESS_KEY, which isn't in this server's env list",
         )
     ]
     assert [change.describe() for change in fleet.changes(build)] == ['Added company skill from Logfire: pr-shepherd']
@@ -100,10 +99,10 @@ def test_pushed_servers_wait_for_consent_keyed_by_target_and_env(tmp_path: Path,
     server = {
         'name': 'deepwiki',
         'url': 'https://mcp.deepwiki.com/mcp',
+        'env': ['DEEPWIKI_TOKEN'],
         'headers': {'X-Token': '${env:DEEPWIKI_TOKEN}'},
     }
     fleet = _fleet(tmp_path, {'mcp_servers': [server]}, {'items': []})
-    fleet.env_allow = ('DEEPWIKI_*',)
 
     build = fleet.build()
     [consent] = build.pending
@@ -117,7 +116,6 @@ def test_pushed_servers_wait_for_consent_keyed_by_target_and_env(tmp_path: Path,
     # A new target is a new question.
     moved = {**server, 'url': 'https://elsewhere.example/mcp'}
     fleet = _fleet(tmp_path, {'mcp_servers': [moved]}, {'items': []})
-    fleet.env_allow = ('DEEPWIKI_*',)
     assert [c.target for c in fleet.build().pending] == ['https://elsewhere.example/mcp']
 
 
@@ -126,9 +124,10 @@ def test_an_allowed_but_unset_variable_is_a_load_failure(tmp_path: Path, monkeyp
     server = {
         'name': 'deepwiki',
         'url': 'https://mcp.deepwiki.com/mcp',
+        'env': ['DEEPWIKI_TOKEN'],
         'headers': {'X-Token': '${env:DEEPWIKI_TOKEN}'},
     }
-    fleet = _fleet(tmp_path, {'mcp_servers': [server], 'policy': {'env_allow': ['DEEPWIKI_TOKEN']}}, {'items': []})
+    fleet = _fleet(tmp_path, {'mcp_servers': [server]}, {'items': []})
     [(item, error)] = fleet.build().failed
     assert error == 'ValueError: Logfire config references $DEEPWIKI_TOKEN, which is not set in your environment'
 
@@ -146,13 +145,29 @@ def test_notices_name_the_version_of_what_changed(tmp_path: Path) -> None:
     build = fleet.build()
     changes = fleet.changes(build, mark_seen=False)
 
-    def title(selected: list[Any]) -> str:
+    def render(selected: list[Any]) -> str:
         console = Console(file=StringIO(), width=200)
-        console.print(notice_panel(selected, snapshot=build.snapshot, link=None))
-        return console.file.getvalue().splitlines()[0]  # pyright: ignore[reportAttributeAccessIssue]
+        console.print(notice_panel(selected, snapshot=build.snapshot, source='logfire/clai2', link=None))
+        return console.file.getvalue()  # pyright: ignore[reportAttributeAccessIssue]
 
     by_tier = {change.tier: change for change in changes}
-    assert '(catalog v1)' in title([by_tier['catalog']])
-    assert '(config v1)' in title([by_tier['company']])
-    assert '(config v1 · catalog v1)' in title(changes)
+    assert 'catalog v1 · /catalog' in render([by_tier['catalog']])
+    assert 'config v1 · /catalog' in render([by_tier['company']])
+    both = render(changes)
+    assert 'Updated from Logfire · logfire/clai2' in both
+    assert '+ skills: pr-shepherd · catalog: iterate' in both
+    assert 'config v1 · catalog v1 · /catalog' in both
     assert fleet.compliance(build.snapshot, build.loaded)['clai2.catalog.version'] == '1'
+
+
+def test_items_apply_by_team_and_repo(tmp_path: Path) -> None:
+    here = {'name': 'here', 'instructions': 'x', 'applies_to': {'teams': ['ai'], 'repos': ['pydantic/*']}}
+    there = {'name': 'there', 'instructions': 'y', 'applies_to': {'repos': ['acme/*']}}
+    anyone = {'name': 'anyone', 'instructions': 'z'}
+    fleet = _fleet(tmp_path, {'skills': [here, there, anyone]}, {'items': []})
+    fleet.scope = lambda: ('ai', 'pydantic/pydantic-ai')
+    assert [item.name for item in fleet.build().loaded] == ['here', 'anyone']
+    fleet.scope = lambda: ('platform', 'pydantic/pydantic-ai')
+    assert [item.name for item in fleet.build().loaded] == ['anyone']
+    rows = {row.name: row.elsewhere for row in fleet.rows(fleet.snapshot())}
+    assert rows == {'here': True, 'there': True, 'anyone': False}
