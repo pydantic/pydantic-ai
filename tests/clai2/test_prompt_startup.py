@@ -63,7 +63,7 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
     assert scrollback.index('PLUGIN_LOAD_NOTICE') < scrollback.index('Goodbye.') < scrollback.index('PLUGIN_END_NOTICE')
 
 
-@pytest.mark.parametrize('command', ['/clear', 'clear'])
+@pytest.mark.parametrize('command', ['/clear', 'clear', '/new'])
 async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     surfaces: list[PromptSurface] = []
 
@@ -85,7 +85,7 @@ async def test_clear_returns_to_the_start_screen(tmp_path: Path, monkeypatch: py
     text = '\n'.join(Text.from_ansi(row).plain for row in surfaces[0].transcript.frame(width=200, height=200).rows)
     assert text.count('/new starts a session') == 1
     assert '> hello' not in text
-    assert 'New session started.' not in text
-    # The panel forgets the cleared conversation, but the terminal's scrollback keeps it, as before.
+    # The exit printout forgets the cleared conversation too, so it never reappears on screen.
     printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
-    assert printed.index('> hello') < printed.index('/new starts a session') < printed.index('Goodbye.')
+    assert '> hello' not in printed
+    assert printed.index('/new starts a session') < printed.index('Goodbye.')

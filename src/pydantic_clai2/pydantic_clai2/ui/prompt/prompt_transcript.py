@@ -292,8 +292,8 @@ _Item = _Line | MarkdownBlock
 class TranscriptBuffer:
     """Retain recent output, never editor paint or terminal-control transactions.
 
-    Items have stable ids, so the panel's scroll position survives new output. `clear` hides
-    earlier items from the panel but keeps them for `printed`, as a terminal keeps its scrollback.
+    Items have stable ids, so the panel's scroll position survives new output. `clear` forgets
+    every item, so neither the panel nor `printed` shows output from before it.
     """
 
     def __init__(self, *, max_lines: int = 10_000, max_chars: int = 4_000_000) -> None:
@@ -305,8 +305,6 @@ class TranscriptBuffer:
         self._items: deque[_Item] = deque()
         self._first = 0
         """The id of `_items[0]`; ids grow by one per item and are never reused."""
-        self._shown = 0
-        """The first id the panel shows, after `clear`."""
         self._printed = 0
         """Items before this id are already in the terminal's own scrollback."""
         self._chars = 0
@@ -416,8 +414,10 @@ class TranscriptBuffer:
         return block
 
     def clear(self) -> None:
-        """Hide all retained output from the panel, as after the screen is cleared."""
-        self._shown = self.end
+        """Forget all retained output, as a fresh terminal has none; ids keep growing."""
+        self._first = self.end
+        self._items.clear()
+        self._chars = 0
         self._pending = ''
         self._discard_until_newline = False
         self._decoder = TranscriptDecoder()
@@ -438,7 +438,7 @@ class TranscriptBuffer:
 
     def ids(self) -> range:
         """Ids the panel may show, ending with the unfinished line."""
-        return range(max(self._first, self._shown), self.end + 1)
+        return range(self._first, self.end + 1)
 
     def rows(self, item: int, *, width: int) -> tuple[str, ...]:
         """One item's rows; the unfinished line always has one, the writer's position."""

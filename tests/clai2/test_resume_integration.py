@@ -199,7 +199,8 @@ async def test_startup_restore_and_new_session_are_persisted(tmp_path: Path) -> 
     assert len(entries) == 2
     assert (await store.get(conversation_id=prior.summary.id)).summary.message_count > prior.summary.message_count
     assert 'Resumed' in output.getvalue()
-    assert 'Previous session remains saved' in output.getvalue()
+    # `/new` is `/clear`, so the banner follows the resumed conversation.
+    assert '/resume restores one' in output.getvalue().rsplit('Resumed', 1)[1]
 
 
 async def test_empty_startup_browser_and_invalid_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
