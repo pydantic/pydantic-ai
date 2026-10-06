@@ -506,6 +506,37 @@ async def test_incompatible_options(allow_model_requests: None, sockets: SocketH
         assert sockets.opened[0].sent == []
 
 
+@pytest.mark.parametrize(
+    'request_headers,accepted',
+    [
+        pytest.param({}, False, id='omitted-all'),
+        pytest.param({'x-tenant': 'tenant-test'}, False, id='omitted-organization'),
+        pytest.param(
+            {'OPENAI-ORGANIZATION': 'org-test', 'x-TENANT': 'tenant-test'}, True, id='case-insensitive-equivalent'
+        ),
+    ],
+)
+async def test_request_header_overrides(
+    allow_model_requests: None, sockets: SocketHarness, request_headers: dict[str, str], accepted: bool
+):
+    settings: OpenAIResponsesModelSettings = {
+        'extra_headers': {'OpenAI-Organization': 'org-test', 'X-Tenant': 'tenant-test'}
+    }
+    request_settings: OpenAIResponsesModelSettings = {'extra_headers': request_headers}
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=settings)
+    async with source.connect() as connected:
+        assert sockets.headers[0]['openai-organization'] == 'org-test'
+        assert sockets.headers[0]['x-tenant'] == 'tenant-test'
+        agent = Agent(connected, model_settings=request_settings)
+        if accepted:
+            assert (await agent.run('hello')).output == 'ready'
+            assert len(sockets.opened[0].sent) == 1
+        else:
+            with pytest.raises(UserError, match='Set `extra_headers` when opening'):
+                await agent.run('hello')
+            assert sockets.opened[0].sent == []
+
+
 async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):
     settings: OpenAIResponsesModelSettings = {
         'openai_responses_service_tier': 'ultrafast',

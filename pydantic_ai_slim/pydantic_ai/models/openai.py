@@ -3217,9 +3217,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if self._websocket is not None:
             if model_settings.get('openai_background'):
                 raise UserError('Background responses are not supported over a Responses WebSocket.')
-            for key, value in model_settings.get('extra_headers', {}).items():
-                if self._websocket.headers.get(key.lower()) != value:
-                    raise UserError('Set `extra_headers` when opening `model.connect()`, before making requests.')
+            request_headers: dict[str, str] = {
+                key.lower(): value for key, value in model_settings.get('extra_headers', {}).items()
+            }
+            request_headers.setdefault('user-agent', get_user_agent())
+            if request_headers != self._websocket.headers:
+                raise UserError('Set `extra_headers` when opening `model.connect()`, before making requests.')
             body: dict[str, object] = dict(create_params)
             if (extra_body := model_settings.get('extra_body')) is not None:
                 if not _is_str_dict(extra_body):
