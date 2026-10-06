@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 from .models import ProposalsDoc
@@ -28,8 +30,7 @@ class VariablesClient:
         config = response.json().get('variables', {}).get(VARIABLE)
         if config is None:
             return None
-        label = (config.get('labels') or {}).get(LABEL) or {}
-        value = label.get('serialized_value')
+        value = _label_value(config, LABEL)
         return ProposalsDoc.model_validate_json(value) if value else None
 
     async def write(self, doc: ProposalsDoc, *, exists: bool) -> None:
@@ -50,3 +51,17 @@ class VariablesClient:
                 },
             )
         response.raise_for_status()
+
+
+def _label_value(config: dict[str, Any], label: str, depth: int = 0) -> str | None:
+    """A label holds a value, or points at `latest` or another label (the server stores a label on the newest version
+    as a `latest` ref)."""
+    target = (config.get('labels') or {}).get(label)
+    if target is None or depth > 5:
+        return None
+    if 'serialized_value' in target:
+        return target['serialized_value']
+    ref = target.get('ref')
+    if ref == 'latest':
+        return (config.get('latest_version') or {}).get('serialized_value')
+    return _label_value(config, ref, depth + 1) if ref else None

@@ -17,7 +17,10 @@ CLUSTER_INSTRUCTIONS = """\
 You are given intents extracted from prompts that many developers typed into their coding agents, plus the
 patterns that were proposed in earlier runs. Group intents that express the SAME underlying request, even when
 worded very differently ("babysit the PR until CI is green" and "keep an eye on checks and review comments and
-iterate" are the same pattern). Leave out intents that match nothing else.
+iterate" are the same pattern). Prefer fewer, broader groups: variants of one workflow (e.g. "iterate on the PR
+until CI is green", "iterate until the review bot is satisfied", "implement it, open a PR and keep iterating
+until green") belong in ONE group. Leave out intents that match nothing else, and leave out throwaway test tasks
+that ask for a specific artifact (e.g. "write FizzBuzz in Rust") rather than describing how the user wants work done.
 
 For each group: write the shared pattern as one sentence, give a short kebab-case slug, and if it is the same
 pattern as an earlier proposal, set `existing_id` to that proposal's id (so it is not proposed twice).

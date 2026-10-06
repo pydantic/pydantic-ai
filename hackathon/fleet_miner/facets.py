@@ -44,7 +44,7 @@ class FacetCache:
 
 
 async def extract_facets(
-    prompts: list[UserPrompt], *, model: str, cache: FacetCache, concurrency: int = 8
+    prompts: list[UserPrompt], *, model: str, cache: FacetCache, concurrency: int = 16
 ) -> dict[str, Facet]:
     """Return a facet per prompt span id, only calling the model for sessions with uncached prompts."""
     agent = Agent(model, output_type=_SessionFacets, instructions=FACET_INSTRUCTIONS, name='fleet_miner_facets')
@@ -58,7 +58,7 @@ async def extract_facets(
         todo = [p for p in session_prompts if p.span_id not in cache.facets]
         if not todo:
             return
-        payload = [{'span_id': p.span_id, 'prompt': p.text[:4000]} for p in session_prompts]
+        payload = [{'span_id': p.span_id, 'prompt': p.text[:2000]} for p in session_prompts]
         async with semaphore:
             result = await agent.run(
                 'Prompts in this session, in order (extract a facet for every span_id):\n' + json.dumps(payload, indent=2)
@@ -67,6 +67,8 @@ async def extract_facets(
         for facet in result.output.facets:
             if facet.span_id in wanted:
                 cache.facets[facet.span_id] = facet
+        cache.save()  # per session, so an interrupted run keeps what it paid for
+        print('.', end='', flush=True)
 
     await asyncio.gather(*(one(ps) for ps in by_session.values()))
     cache.save()

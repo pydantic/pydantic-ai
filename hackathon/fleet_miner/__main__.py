@@ -33,6 +33,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--save-fixture', type=Path, help='also save the fetched prompts here')
     parser.add_argument('--agent-runs', action='store_true', help='also mine user text on agent run spans')
     parser.add_argument('--dry-run', action='store_true', help='print, write nothing')
+    parser.add_argument(
+        '--include-proposals', type=Path, help='also merge in the proposals of this document (e.g. a fixture run)'
+    )
     parser.add_argument('--out', type=Path, help='write the proposals document to this file')
     parser.add_argument('--base-url', default=os.environ.get('LOGFIRE_CLAI2_BASE_URL', 'https://logfire-eu.pydantic.info'))
     parser.add_argument('--facet-model', default='gateway/anthropic:claude-sonnet-5-5')
@@ -76,7 +79,8 @@ async def main(args: argparse.Namespace) -> None:
     if not qualifying:
         print(f'\nNo pattern reached {args.min_users} distinct users.')
     drafted = await patterns_mod.draft_proposals(qualifying, model=args.pattern_model) if qualifying else []
-    merged, actions = patterns_mod.merge(existing, drafted)
+    included = ProposalsDoc.model_validate_json(args.include_proposals.read_bytes()).proposals if args.include_proposals else []
+    merged, actions = patterns_mod.merge(existing, drafted + included)
     for proposal in drafted:
         print(f'\n--- [{actions[proposal.id]}] {proposal.kind} `{proposal.name}` -> {proposal.suggested_tier}')
         print(proposal.description)
