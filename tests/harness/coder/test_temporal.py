@@ -164,7 +164,8 @@ async def _stream_summarize(messages: list[ModelMessage], info: AgentInfo) -> As
 
 
 compacting_agent = Agent(
-    FunctionModel(_summarize, stream_function=_stream_summarize),
+    # A small window keeps the history under Temporal's payload size limit.
+    FunctionModel(_summarize, stream_function=_stream_summarize, profile={'context_window': 64_000}),
     name='compacting_coder_agent',
     deps_type=type(None),
     capabilities=[
@@ -179,9 +180,9 @@ compacting_agent = Agent(
 class CompactingWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        # Well over 85% of the 200,000-token window assumed for a model without a known one.
+        # About 60,000 tokens: over 85% of the window, and older than the 50,000 tokens compaction keeps.
         history: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('lorem ipsum ' * 80_000)]),
+            ModelRequest(parts=[UserPromptPart('lorem ipsum ' * 20_000)]),
             ModelResponse(parts=[TextPart('read it')]),
         ]
         return (await compacting_agent.run(prompt, message_history=history)).output
