@@ -122,7 +122,13 @@ class ImportCatalog:
             spec = _SOURCES[source]
             root = spec.home()
             self._titles[source] = spec.titles(root)
-            self._files.extend((path.stat().st_mtime, source, path) for path in spec.files(root))
+            for path in spec.files(root):
+                try:
+                    modified = path.stat().st_mtime
+                except OSError:
+                    # Removed since it was listed, or a broken link: skip it rather than the whole browser.
+                    continue
+                self._files.append((modified, source, path))
         self._files.sort(reverse=True)
         self._read: dict[Path, ImportedSession | None] = {}
         self._by_id: dict[str, ImportedSession] = {}
@@ -179,14 +185,15 @@ async def save_import(store: SqliteConversationStore, imported: ImportedSession)
         saved = (await store.get(conversation_id=imported.summary.id)).summary
     except LookupError:
         saved = None
-    if saved is not None:
-        # Importing saves revision 1, and each CLAI turn adds one.
-        if saved.revision > 1 or saved.updated_at >= imported.summary.updated_at:
-            return saved.id
-        await store.delete(source=saved)
+    # Importing saves revision 1, and each CLAI turn adds one.
+    if saved is not None and (saved.revision > 1 or saved.updated_at >= imported.summary.updated_at):
+        return saved.id
     messages = await run_sync(imported.messages)
     if not messages:
         raise ValueError(f'{imported.summary.subtitle} has no conversation to import')
+    if saved is not None:
+        # Only once the new transcript has been read, so a failed refresh keeps the previous copy.
+        await store.delete(source=saved)
     await store.save(summary=imported.summary, messages=messages)
     telemetry.record('conversation imported', source=imported.source, messages=len(messages))
     return imported.summary.id

@@ -88,8 +88,13 @@ class Sessions(Generic[DepsT, OutputT]):
         return report
 
     async def import_session(self, source: ImportSource, native_id: str) -> str:
-        """Copy a Claude Code or Codex session into the store by its own ID, returning its CLAI ID."""
-        return await save_import(self.store, await run_sync(find_import, source, native_id))
+        """Copy a Claude Code or Codex session into the store by its own ID, returning its CLAI ID.
+
+        As with a saved session's ID, one from another directory is refused, before anything is saved.
+        """
+        imported = await run_sync(find_import, source, native_id)
+        self.session.check_workspace(imported.summary.workspace)
+        return await save_import(self.store, imported)
 
     async def command(self, args: list[str]) -> str:
         """Shared command/startup resolver; loading history never executes pending tools.

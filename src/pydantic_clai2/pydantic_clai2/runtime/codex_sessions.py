@@ -64,7 +64,8 @@ def header(path: Path) -> Header | None:
         if record.get('type') == 'session_meta':
             meta = meta or payload
         elif record.get('type') == 'response_item' and payload.get('role') == 'user':
-            prompt = prompt or next(iter(_prompts(payload)), '')
+            texts = (text(block.get('text')) for block in objects(payload.get('content')))
+            prompt = prompt or next((t for t in texts if _typed(t)), '')
         if meta and prompt:
             return Header(native_id=text(meta.get('id')), cwd=text(meta.get('cwd')), title=title_text(prompt))
     return None
@@ -100,20 +101,20 @@ def messages(path: Path) -> list[ModelMessage]:
     return history.build()
 
 
-def _prompts(message: JsonObject) -> list[str]:
-    """A user message's typed text, without the context Codex adds."""
-    texts = [text(block.get('text')) for block in objects(message.get('content')) if block.get('type') == 'input_text']
-    return [t for t in texts if t and not t.lstrip().startswith(CONTEXT_PREFIXES)]
+def _typed(value: str) -> bool:
+    """Whether user text was typed, rather than context Codex adds itself."""
+    return bool(value) and not value.lstrip().startswith(CONTEXT_PREFIXES)
 
 
 def _item(history: HistoryBuilder, item: JsonObject, *, at: datetime, model: str | None) -> None:
     kind = item.get('type')
     role = item.get('role')
     if kind == 'message' and role == 'user':
-        for prompt in _prompts(item):
-            history.prompt(prompt, at=at)
+        # In order, so text keeps its place around the images it refers to.
         for block in objects(item.get('content')):
-            if block.get('type') == 'input_image' and (url := text(block.get('image_url'))):
+            if block.get('type') == 'input_text' and _typed(prompt := text(block.get('text'))):
+                history.prompt(prompt, at=at)
+            elif block.get('type') == 'input_image' and (url := text(block.get('image_url'))):
                 history.prompt([BinaryContent.from_data_uri(url) if url.startswith('data:') else ImageUrl(url)], at=at)
     elif kind == 'message' and role == 'assistant':
         for block in objects(item.get('content')):

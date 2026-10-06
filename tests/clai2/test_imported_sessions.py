@@ -171,6 +171,7 @@ def codex_session(cwd: Path, *, session_id: str = CODEX_ID, day: str = '01') -> 
                 {'type': 'input_image', 'image_url': 'data:image/png;base64,cG5n'},
                 {'type': 'input_image', 'image_url': 'https://example.com/a.png'},
                 {'type': 'input_image'},
+                {'type': 'input_text', 'text': 'like the second image'},
             ),
             item({'type': 'reasoning', 'summary': []}),
             item({'type': 'reasoning', 'summary': [{'type': 'summary_text', 'text': 'Plan it'}]}),
@@ -265,7 +266,7 @@ def test_codex_transcript_skips_its_own_context(tmp_path: Path) -> None:
     path = codex_session(tmp_path)
     messages = codex_sessions.messages(path)
     assert parts(messages) == [
-        ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
+        ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['ThinkingPart', 'ToolCallPart', 'ToolCallPart']),
         ('ModelRequest', ['ToolReturnPart', 'ToolReturnPart']),
         ('ModelResponse', ['TextPart']),
@@ -275,6 +276,7 @@ def test_codex_transcript_skips_its_own_context(tmp_path: Path) -> None:
         'Add a --verbose flag',
         [BinaryContent.from_data_uri('data:image/png;base64,cG5n')],
         [ImageUrl('https://example.com/a.png')],
+        'like the second image',
     ]
     assert isinstance(response, ModelResponse)
     assert response.parts == [
@@ -377,6 +379,8 @@ async def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
     # A directory with a transcript's name cannot be read; it is skipped, not fatal.
     (Path.home() / '.claude' / 'projects' / '-work' / 'unreadable.jsonl').mkdir()
     write_jsonl(Path.home() / '.claude' / 'projects' / '-work' / 'blank.jsonl', [])
+    # Listed, but gone by the time it is read, as a transcript deleted meanwhile is.
+    (Path.home() / '.claude' / 'projects' / '-work' / 'deleted.jsonl').symlink_to(tmp_path / 'missing')
     catalog = ImportCatalog(('claude', 'codex'))
     first, second = catalog.listing()
     assert (first.title, first.title_source, first.tags) == ('Verbose flag', 'generated', ('codex',))
@@ -433,17 +437,19 @@ async def test_import_refreshes_only_an_untouched_copy(tmp_path: Path) -> None:
 
 
 async def test_import_rejects_a_session_without_a_conversation(tmp_path: Path) -> None:
-    write_jsonl(
-        Path.home() / '.claude' / 'projects' / '-w' / 'synthetic.jsonl',
-        [
-            {'type': 'user', 'uuid': 'u', 'cwd': '/w', 'message': {'content': 'Hello'}},
-            claude_entry('s', None, 'assistant', [{'type': 'text', 'text': 'API Error'}], model='<synthetic>'),
-        ],
-    )
+    prompt = {'type': 'user', 'uuid': 'u', 'cwd': '/w', 'message': {'content': 'Hello'}}
+    path = write_jsonl(Path.home() / '.claude' / 'projects' / '-w' / 'synthetic.jsonl', [prompt])
+    os.utime(path, (1_000, 1_000))
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    conversation_id = await save_import(store, find_import('claude', 'synthetic'))
+    previous = await store.get(conversation_id=conversation_id)
+    # Claude Code then ended on a notice of its own, leaving nothing to continue.
+    synthetic = claude_entry('s', None, 'assistant', [{'type': 'text', 'text': 'API Error'}], model='<synthetic>')
+    write_jsonl(path, [prompt, synthetic])
     with pytest.raises(ValueError, match='Claude Code session synthetic has no conversation to import'):
         await save_import(store, find_import('claude', 'synthetic'))
-    assert await store.listing() == []
+    # The failed refresh keeps the copy that was there.
+    assert await store.get(conversation_id=conversation_id) == previous
 
 
 def sessions_service(tmp_path: Path) -> tuple[Sessions[None, str], SqliteConversationStore]:
@@ -474,6 +480,8 @@ async def test_resume_command_imports_by_id_and_continues(tmp_path: Path) -> Non
     codex_session(tmp_path / 'elsewhere')
     with pytest.raises(ValueError, match='Session belongs to'):
         await service.command(['codex', CODEX_ID])
+    # Refused before it is saved, so the browser does not gain a session nobody resumed.
+    assert [entry.tags for entry in await store.listing()] == [('claude',)]
 
 
 async def test_resume_browser_lists_imports_beside_saved_sessions(
