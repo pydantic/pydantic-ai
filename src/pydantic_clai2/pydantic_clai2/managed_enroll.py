@@ -6,7 +6,7 @@ from pydantic_clai2.builtin_plugins.logfire import REQUIRES, LogfireAccount, Log
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError, run_setup
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.managed import ManagedTarget
+from pydantic_clai2.managed import NOTICES, ManagedTarget
 
 FACTORY = 'pydantic_clai2.builtin_plugins.logfire'
 
@@ -51,3 +51,4 @@ async def enroll(store: SettingsStore, target: ManagedTarget) -> None:
         requires={key: frozenset(value) for key, value in REQUIRES.items()},
     )
     print(f'clai2 is set up for {target.project_label}.')
+    NOTICES.append(f'Signed in: clai2 is managed through Logfire ({target.project_label}).')

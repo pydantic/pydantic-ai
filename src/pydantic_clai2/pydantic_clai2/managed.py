@@ -14,6 +14,9 @@ from urllib.parse import parse_qs, urlsplit
 from pydantic_clai2.config.api_keys import load_keys
 from pydantic_clai2.config.settings_store import SettingsStore
 
+NOTICES: list[str] = []
+"""Lines from enrolment for the shell to show once it is up: the terminal is cleared when the shell starts."""
+
 MANAGED_ENV = 'CLAI2_MANAGED_URL'
 MANAGED_FILES = {
     'linux': Path('/etc/clai2/managed.toml'),
@@ -132,7 +135,7 @@ def _adopt_pushed_model(store: SettingsStore, target: ManagedTarget) -> None:
         store.reset('model')
     if model not in store.models():
         store.add_model(name=model)
-    print(f"Your organization's default model is {model} (from Logfire). /model to change.")
+    NOTICES.append(f"Your organization's default model is {model} (from Logfire). /model to change.")
 
 
 def _pushed_model(store: SettingsStore, target: ManagedTarget) -> str | None:

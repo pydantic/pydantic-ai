@@ -34,7 +34,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai_harness.ask_user import AskUserRequest, Question, QuestionOption
 from pydantic_ai_harness.logfire import AgentControl
 from pydantic_ai_harness.policy import PolicyDecision, PolicyRule, decision_attributes
-from pydantic_clai2 import policy_state
+from pydantic_clai2 import managed, policy_state
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.fleet import Build, Change, Consent, Fleet, FleetControl, Snapshot
 from pydantic_clai2.builtin_plugins.fleet_ui import (
@@ -506,6 +506,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                     record=self._record_outside_run,
                 )
             )
+        while managed.NOTICES:
+            self.host.console.print(f'◆ {managed.NOTICES.pop(0)}', style=theme.color(theme.ACCENT), markup=False)
         self._announce_changes()
         if self.fleet is not None and self._watcher is None:
             self._watcher = asyncio.get_running_loop().create_task(self._watch())
