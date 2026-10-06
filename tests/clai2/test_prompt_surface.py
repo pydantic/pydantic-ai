@@ -637,6 +637,17 @@ def test_cells_already_in_reverse_video_still_look_selected() -> None:
     assert [attrs & REVERSE for attrs in frame.attrs] == [REVERSE, REVERSE, REVERSE, 0]
 
 
+def test_releasing_another_button_mid_drag_does_not_end_it() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta\n')
+    for report in (press(1, 1), drag(3, 1), '\x1b[<2;3;1M'):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', '\x1b[<2;3;1m') is None, 'the right button let go'
+    assert screen.surface.transcript_key('mouse', drag(5, 1)) is None
+    assert screen.surface.transcript_key('mouse', release(5, 1)) == 'alpha'
+
+
 def test_malformed_mouse_reports_are_ignored() -> None:
     assert mouse_report('\x1b[<' + '9' * 5000 + ';1;1M') is None, 'longer than `int` accepts'
     assert mouse_report('\x1b[<0;1M') is None

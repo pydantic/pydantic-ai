@@ -64,6 +64,8 @@ class Selection:
     def feed(self, report: MouseReport) -> bool:
         """Track a press, drag, and release of the left button; `True` when a release ends a drag."""
         if report.released:
+            if report.button != LEFT:
+                return False  # SGR reports name the released button; the left one may still be held.
             ended = self.held and self.head is not None
             self.held = False
             return ended
