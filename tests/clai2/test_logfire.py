@@ -225,6 +225,30 @@ async def test_httpx_opt_in_traces_requests_and_unloads(
     assert ('ordinary request body' in serialized) is content
 
 
+async def test_httpx_moves_to_remaining_plugin_on_unload(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
+    def respond(transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, 'handle_request', respond)
+    first = load_logfire(make_host(httpx=True, ui_events=False))
+    second = load_logfire(make_host(httpx=True, ui_events=False))
+    try:
+        start = SessionStart(agent=Agent(TestModel()), settings=Settings())
+        await first.dispatch(start)
+        await second.dispatch(start)
+        await close(first)
+        with httpx.Client() as client:
+            client.get('https://example.com/remaining')
+        assert HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
+    finally:
+        await close(second)
+    assert not HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
+    assert any(
+        span.attributes and span.attributes.get('http.url') == 'https://example.com/remaining'
+        for span in recorder.exporters[1].get_finished_spans()
+    )
+
+
 async def test_httpx_does_not_uninstrument_an_existing_owner(recorder: Recorder) -> None:
     existing = HTTPXClientInstrumentor()
     existing.instrument()

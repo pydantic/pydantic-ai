@@ -14,7 +14,7 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 import logfire
 from anyio import CancelScope, to_thread
@@ -84,6 +84,9 @@ class LogfireSettings(BaseModel):
 class LogfirePlugin(Plugin[LogfireSettings]):
     """Core instrumentation, without changing the supplied agent or global OTel providers."""
 
+    _active_httpx: ClassVar[list['LogfirePlugin']] = []
+    """Live opt-in instances, ordered so HTTPX instrumentation can move to a remaining instance on unload."""
+
     def __init__(self, host: PluginHost[None], settings: LogfireSettings) -> None:
         super().__init__(host, settings)
         self._unsubscribe: Callable[[], None] | None = None
@@ -145,14 +148,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
         if self.settings.httpx:
-            instrumentors = (HTTPXClientInstrumentor(), HTTPX2ClientInstrumentor())
-            available = [
-                instrumentor for instrumentor in instrumentors if not instrumentor.is_instrumented_by_opentelemetry
-            ]
-            self.instance.instrument_httpx(capture_all=self.settings.include_content)
-            self._httpx_instrumentors = [
-                instrumentor for instrumentor in available if instrumentor.is_instrumented_by_opentelemetry
-            ]
+            if not self._active_httpx:
+                self._instrument_httpx()
+            self._active_httpx.append(self)
         if self.settings.ui_events:
             self._unsubscribe = telemetry.subscribe(
                 self._clai2, root=self._session_tracing.root, include_content=self.settings.include_content
@@ -160,6 +158,16 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
                 self._clai2.log('info', 'session started', attributes={'model': model})
+
+    def _instrument_httpx(self) -> None:
+        instrumentors = (HTTPXClientInstrumentor(), HTTPX2ClientInstrumentor())
+        available = [
+            instrumentor for instrumentor in instrumentors if not instrumentor.is_instrumented_by_opentelemetry
+        ]
+        self.instance.instrument_httpx(capture_all=self.settings.include_content)
+        self._httpx_instrumentors = [
+            instrumentor for instrumentor in available if instrumentor.is_instrumented_by_opentelemetry
+        ]
 
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         with telemetry.parent_span(self._session_tracing.root()):
@@ -173,10 +181,15 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
-        # Stop receiving UI events and HTTP spans before the instance shuts down.
-        for instrumentor in self._httpx_instrumentors:
-            instrumentor.uninstrument()
-        self._httpx_instrumentors.clear()
+        # HTTPX instrumentors are global: if another plugin instance remains, point them at its live provider.
+        if self in self._active_httpx:
+            self._active_httpx.remove(self)
+        if self._httpx_instrumentors:
+            for instrumentor in self._httpx_instrumentors:
+                instrumentor.uninstrument()
+            self._httpx_instrumentors.clear()
+            if self._active_httpx:
+                self._active_httpx[-1]._instrument_httpx()
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
