@@ -11,12 +11,24 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, TypeAlias, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Literal,
+    NoReturn,
+    Protocol,
+    Self,
+    TypeAlias,
+    assert_never,
+    cast,
+    overload,
+)
 
 import anyio
 import pydantic_core
 from pydantic import AnyUrl, Field, TypeAdapter
-from typing_extensions import Self, TypedDict, assert_never
+from typing_extensions import TypedDict
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 

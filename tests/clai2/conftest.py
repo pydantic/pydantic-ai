@@ -97,6 +97,7 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
     # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
     credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    credential_store._NO_OLDER_ENTRY.clear()  # pyright: ignore[reportPrivateUsage]
 
 
 def stored_accounts() -> set[str]:

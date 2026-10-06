@@ -4,14 +4,14 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
-from typing import Any, Generic, Literal, Protocol
+from typing import Any, Generic, Literal, Protocol, assert_never
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from typing_extensions import TypedDict, TypeVar, assert_never
+from typing_extensions import TypedDict, TypeVar
 
 from pydantic_evals._utils import UNSET, Unset
 

@@ -23,7 +23,7 @@ import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, TypeVar, get_args
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Required, TypeGuard, TypeVar, assert_never, get_args
 from urllib.parse import quote
 
 import websockets
@@ -51,7 +51,7 @@ from openai.types.realtime import (
 from openai.types.realtime.realtime_response_status import Error as RealtimeResponseStatusError
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 from pydantic_core import to_json
-from typing_extensions import Required, TypedDict, assert_never
+from typing_extensions import TypedDict
 
 from .._utils import generate_tool_call_id
 from ..exceptions import ModelHTTPError, UserError
@@ -1303,7 +1303,7 @@ async def expect_event(
     while True:
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RealtimeHandshakeError(f'timed out waiting for a {expected_type!r} event') from None
         if not isinstance(raw, str):
             raise RealtimeHandshakeError(f'expected a text frame, got {type(raw).__name__}')

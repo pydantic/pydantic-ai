@@ -26,6 +26,7 @@ _KEY_ALIASES = {
     'ctrl-enter': 'enter',
     'ctrl-shift-enter': 'enter',
     '<bracketed-paste>': 'paste',
+    '<vt100-mouse-event>': 'mouse',
 }
 _NAMED_KEYS = {
     8: 'backspace',
@@ -103,7 +104,7 @@ def _modified_key(sequence: str) -> str | None:
 class PromptKeys:
     """Attach prompt-toolkit input and normalize paste, CSI-u, Kitty alternate-key and xterm reports.
 
-    `PromptSurface` scopes xterm's `CSI >4;1m` and Kitty's `CSI >5u` modes.
+    `PromptSurface` scopes xterm's `CSI >4;1m`, Kitty's `CSI >5u`, and SGR mouse reporting.
     No prompt-toolkit application or renderer is started.
     """
 

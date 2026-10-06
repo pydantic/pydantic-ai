@@ -8,12 +8,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from typing import Any, ClassVar, Literal, TypeAlias, cast
+from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
 from opentelemetry.util.types import AttributeValue
 from pydantic import JsonValue
-from typing_extensions import assert_never, deprecated
+from typing_extensions import deprecated
 
 from .. import _utils, usage
 from .._instrumentation import model_attributes, open_request_policy, record_uncaught_errors, safe_to_json

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import UTC
 from typing import Any, Literal
 from unittest.mock import AsyncMock
 
@@ -85,7 +85,7 @@ def test_assistant_text():
                 parts=[
                     UserPromptPart(
                         content='Hello',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -95,7 +95,7 @@ def test_assistant_text():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -127,7 +127,7 @@ def test_assistant_text_history():
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='1', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='1', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 instructions='testing',
                 run_id=IsStr(),
@@ -136,12 +136,12 @@ def test_assistant_text_history():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='2', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='2', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 instructions='testing',
                 run_id=IsStr(),
@@ -150,7 +150,7 @@ def test_assistant_text_history():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),

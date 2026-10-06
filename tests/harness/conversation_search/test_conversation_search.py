@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import warnings
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -231,11 +231,11 @@ class TestSnapshotHistorySource:
         # so those fields are cleared before hashing; distinct parts still hash
         # differently.
         request = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call-1')])
-        stamped_request = replace(request, timestamp=datetime.now(timezone.utc), run_id='r1', conversation_id='c1')
+        stamped_request = replace(request, timestamp=datetime.now(UTC), run_id='r1', conversation_id='c1')
         assert message_hash(request) == message_hash(stamped_request)
 
         reply = _reply('done')
-        stamped_reply = replace(reply, timestamp=datetime.now(timezone.utc), run_id='r1', conversation_id='c1')
+        stamped_reply = replace(reply, timestamp=datetime.now(UTC), run_id='r1', conversation_id='c1')
         assert message_hash(reply) == message_hash(stamped_reply)
         assert message_hash(request) != message_hash(_reply('done'))
 

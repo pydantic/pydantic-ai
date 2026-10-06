@@ -13,10 +13,10 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    assert_never,
 )
 
 from pydantic import ValidationError
-from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict

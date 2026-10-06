@@ -14,16 +14,16 @@ from collections.abc import AsyncGenerator, Callable
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypeVar
+from typing import Annotated, Any, Literal, LiteralString, TypeVar
 
 import fastapi
 import logfire
 from fastapi import Depends, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from typing_extensions import LiteralString, ParamSpec, TypedDict
+from typing_extensions import ParamSpec, TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -117,7 +117,7 @@ async def post_chat(
             json.dumps(
                 {
                     'role': 'user',
-                    'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+                    'timestamp': datetime.now(tz=UTC).isoformat(),
                     'content': prompt,
                 }
             ).encode('utf-8')
