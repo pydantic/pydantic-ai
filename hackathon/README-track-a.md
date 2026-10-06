@@ -91,6 +91,26 @@ To publish a new version of a variable without the UI, run
 | `agent_control_config_hint` | `agent_control.client_features` | `["named_instructions", "catalog"]` for clai2; plain `AgentControl` reports `["named_instructions"]` |
 | `Resolve variable agent__clai2` | `name`, `label`, `version`, `reason`, `targeting_key` | Each resolution |
 
+## Policy (`agent__clai2.policy`)
+
+- **Rules** are applied by the harness `PolicyRules` capability (`pydantic_ai_harness.policy`), using the
+  `before_tool_execute` hook.
+  - `observe` records a `policy decision` span and lets the call run.
+  - `enforce` + `deny` skips the call and tells the model why.
+  - `enforce` + `ask` asks in clai2's `ask_user` picker. With no terminal, the call is denied.
+- **`match.command`** globs match each command segment, split on `&&`, `||`, `;`, `|` and newlines. A glob that
+  contains a literal `|` matches the whole command.
+- **`monty` rules** run in Monty with `tool_name` and `args` in scope and no host functions, with a 2 s timeout.
+  If a rule fails, it lets the call through in `observe` mode and blocks it in `enforce` mode, recording `error`.
+- **`mcp.allow`** applies to the user's and the project's MCP servers. Servers Logfire pushes are always allowed.
+- **`locked`** keys can't be turned off: `/catalog disable` and `/plugins disable` answer "locked by your
+  organization".
+- **Telemetry:**
+  - `policy decision` spans carry `clai2.policy.rule`, `.mode`, `.action`, `.outcome`, `.subject`,
+    `gen_ai.tool.name`, and also `.error` and `.monty_ms` for Monty rules.
+  - Every run span carries `clai2.policy.version`, `clai2.catalog.opted_out` and `clai2.policy.locked_ok`.
+  - The config hint's `agent_control.client_features` includes `policy`.
+
 ## Known limitations
 
 - **The cache prefix breaks.** A skill or instruction pushed mid-conversation changes the instructions and the
