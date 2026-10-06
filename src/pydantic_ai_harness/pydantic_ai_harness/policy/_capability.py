@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -37,6 +38,8 @@ class PolicyDecision:
     description: str = ''
     error: str | None = None
     """Why a Monty rule could not decide, when it failed open or closed."""
+    server_name: str | None = None
+    """For an MCP allowlist decision, the server's configured name (the subject is its URL or command)."""
     monty_ms: float | None = None
 
 
@@ -95,10 +98,11 @@ async def run_monty(code: str, tool_name: str, args: Mapping[str, Any], *, timeo
     async def dispatch(name: str, kwargs: dict[str, Any]) -> Any:
         raise RuntimeError(f'policy rules cannot call host functions ({name})')
 
-    # Values go in as Python literals: a policy snippet gets data, never objects.
-    source = f'tool_name = {tool_name!r}\nargs = {dict(args)!r}\ndecision = None\n{code}\n'
+    source = f'decision = None\n{code}\n'
     if 'decision' in code:
         source += 'decision\n'
+    # The call is data, handed in as inputs: never spliced into the source, never live objects.
+    inputs = {'tool_name': tool_name, 'args': json.loads(json.dumps(dict(args), default=str))}
     state = MontyRunState()
     with anyio.fail_after(timeout):
         session = await state.get_session(
@@ -108,7 +112,7 @@ async def run_monty(code: str, tool_name: str, args: Mapping[str, Any], *, timeo
             in_temporal_workflow=False,
         )
         completed = await MontyExecutor(dispatch=dispatch, valid_names=set[str](), portal=state.portal).run(
-            lambda: session.feed_start(source)
+            lambda: session.feed_start(source, inputs=inputs)
         )
     result = completed.output
     if result not in ('allow', 'ask', 'deny'):
@@ -240,6 +244,8 @@ def decision_attributes(decision: PolicyDecision, *, prefix: str) -> dict[str, s
     }
     if decision.error is not None:
         attributes[f'{prefix}.error'] = decision.error
+    if decision.server_name is not None:
+        attributes[f'{prefix}.server_name'] = decision.server_name
     if decision.monty_ms is not None:
         attributes[f'{prefix}.monty_ms'] = round(decision.monty_ms, 2)
     return attributes

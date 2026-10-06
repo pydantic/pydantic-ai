@@ -10,8 +10,10 @@ observability`). Each edit is saved at once, and the loader loads the plugin aga
 next run uses it. Its first row runs the project setup in `logfire_setup`.
 """
 
+import asyncio
 import os
 import sys
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -29,7 +31,7 @@ from pydantic_ai_harness.logfire import AgentControl
 from pydantic_ai_harness.policy import PolicyDecision, decision_attributes
 from pydantic_clai2 import policy_state
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
-from pydantic_clai2.builtin_plugins.fleet import Fleet, FleetControl
+from pydantic_clai2.builtin_plugins.fleet import Build, Change, Fleet, FleetControl
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.commands import Command
@@ -157,6 +159,11 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         )
         self.fleet: Fleet | None = None
         self._notice = ''
+        self._announced: set[str] = set()
+        """Notices already printed by the idle watcher, which the next turn start must not repeat."""
+        self._reported_failures: set[tuple[str, str]] = set()
+        self._watcher: asyncio.Task[None] | None = None
+        install_id = self._install_id = _install_id()
         if api_key:
             tracing = self._session_tracing
             self.fleet = Fleet(
@@ -165,7 +172,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 state_file=logfire_dir() / 'fleet_state.json',
                 allowed_plugins=tuple(settings.allowed_catalog_plugins),
                 attributes=tracing.identity,
-                targeting_key=lambda: tracing.email,
+                targeting_key=lambda: tracing.email or install_id,
                 user=lambda: tracing.email or 'local',
             )
         # UI records and plugin errors are CLAI's own, so they share the session root's scope.
@@ -190,7 +197,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         tracing = self._session_tracing
         control = AgentControl[None](
             self.fleet.agent_variable,
-            targeting_key=lambda _: tracing.email,
+            targeting_key=lambda _: tracing.email or self._install_id,
             attributes=lambda _: tracing.identity(),
             client_features=('catalog', 'policy'),
         )
@@ -248,9 +255,11 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     async def on_turn_start(self, event: TurnStart) -> None:
         self._announce_changes()
+        if self.fleet is not None and self._watcher is None:
+            self._watcher = asyncio.get_running_loop().create_task(self._watch())
 
     def _announce_changes(self) -> None:
-        """Show what Logfire pushed since the user last looked: once in the transcript, then in the status row."""
+        """At turn start: show what Logfire pushed since the user last looked, and mark it seen."""
         if self.fleet is None:
             return
         try:
@@ -259,17 +268,49 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         except Exception as error:  # noqa: BLE001 -- a control-plane hiccup must not block the prompt
             self.host.console.print(f'Logfire fleet config unavailable: {error}', style=theme.color(theme.WARNING))
             return
+        self._show(build, changes)
+        self._announced.clear()
+
+    def _show(self, build: Build, changes: Sequence[Change]) -> None:
+        """Print each change and load failure once; the status row keeps the latest change."""
         for change in changes:
-            self.host.console.print(f'◆ {change.describe()}', style=theme.color(theme.ACCENT), markup=False)
+            text = change.describe()
+            if text not in self._announced:
+                self._announced.add(text)
+                self.host.console.print(f'◆ {text}', style=theme.color(theme.ACCENT), markup=False)
         if changes:
             self._notice = changes[-1].describe()
         for item, error in build.failed:
+            # A broken item fails on every build; say so once per version of it, not on every prompt.
+            if (item.key, error) in self._reported_failures:
+                continue
+            self._reported_failures.add((item.key, error))
             noun = {'mcp_server': 'MCP server'}.get(item.kind, item.kind)
             self.host.console.print(
                 f"Couldn't load {noun} {item.name} from Logfire: {error}",
                 style=theme.color(theme.WARNING),
                 markup=False,
             )
+
+    async def _watch(self) -> None:
+        """While the prompt is idle, show a push within seconds instead of at the next prompt.
+
+        Reads the provider's cached values (no span) every few seconds and builds only when they changed. It
+        never marks anything seen: the next turn start does, so a notice shown here is not repeated there.
+        """
+        assert self.fleet is not None
+        last = self.fleet.fingerprint()
+        while True:
+            await asyncio.sleep(WATCH_INTERVAL)
+            try:
+                current = self.fleet.fingerprint()
+                if current == last:
+                    continue
+                last = current
+                build = self.fleet.build()
+                self._show(build, self.fleet.changes(build, mark_seen=False))
+            except Exception:  # noqa: BLE001 -- a watcher hiccup is retried on the next tick
+                continue
 
     async def configure(self) -> str:
         """The settings menu; its project row runs the setup that signs in and picks where traces go."""
@@ -287,11 +328,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             fleet = self.fleet
             policy_state.install(
                 policy_state.PolicySource(
-                    policy=fleet.policy,
+                    policy=fleet.current_policy,
                     record=self._record_outside_run,
-                    pushed_mcp_servers=lambda: frozenset(
-                        item.name for item in fleet.active() if item.kind == 'mcp_server'
-                    ),
                 )
             )
         self._announce_changes()
@@ -319,6 +357,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
 
     async def on_session_end(self, event: SessionEnd) -> None:
         policy_state.install(None)
+        if self._watcher is not None:
+            self._watcher.cancel()
+            self._watcher = None
         # Stop receiving UI events before the instance shuts down.
         if self._unsubscribe is not None:
             self._unsubscribe()
@@ -346,6 +387,29 @@ async def _user_email(settings: LogfireSettings) -> str | None:
 def _variables_options(api_key: str | None) -> dict[str, Any]:
     """`logfire.configure` arguments that read managed variables; none at all without a key, as before."""
     return {'api_key': api_key, 'variables': logfire.VariablesOptions()} if api_key else {}
+
+
+WATCH_INTERVAL = 5.0
+"""Seconds between idle checks for a push from Logfire."""
+
+
+def _install_id() -> str:
+    """A stable id for this install: the targeting key without an email, so rollouts don't flip per turn."""
+    path = logfire_dir() / 'install_id'
+    try:
+        return path.read_text(encoding='utf-8').strip() or _new_install_id(path)
+    except OSError:
+        return _new_install_id(path)
+
+
+def _new_install_id(path: Path) -> str:
+    value = uuid.uuid4().hex
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding='utf-8')
+    except OSError:
+        pass  # Unwritable config: this process still gets a stable id.
+    return value
 
 
 def _api_key(settings: LogfireSettings) -> str | None:

@@ -133,9 +133,27 @@ class ActiveItem:
 
 
 @dataclass(frozen=True)
+class Snapshot:
+    """The company config and catalog, resolved once, so everything a run or a turn reads agrees."""
+
+    config: FleetAgentConfig
+    version: str | None
+    catalog: Catalog
+
+    @property
+    def policy(self) -> Policy | None:
+        return self.config.policy
+
+    @property
+    def locked(self) -> frozenset[str]:
+        return frozenset(self.config.policy.locked) if self.config.policy is not None else frozenset()
+
+
+@dataclass(frozen=True)
 class Build:
     """One build of the fleet config for a run: the capabilities, the items they came from, and what failed."""
 
+    snapshot: Snapshot
     capabilities: list[AbstractCapability[None]]
     loaded: list[ActiveItem]
     failed: list[tuple[ActiveItem, str]]
@@ -177,6 +195,8 @@ class Fleet:
     catalog_variable: Variable[Catalog] = field(init=False)
     _mcp: dict[str, AbstractToolset[None]] = field(default_factory=dict[str, AbstractToolset[None]], init=False)
     _prepared: Build | None = field(default=None, init=False)
+    latest: Snapshot | None = field(default=None, init=False)
+    """The most recent snapshot, for decisions made outside a run (the MCP allowlist, locked items)."""
 
     def __post_init__(self) -> None:
         self.agent_variable = Variable(
@@ -188,17 +208,33 @@ class Fleet:
 
     # Resolution
 
-    def config(self) -> tuple[FleetAgentConfig, str | None]:
-        resolved = self.agent_variable.get(targeting_key=self.targeting_key(), attributes=self.attributes())
+    def snapshot(self) -> Snapshot:
+        """Resolve the company config and the catalog once (one `Resolve variable` span each)."""
+        targeting_key, attributes = self.targeting_key(), self.attributes()
+        resolved = self.agent_variable.get(targeting_key=targeting_key, attributes=attributes)
         version = getattr(resolved, 'version', None)
-        return resolved.value, None if version is None else str(version)
+        catalog = self.catalog_variable.get(targeting_key=targeting_key, attributes=attributes).value
+        self.latest = Snapshot(
+            config=resolved.value, version=None if version is None else str(version), catalog=catalog
+        )
+        return self.latest
 
-    def catalog(self) -> Catalog:
-        return self.catalog_variable.get(targeting_key=self.targeting_key(), attributes=self.attributes()).value
+    def fingerprint(self) -> tuple[str | None, ...]:
+        """The raw published values, read from the provider's cache without a span, to notice a push cheaply."""
+        provider = self.instance.config.get_variable_provider()
+        targeting_key, attributes = self.targeting_key(), self.attributes()
+        return tuple(
+            provider.get_serialized_value(variable.name, targeting_key, attributes).value
+            for variable in (self.agent_variable, self.catalog_variable)
+        )
 
-    def active(self) -> list[ActiveItem]:
+    def current_policy(self) -> Policy | None:
+        """The policy as last resolved, for decisions outside a run."""
+        return (self.latest or self.snapshot()).policy
+
+    def active(self, snapshot: Snapshot) -> list[ActiveItem]:
         """Company items, then catalog items the user has on."""
-        config, _ = self.config()
+        config = snapshot.config
         items = [
             *(
                 ActiveItem('instruction', name, '', 'company', {'instructions': text})
@@ -215,37 +251,28 @@ class Fleet:
         ]
         state = self._user_state()
         company = {item.key for item in items}
-        for item in self.catalog().items:
+        for item in snapshot.catalog.items:
             key = _key(item.kind, item.name)
-            if key in company or not self._enabled(item, state):
+            if key in company or not self._enabled(item, state, snapshot.locked):
                 continue
             items.append(ActiveItem(item.kind, item.name, item.description, 'catalog', item.payload))
         return items
 
-    def policy(self) -> Policy | None:
-        """The organization policy published with the company config, if any."""
-        return self.config()[0].policy
-
-    def _locked(self) -> frozenset[str]:
-        policy = self.policy()
-        return frozenset(policy.locked) if policy is not None else frozenset()
-
-    def compliance(self, active: Sequence[ActiveItem]) -> dict[str, str]:
+    def compliance(self, snapshot: Snapshot, active: Sequence[ActiveItem]) -> dict[str, str]:
         """The compliance attributes for a run: policy version, what the user opted out of, locked items held."""
-        _, version = self.config()
         state = self._user_state()
-        defaults_on = {_key(item.kind, item.name) for item in self.catalog().items if item.default == 'on'}
+        defaults_on = {_key(item.kind, item.name) for item in snapshot.catalog.items if item.default == 'on'}
         opted_out = sorted(key for key in state.opted_out if key in defaults_on)
-        keys = {item.key for item in active} | {'plugin:observability'}  # This code runs inside observability.
+        keys = {item.key for item in active} | {f'plugin:{name}' for name in policy_state.loaded_plugins()}
         return {
-            'clai2.policy.version': version or '',
+            'clai2.policy.version': snapshot.version or '',
             'clai2.catalog.opted_out': ','.join(opted_out),
-            'clai2.policy.locked_ok': 'true' if self._locked() <= keys else 'false',
+            'clai2.policy.locked_ok': 'true' if snapshot.locked <= keys else 'false',
         }
 
-    def _enabled(self, item: CatalogItem, state: _UserState) -> bool:
+    def _enabled(self, item: CatalogItem, state: _UserState, locked: frozenset[str]) -> bool:
         key = _key(item.kind, item.name)
-        if key in self._locked():
+        if key in locked:
             return True
         if item.default == 'on':
             return key not in state.opted_out
@@ -253,12 +280,13 @@ class Fleet:
 
     # Capabilities
 
-    def build(self) -> Build:
+    def build(self, snapshot: Snapshot | None = None) -> Build:
         """Build every active item; one that fails is reported, not counted as loaded."""
+        snapshot = snapshot or self.snapshot()
         capabilities: list[AbstractCapability[None]] = []
         loaded: list[ActiveItem] = []
         failed: list[tuple[ActiveItem, str]] = []
-        for item in self.active():
+        for item in self.active(snapshot):
             try:
                 capability = self._build(item)
             except Exception as error:  # noqa: BLE001 -- one bad pushed item must not stop the run
@@ -267,7 +295,7 @@ class Fleet:
             loaded.append(item)
             if capability is not None:
                 capabilities.append(capability)
-        return Build(capabilities=capabilities, loaded=loaded, failed=failed)
+        return Build(snapshot=snapshot, capabilities=capabilities, loaded=loaded, failed=failed)
 
     def prepare(self) -> Build:
         """Build for the turn about to start, so its notices and its run agree on what loaded."""
@@ -315,14 +343,15 @@ class Fleet:
     # Opt-in and notices
 
     def set_opt(self, key: str, on: bool) -> str:
-        catalog = {_key(item.kind, item.name): item for item in self.catalog().items}
+        snapshot = self.snapshot()
+        catalog = {_key(item.kind, item.name): item for item in snapshot.catalog.items}
         if key not in catalog:
             matches = [k for k in catalog if k.split(':', 1)[1] == key]
             if len(matches) != 1:
                 return f'No catalog item {key!r}. Run /catalog to list them.'
             key = matches[0]
         item = catalog[key]
-        if not on and key in self._locked():
+        if not on and key in snapshot.locked:
             return f'{item.name} is {policy_state.LOCKED_MESSAGE}; it cannot be disabled.'
         state = self._load()
         user = state.users.setdefault(self.user(), _UserState())
@@ -346,7 +375,7 @@ class Fleet:
         An item that failed to build is neither news nor a removal: the user sees the failure instead, and
         the item is announced once it loads.
         """
-        config, _ = self.config()
+        config = build.snapshot.config
         failed = {item.key for item, _ in build.failed}
         current: dict[str, tuple[str, str, str, str]] = {}
         for item in build.loaded:
@@ -380,7 +409,8 @@ class Fleet:
 
     def listing(self) -> str:
         """The `/catalog` listing: company items, then the catalog with each item's state for this user."""
-        config, version = self.config()
+        snapshot = self.snapshot()
+        config, version = snapshot.config, snapshot.version
         state = self._user_state()
         lines = [f'Company config from Logfire (agent__{self.name}{f" v{version}" if version else ""}):']
         company = [
@@ -389,9 +419,9 @@ class Fleet:
         ]
         lines.extend(company or ['  (none)'])
         lines.append(f'Catalog (catalog__{self.name}):')
-        items = self.catalog().items
+        items = snapshot.catalog.items
         for item in items:
-            on = self._enabled(item, state)
+            on = self._enabled(item, state, snapshot.locked)
             default = 'default on' if item.default == 'on' else 'optional'
             lines.append(f'  [{"x" if on else " "}] {item.kind:<10} {item.name} ({default}): {item.description}')
         if not items:
@@ -450,10 +480,14 @@ class FleetControl(AbstractCapability[None]):
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
         build = self.fleet.take()
-        capabilities, items = build.capabilities, build.loaded
-        baggage = {ACTIVE_ITEMS_ATTRIBUTE: ','.join(sorted(item.key for item in items)), **self.fleet.compliance(items)}
+        capabilities, items, snapshot = build.capabilities, build.loaded, build.snapshot
+        baggage = {
+            ACTIVE_ITEMS_ATTRIBUTE: ','.join(sorted(item.key for item in items)),
+            **self.fleet.compliance(snapshot, items),
+        }
+        # The run's policy is the one this run resolved, so a push mid-run applies from the next run.
         rules = PolicyRules(
-            policy=self.fleet.policy, approver=self.approver, record=self.record, attribute_prefix='clai2.policy'
+            policy=lambda: snapshot.policy, approver=self.approver, record=self.record, attribute_prefix='clai2.policy'
         )
         return CombinedCapability([_AdoptionBaggage(baggage=baggage), rules, _PluginMCPAllowlist(), *capabilities])
 

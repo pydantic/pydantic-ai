@@ -19,8 +19,6 @@ class PolicySource:
 
     policy: Callable[[], Policy | None]
     record: Callable[[PolicyDecision], None]
-    pushed_mcp_servers: Callable[[], frozenset[str]]
-    """Names of MCP servers Logfire pushed, which the allowlist never applies to."""
 
 
 _source: PolicySource | None = None
@@ -33,6 +31,10 @@ def install(source: PolicySource | None) -> None:
     global _source
     _source = source
     _recorded.clear()
+
+
+loaded_plugins: Callable[[], frozenset[str]] = frozenset
+"""Ids of the plugins loaded now; the shell installs the reader, so `locked_ok` can check `plugin:<id>` keys."""
 
 
 def current() -> PolicySource | None:
@@ -68,7 +70,9 @@ def mcp_allowed(name: str, url: str, *, subject: str) -> bool:
     policy = source.policy() if source is not None else None
     if source is None or policy is None or policy.mcp is None:
         return True
-    if any(name == allowed or (url and fnmatch.fnmatchcase(url, allowed)) for allowed in policy.mcp.allow):
+    # A stdio server's subject is its command, which is what the UI writes when someone clicks Allow.
+    candidates = [value for value in (name, url, subject) if value]
+    if any(fnmatch.fnmatchcase(value, allowed) for allowed in policy.mcp.allow for value in candidates):
         return True
     enforce = policy.mcp.mode == 'enforce'
     if (name, enforce) not in _recorded:
@@ -81,6 +85,7 @@ def mcp_allowed(name: str, url: str, *, subject: str) -> bool:
                 outcome='denied' if enforce else 'would_deny',
                 tool_name=f'mcp:{name}',
                 subject=subject[:500],
+                server_name=name,
             )
         )
     return not enforce

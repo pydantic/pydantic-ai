@@ -56,9 +56,7 @@ def test_mcp_policy_records_once_per_session() -> None:
     policy = Policy(mcp=MCPPolicy(allow=['deepwiki'], mode='observe'))
 
     def start_session() -> None:
-        policy_state.install(
-            policy_state.PolicySource(policy=lambda: policy, record=recorded.append, pushed_mcp_servers=frozenset)
-        )
+        policy_state.install(policy_state.PolicySource(policy=lambda: policy, record=recorded.append))
 
     try:
         start_session()
@@ -70,3 +68,17 @@ def test_mcp_policy_records_once_per_session() -> None:
     finally:
         policy_state.install(None)
     assert [(d.tool_name, d.outcome) for d in recorded] == [('mcp:context7', 'would_deny')] * 2
+
+
+def test_mcp_allowlist_matches_a_stdio_command_and_names_the_server() -> None:
+    from pydantic_ai_harness.policy import MCPPolicy, Policy
+
+    recorded: list[PolicyDecision] = []
+    policy = Policy(mcp=MCPPolicy(allow=['npx -y @acme/allowed*'], mode='enforce'))
+    policy_state.install(policy_state.PolicySource(policy=lambda: policy, record=recorded.append))
+    try:
+        assert policy_state.mcp_allowed('acme', '', subject='npx -y @acme/allowed-mcp')
+        assert not policy_state.mcp_allowed('other', '', subject='npx -y @other/mcp')
+    finally:
+        policy_state.install(None)
+    assert [(d.server_name, d.subject, d.outcome) for d in recorded] == [('other', 'npx -y @other/mcp', 'denied')]

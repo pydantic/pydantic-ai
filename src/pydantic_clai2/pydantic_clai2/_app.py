@@ -26,7 +26,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2 import warm_imports
+from pydantic_clai2 import policy_state, warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.self_update import Relaunch, Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
@@ -648,6 +648,8 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
+    # Hackathon: lets the fleet's `locked_ok` check that a locked plugin is really loaded.
+    policy_state.loaded_plugins = lambda: frozenset(loader._loaded)  # pyright: ignore[reportPrivateUsage]
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
