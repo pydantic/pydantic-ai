@@ -157,15 +157,9 @@ def _summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(summary.group() if summary else 'not compacted')])
 
 
-async def _stream_summarize(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    part = _summarize(messages, info).parts[0]
-    assert isinstance(part, TextPart)
-    yield part.content
-
-
 compacting_agent = Agent(
     # A small window keeps the history under Temporal's payload size limit.
-    FunctionModel(_summarize, stream_function=_stream_summarize, profile={'context_window': 64_000}),
+    FunctionModel(_summarize, profile={'context_window': 64_000}),
     name='compacting_coder_agent',
     deps_type=type(None),
     capabilities=[
