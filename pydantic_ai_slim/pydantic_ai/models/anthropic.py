@@ -1322,6 +1322,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
+        if _last_cacheable_block_has_cache_control(anthropic_messages):
+            # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
+            # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
+            auto_cache_control = None
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -1702,6 +1706,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
+        if _last_cacheable_block_has_cache_control(anthropic_messages):
+            # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
+            # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
+            auto_cache_control = None
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -4421,3 +4429,22 @@ def _support_tool_forcing(
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
+
+
+def _last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessageParam]) -> bool:
+    """Whether the block automatic caching would put its breakpoint on already carries an explicit `cache_control`.
+
+    That's the last cacheable block of the last message, the same one `anthropic_cache_messages` targets.
+    https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+    """
+    content = anthropic_messages[-1]['content']
+    blocks = [] if isinstance(content, str) else cast(list[dict[str, Any]], content)
+    last = next(
+        (
+            block
+            for block in reversed(blocks)
+            if 'cache_control' in block or block['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES
+        ),
+        None,
+    )
+    return last is not None and 'cache_control' in last

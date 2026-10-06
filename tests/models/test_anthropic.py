@@ -2081,6 +2081,36 @@ async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: N
     assert tools[-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
 
 
+@pytest.mark.parametrize(
+    ('settings', 'cache_point_ttl'),
+    [
+        pytest.param(AnthropicModelSettings(anthropic_cache=True), '1h', id='automatic-5m-explicit-1h'),
+        pytest.param(AnthropicModelSettings(anthropic_cache='1h'), '5m', id='automatic-1h-explicit-5m'),
+        pytest.param(ModelSettings(cache='1h'), '5m', id='unified-1h-explicit-5m'),
+    ],
+)
+async def test_automatic_caching_yields_to_explicit_breakpoint_on_last_block(
+    allow_model_requests: None, settings: ModelSettings, cache_point_ttl: Literal['5m', '1h']
+):
+    """A `CachePoint` on the last block takes the breakpoint automatic caching would place, so no top-level
+    `cache_control` is sent: Anthropic rejects automatic caching when the last block's explicit breakpoint has a
+    different TTL ("If the last block has an explicit `cache_control` with a different TTL, the API returns a
+    400 error", https://platform.claude.com/docs/en/build-with-claude/prompt-caching). A mocked client, since the
+    property is a request the API would reject."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await Agent(model, model_settings=settings).run(['Some context', CachePoint(ttl=cache_point_ttl)])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] is OMIT
+    assert completion_kwargs['messages'][-1]['content'][-1]['cache_control'] == {
+        'type': 'ephemeral',
+        'ttl': cache_point_ttl,
+    }
+
+
 async def test_limit_cache_points_with_cache(allow_model_requests: None):
     """Test that automatic caching reduces explicit cache point budget from 4 to 3."""
     c = completion_message(
