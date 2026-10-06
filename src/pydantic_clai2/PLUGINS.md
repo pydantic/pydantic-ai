@@ -1226,9 +1226,12 @@ Tokens are kept out of plugin settings, which are stored in plaintext:
   `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so later sessions
   reuse and refresh them. Choosing it saves `{"auth": "oauth"}`, which keeps
   using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. If you are not
-  signed in yet, the browser opens when the menu closes. A failed sign-in fails
-  the load, so nothing is added. A headless run that is not signed in fails to
-  load rather than opening a browser.
+  signed in yet, the browser opens right away, behind a waiting screen. Esc
+  cancels it, and a failed sign-in is reported in the menu. Either way Day AI
+  stays signed out and CLAI keeps working. Loading never opens the browser.
+  While browser sign-in is chosen but not finished, the plugin loads without
+  Day AI tools and prints how to sign in, so a sign-in you cannot finish never
+  holds up a session.
 
 Until you choose one, with no `DAY_AI_ACCESS_TOKEN` and no earlier sign-in,
 the plugin loads without Day AI tools and prints how to connect. A key named
