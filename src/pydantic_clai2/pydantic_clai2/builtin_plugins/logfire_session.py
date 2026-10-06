@@ -4,6 +4,7 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from uuid import uuid4
+from weakref import ref
 
 import logfire
 from anyio import move_on_after, run_process
@@ -14,6 +15,15 @@ from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapRunHandler
 from pydantic_clai2.plugins import SessionEndReason
 from pydantic_clai2.ui.telemetry import SCOPE, parent_span
+
+_TRACINGS: list[ref['SessionTracing']] = []
+"""Every started session tracing, weakly: each enabled copy of the `observability` plugin has one."""
+
+
+def _live_tracings() -> list['SessionTracing']:
+    live = [tracing for weak in _TRACINGS if (tracing := weak()) is not None]
+    _TRACINGS[:] = [ref(tracing) for tracing in live]
+    return live
 
 
 @dataclass(kw_only=True)
@@ -32,6 +42,8 @@ class SessionTracing(AbstractCapability[None]):
 
     def start(self, email: str | None) -> None:
         """Open the current conversation's root; `email`, when known, identifies the user on roots only."""
+        if self not in _live_tracings():
+            _TRACINGS.append(ref(self))
         self._email = email
         self._active = True
         self.root()
@@ -69,6 +81,7 @@ class SessionTracing(AbstractCapability[None]):
     def end(self, reason: SessionEndReason) -> None:
         self._bind_identity()
         self._active = False
+        _TRACINGS[:] = [weak for weak in _TRACINGS if weak() is not self]
         for span in self._roots.values():
             span.set_attribute('reason', reason)
             span.end()
@@ -98,7 +111,10 @@ class SessionTracing(AbstractCapability[None]):
             try:
                 return await handler()
             except Exception as error:
-                self._run_errors.append(error)
+                # Every enabled copy of the plugin looks the error up at turn end, but `combine` keeps only the last
+                # copy's `wrap_run`, so this one tells them all.
+                for tracing in _live_tracings():
+                    tracing._run_errors.append(error)
                 raise
 
 

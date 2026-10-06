@@ -348,6 +348,28 @@ async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, 
         assert any(span.status.status_code is trace.StatusCode.ERROR for span in spans)
 
 
+async def test_a_failure_inside_the_run_is_not_logged_again_by_a_second_copy(recorder: Recorder) -> None:
+    """With two copies enabled, `combine` keeps one copy's `wrap_run`; neither logs the run's error as `Turn failed`."""
+    first, second = load_logfire(make_host()), load_logfire(make_host())
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool_plain
+    def work() -> str:
+        raise RuntimeError('tool failure')
+
+    try:
+        for plugin in (first, second):
+            await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+        with pytest.raises(RuntimeError) as in_run:
+            await agent.run('run the tool', capabilities=[*first.capabilities, *second.capabilities])
+        for plugin in (first, second):
+            await plugin.dispatch(TurnEnd(text='a prompt', outcome='failed', error=in_run.value))
+    finally:
+        await close(first)
+        await close(second)
+    assert not [span for span in recorder.spans() if (span.attributes or {}).get('logfire.msg') == 'Turn failed']
+
+
 @pytest.mark.parametrize('content', [True, False])
 async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(
     recorder: Recorder, content: bool
