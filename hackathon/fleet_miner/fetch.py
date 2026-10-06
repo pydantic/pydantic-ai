@@ -24,14 +24,18 @@ _SESSIONS = """
     GROUP BY trace_id
 """
 
-# The session root only lands once a session ends, and clai2 builds before 2026-10-05 have none: fall back to the
-# machine as the user and the process as the session, so open and older sessions still count.
-_IDENTITY = """s.user_email, r.otel_resource_attributes->>'host.name' AS host,
-       coalesce(s.session_id, 'process:' || (r.otel_resource_attributes->>'service.instance.id')) AS session_id"""
+# Current clai2 puts `user.email`, `clai2.team` and `agent_session_id` on every record and span itself (as baggage).
+# Older records only have them on the `CLAI session` root, which lands once a session ends, and builds before
+# 2026-10-05 have no root at all: fall back to the machine as the user and the process as the session.
+IDENTITY = """coalesce(r.attributes->>'user.email', s.user_email) AS user_email,
+       r.attributes->>'clai2.team' AS team,
+       r.otel_resource_attributes->>'host.name' AS host,
+       coalesce(r.attributes->>'agent_session_id', s.session_id,
+                'process:' || (r.otel_resource_attributes->>'service.instance.id')) AS session_id"""
 
 PROMPTS_SQL = f"""
 SELECT r.trace_id, r.span_id, r.start_timestamp, r.attributes->>'prompt' AS prompt,
-       {_IDENTITY}
+       {IDENTITY}
 FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.span_name = 'prompt submitted'
@@ -47,7 +51,7 @@ ORDER BY r.start_timestamp
 # `pydantic_ai.all_messages` repeats the conversation so far, so texts are deduplicated per trace below.
 AGENT_RUNS_SQL = f"""
 SELECT r.trace_id, r.span_id, r.start_timestamp, r.attributes->>'pydantic_ai.all_messages' AS messages,
-       {_IDENTITY}
+       {IDENTITY}
 FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.service_name = 'pydantic-clai2'

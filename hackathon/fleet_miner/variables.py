@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -22,14 +23,39 @@ class VariablesClient:
     async def __aexit__(self, *exc: object) -> None:
         await self._client.aclose()
 
-    async def read(self) -> ProposalsDoc | None:
+    async def _config(self) -> dict[str, Any] | None:
         response = await self._client.get('/v1/variables/')
         response.raise_for_status()
-        config = response.json().get('variables', {}).get(VARIABLE)
-        if config is None:
-            return None
-        value = _label_value(config, LABEL)
+        return response.json().get('variables', {}).get(VARIABLE)
+
+    async def read(self) -> ProposalsDoc | None:
+        """The document the `production` label points at (the UI moves that label when it writes statuses)."""
+        config = await self._config()
+        value = _label_value(config, LABEL) if config else None
         return ProposalsDoc.model_validate_json(value) if value else None
+
+    async def update(self, build: Callable[[ProposalsDoc | None], ProposalsDoc], *, attempts: int = 3) -> ProposalsDoc:
+        """Read, merge, write, then re-read and verify, so a status the UI wrote meanwhile is not clobbered.
+
+        `build` merges our proposals into whatever is current right now (the read happens just before the write,
+        not when the miner started minutes earlier). If the re-read shows someone else's write landed after ours,
+        merge again onto theirs. The API has no compare-and-swap, so a write landing in the milliseconds between our
+        read and our write can't be prevented, only detected: the version then jumps by more than one.
+        """
+        for _ in range(attempts):
+            before = await self._config()
+            current_value = _label_value(before, LABEL) if before else None
+            doc = build(ProposalsDoc.model_validate_json(current_value) if current_value else None)
+            ours = doc.model_dump_json()
+            await self.write(doc, exists=before is not None)
+            after = await self._config()
+            if after is not None and _label_value(after, LABEL) == ours:
+                old_version = (before or {}).get('latest_version', {}).get('version', 0)
+                if after['latest_version']['version'] > old_version + 1:
+                    print('warning: another write landed between our read and write; re-check its statuses')
+                return doc
+            print('note: the variable changed right after our write; merging again onto the newer value')
+        raise RuntimeError(f'could not write `{VARIABLE}` without racing another writer ({attempts} attempts)')
 
     async def write(self, doc: ProposalsDoc, *, exists: bool) -> None:
         label = {'target_type': 'version', 'serialized_value': doc.model_dump_json()}

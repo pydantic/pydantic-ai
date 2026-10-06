@@ -22,15 +22,14 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
-from .fetch import _SESSIONS
+from .fetch import _SESSIONS, IDENTITY
 from .models import Evidence, McpAllow, PolicyMatch, PolicyRule, Proposal, clean_text, redact_secrets
 from .patterns import leaked_identifiers_in
 
 TOOL_CALLS_SQL = f"""
 SELECT r.trace_id, r.span_id, r.start_timestamp, r.attributes->>'gen_ai.tool.name' AS tool,
        r.attributes->>'gen_ai.tool.call.arguments' AS arguments,
-       s.user_email, r.otel_resource_attributes->>'host.name' AS host,
-       coalesce(s.session_id, 'process:' || (r.otel_resource_attributes->>'service.instance.id')) AS session_id
+       {IDENTITY}
 FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.service_name = 'pydantic-clai2' AND r.span_name LIKE 'execute_tool %'

@@ -83,12 +83,11 @@ async def main(args: argparse.Namespace) -> None:
     existing_doc = await client.read() if client else None
     existing = existing_doc.proposals if existing_doc else []
 
-    existing = [
-        p
-        for p in existing
-        if p.id not in args.drop
-        and not (args.drop_unreviewed_policy and p.kind == 'policy' and p.status in ('pending', 'stale'))
-    ]
+    def keep(p: Proposal) -> bool:
+        unreviewed_policy = p.kind == 'policy' and p.status in ('pending', 'stale')
+        return p.id not in args.drop and not (args.drop_unreviewed_policy and unreviewed_policy)
+
+    existing = [p for p in existing if keep(p)]
     mine_prompts, mine_policy = 'prompts' in args.only, 'policy' in args.only and not args.fixture
     drafted = await _mine_prompts(args, prompts, existing) if mine_prompts else []
     if mine_policy:
@@ -115,9 +114,18 @@ async def main(args: argparse.Namespace) -> None:
     if client is None:
         print(f'\nNo LOGFIRE_CLAI2_API_KEY: not writing `{VARIABLE}`.')
         return
+
+    def build(current: ProposalsDoc | None) -> ProposalsDoc:
+        # Merge onto what is live right now: statuses written while we were mining win.
+        fresh, _ = patterns_mod.merge(
+            [p for p in (current.proposals if current else []) if keep(p)], drafted, stale_kinds=stale_kinds
+        )
+        return doc.model_copy(update={'proposals': fresh})
+
     async with client:
-        await client.write(doc, exists=existing_doc is not None)
-    print(f'\nWrote `{VARIABLE}` ({sum(a != "skipped" for a in actions.values())} new or updated proposals).')
+        written = await client.update(build)
+    statuses = {s: sum(p.status == s for p in written.proposals) for s in ('pending', 'stale', 'accepted', 'dismissed')}
+    print(f'\nWrote and verified `{VARIABLE}`: {statuses}')
 
 
 async def _mine_prompts(
@@ -136,6 +144,7 @@ async def _mine_prompts(
         found = patterns_mod.load_patterns(clusters_path, prompts)
     else:
         found = await patterns_mod.find_patterns(prompts, facets, model=args.pattern_model, existing=existing)
+        patterns_mod.assign_stable_ids(found, existing, prior_spans=patterns_mod.load_prior_spans(clusters_path))
         patterns_mod.save_patterns(clusters_path, found)
     print('\nPatterns (distinct users / sessions / score):')
     for p in found:

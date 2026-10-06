@@ -132,6 +132,39 @@ async def find_patterns(
     return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
 
 
+def assign_stable_ids(
+    patterns: list[Pattern], existing: list[Proposal], *, prior_spans: dict[str, set[str]] | None = None
+) -> None:
+    """Give each cluster the id of the earlier proposal it continues, so a renamed cluster can't resurrect an
+    accepted or dismissed pattern under a new id.
+
+    A cluster continues an earlier proposal (of any status) when they share prompts: the proposal's evidence spans,
+    plus the full span list cached from the run that drafted it (`prior_spans`). Failing that, the clustering model's
+    intent match (`existing_id`) decides. Only a cluster that matches nothing gets a new id, never one already taken.
+    """
+    prior = [p for p in existing if p.kind in ('skill', 'instruction')]
+    spans_of = {p.id: {e.span_id for e in p.evidence} | (prior_spans or {}).get(p.id, set()) for p in prior}
+    taken: set[str] = set()
+    for pattern in sorted(patterns, key=lambda p: len(p.prompts), reverse=True):
+        spans = {u.span_id for u in pattern.prompts}
+        overlaps = {pid: len(spans & s) for pid, s in spans_of.items() if pid not in taken}
+        best = max(overlaps, key=lambda pid: overlaps[pid], default=None)
+        if best is not None and overlaps[best] > 0:
+            pattern.id = pattern.existing_id = best
+        elif pattern.existing_id in spans_of and pattern.existing_id not in taken:
+            pattern.id = pattern.existing_id
+        else:
+            pattern.existing_id = None
+            base, n = pattern.id, 2
+            while pattern.id in taken or pattern.id in spans_of or any(pattern.id == p.id for p in existing):
+                pattern.id, n = f'{base}-{n}', n + 1
+        taken.add(pattern.id)
+
+
+def load_prior_spans(path: Path) -> dict[str, set[str]]:
+    return {item['id']: set(item['span_ids']) for item in json.loads(path.read_text())} if path.exists() else {}
+
+
 def save_patterns(path: Path, patterns: list[Pattern]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = [
