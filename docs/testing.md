@@ -92,7 +92,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
 ```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py" typecheck="skip - dirty-equals matchers stand in for timestamps and IDs"}
-from datetime import timezone
+from datetime import UTC
 import pytest
 
 from dirty_equals import IsNow, IsStr
@@ -131,11 +131,11 @@ async def test_forecast():
             parts=[
                 UserPromptPart(
                     content='What will the weather be like in London on 2024-11-28?',
-                    timestamp=IsNow(tz=timezone.utc),  # (7)!
+                    timestamp=IsNow(tz=UTC),  # (7)!
                 ),
             ],
             instructions='Providing a weather forecast at the locations the user provides.',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             run_id=IsStr(),
             conversation_id=IsStr(),
         ),
@@ -155,7 +155,7 @@ async def test_forecast():
                 output_tokens=7,
             ),
             model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),
@@ -166,11 +166,11 @@ async def test_forecast():
                     tool_name='weather_forecast',
                     content='Sunny with a chance of rain',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                 ),
             ],
             instructions='Providing a weather forecast at the locations the user provides.',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             run_id=IsStr(),
             conversation_id=IsStr(),
         ),
@@ -185,7 +185,7 @@ async def test_forecast():
                 output_tokens=16,
             ),
             model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),

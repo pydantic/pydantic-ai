@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic_ai.messages import ModelMessage
@@ -48,7 +48,7 @@ from one. Vocabulary mirrors `pydantic_ai.messages.ModelRequestState`.
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _empty_str_dict() -> dict[str, str]:

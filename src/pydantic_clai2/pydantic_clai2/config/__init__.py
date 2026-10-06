@@ -6,8 +6,12 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 
 from pydantic_clai2.config.theme_names import names
 
-UpdateChannel = Literal['stable', 'bleeding']
+UpdateChannel = Literal['stable', 'main']
 UPDATE_CHANNELS: tuple[UpdateChannel, ...] = get_args(UpdateChannel)
+STORED_MAIN_CHANNEL = 'bleeding'
+"""`main`'s former name, still what is saved for it: older builds accept only this name."""
+ToolCallDisplay = Literal['detailed', 'grouped']
+TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
 
 
 class Settings(BaseModel):
@@ -24,6 +28,13 @@ class Settings(BaseModel):
     )
     tool_retries: int = Field(
         default=3, ge=0, description='Default retries per tool call. Explicit tool retry limits take precedence.'
+    )
+    pool_accounts: bool = Field(
+        default=True,
+        description=(
+            'A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, '
+            'as @* does. PROVIDER@default:MODEL runs the default account alone.'
+        ),
     )
     speculative_code_mode: bool = Field(
         default=False,
@@ -46,6 +57,14 @@ class Settings(BaseModel):
     )
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
+    tool_calls: ToolCallDisplay = Field(
+        default='detailed',
+        description=(
+            'How tool calls print: detailed gives each call its own line with arguments; '
+            'grouped counts consecutive calls by tool on one live line. Grouped ignores display.tool_output '
+            'and display.tool_arg_chars; file diffs still print.'
+        ),
+    )
     tool_output: bool = Field(
         default=False, description='Show shell and grep output below tool summaries. File diffs are always shown.'
     )
@@ -67,8 +86,14 @@ class Settings(BaseModel):
     )
     update_channel: UpdateChannel = Field(
         default='stable',
-        description='Where /update looks: stable PyPI releases, or bleeding for the newest CLAI commit on main.',
+        description='Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main.',
     )
+
+    @field_validator('update_channel', mode='before')
+    @classmethod
+    def read_former_channel_name(cls, value: object) -> object:
+        """Read `bleeding`, saved by older builds and by this one, as `main`."""
+        return 'main' if value == STORED_MAIN_CHANNEL else value
 
     @field_validator('theme')
     @classmethod
@@ -86,6 +111,7 @@ SETTING_FIELDS = {
     'display.theme': 'theme',
     'display.spinner': 'spinner',
     'display.splash': 'splash',
+    'display.tool_calls': 'tool_calls',
     'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',
     'display.grep_lines': 'grep_lines',
@@ -93,12 +119,13 @@ SETTING_FIELDS = {
     'display.smooth_seconds': 'smooth_seconds',
     'run.tool_retries': 'tool_retries',
     'run.speculative_code_mode': 'speculative_code_mode',
+    'accounts.pool': 'pool_accounts',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
     'updates.channel': 'update_channel',
 }
 
-STRING_SETTINGS = frozenset({'model', 'display.theme', 'display.spinner', 'updates.channel'})
+STRING_SETTINGS = frozenset({'model', 'display.theme', 'display.spinner', 'display.tool_calls', 'updates.channel'})
 """Keys whose typed value is taken as text rather than parsed as JSON."""
 
 

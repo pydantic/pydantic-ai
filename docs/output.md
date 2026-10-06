@@ -967,8 +967,9 @@ Here's an example of streaming a user profile as it's built:
 
 ```python {title="streamed_user_profile.py" line_length="120"}
 from datetime import date
+from typing import NotRequired
 
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 
