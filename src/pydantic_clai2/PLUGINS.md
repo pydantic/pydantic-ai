@@ -910,7 +910,9 @@ so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`; harness owns the automatic trigger. `/compact` runs the
-same chain unconditionally. Its optional focus is free text, not shell arguments:
+same chain unconditionally, with the protected tail capped at half the
+conversation, and keeps the history unless the result is smaller. Its optional
+focus is free text, not shell arguments:
 `/compact don't lose the "auth" decisions` preserves the apostrophe and quotes in
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions

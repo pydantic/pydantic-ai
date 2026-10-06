@@ -1484,12 +1484,15 @@ to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
 window by default). `/compact` runs the same chain between turns regardless of that
-threshold. Add free text to say what the summary must keep, for example
+threshold, but it protects at most half the conversation, so it always has older
+messages to summarise. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
 as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
-You get one line with the message counts before and after and an estimate of the tokens saved.
-An empty conversation, or one that fits inside the protected tail, says so and
-sends nothing.
+You get one line with the message counts before and after and an estimate of the
+tokens saved out of the total. When compacting would not make the conversation
+smaller, for example because the summary is longer than what it replaces, the
+conversation is left as it was and you are told so. An empty or one-message
+conversation sends nothing.
 
 The window comes from genai-prices, the same catalog the `/model add` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
