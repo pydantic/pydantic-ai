@@ -63,6 +63,12 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
 
 
 @pytest.fixture(autouse=True)
+def no_native_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Copy out through OSC 52 only: the local clipboard command would replace the developer's clipboard."""
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.text_clipboard.copy_command', lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Redirect default databases, including subprocesses, away from user data."""
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))

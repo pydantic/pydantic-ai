@@ -29,7 +29,7 @@ from pydantic_clai2.plugins import FullScreen, Plugin
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
-from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, Scroll, question_input
+from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey, question_input
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -145,9 +145,9 @@ class QuestionMenu:
                 while True:
                     surface.paint(self.frame(width=console.width, height=console.height))
                     key = key_source()
-                    if isinstance(key, Scroll):
-                        # Reading back through the transcript must not answer or edit the question.
-                        surface.scroll_key(key.key, key.data)
+                    if isinstance(key, TranscriptKey):
+                        # Reading back through or copying the transcript must not answer or edit the question.
+                        surface.transcript_key(key.key, key.data)
                         continue
                     if key == 'ctrl-c' or (key == 'escape' and not self.editing_custom):
                         return None

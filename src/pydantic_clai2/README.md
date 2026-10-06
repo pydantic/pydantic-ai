@@ -258,8 +258,14 @@ changing the draft. New output leaves a scrolled view in place; returning to the
 bottom or submitting follows new output again. Ctrl+L clears the screen, as in
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
-Use `/clear` to start a new conversation instead. Hold Shift or Option to select
-text with the mouse, depending on your terminal. On exit, CLAI prints the retained
+Use `/clear` to start a new conversation instead. Drag with the mouse to select
+text; releasing the button copies it to the clipboard and the footer says so.
+Locally CLAI copies with `pbcopy` on macOS, PowerShell on Windows, and `wl-copy`,
+`xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
+terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
+*Applications in terminal may access clipboard*; tmux: `set-clipboard on`).
+Holding Shift (Option in iTerm2) still uses the terminal's own selection in most
+terminals. On exit, CLAI prints the retained
 transcript into native terminal scrollback, without output cleared by Ctrl+L. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`

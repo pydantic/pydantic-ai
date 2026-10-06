@@ -19,6 +19,7 @@ from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.text import Text
+from termflow.ansi import make_clipboard_copy
 from termflow.tui.completion import Completion
 
 from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
@@ -763,6 +764,23 @@ async def test_wheel_reports_arrive_through_the_decoder() -> None:
         with anyio.fail_after(2):
             while live.output.view.anchor is not None:  # pyright: ignore[reportUnnecessaryComparison] -- changed by input
                 await anyio.sleep(0.01)
+
+
+async def test_a_mouse_drag_copies_the_transcript_without_touching_the_draft() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, pipe, _):
+        live.output.write('copy this line\n')
+        live.buffer.replace('draft')
+        live.paint()
+        pipe.send_text('\x1b[<0;1;1M\x1b[<32;9;1M\x1b[<0;9;1m')
+        with anyio.fail_after(2):
+            while not live.notice:
+                await anyio.sleep(0.01)
+        assert live.notice == 'Copied the selection to the clipboard.'
+        assert make_clipboard_copy('copy this') in terminal.getvalue()
+        assert live.buffer.text == 'draft'
+        live.feed('x')
+        assert live.notice == '', 'the next key clears the notice'
 
 
 async def test_steering_returns_the_transcript_to_the_newest_output() -> None:

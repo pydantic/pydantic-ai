@@ -5,8 +5,12 @@ import io
 import pytest
 from rich.console import Console
 from rich.text import Text
+from termflow.ansi import make_clipboard_copy
+from termflow.live import ScreenBuffer
+from termflow.live.buffer import REVERSE
 from termflow.themes import PALETTES, reset_palette
 
+from pydantic_clai2.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
 from pydantic_clai2.ui.prompt.prompt_surface import (
     ENTER,
     FRAME_INTERVAL,
@@ -14,6 +18,7 @@ from pydantic_clai2.ui.prompt.prompt_surface import (
     MAX_HELD_OSC,
     MODES_OFF,
     MODES_ON,
+    WHEEL_ROWS,
     PromptSurface,
 )
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -474,3 +479,206 @@ def test_split_hyperlinks_stay_in_the_transcript_and_are_not_forwarded() -> None
     screen.write('\x1b\\link\x1b]8;;\x1b\\\n')
     assert '\x1b]8;;https://example.com' not in screen.terminal.getvalue()
     assert Text.from_ansi(screen.surface.transcript.frame(width=80, height=5).rows[0]).plain == 'link'
+
+
+def press(column: int, row: int) -> str:
+    return f'\x1b[<0;{column};{row}M'
+
+
+def drag(column: int, row: int) -> str:
+    return f'\x1b[<32;{column};{row}M'
+
+
+def release(column: int, row: int) -> str:
+    return f'\x1b[<0;{column};{row}m'
+
+
+def highlighted(surface: PromptSurface) -> list[str]:
+    """The text of each painted row's reverse-video cells."""
+    frame = surface._frame  # pyright: ignore[reportPrivateUsage]
+    assert frame is not None
+    rows: list[str] = []
+    for row in range(frame.height):
+        cells = range(row * frame.width, (row + 1) * frame.width)
+        text = ''.join(frame.chars[index] for index in cells if frame.attrs[index] & REVERSE)
+        if text and SCROLLED_HINT.strip() not in text:  # The hint is reverse video of its own.
+            rows.append(text)
+    return rows
+
+
+def test_dragging_highlights_cells_and_releasing_copies_them() -> None:
+    """The panel reports the mouse for the wheel, so most terminals no longer select text themselves."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('first line here\nsecond line\nthird\n')
+    assert screen.surface.transcript_key('mouse', press(7, 1)) is None
+    assert highlighted(screen.surface) == [], 'a press alone selects nothing'
+    assert screen.surface.transcript_key('mouse', drag(10, 1)) is None
+    assert highlighted(screen.surface) == ['line']
+    assert screen.surface.transcript_key('mouse', drag(3, 3)) is None
+    assert highlighted(screen.surface) == ['line here' + ' ' * 25, 'second line' + ' ' * 29, 'thi']
+    start = len(screen.terminal.getvalue())
+    assert screen.surface.transcript_key('mouse', release(3, 3)) == 'line here\nsecond line\nthi'
+    assert screen.terminal.getvalue()[start:] == make_clipboard_copy('line here\nsecond line\nthi')
+    assert highlighted(screen.surface), 'the copied cells stay highlighted'
+    assert screen.lines()[:3] == ['first line here', 'second line', 'third'], 'selection never changes text'
+
+
+def test_dragging_backwards_selects_the_same_cells_in_reading_order() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta\ngamma\n')
+    for report in (press(3, 2), drag(1, 1), drag(7, 1), release(7, 1)):
+        copied = screen.surface.transcript_key('mouse', report)
+    assert copied == 'beta\ngam'
+
+
+def test_clicks_other_buttons_and_blank_drags_copy_nothing() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('text\n')
+    start = len(screen.terminal.getvalue())
+    # A click, a drag that ends on its own cell, a release without a press, a right drag, junk.
+    for report in (
+        press(2, 1),
+        release(2, 1),
+        release(2, 1),
+        '\x1b[<2;2;1M',
+        '\x1b[<34;4;1M',
+        '\x1b[<2;4;1m',
+        'not a mouse report',
+    ):
+        assert screen.surface.transcript_key('mouse', report) is None
+    assert highlighted(screen.surface) == []
+    for report in (press(20, 3), drag(30, 4)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(30, 4)) is None, 'blank cells have nothing to copy'
+    assert '\x1b]52;' not in screen.terminal.getvalue()[start:]
+
+
+def test_scrolling_resizing_and_releasing_the_panel_clear_the_highlight() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    for index in range(20):
+        screen.write(f'line {index}\n')
+
+    def select() -> None:
+        for report in (press(1, 1), drag(4, 1), release(4, 1)):
+            screen.surface.transcript_key('mouse', report)
+        assert highlighted(screen.surface) == ['line']
+
+    select()
+    screen.surface.transcript_key('mouse', '\x1b[<64;1;1M')
+    assert screen.surface.view.anchor is not None, 'the wheel still scrolls'
+    assert highlighted(screen.surface) == [], 'the selected text moved away'
+    select()
+    screen.surface.transcript_key('pagedown')
+    assert screen.surface.view.anchor is None and highlighted(screen.surface) == []
+    select()
+    screen.surface.resize_notice()
+    screen.surface.paint(ROWS)
+    assert highlighted(screen.surface) == []
+    select()
+    screen.surface.clear()  # Ctrl+L.
+    assert screen.surface.selection.anchor is None
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    select()
+    screen.surface.release()
+    assert highlighted(screen.surface) == [], 'a menu or command never shows a stale highlight'
+    screen.surface.release()
+
+
+def test_output_that_moves_the_selected_text_drops_the_selection() -> None:
+    """Screen cells, not transcript rows: a release must never copy text the user did not drag over."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    for index in range(4):
+        screen.write(f'line {index}\n')
+    for report in (press(1, 1), drag(6, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert highlighted(screen.surface) == ['line 0']
+    screen.write('line 4\n')  # Below the selection: the selected cells still show the same text.
+    assert highlighted(screen.surface) == ['line 0']
+    screen.write('line 5\nline 6\n')  # Following the newest output scrolls `line 0` away.
+    assert screen.lines()[0] != 'line 0'
+    assert highlighted(screen.surface) == []
+    assert screen.surface.transcript_key('mouse', drag(6, 1)) is None, 'the drag ended with the selection'
+    assert screen.surface.transcript_key('mouse', release(6, 1)) is None
+    assert '\x1b]52;' not in screen.terminal.getvalue()
+
+
+def test_a_drag_during_a_hold_highlights_on_the_next_frame() -> None:
+    """An inline question repaints the panel itself after each report."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('context\n')
+    screen.surface.release()
+    with screen.surface.held(leave_screen=False):
+        screen.surface.paint(('1. Patch',))
+        for report in (press(1, 1), drag(3, 1)):
+            screen.surface.transcript_key('mouse', report)
+        assert highlighted(screen.surface) == []
+        screen.surface.paint(('1. Patch',))
+        assert highlighted(screen.surface) == ['con']
+        assert screen.surface.transcript_key('mouse', release(3, 1)) == 'con'
+
+
+def test_a_release_before_any_frame_copies_nothing() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (40, 10))
+    surface.selection = Selection(anchor=(0, 0), head=(0, 3), held=True)
+    assert surface.transcript_key('mouse', release(4, 1)) is None
+
+
+def test_cells_already_in_reverse_video_still_look_selected() -> None:
+    frame = ScreenBuffer(4, 1)
+    frame.attrs[1] = REVERSE  # The editor's painted cursor, for example.
+    Selection(anchor=(0, 0), head=(0, 2)).highlight(frame, rows=1, previous=None)
+    assert [attrs & REVERSE for attrs in frame.attrs] == [REVERSE, REVERSE, REVERSE, 0]
+
+
+def test_releasing_another_button_mid_drag_does_not_end_it() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta\n')
+    for report in (press(1, 1), drag(3, 1), '\x1b[<2;3;1M'):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', '\x1b[<2;3;1m') is None, 'the right button let go'
+    assert screen.surface.transcript_key('mouse', drag(5, 1)) is None
+    assert screen.surface.transcript_key('mouse', release(5, 1)) == 'alpha'
+
+
+def test_malformed_mouse_reports_are_ignored() -> None:
+    assert mouse_report('\x1b[<' + '9' * 5000 + ';1;1M') is None, 'longer than `int` accepts'
+    assert mouse_report('\x1b[<0;1M') is None
+    assert mouse_report('\x1b[<0;10;5M') == MouseReport(button=0, cell=(4, 9), released=False)
+
+
+def test_selection_spans_clamp_to_the_frame() -> None:
+    selection = Selection(anchor=(-1, -5), head=(99, 99))
+    assert selection.span(width=4, rows=3) == range(0, 12)
+    assert selection.span(width=4, rows=2) == range(0, 8), 'rows below the transcript are not selectable'
+    assert Selection(anchor=(0, 0)).span(width=4, rows=3) == range(0)
+    assert Selection(anchor=(0, 0)).text(ScreenBuffer(4, 3), rows=3) == '', 'a click selects nothing'
+
+
+def test_a_drag_into_the_editor_copies_only_the_transcript() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('answer\n')
+    for report in (press(1, 1), drag(5, 9)):  # Row 9 is the editor's `BOTTOM` row.
+        screen.surface.transcript_key('mouse', report)
+    assert not any(row in highlighted(screen.surface) for row in ROWS)
+    assert screen.surface.transcript_key('mouse', release(5, 9)) == 'answer'
+
+
+def test_the_wheel_scrolls_both_ways_with_or_without_modifiers() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(ROWS)
+    for index in range(20):
+        screen.write(f'line {index}\n')
+    newest = screen.lines()[0]
+    screen.surface.transcript_key('mouse', '\x1b[<68;1;1M')  # Shift+wheel up.
+    assert screen.lines()[0] == f'line {int(newest.split()[1]) - WHEEL_ROWS}'
+    screen.surface.transcript_key('mouse', '\x1b[<65;1;1M')
+    assert screen.surface.view.anchor is None
