@@ -30,8 +30,8 @@ from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolse
 try:
     from render import Options, Retry, TaskContext, Workflows
     from render.workflows import TaskDefinition
-except ModuleNotFoundError as _import_error:  # pragma: no cover
-    if _import_error.name != 'render':
+except ModuleNotFoundError as _import_error:
+    if _import_error.name != 'render':  # pragma: no cover - incomplete SDK installation
         raise
     raise ImportError(
         'Please install the `render` package to use the Render Workflows capability, '
