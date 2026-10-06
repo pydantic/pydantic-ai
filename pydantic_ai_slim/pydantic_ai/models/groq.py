@@ -5,11 +5,10 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, assert_never, cast, overload
 
 from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
-from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -63,6 +62,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -391,7 +391,7 @@ class GroqModel(Model[AsyncGroq]):
             merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
@@ -463,7 +463,7 @@ class GroqModel(Model[AsyncGroq]):
         peekable_response: _utils.PeekableAsyncStream[
             chat.ChatCompletionChunk, AsyncStream[chat.ChatCompletionChunk]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -722,7 +722,7 @@ class GroqStreamedResponse(StreamedResponse):
                 reasoning = False
                 if self._provider_timestamp is not None:  # pragma: no branch
                     self.provider_details = {'timestamp': self._provider_timestamp}
-                async for chunk in self._response:
+                async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
                     self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
 
                     if chunk.id:  # pragma: no branch

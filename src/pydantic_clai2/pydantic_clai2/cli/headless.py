@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 
 from anyio import CancelScope
 from rich.console import Console
@@ -15,6 +15,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.plugins import SessionEndReason, TurnEnd, TurnStart
+from pydantic_clai2.runtime.imported_sessions import ImportSource
 
 
 @asynccontextmanager
@@ -31,9 +32,12 @@ async def run_headless(
     store: SettingsStore,
     project: ProjectSettings,
     resume: str | None = None,
+    resume_from: ImportSource | None = None,
     agent: AbstractAgent[None, object] | None = None,
 ) -> int:
     """Print only the final answer; preserve sessions and report failures on stderr.
+
+    `resume_from` imports the `resume` session from Claude Code or Codex first.
 
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
     """
@@ -59,12 +63,18 @@ async def run_headless(
         async with agent:
             with shell.screen.bound(no_screen):  # pragma: no branch -- bound never suppresses exceptions.
                 try:
-                    # Skip before activation, even when a saved declaration overrides the built-in.
-                    for entry in shell.loader.entries():
-                        if entry.declaration.enabled and entry.name != 'ask_user':
-                            await shell.loader.load(entry.name)
-                    if resume is not None:
-                        await shell.session.resume(resume)
+                    with shell.defer_identity() if resume is not None else nullcontext():
+                        # Skip before activation, even when a saved declaration overrides the built-in.
+                        for entry in shell.loader.entries():
+                            if entry.declaration.enabled and entry.name != 'ask_user':
+                                # Read afresh: a plugin loaded earlier in this loop may include this one.
+                                current = next(other for other in shell.loader.entries() if other.name == entry.name)
+                                if current.included_in is None:
+                                    await shell.loader.load(entry.name)
+                        if resume is not None:
+                            if resume_from is not None:
+                                resume = await shell.sessions.import_session(resume_from, resume)
+                            await shell.session.resume(resume)
                     start = TurnStart(text=text)
                     ended = TurnEnd(text=text, outcome='cancelled')
                     try:
@@ -79,7 +89,7 @@ async def run_headless(
                     assert ended.result is not None
                     answer = str(ended.result.output)
                     reason = 'exit'
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 -- CLI boundary, stdout must remain answer-only.
                     Console(stderr=True).print(error_message(exc), markup=False, highlight=False)
                     return 1
                 finally:

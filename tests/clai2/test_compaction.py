@@ -1,7 +1,7 @@
 """The built-in `compaction` plugin, loaded with `load_plugin` and driven through one `chat()` run."""
 
 import io
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -12,13 +12,21 @@ from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.compaction import FallbackCompaction
+from pydantic_ai_harness.compaction import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import Session, chat
-from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
+from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
+from pydantic_clai2.builtin_plugins import compaction as compaction_plugin
+from pydantic_clai2.builtin_plugins.compaction import (
+    CompactionPlugin,
+    CompactionSettings,
+    CompactionSource,
+    build_chain,
+)
+from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, Transcript, load_plugin
+from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, Transcript, load_plugin
+from pydantic_clai2.plugins.loader import PluginLoader
 from tests.clai2.test_app_edges import inputs
 
 
@@ -120,6 +128,26 @@ async def test_summariser_failure_falls_back_to_truncation() -> None:
     notice = await plugin.commands.execute_async('/compact')
     assert notice.startswith('Compacted 4 messages down to 2;')
     assert_truncated_without_a_summary(transcript)
+
+
+def protected_tails(chain: FallbackCompaction[None]) -> list[int | None]:
+    """The `keep_tokens` of each strategy in the chain, in fallback order."""
+    tails: list[int | None] = []
+    for strategy in chain.fallback_chain:
+        assert isinstance(strategy, SummarizingCompaction | SlidingWindowCompaction)
+        tails.append(strategy.keep_tokens)
+    return tails
+
+
+@pytest.mark.parametrize(('strategy', 'strategies'), [('summarization', 2), ('truncation', 1)])
+def test_threshold_and_protected_tokens_reach_every_strategy(strategy: str, strategies: int) -> None:
+    """Unset, the chain compacts at 85% and keeps the last 50,000 tokens; set, it uses the chosen values."""
+    default = build_chain(CompactionSettings.model_validate({'strategy': strategy}))
+    assert default.max_fraction == 0.85 and protected_tails(default) == [50_000] * strategies
+    chosen = build_chain(
+        CompactionSettings.model_validate({'strategy': strategy, 'threshold': 0.6, 'protected_tokens': 0})
+    )
+    assert chosen.max_fraction == 0.6 and protected_tails(chosen) == [0] * strategies
 
 
 async def test_settings_are_validated_on_activation() -> None:
@@ -228,3 +256,93 @@ async def test_shell_loads_the_plugin_and_compacts(tmp_path: Path, monkeypatch: 
     text = output.getvalue()
     assert 'Compacted 4 messages down to 3' in text
     assert 'compaction' in text and 'pydantic_clai2.builtin_plugins.compaction (built-in)' in text
+
+
+def test_settings_source_shows_validates_saves_and_resets() -> None:
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[None](
+        name='compaction',
+        console=Console(file=io.StringIO()),
+        settings={'protected_tokens': 0},
+        save_settings=saved.append,
+    )
+    source = CompactionSource(host)
+    strategy, threshold, protected, window, summarizer = source.rows()
+    assert [source.current(row) for row in source.rows()] == ['summarization', '0.85', '0', '(not set)', '(not set)']
+    assert [row.default for row in source.rows()] == ['summarization', '0.85', '50000', '(not set)', '(not set)']
+    assert strategy.choices == ('summarization', 'truncation') and not strategy.allow_custom
+    assert threshold.allow_custom and not threshold.choices
+    assert source.problem(threshold, '0') == 'Input should be greater than 0'
+    assert source.problem(threshold, 'most') is not None
+    assert source.problem(protected, '2.5') == 'Input should be a valid integer'
+    assert source.problem(threshold, '1') is None
+    assert source.apply(threshold, '0.7') == 'Saved Threshold.'
+    assert source.apply(window, '200000') == 'Saved Context window.'
+    assert source.apply(summarizer, 'openai:gpt-5-mini') == 'Saved Summarization model.'
+    assert source.apply(strategy, 'truncation') == 'Saved Strategy.'
+    assert saved[-1] == {
+        'protected_tokens': 0,
+        'threshold': 0.7,
+        'context_window': 200_000,
+        'summarization_model': 'openai:gpt-5-mini',
+        'strategy': 'truncation',
+    }, 'only chosen settings are saved, so later default changes still apply'
+    assert source.current(window) == '200000'
+    assert source.reset(threshold) == 'Reset Threshold.'
+    assert 'threshold' not in saved[-1] and source.current(threshold) == '0.85'
+    assert source.reset(threshold) == 'Reset Threshold.'
+
+
+async def test_configure_outside_a_terminal_explains_how() -> None:
+    assert 'from a terminal' in await make_plugin().plugin.configure()
+
+
+@pytest.mark.parametrize('messages', [['Saved Threshold.'], []])
+async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, messages: list[str]) -> None:
+    host = PluginHost[None](name='compaction', console=Console(file=io.StringIO(), force_terminal=True), settings={})
+    plugin = load_plugin(CompactionPlugin, host).plugin
+
+    async def run_worker(work: Callable[[], list[str]]) -> list[str]:
+        return messages
+
+    monkeypatch.setattr(compaction_plugin, 'run_worker', run_worker)
+    assert await plugin.configure() == ('\n'.join(messages) or 'No compaction settings changed.')
+
+
+async def test_configured_settings_rebuild_the_chain_for_the_next_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beside the default `coder`, `/plugins configure compaction` reloads it, so the next run binds the new chain."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    coder, compaction = (
+        next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == name) for name in ('coder', 'compaction')
+    )
+    plugins = PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(coder, compaction),
+    )
+    try:
+        await plugins.load_all()
+        assert [entry.state for entry in plugins.entries()] == ['enabled, loaded', 'enabled, loaded']
+        before = plugins.entries()[1].loaded
+        assert before is not None and isinstance(before.capabilities[0], FallbackCompaction)
+        assert before.capabilities[0].max_fraction == 0.85
+        assert isinstance(before.plugin, CompactionPlugin) and protected_tails(before.plugin.chain) == [50_000, 50_000]
+
+        async def save() -> str:
+            before.host.save_settings(CompactionSettings(threshold=0.6, protected_tokens=1000))
+            return 'saved'
+
+        monkeypatch.setattr(before.plugin, 'configure', save)
+        assert await plugins.configure('compaction') == 'saved'
+        after = plugins.entries()[1].loaded
+        assert after is not None and after is not before
+        chain = after.capabilities[0]
+        assert isinstance(chain, FallbackCompaction) and chain.max_fraction == 0.6
+        assert isinstance(after.plugin, CompactionPlugin) and protected_tails(after.plugin.chain) == [1000, 1000]
+        assert store.plugins()[0].settings == {'threshold': 0.6, 'protected_tokens': 1000}
+    finally:
+        await plugins.close('exit')

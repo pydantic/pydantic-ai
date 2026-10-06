@@ -5,7 +5,7 @@ import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -195,7 +195,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -216,7 +216,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -282,7 +282,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -385,7 +385,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -420,7 +420,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -448,7 +448,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -803,7 +803,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1078,7 +1078,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=UTC),
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -1252,7 +1252,7 @@ search(What is the weather in San Francisco today?)
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=UTC),
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -1907,7 +1907,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1940,7 +1940,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1968,7 +1968,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2095,7 +2095,7 @@ Enjoy your homemade Uruguayan alfajores!\
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3464,7 +3464,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5852,7 +5852,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5902,7 +5902,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5990,3 +5990,44 @@ async def test_groq_extra_headers_not_mutated(allow_model_requests: None):
 
     # The caller's dict is unchanged: no User-Agent leaked into it.
     assert user_headers == {'X-Custom': 'value'}
+
+
+@pytest.mark.parametrize(
+    ('stream', 'content', 'content_type'),
+    [
+        pytest.param(False, b'   ', 'application/json', id='request'),
+        pytest.param(
+            True,
+            b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"llama-3.3-70b-versatile",'
+            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
+            b'data: {not json\n\n',
+            'text/event-stream',
+            id='stream',
+        ),
+        pytest.param(True, b'data: {not json\n\n', 'text/event-stream', id='stream-first-chunk'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, content_type: str
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=content, headers={'content-type': content_type})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = AsyncGroq(api_key='test', base_url='http://localhost', max_retries=0, http_client=http_client)
+        agent = Agent(GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('Hello')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

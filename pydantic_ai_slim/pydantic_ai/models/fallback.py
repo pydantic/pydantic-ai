@@ -7,12 +7,11 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 
 import anyio
 from opentelemetry.trace import get_current_span
 from opentelemetry.util.types import AttributeValue
-from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import (
     model_attributes,
