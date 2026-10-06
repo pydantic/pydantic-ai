@@ -11,7 +11,7 @@ import sys
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
 from typing import Literal
 from uuid import uuid4
@@ -41,7 +41,7 @@ class ConversationSummary:
     schema_version: Literal[1] = 1
     id: str = field(default_factory=lambda: str(uuid4()))
     workspace: str
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     revision: int = 0
     title: str = 'New session'
     subtitle: str = ''
@@ -169,7 +169,7 @@ class SqliteConversationStore:
         updated = replace(
             summary,
             revision=summary.revision + 1,
-            updated_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(UTC),
             message_count=len(messages),
             total_tokens=sum(m.usage.total_tokens for m in messages if isinstance(m, ModelResponse)),
         )

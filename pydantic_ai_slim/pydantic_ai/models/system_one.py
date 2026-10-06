@@ -4,11 +4,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from math import isfinite
-from typing import Annotated, ClassVar, Literal, cast
+from typing import Annotated, ClassVar, Literal, assert_never, cast
 
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
-from typing_extensions import assert_never
 
 from .._http import to_httpx2_timeout
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError

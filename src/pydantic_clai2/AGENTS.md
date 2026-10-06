@@ -91,10 +91,12 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **Instruction order is capability order.** Placement is a core
   `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a CLAI list.
 - **Registration is idempotent per name.** "Active for the next prompt" is the
-  natural unit. Stock agents are rebuilt when the capability snapshot changes,
-  with plugins bound at construction so self-delegation carries their tools,
-  instructions, and guardrails. Supplied agents still receive plugins per run
-  (`agent.run(capabilities=...)`) and are never rebuilt.
+  natural unit. Stock agents are rebuilt when the capability snapshot or CLAI's
+  unchosen default model changes. Plugins are bound at construction so
+  self-delegation carries their tools, instructions, and guardrails, and the
+  default model is bound as the agent's own so a capability can replace it.
+  Supplied agents still receive plugins per run (`agent.run(capabilities=...)`)
+  and are never rebuilt.
 - **Shipped plugins register first, in declared order.** The menu's alphabetical
   order is for scanning only. Registration order is the order instructions,
   renderers, and status segments are consulted in, so `coder`'s guidance leads
@@ -130,9 +132,11 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `on_session_start`.
 
 **Overlapping plugins go in the compatibility matrix.** `plugins/compatibility.py`
-maps a plugin's factory to the factories it already includes (`coder` includes
-`compaction`, and harness `SubAgents` while it binds one, which it does with
-`sub_agents` on). While the including plugin is loaded, the
+maps a plugin's factory to the factories it already includes, each with the
+capability classes it must bind for that to hold (`coder` includes harness
+`SubAgents` while it binds one, which it does with `sub_agents` on, and
+`compaction` only while it binds a history compaction, which it does not, so
+both run by default). While the including plugin is loaded, the
 loader keeps the included ones unloaded and refuses to enable or configure them, and `/plugins`
 greys their rows out. Their saved `enabled` flag is untouched, so turning the
 including plugin off loads them again. Add a row there; do not special-case ids.
@@ -190,7 +194,9 @@ one that is not.
   already run with the editor suspended. Do not start a second input reader
   alongside the live editor.
 - Adding a plugin is not in the menu. It needs free text, so it stays
-  `/plugins add`.
+  `/plugins add ID MODULE[:ATTR] [JSON]` or `/plugins add GIT_URL`. Git installs
+  use the existing file loader, with HTTPS/SSH for network sources; see
+  `PLUGINS.md` for the repository layout, trust boundary, and checkout management.
 - Anything that is "edit named, validated fields" uses `field_menu.py`: a
   `FieldSource` supplies rows, current values, validation, apply, and reset;
   `FieldMenu` builds the widgets; `run_flow` is the loop. `/set` and per-model
@@ -220,8 +226,10 @@ renderer would do.
 
 `/theme` offers the unchanged `default` appearance and `termflow.themes.PALETTES`.
 Do not define new palettes. Resolve brand roles with `theme.color(...)` for Rich;
-`theme.sgr(...)` resolves raw ANSI itself. `theme.current()` returns a Termflow
-palette or `None` for the original appearance. Termflow owns palette application
+`theme.sgr(...)` resolves raw ANSI itself. A theme change repaints retained
+transcript lines by translating these roles, so colour output through them,
+and print logo branding inside `theme.branded()` so it keeps its colours.
+`theme.current()` returns a Termflow palette or `None` for the original appearance. Termflow owns palette application
 and reset; `theme.use(...)` leaves the terminal untouched in the default session.
 Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
@@ -258,7 +266,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 |---|---|
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
-| `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the newest CLAI commit on `main` (`bleeding`, an HTTPS source archive with `--overrides`, no git), reinstalled with `uv tool install --force` |
+| `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`bleeding`: sdists built from `main` by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force` |
 | `_app.py` | the prompt loop and built-in `/commands` |
 | `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
@@ -274,6 +282,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `ui/menus/slash_search.py` | `slash_search`: plain-letter hotkeys plus `/` to search, for any termflow menu |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
+| `plugins/_git.py` | Git installation for `/plugins add GIT_URL`, with checkout rollback until its declaration is saved |
+| `runtime/_processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
@@ -281,13 +291,20 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models; protects the current model and saved default |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
+| `models/profiles.py` | auth profiles: parse `PROVIDER@PROFILE:NAME`, the profile's credential account; read providers through `provider_of`/`base_model`, never `partition(':')` |
+| `models/key_profiles.py` | `/login PROVIDER@PROFILE` for connection and API-key providers, and building a core model from a profile's key |
+| `models/accounts.py` | accounts per provider for `/accounts` and `PROVIDER@*`: found from credential files or recorded at `/login`, ordered in the `accounts` table (no secrets) |
+| `ui/menus/accounts_menu.py` | `/accounts` (`AccountsMenu`, `open_accounts_menu`), the add-account flow, and `choose_account`, the account step in `/model add` |
+| `models/usage.py` | account usage fetchers: Codex through the core provider's own client (so tokens refresh as for model requests), Copilot with the saved GitHub login, plugins through `PluginLogin.usage` |
+| `ui/menus/account_usage.py` | `UsageBoard`: `/accounts` usage loaded in the background while the menu is open; the menu thread redraws itself from `read_key`, never another thread |
+| `models/chains.py` | `/chain`, `chain:NAME` fallback chains over core `FallbackModel`; a chain takes its first model's settings |
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
 | `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
 | `builtin_plugins/logfire_session.py` | the `observability` plugin's `CLAI session` roots: `SessionTracing` and the `git_email` lookup for `user_tag: git-email` |
 | `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), account email from `/v1/account/me`, project pick, write token saved in `/keys` |
-| `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content |
+| `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content; typed text goes only through `prompt_text`, which the subscriber's `include_content` gates |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert, its settings menu |
 | `commands.py` | `Command`, the registry, completion |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
@@ -316,7 +333,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
-| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
+| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
+| `ui/rendering/recolor.py` | repaints retained styled transcript lines in a newly selected theme |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 | `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `get_spinners`, the user's `spinners.json`, `Spinners` |
 | `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
@@ -398,21 +416,29 @@ History-changing plugins use `await conversation.commit_messages`, not the legac
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 
 The interactive editor owns its layout explicitly. Do not reintroduce a
-PromptSession renderer or mutate generated layout children. Transcript writes
-go directly to the scroll region, never through an erase/redraw of the editor.
-The hardware cursor stays hidden until release; the input cursor is a painted
-reverse-video cell. Keep terminal mutations in `PromptSurface`, and detach the
-key reader before a menu owns the screen. The remaining prompt-toolkit decoder
-preserves paste and modified keys not yet exposed by Termflow's `read_key`.
+PromptSession renderer. `PromptSurface` composes a termflow.live `ScreenBuffer`,
+`TranscriptView` draws its transcript region, and `render_diff` paints changed
+cells. Do not invent a parallel canvas. The hardware cursor stays hidden;
+the input cursor is a painted reverse-video cell. Keep terminal mutations in
+`PromptSurface`, and detach the key reader before a menu owns the screen.
+The prompt-toolkit decoder preserves paste, modified keys, and SGR mouse reports.
+PageUp/PageDown and wheel input scroll the transcript, not the draft.
 
-Physical resize blanks the viewport and defers output until size notifications
-have been quiet for 250 ms. Rebuild from `TranscriptBuffer`, not guessed old row
-coordinates or cursor reports. Never send erase-scrollback (CSI 3 J). Keep editor
-height changes separate from physical resize, preserve the draft, and close the
-resize output spool on both normal handoff and failure. `SIGWINCH` only marks the
-resize and schedules a paint; the signal handler must not perform terminal IO.
+Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
+reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
+anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
+Full-screen menus leave the live panel temporarily. Inline questions borrow it
+with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source
+for width/theme repaint; tool output keeps styled lines, each tagged with the
+theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
+when the theme changes. On exit, `restore`
+prints retained output into native scrollback once, skipping startup output
+already printed there. Transcript memory is bounded, including Markdown parts.
+Reload rebinds the retained transcript and its nested classes in place after a
+successful shell rebuild, including migration from the pre-live Text-line buffer.
+The suspended `chat` coroutine still holds that transcript; do not only replace
+it on the new shell or mutate it before a rebuild that can fail.
 
-The `ask_user` picker is an inline exception to the full-screen menu convention.
-It borrows the released `PromptSurface` while the editor is suspended, retaining
-the shared transcript for resize replay. Keep its numbered choices and Enter
-toggles; do not reintroduce alternate-screen switching or Space-to-toggle.
+The `ask_user` picker borrows the released `PromptSurface` while the editor is
+suspended. Keep its numbered choices and Enter toggles; do not switch screens
+inside the picker or reintroduce Space-to-toggle.

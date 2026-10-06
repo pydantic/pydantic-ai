@@ -127,6 +127,13 @@ def test_provider_catalog_and_back_navigation(tmp_path: Path) -> None:
         model.name for model in codex.models
     }
     assert menu.build_providers().highlighted == MenuItem('openai-codex', value='openai-codex')
+    profiled, _ = make_context(tmp_path / 'profiled')
+    profiled.settings = Settings(model='openai@work:gpt-5')
+    profiled_menu = ModelMenu(profiled)
+    assert profiled_menu.build_providers().highlighted == MenuItem('openai', value='openai')
+    # Another account's model is listed under its provider, not as a provider of its own.
+    assert 'openai@work' not in profiled_menu.providers()
+    assert 'openai@work:gpt-5' in [model.name for model in profiled_menu.for_provider('openai').models]
     script = Script(
         lists=[pick('anthropic'), MenuResult(cancelled=True), pick('openai-codex'), pick('openai-codex:gpt-5.6-luna')],
         choices=[],
@@ -206,16 +213,16 @@ async def test_open_add_model_menu_and_settings_reach_the_run(tmp_path: Path) ->
     assert seen == [{'max_tokens': 3, 'seed': 7}]
 
 
-def test_live_model_settings_follow_saves_and_keep_the_last_valid_ones(tmp_path: Path) -> None:
+def test_live_model_overrides_follow_saves_and_keep_the_last_valid_ones(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
-    live = context.live_model_settings('test')
+    live = context.live_model_overrides('test')
     assert live(None) == {}
     context.store.save_model_settings('test', {'seed': 7})
     assert live(None) == {'seed': 7}
     context.store.save_model_settings('test', {'temperature': 'hot'})
     assert live(None) == {'seed': 7}
     with pytest.raises(ValidationError):
-        context.live_model_settings('test')
+        context.live_model_overrides('test')
 
 
 def test_added_models_persist_independently_of_settings(tmp_path: Path) -> None:

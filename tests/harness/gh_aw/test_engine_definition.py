@@ -39,10 +39,6 @@ requires_cli = pytest.mark.skipif(
     any(importlib.util.find_spec(package) is None for package in _CLI_PACKAGES),
     reason='running the CLI needs the pydantic-ai `cli` extra',
 )
-requires_safe_path = pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason='the launcher is invoked with `-P`, which arrived in Python 3.11',
-)
 
 # Stands in for gh-aw's own helper module, which the harness script requires next to
 # itself. The two functions the script calls mirror the upstream shapes: the resolved
@@ -478,7 +474,6 @@ async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_env
     assert lines[:3] == [os.path.realpath(workspace), 'marker=from-the-step', 'key=withheld']
 
 
-@requires_safe_path
 class TestLauncherProgram:
     """The `-c` program, run by the real interpreter with the bytes the launcher sends."""
 

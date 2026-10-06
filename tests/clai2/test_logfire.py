@@ -436,16 +436,23 @@ def messages(recorder: Recorder) -> list[object]:
     return [(span.attributes or {}).get('logfire.msg') for span in recorder.spans()]
 
 
-async def test_ui_events_are_off_by_default(recorder: Recorder) -> None:
-    plugin = load_logfire(make_host())
-    telemetry.record('setting {setting} changed', setting='display.theme', value='default')
-    await close(plugin)
-    assert messages(recorder) == []
+async def test_ui_events_can_be_explicitly_disabled(recorder: Recorder) -> None:
+    plugin = load_logfire(make_host(ui_events=False))
+    try:
+        await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+        await plugin.dispatch(TurnEnd(text='a private prompt', outcome='cancelled'))
+        telemetry.record('setting {setting} changed', setting='display.theme', value='default')
+    finally:
+        await close(plugin)
+    assert messages(recorder) == ['CLAI session']
 
 
 @pytest.mark.parametrize('model', [Settings().model, None])
-async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Recorder, model: str | None) -> None:
-    plugin = load_logfire(make_host(ui_events=True))
+@pytest.mark.parametrize('settings', [{}, {'ui_events': True}])
+async def test_ui_events_follow_the_plugin_and_keep_setting_names(
+    recorder: Recorder, model: str | None, settings: dict[str, JsonValue]
+) -> None:
+    plugin = load_logfire(make_host(**settings))
     try:
         for event in (
             SessionStart(agent=Agent(TestModel()), settings=Settings(model=model)),
@@ -471,6 +478,18 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Reco
     # Names are exempt from scrubbing; any other attribute that looks like a secret is still scrubbed.
     assert (changed.attributes or {})['value'] == "[Scrubbed due to 'password']"
     assert 'a private prompt' not in json.dumps([dict(span.attributes or {}) for span in recorder.spans()])
+
+
+@pytest.mark.parametrize('content', [False, True])
+async def test_ui_events_carry_typed_text_only_with_message_content(recorder: Recorder, content: bool) -> None:
+    plugin = load_logfire(make_host(ui_events=True, include_content=content))
+    try:
+        await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+        telemetry.record('prompt submitted', kind='prompt', **telemetry.prompt_text('fix the session bug'))
+    finally:
+        await close(plugin)
+    submitted = next(span for span in recorder.spans() if span.name == 'prompt submitted')
+    assert (submitted.attributes or {}).get('prompt') == ('fix the session bug' if content else None)
 
 
 @pytest.mark.parametrize(
@@ -535,7 +554,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             pick('ui_events'),
             MenuResult(cancelled=True),
         ],
-        choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('true')],
+        choices=[pick('false'), pick('false'), pick('false'), pick('git-email'), pick('false')],
         texts=[typed('my-clai')],
     )
     monkeypatch.setattr(logfire_plugin, 'RUNNERS', scripted.runners)
@@ -557,7 +576,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'account': None,
             'token': None,
             'base_url': None,
-            'ui_events': True,
+            'ui_events': False,
         }
         assert [options['service_name'] for options in recorder.options] == ['pydantic-clai2', 'my-clai']
         assert recorder.options[-1]['send_to_logfire'] is False
@@ -585,6 +604,12 @@ def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyP
     rows = {row.key: row for row in source.rows()}
     assert source.title == 'Observability (Logfire)'
     assert rows[PROJECT].note == 'no LOGFIRE_TOKEN or credentials file'
+    assert rows['ui_events'].default == 'true'
+    assert source.current(rows['ui_events']) == 'true'
+    source.apply(rows['ui_events'], 'false')
+    assert source.current(rows['ui_events']) == 'false'
+    assert source.reset(rows['ui_events']) == 'Reset UI events.'
+    assert source.current(rows['ui_events']) == 'true'
     assert source.current(rows[PROJECT]) == 'LOGFIRE_TOKEN or credentials file'
     assert source.current(rows['send_to_logfire']) == 'if-token-present'
     assert source.current(rows['include_content']) == 'false'

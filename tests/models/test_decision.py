@@ -1056,7 +1056,7 @@ async def escalate(ctx: RunContext[None]) -> str:
     return 'escalated'
 
 
-class Priority(str, Enum):
+class Priority(str, Enum):  # noqa: UP042
     """How soon the ticket needs a reply."""
 
     now = 'now'
@@ -1427,7 +1427,7 @@ def test_unsure_route_pickles():
     )
 
 
-class Reprioritise(str, Enum):
+class Reprioritise(str, Enum):  # noqa: UP042
     """Change how soon the ticket needs a reply."""
 
     now = 'now'
@@ -1503,7 +1503,7 @@ async def test_the_route_question_carries_the_agent_instructions(allow_model_req
     )
 
 
-class Bank(str, Enum):
+class Bank(str, Enum):  # noqa: UP042
     """The banks the customer's accounts can be with."""
 
     ing = 'ing'
@@ -2104,7 +2104,7 @@ async def test_a_route_with_nothing_to_ask_could_be_the_one_taken(allow_model_re
     assert list(model.requests[0].questions) == snapshot(['route'])
 
 
-class Area(str, Enum):
+class Area(str, Enum):  # noqa: UP042
     billing = 'billing'
     bug = 'bug'
 
