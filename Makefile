@@ -102,6 +102,10 @@ integration-mongodb: ## Run the harness MongoDB tests (`docker run -d -p 27017:2
 integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
 
+.PHONY: integration-logfire-platform
+integration-logfire-platform: ## Run the live Harness Agent Control conformance suite (see its README first)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/logfire_platform
+
 .PHONY: update-examples
 update-examples: ## Update documentation examples
 	uv run -m pytest --update-examples tests/test_examples.py
