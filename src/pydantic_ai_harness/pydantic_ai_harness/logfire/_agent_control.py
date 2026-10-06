@@ -48,6 +48,7 @@ from logfire.agent_control import (
 )
 from logfire.variables import Variable
 from logfire.variables.abstract import NoOpVariableProvider
+from pydantic import ModelWrapValidatorHandler, PrivateAttr, model_validator
 
 from pydantic_ai import AbstractToolset, RunContext, TemplateStr, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, CombinedCapability
@@ -337,40 +338,46 @@ def _instruction_key(part: InstructionPart) -> str | None:
     return str(part.id) if part.id is not None else None
 
 
-ADDITIVE_ID_PREFIX = 'logfire:'
-"""Hackathon: an instruction entry whose `id` starts with this adds a *named* block instead of addressing one.
+class AgentControlConfig(AgentConfig):
+    """Hackathon: `AgentConfig` that keeps the optional `name` of an added (id-less) instruction entry.
 
-A centrally pushed instruction needs a stable name -- to say what arrived, to roll it out and back, and to
-attribute adoption -- but an `id` normally names a block the code assembled. Entries under this prefix are
-never matched against code blocks and never reported as unmatched; the part they add is named after the rest
-of the id.
-"""
+    `{"name": "run-tests-first", "instructions": "..."}` adds a block exactly like an id-less entry always
+    did; `name` is only its identity and label -- what a notice calls it, what adoption is counted under,
+    and the added part's `InstructionPart.name`. An entry with an `id` keeps its override meaning. The
+    contract's `InstructionBlock` drops unknown keys, so names are kept on the side here, keyed by text;
+    the real change belongs in `logfire.agent_control` as an optional `InstructionBlock.name`.
+    """
+
+    _instruction_names: dict[str, str] = PrivateAttr(default_factory=dict[str, str])
+
+    @model_validator(mode='wrap')
+    @classmethod
+    def _keep_instruction_names(cls, data: Any, handler: ModelWrapValidatorHandler[AgentControlConfig]) -> Any:
+        config = handler(data)
+        raw = cast(dict[str, Any], data) if isinstance(data, dict) else {}
+        entries: object = raw.get('instructions')
+        if isinstance(entries, list):
+            for entry in cast(list[object], entries):
+                if isinstance(entry, dict):
+                    fields = cast(dict[str, object], entry)
+                    if fields.get('id') is not None:
+                        continue
+                    name, text = fields.get('name'), fields.get('instructions')
+                    if isinstance(name, str) and name and isinstance(text, str):
+                        config._instruction_names[text] = name
+        return config
+
+    def instruction_name(self, text: str) -> str | None:
+        """The `name` an added entry with this text was published under, if any."""
+        return self._instruction_names.get(text)
 
 
-def _split_additive(config: AgentConfig) -> tuple[AgentConfig, list[tuple[str, str]]]:
-    """Take the named additive entries out of `config`, as `(name, text)` pairs in order."""
-    entries = config.instructions
-    if not isinstance(entries, list):
-        return config, []
-    named: list[tuple[str, str]] = []
-    kept: list[Any] = []
-    for entry in entries:
-        entry_id = getattr(entry, 'id', None)
-        text = getattr(entry, 'instructions', None)
-        if isinstance(entry_id, str) and entry_id.startswith(ADDITIVE_ID_PREFIX):
-            if text:
-                named.append((_part_name(entry_id.removeprefix(ADDITIVE_ID_PREFIX)), text))
-            continue
-        kept.append(entry)
-    if not named and len(kept) == len(entries):
-        return config, []
-    return config.model_copy(update={'instructions': kept or None}), named
-
-
-def _part_name(slug: str) -> str:
-    """A valid `InstructionPart.name`: no `:` (the id delimiter), and never the reserved `agent`."""
-    name = slug.replace(':', '-') or 'fleet'
-    return 'fleet-agent' if name == 'agent' else name
+def _part_name(name: str | None) -> str | None:
+    """`name` as a valid `InstructionPart.name`: no `:` (the id delimiter), never the reserved `agent`."""
+    if not name:
+        return None
+    name = name.replace(':', '-')
+    return 'logfire-agent' if name == 'agent' else name
 
 
 def _blocks(parts: Sequence[InstructionPart]) -> list[Block]:
@@ -659,7 +666,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     client_features: Sequence[str] = field(default=(), kw_only=True)
     """Hackathon: what this client supports beyond the contract, reported on `agent_control_config_hint`.
 
-    Every `AgentControl` reports `named_instructions` (it adds `logfire:<slug>` blocks); a client such as clai2
+    Every `AgentControl` reports `named_instructions` (it keeps an added entry's `name`); a client such as clai2
     adds `catalog` when it delivers the opt-in catalog, so the Logfire UI offers delivery tiers only to agents
     that can honor them.
     """
@@ -709,8 +716,8 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         self._setup_variable(
             self.name,
             prefix=AGENT_VARIABLE_PREFIX,
-            value_type=AgentConfig,
-            default=AgentConfig(),
+            value_type=AgentControlConfig,
+            default=AgentControlConfig(),
         )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
@@ -958,7 +965,6 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         config = self._current_config()
         if config is None or not config.instructions:
             return request_context
-        config, named = _split_additive(config)
         parameters = request_context.model_request_parameters
         parts = list(parameters.instruction_parts or [])
         blocks = _blocks(parts)
@@ -980,8 +986,8 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
             elif block.id is not None:
                 applied_parts.append(replace(replaceable[block.id].pop(0), content=block.text))
             else:
-                applied_parts.append(self._added_part(block.text, ctx))
-        applied_parts.extend(self._added_part(text, ctx, name=name) for name, text in named)
+                name = config.instruction_name(block.text) if isinstance(config, AgentControlConfig) else None
+                applied_parts.append(self._added_part(block.text, ctx, name=_part_name(name)))
         self._plan_issues('instructions', applied.issues)
         if applied_parts != parts:
             request_context.model_request_parameters = replace(parameters, instruction_parts=applied_parts)

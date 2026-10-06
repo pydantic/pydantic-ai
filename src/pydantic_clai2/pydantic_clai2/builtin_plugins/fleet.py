@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import logfire
-from logfire.agent_control import AgentConfig
 from logfire.variables import Variable
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -39,10 +38,9 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness.logfire import AgentControlConfig
 
 ItemKind = Literal['skill', 'mcp_server', 'plugin', 'instruction']
-INSTRUCTION_PREFIX = 'logfire:'
-"""Pushed instruction blocks are named `logfire:<slug>`; AgentControl adds them rather than matching code blocks."""
 
 
 class FleetSkill(BaseModel):
@@ -66,8 +64,8 @@ class FleetMCPServer(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict[str, str])
 
 
-class FleetAgentConfig(AgentConfig):
-    """Agent Control's `AgentConfig` plus the hackathon's company `skills` and `mcp_servers` sections."""
+class FleetAgentConfig(AgentControlConfig):
+    """Agent Control's config (with named added instructions) plus company `skills` and `mcp_servers` sections."""
 
     skills: list[FleetSkill] | None = None
     mcp_servers: list[FleetMCPServer] | None = None
@@ -148,8 +146,9 @@ class Change:
         if self.kind == 'instruction':
             return f'{verb} company instruction from Logfire: {self.name}'
         noun = {'skill': 'skill', 'mcp_server': 'MCP server', 'plugin': 'plugin'}
-        where = 'company' if self.tier == 'company' else 'catalog'
-        return f'{self.action.capitalize()} {where} {noun.get(self.kind, self.kind)} from Logfire: {self.name}'
+        # A removed item is no longer anywhere to say which tier it came from.
+        where = {'company': 'company ', 'catalog': 'catalog '}.get(self.tier, '')
+        return f'{self.action.capitalize()} {where}{noun.get(self.kind, self.kind)} from Logfire: {self.name}'
 
 
 @dataclass
@@ -298,7 +297,12 @@ class Fleet:
         current: dict[str, tuple[str, str, str, str]] = {}
         for item in self.active():
             current[item.key] = (item.kind, item.name, item.tier, _digest(dict(item.payload)))
-        added_instructions = [block for block in config.instructions or () if _is_added(block)]
+        named_texts = {text for _, text in _named_instructions(config)}
+        added_instructions = [
+            block
+            for block in config.instructions or ()
+            if _is_added(block) and (block if isinstance(block, str) else block.instructions) not in named_texts
+        ]
         if added_instructions:
             digest = _digest([_dump_block(block) for block in added_instructions])
             current['instructions:company'] = ('instructions', 'company instructions', 'company', digest)
@@ -313,7 +317,7 @@ class Fleet:
                 changes.append(Change('updated', kind, name, tier))
         for key in user.seen.keys() - current.keys():
             kind, _, name = key.partition(':')
-            changes.append(Change('removed', kind, name, 'company'))
+            changes.append(Change('removed', kind, name, ''))
         if mark_seen and changes:
             user.seen = {key: value[3] for key, value in current.items()}
             self._save(state)
@@ -358,14 +362,14 @@ def _capability_id(name: str) -> str:
     return re.sub(r'[^A-Za-z0-9_-]', '_', name) or 'item'
 
 
-def _named_instructions(config: AgentConfig) -> list[tuple[str, str]]:
-    """The pushed instructions that carry a name, as `(slug, text)`."""
+def _named_instructions(config: FleetAgentConfig) -> list[tuple[str, str]]:
+    """The added instructions published with a `name`, as `(name, text)`; unnamed ones are grouped separately."""
     named: list[tuple[str, str]] = []
     for block in config.instructions or ():
-        block_id = getattr(block, 'id', None)
-        text = getattr(block, 'instructions', None)
-        if isinstance(block_id, str) and block_id.startswith(INSTRUCTION_PREFIX) and text:
-            named.append((block_id.removeprefix(INSTRUCTION_PREFIX), text))
+        text = block if isinstance(block, str) else block.instructions if block.id is None else None
+        name = config.instruction_name(text) if text else None
+        if name and text:
+            named.append((name, text))
     return named
 
 

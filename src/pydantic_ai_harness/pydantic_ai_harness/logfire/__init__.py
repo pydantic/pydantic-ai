@@ -6,12 +6,13 @@ framework adapter and the Logfire UI share one copy of it. Import it from there;
 [`AgentControl`][pydantic_ai_harness.logfire.AgentControl] is what connects it to a Pydantic AI agent.
 """
 
-from pydantic_ai_harness.logfire._agent_control import AgentControl
+from pydantic_ai_harness.logfire._agent_control import AgentControl, AgentControlConfig
 from pydantic_ai_harness.logfire._managed_prompt import ManagedPrompt
 from pydantic_ai_harness.logfire._managed_variable import resolution_reason
 
 __all__ = [
     'AgentControl',
+    'AgentControlConfig',
     'ManagedPrompt',
     'resolution_reason',
 ]
