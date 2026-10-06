@@ -1,6 +1,7 @@
 """A plugin-owned session root, shared by UI events and agent instrumentation."""
 
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from uuid import uuid4
 
@@ -12,7 +13,10 @@ from opentelemetry.trace import Span
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapRunHandler
 from pydantic_clai2.plugins import SessionEndReason
-from pydantic_clai2.ui.telemetry import SCOPE, parent_span
+from pydantic_clai2.ui.telemetry import PROMPT_SOURCE, PROMPT_SOURCE_ATTRIBUTE, SCOPE, parent_span
+
+_IN_RUN: ContextVar[bool] = ContextVar('clai2_in_run', default=False)
+"""Set inside a run, so a run started within it (a sub-agent's) is attributed as one."""
 
 
 @dataclass(kw_only=True)
@@ -94,8 +98,18 @@ class SessionTracing(AbstractCapability[None]):
 
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         # Hackathon: the fleet control plane groups traces by user and team, so identity rides on every span.
-        with parent_span(self.root()), logfire.set_baggage(**self.identity()):
-            return await handler()
+        source = 'subagent' if _IN_RUN.get() else PROMPT_SOURCE.get()
+        nested = _IN_RUN.set(True)
+        try:
+            with parent_span(self.root()), logfire.set_baggage(**self.identity(), **{PROMPT_SOURCE_ATTRIBUTE: source}):
+                return await handler()
+        finally:
+            _IN_RUN.reset(nested)
+
+    def ui_identity(self) -> dict[str, str]:
+        """What every UI record carries: the user, the team, and the session, so no join with the root is needed."""
+        session_id = self.session_id()
+        return {**self.identity(), **({'agent_session_id': session_id} if session_id else {})}
 
 
 async def git_email() -> str | None:

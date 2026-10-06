@@ -28,8 +28,15 @@ from logfire.agent_control import AgentConfig
 from logfire.variables import Variable
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
+from pydantic_ai import AgentRunResult, RunContext
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CapabilityOrdering,
+    CombinedCapability,
+    Instrumentation,
+    WrapRunHandler,
+)
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 
@@ -360,4 +367,23 @@ class FleetControl(AbstractCapability[None]):
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
         capabilities = self.fleet.capabilities()
-        return CombinedCapability([*capabilities]) if capabilities else self
+        active = ','.join(sorted(item.key for item in self.fleet.active()))
+        return CombinedCapability([_AdoptionBaggage(active=active), *capabilities])
+
+
+ACTIVE_ITEMS_ATTRIBUTE = 'clai2.fleet.active'
+"""Every span of a run lists the fleet items in force for it, as sorted `kind:name` keys joined by commas."""
+
+
+@dataclass(kw_only=True)
+class _AdoptionBaggage(AbstractCapability[None]):
+    """Puts which company and catalog items this run had on every span, so Logfire can show who adopted what."""
+
+    active: str
+
+    def get_ordering(self) -> CapabilityOrdering:
+        return CapabilityOrdering(position='outermost', wraps=(Instrumentation,))
+
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        with logfire.set_baggage(**{ACTIVE_ITEMS_ATTRIBUTE: self.active}):
+            return await handler()

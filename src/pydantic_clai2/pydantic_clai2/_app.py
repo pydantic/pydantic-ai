@@ -67,6 +67,7 @@ from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
@@ -1072,7 +1073,11 @@ class _Shell(Generic[DepsT, OutputT]):
 
         async def run_turn() -> None:
             nonlocal ended
-            ended = await self.run_turn(start, images=images, automated=automated)
+            source = telemetry.PROMPT_SOURCE.set('plugin' if automated else 'typed')
+            try:
+                ended = await self.run_turn(start, images=images, automated=automated)
+            finally:
+                telemetry.PROMPT_SOURCE.reset(source)
 
         previous_tasks = {(record.id, record.generation) for record in self.tasks.records()}
         completed = await self.interrupts.run(run_turn())

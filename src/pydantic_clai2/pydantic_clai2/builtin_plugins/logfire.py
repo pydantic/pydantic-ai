@@ -14,7 +14,7 @@ import os
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 import logfire
 from anyio import CancelScope, to_thread
@@ -126,7 +126,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.
                 scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names) if settings.ui_events else None,
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
-                **({'api_key': api_key, 'variables': logfire.VariablesOptions()} if api_key else {}),
+                **_variables_options(api_key),
             )
         finally:
             # Even local SDK configuration replaces the process-wide propagator.
@@ -242,7 +242,10 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         self._announce_changes()
         if self.settings.ui_events:
             self._unsubscribe = telemetry.subscribe(
-                self._clai2, root=self._session_tracing.root, include_content=self.settings.include_content
+                self._clai2,
+                root=self._session_tracing.root,
+                include_content=self.settings.include_content,
+                identity=self._session_tracing.ui_identity,
             )
             model = event.settings.model or 'agent default'
             with telemetry.parent_span(self._session_tracing.root()):
@@ -282,6 +285,11 @@ async def _user_email(settings: LogfireSettings) -> str | None:
     if settings.user_tag == 'logfire-account' and account is not None and account.token == settings.token:
         return account.email
     return None
+
+
+def _variables_options(api_key: str | None) -> dict[str, Any]:
+    """`logfire.configure` arguments that read managed variables; none at all without a key, as before."""
+    return {'api_key': api_key, 'variables': logfire.VariablesOptions()} if api_key else {}
 
 
 def _api_key(settings: LogfireSettings) -> str | None:

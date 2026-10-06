@@ -15,6 +15,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.plugins import SessionEndReason, TurnEnd, TurnStart
+from pydantic_clai2.ui import telemetry
 
 
 @asynccontextmanager
@@ -71,9 +72,11 @@ async def run_headless(
                             await shell.session.resume(resume)
                     start = TurnStart(text=text)
                     ended = TurnEnd(text=text, outcome='cancelled')
+                    source = telemetry.PROMPT_SOURCE.set('headless')
                     try:
                         ended = await shell.run_turn(start, headless=True)
                     finally:
+                        telemetry.PROMPT_SOURCE.reset(source)
                         with CancelScope(shield=True):
                             await shell.loader.fire(ended)
                     if ended.outcome != 'completed':
