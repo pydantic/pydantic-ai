@@ -58,6 +58,9 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     ```
     """
 
+    id: str | None = field(default='pydantic_ai_docs', kw_only=True)
+    """Stable, so its instructions can be addressed as `capability:pydantic_ai_docs`, e.g. by Agent Control."""
+
     local_docs_path: Path | None = None
     """Pyai docs checkout inside the workspace. Relative paths use the workspace
     working directory. When `None`, falls back to the
