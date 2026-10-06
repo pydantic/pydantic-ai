@@ -445,14 +445,23 @@ class TranscriptBuffer:
         self._append(block)
         return block
 
-    def clear(self) -> None:
-        """Forget all retained output, as a fresh terminal has none; ids keep growing."""
-        self._first = self.end
+    def clear(self, *, keep_current: bool = False) -> None:
+        """Forget all retained output, as a fresh terminal has none; ids keep growing.
+
+        `keep_current` keeps what a running turn is still writing: the unfinished line, or else a
+        trailing Markdown part, so the rest of a streaming response still shows.
+        """
+        current = self._items[-1] if keep_current and self._items and not self._pending else None
+        kept = current if isinstance(current, MarkdownBlock) else None
+        self._first = self.end - (kept is not None)
         self._items.clear()
         self._chars = 0
-        self._pending = ''
-        self._discard_until_newline = False
-        self._decoder = TranscriptDecoder()
+        if kept is not None:
+            self._append(kept)
+        if not keep_current:
+            self._pending = ''
+            self._discard_until_newline = False
+            self._decoder = TranscriptDecoder()
 
     def mark_printed(self) -> None:
         """Everything completed so far reached the terminal directly, so `printed` skips it."""

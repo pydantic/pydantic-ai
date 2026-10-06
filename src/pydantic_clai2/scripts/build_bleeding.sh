@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds what `/update` installs on the `bleeding` channel into OUT_DIR, from the checked-out commit:
+# Builds what `/update` installs on the `main` channel into OUT_DIR, from the checked-out commit:
 # an sdist of CLAI and of each workspace package it pins exactly, named `<package>-<commit>.tar.gz`,
 # and `clai2-bleeding.json`, which names the commit. The `clai2-bleeding` workflow publishes them to
 # the `clai2-bleeding` GitHub release. To try them locally, serve OUT_DIR over HTTP and start CLAI

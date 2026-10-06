@@ -1310,6 +1310,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
+            # MCP Apps (SEP-1865) servers keep a tool from the model by leaving `"model"` out of `_meta.ui.visibility`.
+            match mcp_tool.meta:
+                case {'ui': {'visibility': visibility}} if isinstance(visibility, list) and 'model' not in visibility:
+                    continue
+                case _:
+                    pass
             # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
             input_schema = mcp_validated_field(mcp_tool, 'input_schema', _JSON_SCHEMA_ADAPTER)

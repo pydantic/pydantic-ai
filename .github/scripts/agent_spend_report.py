@@ -427,14 +427,15 @@ def format_report(
         lines.append('')
 
     lines.append('```')
-    lines.append(f'{"workflow":<34}{"runs":>6}{"agent":>7}{"empty":>7}{"out tok":>10}')
+    lines.append(f'{"workflow":<34}{"runs":>6}{"failed":>8}{"agent":>7}{"empty":>7}{"out tok":>10}')
     for summary in summaries:
         empty = f'{summary.zero_output_rate:.0%}' if summary.output_measured_runs else '-'
         # Mark the row itself, not only the footnote: an unmarked number reads as the
         # workflow's total when it is really a sample of it.
         name = f'{summary.workflow}*' if summary.workflow in capped else summary.workflow
         lines.append(
-            f'{name[:33]:<34}{summary.total_runs:>6}{summary.agent_runs:>7}{empty:>7}{summary.output_tokens:>10,}'
+            f'{name[:33]:<34}{summary.total_runs:>6}{summary.conclusions["failure"]:>8}'
+            f'{summary.agent_runs:>7}{empty:>7}{summary.output_tokens:>10,}'
         )
     lines.append('```')
 
