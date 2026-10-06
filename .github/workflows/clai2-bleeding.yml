@@ -1,6 +1,6 @@
 name: CLAI2 bleeding
 
-# Publishes what `/update` installs on CLAI's `bleeding` channel: sdists of `pydantic-clai2` and of
+# Publishes what `/update` installs on CLAI's `main` channel: sdists of `pydantic-clai2` and of
 # the workspace packages it pins exactly, built from each `main` commit that changes them, and
 # `clai2-bleeding.json`, which names that commit. They replace the assets of the `clai2-bleeding`
 # prerelease, whose tag moves with them. Release downloads are not GitHub API requests, so `/update`
@@ -72,7 +72,7 @@ jobs:
           if ! gh release view "$TAG" > /dev/null 2>&1; then
             # A prerelease that is never "latest", so it stays out of the release list's baselines.
             gh release create "$TAG" --verify-tag --prerelease --latest=false --title 'CLAI2 bleeding' \
-              --notes 'Sdists rebuilt from `main` for `/update` on the CLAI `bleeding` channel. Not a release.'
+              --notes 'Sdists rebuilt from `main` for `/update` on the CLAI `main` channel. Not a release.'
           fi
           # Sdists first and the manifest last, so the manifest never names a commit without its files.
           gh release upload "$TAG" dist/bleeding/*.tar.gz --clobber
