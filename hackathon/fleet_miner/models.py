@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 Tier = Literal['required', 'default_on', 'optional']
 ProposalKind = Literal['skill', 'instruction']
@@ -40,6 +42,14 @@ class Facet(BaseModel):
     workflow: bool = Field(description='True when the intent is a multi-step procedure rather than a one-line preference.')
 
 
+# Tool-call markup a model sometimes leaks into a text field (e.g. a trailing `</parameter> </invoke>`).
+_MARKUP = re.compile(r'</?(?:antml:)?(?:parameter|invoke|function_calls|function_results)\b[^>]*>')
+
+
+def strip_markup(value: str) -> str:
+    return _MARKUP.sub('', value).strip()
+
+
 class Evidence(BaseModel):
     user: str | None
     trace_id: str
@@ -66,6 +76,8 @@ class Proposal(BaseModel):
     accepted_at: datetime | None = None
     score: float | None = None
     """Hackathon extra: LLM confidence times the distinct-user spread factor (braindump's scoring)."""
+
+    _strip_markup = field_validator('id', 'name', 'description', 'text', 'rationale', 'pattern')(strip_markup)
 
 
 class Window(BaseModel):

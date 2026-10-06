@@ -7,11 +7,11 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pydantic_ai import Agent
 
-from .models import Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt
+from .models import Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, strip_markup
 
 CLUSTER_INSTRUCTIONS = """\
 You are given intents extracted from prompts that many developers typed into their coding agents, plus the
@@ -23,7 +23,7 @@ until green") belong in ONE group. Leave out intents that match nothing else, an
 that ask for a specific artifact (e.g. "write FizzBuzz in Rust") rather than describing how the user wants work done.
 
 For each group: write the shared pattern as one sentence, give a short kebab-case slug, and if it is the same
-pattern as an earlier proposal, set `existing_id` to that proposal's id (so it is not proposed twice).
+pattern as an earlier proposal, set `existing_id` to that proposal's id exactly as given (so it is not proposed twice); otherwise leave it null.
 `confidence` is how sure you are that this is one coherent, reusable pattern (0-1).
 """
 
@@ -65,6 +65,8 @@ class _Draft(BaseModel):
     suggested_tier: Tier
     rationale: str
 
+    _strip_markup = field_validator('name', 'description', 'text', 'rationale')(strip_markup)
+
 
 @dataclass
 class Pattern:
@@ -99,17 +101,20 @@ async def find_patterns(
     result = await agent.run(
         f'Earlier proposals:\n{json.dumps(earlier, indent=2)}\n\nIntents:\n{json.dumps(items, indent=2)}'
     )
+    known_ids = {p.id for p in existing}
     patterns: list[Pattern] = []
     for group in result.output.groups:
+        # Only reuse an id the model was actually shown; anything else is a mangled or invented one.
+        existing_id = group.existing_id if group.existing_id in known_ids else None
         group_prompts = [by_span[s] for s in dict.fromkeys(group.span_ids) if s in by_span]
         if len(group_prompts) < 2:
             continue
         pattern = Pattern(
-            id=group.existing_id or group.slug,
+            id=existing_id or group.slug,
             pattern=group.pattern,
             confidence=group.confidence,
             prompts=group_prompts,
-            existing_id=group.existing_id,
+            existing_id=existing_id,
         )
         for p in group_prompts:
             pattern.users.add(p.user or f'unknown:{p.session_id or p.trace_id}')
