@@ -717,6 +717,42 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
     assert ToolSearchTool in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
+def test_anthropic_legacy_bedrock_excludes_native_output_for_structured_output_unsupported_models():
+    """Models absent from Bedrock's structured-output docs must not resolve bare `output_type` to
+    native output on the legacy Bedrock InvokeModel API — it rejects `output_config.format` with a 400.
+    https://github.com/pydantic/pydantic-ai/issues/9878"""
+    model_name = 'global.anthropic.claude-sonnet-5'
+    legacy_bedrock = AnthropicModel(
+        model_name,
+        provider=AnthropicProvider(
+            anthropic_client=mock_anthropic_client(
+                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
+            )
+        ),
+    )
+    assert legacy_bedrock.profile.get('supports_json_schema_output', False) is False
+    model_request_parameters = ModelRequestParameters(output_tools=[ToolDefinition(name='final_result')])
+    assert legacy_bedrock._default_structured_output_mode(None, model_request_parameters) == 'tool'  # pyright: ignore[reportPrivateUsage]
+
+    # The Mantle client serves the Messages API, so it keeps native output.
+    mantle = AnthropicModel(
+        model_name,
+        provider=AnthropicProvider(
+            anthropic_client=mock_anthropic_client(
+                AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws'
+            )
+        ),
+    )
+    assert mantle.profile.get('supports_json_schema_output', False) is True
+
+    # The direct Anthropic API is unaffected.
+    direct = AnthropicModel(
+        'claude-sonnet-5',
+        provider=AnthropicProvider(anthropic_client=mock_anthropic_client(AsyncAnthropic, 'https://api.anthropic.com')),
+    )
+    assert direct.profile.get('supports_json_schema_output', False) is True
+
+
 def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
     m = AnthropicModel(
         'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))

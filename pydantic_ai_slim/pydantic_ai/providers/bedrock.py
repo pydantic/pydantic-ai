@@ -253,19 +253,21 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
 
+# These models support structured output on the direct Anthropic API but are not listed
+# in the Bedrock Runtime structured-output docs:
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+BEDROCK_STRUCTURED_OUTPUT_UNSUPPORTED = (
+    'claude-opus-4-1',
+    'claude-opus-4-7',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-fable-5',
+)
+
+
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # These models support structured output on the direct Anthropic API but are not listed
-    # in the Bedrock Runtime structured-output docs:
-    # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = (
-        'claude-opus-4-1',
-        'claude-opus-4-7',
-        'claude-opus-4-8',
-        'claude-opus-5',
-        'claude-sonnet-5',
-        'claude-fable-5',
-    )
     downstream = anthropic_model_profile(model_name)
     supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))
     # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
@@ -290,7 +292,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         _strip_builtin_tools(downstream),
     )
     supports_structured_output = profile.get('supports_json_schema_output', False) and not model_name.startswith(
-        bedrock_structured_output_unsupported
+        BEDROCK_STRUCTURED_OUTPUT_UNSUPPORTED
     )
     return merge_profile(
         profile,

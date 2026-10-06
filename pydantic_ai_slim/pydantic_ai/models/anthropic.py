@@ -81,7 +81,9 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
+from ..providers._bedrock_model_names import split_bedrock_model_id
 from ..providers.anthropic import AsyncAnthropicClient
+from ..providers.bedrock import BEDROCK_STRUCTURED_OUTPUT_UNSUPPORTED
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from ..toolsets._tool_search import discovered_tool_names_in_order
@@ -320,6 +322,15 @@ _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 _WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+# Native structured output (`output_config.format`) is published for these models on the direct
+# Anthropic API, but the legacy Bedrock InvokeModel API rejects it with
+# `output_config.format: Extra inputs are not permitted` — the same models are already excluded from
+# native output on the Bedrock Converse API by `BEDROCK_STRUCTURED_OUTPUT_UNSUPPORTED`. Mirroring that
+# exclusion here keeps bare `output_type` on `AnthropicModel` + `AsyncAnthropicBedrock` from sending a
+# request Bedrock answers with a 400, scoped to those models. `AsyncAnthropicBedrockMantle` serves the
+# Messages API and is not a subclass of `AsyncAnthropicBedrock`, so it stays supported.
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+_NATIVE_OUTPUT_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
 # The advisor tool is available on the direct Anthropic API and Claude Platform on AWS
 # (`AsyncAnthropicBedrockMantle`) only — not on the legacy Bedrock InvokeModel client, Vertex, or
 # Foundry. `AsyncAnthropicBedrockMantle` isn't a subclass of `AsyncAnthropicBedrock`, so the plain
@@ -1050,11 +1061,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
             client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
         )
+        bedrock_provider, bedrock_base_model_name = split_bedrock_model_id(self.model_name)
+        supports_json_schema_output = _profile.get('supports_json_schema_output', False) and not (
+            isinstance(client, _NATIVE_OUTPUT_UNSUPPORTED_CLIENTS)
+            and bedrock_provider == 'anthropic'
+            and bedrock_base_model_name.startswith(BEDROCK_STRUCTURED_OUTPUT_UNSUPPORTED)
+        )
         _profile = merge_profile(
             _profile,
             AnthropicModelProfile(
                 supported_native_tools=supported_native_tools,
                 anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
+                supports_json_schema_output=supports_json_schema_output,
                 # Narrowed rather than handled in `_map_message` so `Model.prepare_messages` stays the
                 # only place that knows the `<system>`-tagged fallback: where this is `False`, the
                 # mid-conversation parts are rewritten before the adapter ever sees them.
