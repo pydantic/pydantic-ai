@@ -218,9 +218,9 @@ async def model_command(context: CommandContext, args: list[str], *, runners: Ru
     focus: object = None
     if args[:1] == ['chains']:
         # Opens the picker on its fallback chains: the first one, or the row that creates one.
-        args = args[1:]
-        if args:
-            raise ValueError(_USAGE)
+        if args[1:]:
+            raise ValueError('Usage: /model chains. Create, edit, rename, and delete fallback chains in its picker.')
+        args = []
         chains = [name for name in context.store.models() if chain_name(name) is not None]
         focus = chains[0] if chains else ModelPickerAction.NEW_CHAIN
     if args[:1] == ['add']:

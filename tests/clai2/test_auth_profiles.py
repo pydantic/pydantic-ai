@@ -425,7 +425,7 @@ async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch:
         console=Console(file=output, width=200),
     )
     text = output.getvalue()
-    assert 'Usage: /model [NAME] | /model add [NAME] | /model settings [NAME] | /model chains' in text
+    assert 'Usage: /model chains. Create, edit, rename, and delete fallback chains in its picker.' in text
     assert 'Fast mode on for chain:pool' in text
     assert 'openai-codex:test answered' in text
     assert resolved == ['openai-codex:test', 'openai-codex@work:test']

@@ -157,7 +157,7 @@ async def test_model_chains_opens_the_picker_on_its_chains(tmp_path: Path) -> No
     context.store.save_chain(name='best', models=['openai:gpt-5', 'openai@work:gpt-5'])
     assert await model_command(context, ['chains'], runners=runners) == 'No changes.'
     assert highlighted == [ModelPickerAction.NEW_CHAIN, 'chain:best']
-    with pytest.raises(ValueError, match=r'/model chains$'):
+    with pytest.raises(ValueError, match=r'^Usage: /model chains\. Create, edit, rename, and delete'):
         await model_command(context, ['chains', 'best'])
 
 
@@ -231,6 +231,10 @@ def test_chain_names_and_typed_models_are_checked(tmp_path: Path, monkeypatch: p
     keys(monkeypatch, 'chain_menu', ['enter'])
     # Saved models already in the chain are not offered.
     assert pick_member(context, [str(context.settings.model)], TERMINAL) == 'openai:gpt-5'
+    # Nor are saved models a chain cannot run, such as one without a provider: only typing is left.
+    context.store.add_model(name='test')
+    keys(monkeypatch, 'chain_menu', ['enter', 'escape'])
+    assert pick_member(context, [str(context.settings.model), 'openai:gpt-5'], TERMINAL) is None
     pressed = ['end', 'enter']
     for refused in ['openai:gpt-5', 'chain:best', 'bare']:
         pressed += [*refused, 'enter', *['backspace'] * len(refused)]
@@ -245,14 +249,21 @@ def test_store_renames_a_chain_unless_it_is_the_saved_default(tmp_path: Path) ->
     assert not store.rename_chain(old='pool', new='top')
     assert 'pool' in store.chains()
     store.set('model', 'openai:gpt-5')
+    # A name another session took after it was checked is refused, not overwritten.
+    store.save_chain(name='taken', models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
+    with pytest.raises(ValueError, match=r'^chain:taken already exists\.$'):
+        store.rename_chain(old='pool', new='taken')
+    store.add_model(name='chain:orphan')  # a `/model` entry left by an older build, with no chain behind it
+    with pytest.raises(ValueError, match='chain:orphan already exists'):
+        store.rename_chain(old='pool', new='orphan')
     assert store.rename_chain(old='pool', new='top')
-    assert store.chains() == {'top': ['openai:gpt-5', 'openai@work:gpt-5']}
+    assert store.chains()['top'] == ['openai:gpt-5', 'openai@work:gpt-5'] and 'pool' not in store.chains()
     # Deleting it from the `/model` list removes the chain too, unless it is the saved default.
     store.set('model', 'chain:top')
     assert not store.remove_model(name='chain:top')
     store.set('model', 'openai:gpt-5')
     assert store.remove_model(name='chain:top')
-    assert store.chains() == {}
+    assert 'top' not in store.chains()
 
 
 def test_chain_details() -> None:

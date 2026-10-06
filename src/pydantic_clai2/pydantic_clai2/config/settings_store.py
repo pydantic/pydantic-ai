@@ -181,13 +181,19 @@ class SettingsStore:
             connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (f'chain:{name}',))
 
     def rename_chain(self, *, old: str, new: str) -> bool:
-        """Rename a chain with its `/model` entry and settings; return `False` if it is the saved default."""
+        """Rename a chain with its `/model` entry and settings; return `False` if it is the saved default.
+
+        Raises `ValueError` if another session took `new` since the name was checked.
+        """
         with self._connect() as connection:
-            # Keep the default check and the renames atomic across CLAI sessions, as removal does.
+            # Keep the checks and the renames atomic across CLAI sessions, as removal does.
             connection.execute('BEGIN IMMEDIATE')
             row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
             if row is not None and _JSON.validate_json(row[0]) == f'chain:{old}':
                 return False
+            taken = 'SELECT 1 FROM model_chains WHERE name = ? UNION SELECT 1 FROM models WHERE name = ?'
+            if connection.execute(taken, (new, f'chain:{new}')).fetchone() is not None:
+                raise ValueError(f'chain:{new} already exists.')
             connection.execute('UPDATE model_chains SET name = ? WHERE name = ?', (new, old))
             connection.execute('UPDATE models SET name = ? WHERE name = ?', (f'chain:{new}', f'chain:{old}'))
             connection.execute('UPDATE model_settings SET model = ? WHERE model = ?', (f'chain:{new}', f'chain:{old}'))

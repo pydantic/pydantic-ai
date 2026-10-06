@@ -11,7 +11,7 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.models.chains import chain_name, check_member
+from pydantic_clai2.models.chains import check_member
 from pydantic_clai2.models.profiles import check_name
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key
@@ -187,7 +187,8 @@ def _build_editor(name: str, models: list[str], *, cursor: int, notice: str) -> 
 
 
 def _pick_member(context: CommandContext, models: list[str], runners: Runners) -> str | None:
-    saved = [model for model in context.store.models() if chain_name(model) is None and model not in models]
+    # Only models a chain can run: provider-qualified, installed, not chains, and not in it already.
+    saved = [model for model in context.store.models() if _member_problem(model, models) is None]
     rows = [MenuItem(model, value=model) for model in saved]
     picked = runners.run_list(
         MenuBuilder('Add a model to the chain')
