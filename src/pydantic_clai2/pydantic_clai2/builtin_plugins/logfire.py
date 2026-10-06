@@ -23,10 +23,21 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, Va
 
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai_harness.logfire import AgentControl
+from pydantic_clai2.builtin_plugins.fleet import Fleet, FleetControl
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
+from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
-from pydantic_clai2.plugins import Plugin, PluginHost, PluginLoadFailed, SessionEnd, SessionStart, TurnEnd
+from pydantic_clai2.plugins import (
+    Plugin,
+    PluginHost,
+    PluginLoadFailed,
+    SessionEnd,
+    SessionStart,
+    TurnEnd,
+    TurnStart,
+)
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
 from pydantic_clai2.ui.rendering import theme
@@ -74,6 +85,23 @@ class LogfireSettings(BaseModel):
         description='Also record UI interactions: menus, commands, settings, plugins, keys, and prompt actions. '
         'With message content included, submitted prompts carry their text.',
     )
+    # Hackathon: Logfire as the fleet's control plane.
+    agent_control: bool = Field(
+        default=True,
+        description='Read the company config (`agent__<agent_control_name>`) and catalog '
+        '(`catalog__<agent_control_name>`) from Logfire managed variables. Needs an API key that can read variables.',
+    )
+    agent_control_name: str = Field(default='clai2', min_length=1)
+    api_key: KeyReference | None = Field(
+        default=None,
+        description='A /keys entry holding a Logfire API key with `project:read_variables`. Unset, '
+        'LOGFIRE_CLAI2_API_KEY or LOGFIRE_API_KEY is used.',
+    )
+    team: str | None = Field(default=None, description='Your team, sent with every span and used for targeting.')
+    allowed_catalog_plugins: list[str] = Field(
+        default_factory=list[str],
+        description='`module:Class` capability factories the Logfire catalog may enable as plugins.',
+    )
 
 
 class LogfirePlugin(Plugin[LogfireSettings]):
@@ -83,6 +111,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         super().__init__(host, settings)
         self._unsubscribe: Callable[[], None] | None = None
         token, send_to_logfire = _destination(settings, host)
+        api_key = _api_key(settings) if settings.agent_control else None
         private_dir = logfire_dir()
         propagator = get_global_textmap()
         try:
@@ -97,6 +126,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.
                 scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names) if settings.ui_events else None,
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
+                api_key=api_key,
+                variables=logfire.VariablesOptions(block_before_first_resolve=True) if api_key else None,
             )
         finally:
             # Even local SDK configuration replaces the process-wide propagator.
@@ -113,18 +144,89 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         except BaseException:
             _shutdown(self.instance)
             raise
-        self._session_tracing = SessionTracing(instance=self.instance, session_id=lambda: self.host.session_id)
+        self._session_tracing = SessionTracing(
+            instance=self.instance, session_id=lambda: self.host.session_id, team=settings.team
+        )
+        self.fleet: Fleet | None = None
+        self._notice = ''
+        if api_key:
+            tracing = self._session_tracing
+            self.fleet = Fleet(
+                instance=self.instance,
+                name=settings.agent_control_name,
+                state_file=logfire_dir() / 'fleet_state.json',
+                allowed_plugins=tuple(settings.allowed_catalog_plugins),
+                attributes=tracing.identity,
+                targeting_key=lambda: tracing.email,
+                user=lambda: tracing.email or 'local',
+            )
         # UI records and plugin errors are CLAI's own, so they share the session root's scope.
         self._clai2 = logfire.Logfire(config=self.instance.config, otel_scope=telemetry.SCOPE)
 
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
         """Tag the identity settings so older builds sharing the database can ignore them."""
-        requires = {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        requires = {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            **dict.fromkeys(
+                ('agent_control', 'agent_control_name', 'api_key', 'team', 'allowed_catalog_plugins'),
+                ['fleet-control'],
+            ),
+        }
         return cls(host, host.settings(LogfireSettings, requires=requires))
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (self._session_tracing, self.instrumentation)
+        if self.fleet is None:
+            return (self._session_tracing, self.instrumentation)
+        tracing = self._session_tracing
+        control = AgentControl[None](
+            self.fleet.agent_variable,
+            targeting_key=lambda _: tracing.email,
+            attributes=lambda _: tracing.identity(),
+        )
+        return (self._session_tracing, self.instrumentation, control, FleetControl(fleet=self.fleet))
+
+    def get_commands(self) -> Sequence[Command]:
+        if self.fleet is None:
+            return ()
+        fleet = self.fleet
+
+        def catalog(args: list[str]) -> str:
+            if len(args) == 2 and args[0] in ('enable', 'disable'):
+                return fleet.set_opt(args[1], args[0] == 'enable')
+            return fleet.listing()
+
+        return (
+            Command(
+                name='catalog',
+                description='Company skills and MCP servers from Logfire, and the catalog you can opt into',
+                handler=catalog,
+                complete=lambda _: ('enable', 'disable'),
+            ),
+        )
+
+    def get_status_segments(self) -> Sequence[Callable[[], str]]:
+        return (lambda: self._notice,) if self.fleet is not None else ()
+
+    async def on_turn_start(self, event: TurnStart) -> None:
+        self._announce_changes()
+
+    def _announce_changes(self) -> None:
+        """Show what Logfire pushed since the user last looked: once in the transcript, then in the status row."""
+        if self.fleet is None:
+            return
+        try:
+            changes = self.fleet.changes()
+        except Exception as error:  # noqa: BLE001 -- a control-plane hiccup must not block the prompt
+            self.host.console.print(f'Logfire fleet config unavailable: {error}', style=theme.color(theme.WARNING))
+            return
+        for change in changes:
+            self.host.console.print(f'◆ {change.describe()}', style=theme.color(theme.ACCENT), markup=False)
+        if changes:
+            self._notice = f'◆ {changes[-1].describe()}'
+        for warning in self.fleet.warnings:
+            self.host.console.print(warning, style=theme.color(theme.WARNING), markup=False)
 
     async def configure(self) -> str:
         """The settings menu; its project row runs the setup that signs in and picks where traces go."""
@@ -138,6 +240,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
+        self._announce_changes()
         if self.settings.ui_events:
             self._unsubscribe = telemetry.subscribe(
                 self._clai2, root=self._session_tracing.root, include_content=self.settings.include_content
@@ -180,6 +283,15 @@ async def _user_email(settings: LogfireSettings) -> str | None:
     if settings.user_tag == 'logfire-account' and account is not None and account.token == settings.token:
         return account.email
     return None
+
+
+def _api_key(settings: LogfireSettings) -> str | None:
+    """The API key that reads the fleet config: the chosen `/keys` entry, else the environment."""
+    if settings.api_key is not None:
+        key = load_keys().get(settings.api_key.name)
+        if key is not None:
+            return key.get_secret_value()
+    return os.getenv('LOGFIRE_CLAI2_API_KEY') or os.getenv('LOGFIRE_API_KEY') or None
 
 
 def logfire_dir() -> Path:

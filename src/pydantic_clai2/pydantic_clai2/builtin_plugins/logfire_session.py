@@ -22,6 +22,7 @@ class SessionTracing(AbstractCapability[None]):
     instance: logfire.Logfire
     session_id: Callable[[], str | None]
     id: str | None = 'clai2_session_tracing'
+    team: str | None = None
     _email: str | None = field(default=None, init=False)
     _active: bool = field(default=False, init=False)
     _roots: dict[str, Span] = field(default_factory=dict[str, Span], init=False)
@@ -79,8 +80,21 @@ class SessionTracing(AbstractCapability[None]):
         """Match instrumentation's last-instance precedence, preserving that instance's live roots."""
         return capabilities[-1]
 
+    @property
+    def email(self) -> str | None:
+        """The user's email once the session started, when `user_tag` names one."""
+        return self._email
+
+    def identity(self) -> dict[str, str]:
+        """Who is running: baggage on every span of a run, and the attributes fleet targeting matches on."""
+        return {
+            **({'user.email': self._email} if self._email else {}),
+            **({'clai2.team': self.team} if self.team else {}),
+        }
+
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
-        with parent_span(self.root()):
+        # Hackathon: the fleet control plane groups traces by user and team, so identity rides on every span.
+        with parent_span(self.root()), logfire.set_baggage(**self.identity()):
             return await handler()
 
 
