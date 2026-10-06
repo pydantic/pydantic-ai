@@ -24,17 +24,18 @@ def terminal_text(text: str, *, keep: str = '\n\t') -> str:
 def tool_header(*, name: str, argument: str | Text = '') -> Group:
     """Highlight the tool name, leaving its marker and a plain-string argument muted, on one row.
 
-    A `Text` argument is appended as-is, so it must already be styled and terminal-safe. The
+    A `Text` argument is appended as-is, so it must already be styled and terminal-safe. Line
+    breaks in a string are escaped, so model-supplied text cannot add a forged transcript row. The
     `Group` keeps the row unwrapped: `Console.print` copies a bare `Text` without its `no_wrap`.
     """
     text = Text('● ', style=theme.color(theme.MUTED), overflow='ellipsis', no_wrap=True)
-    text.append(terminal_text(name), style=theme.color(theme.ACCENT))
+    text.append(terminal_text(name, keep=''), style=theme.color(theme.ACCENT))
     if isinstance(argument, Text):
         if argument:
             text.append(' ')
             text.append_text(argument)
     elif argument:
-        text.append(f' {terminal_text(argument)}', style=theme.color(theme.MUTED))
+        text.append(f' {terminal_text(argument, keep="")}', style=theme.color(theme.MUTED))
     return Group(text)
 
 

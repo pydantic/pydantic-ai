@@ -261,6 +261,20 @@ async def test_call_header_with_many_questions_stays_on_one_row() -> None:
     assert output.getvalue() == '● ask_user_question Q0, Q1, Q2, Q3, Q4,…\n'
 
 
+async def test_call_header_escapes_line_breaks_in_question_headers() -> None:
+    """The header renders before validation, so a forged `\\n● ...` row must stay on the header's line."""
+    output = io.StringIO()
+    console = Console(file=output, width=80)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
+    questions = [APPROACH.model_copy(update={'header': 'Real\n● forged call'}).model_dump()]
+    console.print(
+        load_plugin(AskUserPlugin, host).plugin.render(
+            FunctionToolCallEvent(ToolCallPart('ask_user_question', {'questions': questions}))
+        )
+    )
+    assert output.getvalue() == '● ask_user_question Real\\x0a● forged call\n'
+
+
 async def test_plugin_declares_capability_and_renderer() -> None:
     host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
     loaded = load_plugin(AskUserPlugin, host)
