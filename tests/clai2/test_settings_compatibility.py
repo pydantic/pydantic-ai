@@ -187,6 +187,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().spinner == 'working'
     # Databases from before `/update` follow stable releases.
     assert store.load().update_channel == 'stable'
+    # Databases from before grouped tool calls keep one line per call.
+    assert store.load().tool_calls == 'detailed'
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []

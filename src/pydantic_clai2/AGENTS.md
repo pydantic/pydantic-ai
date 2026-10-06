@@ -278,6 +278,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/menus/rewind.py` | double-Esc rewind picker: run boundaries, compaction guard, and durable history replacement before draft restoration |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
+| `ui/rendering/tool_group.py` | `display.tool_calls = grouped`: `ToolCallGroup`, one live line counting consecutive calls by tool, kept as its own transcript item in the live prompt; `finish()` closes it, `_drain()` does not |
+| `ui/menus/tool_calls_preview.py` | the sample of each `display.tool_calls` style shown in the `/set` choice picker (`FieldRow.preview`) |
 | `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
@@ -438,8 +440,8 @@ Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
-with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source
-for width/theme repaint; tool output keeps styled lines, each tagged with the
+with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source,
+and a tool-call group its call names, for width/theme repaint; tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`
 prints retained output into native scrollback once, skipping startup output

@@ -52,13 +52,19 @@ launch directory, set **Unrestricted filesystem** to `false` in
 
 Tool calls show a single-line summary followed by a blank line by default.
 Tool and argument names are pink; argument values and bullet markers are muted grey.
-Successful file writes and edits also show their diffs, including in compact mode.
+Successful file writes and edits also show their diffs, even with `display.tool_output` off.
 Shell output, exit details and log paths, and grep results stay out of the terminal;
 the model still receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show shell and grep details, or
-`/set display.tool_output false` to hide those details without hiding file diffs. In detailed mode,
+`/set display.tool_output false` to hide those details without hiding file diffs. With `display.tool_output` on,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
+
+To count calls instead of listing them, run `/set display.tool_calls grouped`. Consecutive calls share
+one live line, such as `● shell 4, grep 2, shell 3`. A count grows in place and is final once a different
+tool or other output follows. The `grouped` style shows only names and counts, so it ignores
+`display.tool_output` and `display.tool_arg_chars`. File edits and writes still print their summary and diff,
+which ends the line. `/set` previews both styles when you pick one. The default is `detailed`, one line per call.
 
 ## Source layout
 
@@ -1690,6 +1696,15 @@ without a specialized summary list their arguments after the name as `name=value
 muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
 changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
+
+With `/set display.tool_calls grouped`, each call adds to a streak of the same tool on one line instead
+of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is redrawn from column zero
+as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
+In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
+mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
+The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
+`edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
+The setting applies to the next turn.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.
 The URL stays visible beside the label for other terminals and redirected output.
