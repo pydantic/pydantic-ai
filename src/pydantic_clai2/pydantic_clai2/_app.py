@@ -913,6 +913,7 @@ class _Shell(Generic[DepsT, OutputT]):
             else Path(str(self.sessions.store.database) + '.tasks'),
             step_store=self.session.step_store,
         )
+        self.status.subagent = self.tasks.focused
         self.forks = Forks(
             console=self.console,
             history=lambda: self.session.messages,
