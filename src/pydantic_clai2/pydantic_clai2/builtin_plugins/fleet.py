@@ -133,7 +133,10 @@ class Change:
     tier: str
 
     def describe(self) -> str:
-        noun = {'skill': 'skill', 'mcp_server': 'MCP server', 'plugin': 'plugin', 'instructions': 'instructions'}
+        if self.kind == 'instructions':
+            verb = {'added': 'New', 'updated': 'Updated', 'removed': 'Removed'}[self.action]
+            return f'{verb} company instructions from Logfire'
+        noun = {'skill': 'skill', 'mcp_server': 'MCP server', 'plugin': 'plugin'}
         where = 'company' if self.tier == 'company' else 'catalog'
         return f'{self.action.capitalize()} {where} {noun.get(self.kind, self.kind)} from Logfire: {self.name}'
 
