@@ -27,7 +27,7 @@ from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from tests.clai2.test_logfire import Recorder, observability_loader, recorder as recorder
 
-_FLEET_KEYS = ('agent_control', 'agent_control_name', 'api_key', 'team', 'allowed_catalog_plugins')
+_FLEET_KEYS = ('agent_control', 'agent_control_name', 'api_key', 'team', 'allowed_catalog_plugins', 'fleet_env_allow')
 """Hackathon fleet-control settings, tagged with the `fleet-control` feature."""
 
 

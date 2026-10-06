@@ -107,6 +107,11 @@ class LogfireSettings(BaseModel):
     team: str | None = Field(
         default=None, description='Your team, sent with every span and used for targeting. Unset, CLAI2_TEAM is used.'
     )
+    fleet_env_allow: list[str] = Field(
+        default_factory=list[str],
+        description='Globs over environment variable names that config pushed from Logfire may send, '
+        'such as `GITHUB_TOKEN`.',
+    )
     allowed_catalog_plugins: list[str] = Field(
         default_factory=list[str],
         description='`module:Class` capability factories the Logfire catalog may enable as plugins.',
@@ -133,7 +138,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 config_dir=private_dir,
                 data_dir=private_dir,
                 # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.
-                scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names) if settings.ui_events else None,
+                scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names),
                 advanced=logfire.AdvancedOptions(base_url=settings.base_url) if settings.base_url else None,
                 **_variables_options(api_key),
             )
@@ -171,6 +176,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 name=settings.agent_control_name,
                 state_file=logfire_dir() / 'fleet_state.json',
                 allowed_plugins=tuple(settings.allowed_catalog_plugins),
+                env_allow=tuple(settings.fleet_env_allow),
                 attributes=tracing.identity,
                 targeting_key=lambda: tracing.email or install_id,
                 user=lambda: tracing.email or 'local',
@@ -185,7 +191,14 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             'user_tag': ['logfire-user-tag'],
             'account': ['logfire-user-tag'],
             **dict.fromkeys(
-                ('agent_control', 'agent_control_name', 'api_key', 'team', 'allowed_catalog_plugins'),
+                (
+                    'agent_control',
+                    'agent_control_name',
+                    'api_key',
+                    'team',
+                    'allowed_catalog_plugins',
+                    'fleet_env_allow',
+                ),
                 ['fleet-control'],
             ),
         }
@@ -254,7 +267,32 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         return (lambda: self._notice,) if self.fleet is not None else ()
 
     async def on_turn_start(self, event: TurnStart) -> None:
+        await self._ask_consent()
         self._announce_changes()
+
+    async def _ask_consent(self) -> None:
+        """Ask once about each pushed MCP server or plugin whose target or env changed; headless never asks."""
+        if self.fleet is None or not sys.stdin.isatty():
+            return
+        try:
+            pending = self.fleet.build().pending
+        except Exception:  # noqa: BLE001 -- the turn-start pass reports a broken config
+            return
+        for consent in pending:
+            question = Question(
+                header='Logfire',
+                question=consent.question()[:400],
+                options=(
+                    QuestionOption(label='Allow', description='Turn it on; asked again if its target or env changes.'),
+                    QuestionOption(label='Deny', description='Keep it off.'),
+                ),
+            )
+            answerer = TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)
+            response = await answerer(AskUserRequest(questions=(question,)))
+            if response.cancelled:
+                continue  # Asked again next turn.
+            allow = bool(response.answers) and response.answers[0].selected == ('Allow',)
+            self.fleet.decide(consent, allow=allow)
 
     def _announce_changes(self) -> None:
         """At turn start: show what Logfire pushed since the user last looked, and mark it seen."""
@@ -278,6 +316,14 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 self.host.console.print(f'◆ {text}', style=theme.color(theme.ACCENT), markup=False)
         if changes:
             self._notice = changes[-1].describe()
+        for consent in build.pending:
+            if (consent.item.key, consent.fingerprint) not in self._reported_failures:
+                self._reported_failures.add((consent.item.key, consent.fingerprint))
+                self.host.console.print(
+                    f'{consent.question()} It stays off until you approve it at your next prompt.',
+                    style=theme.color(theme.WARNING),
+                    markup=False,
+                )
         for item, error in build.failed:
             # A broken item fails on every build; say so once per version of it, not on every prompt.
             if (item.key, error) in self._reported_failures:

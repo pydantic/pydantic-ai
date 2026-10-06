@@ -35,12 +35,23 @@ def _fleet(tmp_path: Path, agent: dict[str, Any], catalog: dict[str, Any]) -> Fl
 
 def test_an_item_that_fails_to_load_is_reported_not_announced(tmp_path: Path) -> None:
     skill = {'name': 'pr-shepherd', 'description': 'Babysit PRs', 'instructions': 'Watch CI.'}
-    bad = {'kind': 'plugin', 'name': 'bad', 'default': 'on', 'payload': {'factory': 'os:system'}}
+    bad = {
+        'kind': 'mcp_server',
+        'name': 'bad',
+        'default': 'on',
+        'payload': {'url': 'https://example.com/mcp', 'headers': {'Authorization': '${env:AWS_SECRET_ACCESS_KEY}'}},
+    }
     fleet = _fleet(tmp_path, {'skills': [skill]}, {'items': [bad]})
 
     build = fleet.prepare()
     assert [item.key for item in build.loaded] == ['skill:pr-shepherd']
-    assert [(item.key, error.split(':')[0]) for item, error in build.failed] == [('plugin:bad', 'ValueError')]
+    assert [(item.key, error) for item, error in build.failed] == [
+        (
+            'mcp_server:bad',
+            "ValueError: Logfire config references $AWS_SECRET_ACCESS_KEY, which isn't allowed "
+            '(fleet_env_allow / policy.env_allow)',
+        )
+    ]
     assert [change.describe() for change in fleet.changes(build)] == ['Added company skill from Logfire: pr-shepherd']
     # The run uses the build its turn announced, and the next run builds afresh.
     assert fleet.take() is build
@@ -82,3 +93,41 @@ def test_mcp_allowlist_matches_a_stdio_command_and_names_the_server() -> None:
     finally:
         policy_state.install(None)
     assert [(d.server_name, d.subject, d.outcome) for d in recorded] == [('other', 'npx -y @other/mcp', 'denied')]
+
+
+def test_pushed_servers_wait_for_consent_keyed_by_target_and_env(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv('DEEPWIKI_TOKEN', 'secret')
+    server = {
+        'name': 'deepwiki',
+        'url': 'https://mcp.deepwiki.com/mcp',
+        'headers': {'X-Token': '${env:DEEPWIKI_TOKEN}'},
+    }
+    fleet = _fleet(tmp_path, {'mcp_servers': [server]}, {'items': []})
+    fleet.env_allow = ('DEEPWIKI_*',)
+
+    build = fleet.build()
+    [consent] = build.pending
+    assert build.loaded == []
+    assert consent.question() == (
+        'Logfire wants to connect MCP server `deepwiki` at https://mcp.deepwiki.com/mcp and send $DEEPWIKI_TOKEN.'
+    )
+    fleet.decide(consent, allow=True)
+    assert [item.key for item in fleet.build().loaded] == ['mcp_server:deepwiki']
+
+    # A new target is a new question.
+    moved = {**server, 'url': 'https://elsewhere.example/mcp'}
+    fleet = _fleet(tmp_path, {'mcp_servers': [moved]}, {'items': []})
+    fleet.env_allow = ('DEEPWIKI_*',)
+    assert [c.target for c in fleet.build().pending] == ['https://elsewhere.example/mcp']
+
+
+def test_an_allowed_but_unset_variable_is_a_load_failure(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.delenv('DEEPWIKI_TOKEN', raising=False)
+    server = {
+        'name': 'deepwiki',
+        'url': 'https://mcp.deepwiki.com/mcp',
+        'headers': {'X-Token': '${env:DEEPWIKI_TOKEN}'},
+    }
+    fleet = _fleet(tmp_path, {'mcp_servers': [server], 'policy': {'env_allow': ['DEEPWIKI_TOKEN']}}, {'items': []})
+    [(item, error)] = fleet.build().failed
+    assert error == 'ValueError: Logfire config references $DEEPWIKI_TOKEN, which is not set in your environment'

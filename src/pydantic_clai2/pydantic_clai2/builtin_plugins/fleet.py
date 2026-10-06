@@ -13,6 +13,7 @@ that can read managed variables. Three things come down from Logfire:
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import importlib
 import json
@@ -96,6 +97,8 @@ class _UserState(BaseModel):
     opted_out: list[str] = Field(default_factory=list[str])
     seen: dict[str, str] = Field(default_factory=dict[str, str])
     """What the user was last shown, as item key to content digest."""
+    consents: dict[str, tuple[str, bool]] = Field(default_factory=dict[str, tuple[str, bool]])
+    """Per pushed MCP server or plugin key: the consent fingerprint the user decided on, and whether they allowed it."""
 
 
 class _State(BaseModel):
@@ -113,8 +116,19 @@ def _digest(value: object) -> str:
 _ENV_REF = re.compile(r'\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}')
 
 
+def _check_env(names: Sequence[str], allowed: Sequence[str]) -> None:
+    """Refuse a reference outside the allowlist, or to a variable that is not set."""
+    for name in names:
+        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in allowed):
+            raise ValueError(
+                f"Logfire config references ${name}, which isn't allowed (fleet_env_allow / policy.env_allow)"
+            )
+        if name not in os.environ:
+            raise ValueError(f'Logfire config references ${name}, which is not set in your environment')
+
+
 def _resolve_env(value: str) -> str:
-    return _ENV_REF.sub(lambda match: os.environ.get(match.group(1), ''), value)
+    return _ENV_REF.sub(lambda match: os.environ[match.group(1)], value)
 
 
 @dataclass(frozen=True)
@@ -157,6 +171,30 @@ class Build:
     capabilities: list[AbstractCapability[None]]
     loaded: list[ActiveItem]
     failed: list[tuple[ActiveItem, str]]
+    pending: list[Consent] = field(default_factory=list['Consent'])
+    """Pushed servers and plugins waiting for the user's consent; inactive until approved."""
+    declined: list[ActiveItem] = field(default_factory=list[ActiveItem])
+
+
+@dataclass(frozen=True)
+class Consent:
+    """What the user is asked before a pushed MCP server or plugin becomes active."""
+
+    item: ActiveItem
+    target: str
+    """The URL (MCP server) or factory (plugin)."""
+    env: tuple[str, ...]
+    """Environment variables its config would send."""
+
+    @property
+    def fingerprint(self) -> str:
+        return _digest([self.item.kind, self.item.name, self.target, list(self.env)])
+
+    def question(self) -> str:
+        sends = f' and send {", ".join(f"${name}" for name in self.env)}' if self.env else ''
+        if self.item.kind == 'mcp_server':
+            return f'Logfire wants to connect MCP server `{self.item.name}` at {self.target}{sends}.'
+        return f'Logfire wants to enable plugin `{self.item.name}` ({self.target}){sends}.'
 
 
 @dataclass(frozen=True)
@@ -188,6 +226,8 @@ class Fleet:
     name: str
     state_file: Path
     allowed_plugins: Sequence[str] = ()
+    env_allow: Sequence[str] = ()
+    """Local globs over environment variable names pushed config may reference (`fleet_env_allow`)."""
     attributes: Callable[[], Mapping[str, Any]] = dict
     targeting_key: Callable[[], str | None] = lambda: None
     user: Callable[[], str] = lambda: 'local'
@@ -286,8 +326,21 @@ class Fleet:
         capabilities: list[AbstractCapability[None]] = []
         loaded: list[ActiveItem] = []
         failed: list[tuple[ActiveItem, str]] = []
+        state = self._user_state()
+        pending: list[Consent] = []
+        declined: list[ActiveItem] = []
+        allowed_env = (*self.env_allow, *(snapshot.policy.env_allow if snapshot.policy else ()))
         for item in self.active(snapshot):
             try:
+                consent = self._consent_needed(item, allowed_env)
+                if consent is not None:
+                    decided = state.consents.get(item.key)
+                    if decided is None or decided[0] != consent.fingerprint:
+                        pending.append(consent)
+                        continue
+                    if not decided[1]:
+                        declined.append(item)
+                        continue
                 capability = self._build(item)
             except Exception as error:  # noqa: BLE001 -- one bad pushed item must not stop the run
                 failed.append((item, f'{type(error).__name__}: {error}'))
@@ -295,7 +348,32 @@ class Fleet:
             loaded.append(item)
             if capability is not None:
                 capabilities.append(capability)
-        return Build(snapshot=snapshot, capabilities=capabilities, loaded=loaded, failed=failed)
+        return Build(
+            snapshot=snapshot,
+            capabilities=capabilities,
+            loaded=loaded,
+            failed=failed,
+            pending=pending,
+            declined=declined,
+        )
+
+    def _consent_needed(self, item: ActiveItem, allowed_env: Sequence[str]) -> Consent | None:
+        """The consent a pushed MCP server or plugin needs; raises when it references env it may not."""
+        if item.kind == 'mcp_server':
+            server = FleetMCPServer.model_validate({'name': item.name, **item.payload})
+            names = sorted({name for value in server.headers.values() for name in _ENV_REF.findall(value)})
+            _check_env(names, allowed_env)
+            return Consent(item=item, target=server.url, env=tuple(names))
+        if item.kind == 'plugin':
+            return Consent(item=item, target=str(item.payload.get('factory', '')), env=())
+        return None
+
+    def decide(self, consent: Consent, *, allow: bool) -> None:
+        """Remember the user's answer for exactly this server/plugin, target and env set."""
+        state = self._load()
+        user = state.users.setdefault(self.user(), _UserState())
+        user.consents[consent.item.key] = (consent.fingerprint, allow)
+        self._save(state)
 
     def prepare(self) -> Build:
         """Build for the turn about to start, so its notices and its run agree on what loaded."""
@@ -376,7 +454,8 @@ class Fleet:
         the item is announced once it loads.
         """
         config = build.snapshot.config
-        failed = {item.key for item, _ in build.failed}
+        # Failed and consent-pending items are neither news nor removals: the user sees why instead.
+        failed = {item.key for item, _ in build.failed} | {consent.item.key for consent in build.pending}
         current: dict[str, tuple[str, str, str, str]] = {}
         for item in build.loaded:
             current[item.key] = (item.kind, item.name, item.tier, _digest(dict(item.payload)))
@@ -483,6 +562,7 @@ class FleetControl(AbstractCapability[None]):
         capabilities, items, snapshot = build.capabilities, build.loaded, build.snapshot
         baggage = {
             ACTIVE_ITEMS_ATTRIBUTE: ','.join(sorted(item.key for item in items)),
+            'clai2.fleet.pending_consent': ','.join(sorted(consent.item.key for consent in build.pending)),
             **self.fleet.compliance(snapshot, items),
         }
         # The run's policy is the one this run resolved, so a push mid-run applies from the next run.

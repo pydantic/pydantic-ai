@@ -583,6 +583,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'api_key': None,
             'team': None,
             'allowed_catalog_plugins': [],
+            'fleet_env_allow': [],
         }
         assert [options['service_name'] for options in recorder.options] == ['pydantic-clai2', 'my-clai']
         assert recorder.options[-1]['send_to_logfire'] is False

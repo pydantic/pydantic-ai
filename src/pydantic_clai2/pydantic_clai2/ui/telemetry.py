@@ -177,6 +177,9 @@ def operation_name(operation: object) -> str:
     return f'{prefix}:{path}' if prefix else path
 
 
+FLEET_PREFIXES = ('clai2.fleet.', 'clai2.policy.')
+
+
 def keep_names(match: logfire.ScrubMatch) -> object:
     """A Logfire scrubbing callback that keeps UI telemetry's names, which can look like secrets but are not.
 
@@ -185,6 +188,10 @@ def keep_names(match: logfire.ScrubMatch) -> object:
     filled from them, are kept, along with `PROMPT`, whose words would otherwise trip the same patterns ("the
     session bug"). Everything else, including every agent span, is scrubbed as usual.
     """
+    # Hackathon: fleet and policy attributes hold item keys and rule names (`mcp_server:deepwiki-auth`), not
+    # secrets; scrubbing them would hide what was adopted and what policy decided.
+    if len(match.path) == 2 and match.path[0] == 'attributes' and str(match.path[1]).startswith(FLEET_PREFIXES):
+        return match.value
     if (
         _emitting.get()
         and len(match.path) == 2
