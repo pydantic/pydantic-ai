@@ -67,6 +67,7 @@ from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
+from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
@@ -173,6 +174,7 @@ async def chat(
     project: ProjectSettings | None = None,
     resume: str | None = None,
     load_plugins: bool = True,
+    worktree: Worktree | None = None,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -181,13 +183,14 @@ async def chat(
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
+    `worktree` is the checkout `--worktree` opened; its path and branch are shown under the launch banner.
     """
     console = console or Console()
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
         project = project or ProjectSettings()
-        _print_welcome(project, console)
+        _print_welcome(project, console, worktree=worktree)
         use_defaults = builtin_plugins is DEFAULT_PLUGINS
         use_stock_defaults = builtin_plugins is STOCK_PLUGINS
         shell = create_shell(
@@ -1165,10 +1168,13 @@ class _Shell(Generic[DepsT, OutputT]):
         return ended
 
 
-def _print_welcome(project: ProjectSettings, console: Console) -> None:
-    """The banner and hints a fresh launch shows, which `/clear` returns to."""
+def _print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
+    """The banner and hints a fresh launch shows, which `/clear` returns to without the launch's worktree notice."""
     console.print()
     print_banner(console)
+    if worktree is not None:
+        # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
+        console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
     console.print(
         '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
         style=theme.color(theme.MUTED),
