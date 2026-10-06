@@ -46,7 +46,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
-from pydantic_clai2.models.chains import chain_command, chain_completions, settings_model as chain_settings_model
+from pydantic_clai2.models.chains import settings_model as chain_settings_model
 from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, provider_of
 from pydantic_clai2.plugins import (
     ModelProvider,
@@ -370,7 +370,7 @@ class _ModelResolver:
 
         models = self.store.chains().get(chain) if self.store is not None else None
         if not models:
-            raise UserError(f'No chain named {chain}. Save one with /chain {chain} MODEL MODEL...')
+            raise UserError(f'No chain named {chain}. Create one with /model chains.')
         first, *rest = [await self.resolve(model) for model in models]
         return FallbackModel(first, *rest)
 
@@ -514,15 +514,6 @@ def create_shell(
     )
     commands.register(
         Command(
-            name='chain',
-            description='Save fallback chains of models, then select one with /model chain:NAME',
-            handler=lambda args: chain_command(store, args),
-            complete=lambda args: chain_completions(store, args),
-            during_turn=True,
-        )
-    )
-    commands.register(
-        Command(
             name='accounts',
             description='Add, rename, reorder, and sign out of accounts; MODEL@* tries them all in order',
             handler=models.accounts,
@@ -550,14 +541,17 @@ def create_shell(
     commands.register(
         Command(
             name='model',
-            description='Select any model, or open the picker; also /model add [NAME] and /model settings [NAME]',
+            description=(
+                'Select any model or fallback chain, or open the picker; also /model add [NAME], '
+                '/model settings [NAME], and /model chains'
+            ),
             handler=lambda args: model_command(context, args),
             complete=lambda args: model_completions(context, args),
             during_turn=True,
             during_turn_subcommands=MODEL_SUBCOMMANDS,
         )
     )
-    # Deprecated spellings of `/model add` and `/model settings`, kept working for existing habits.
+    # Deprecated spellings of `/model add`, `/model settings`, and `/model chains`, kept working for existing habits.
     commands.register(
         Command(
             name='add_model',
@@ -573,6 +567,14 @@ def create_shell(
             description='Deprecated: use /model settings',
             handler=lambda args: model_command(context, ['settings', *args]),
             complete=lambda args: model_completions(context, ['settings', *args]),
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='chain',
+            description='Alias of /model chains: fallback chains live in the /model picker',
+            handler=lambda args: model_command(context, ['chains', *args]),
             during_turn=True,
         )
     )

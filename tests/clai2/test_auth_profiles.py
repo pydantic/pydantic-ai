@@ -34,7 +34,7 @@ from pydantic_clai2.config.credential_store import (
 )
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot, key_profiles, openrouter, vllm
-from pydantic_clai2.models.chains import chain_command, chain_completions, settings_model
+from pydantic_clai2.models.chains import settings_model
 from pydantic_clai2.models.model_catalog import check_installed
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm
@@ -343,7 +343,7 @@ async def test_a_chain_does_not_hide_a_profile_that_is_not_signed_in(tmp_path: P
 
 async def test_resolver_reports_profile_problems(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     models = resolver(tmp_path, {'single': ModelProvider(prefix='single', resolve=echo)})
-    with pytest.raises(UserError, match=r'No chain named missing\. Save one with /chain missing MODEL MODEL'):
+    with pytest.raises(UserError, match=r'No chain named missing\. Create one with /model chains\.'):
         await models.resolve('chain:missing')
     with pytest.raises(UserError, match='No chain named any'):
         await _ModelResolver(console=Console(file=io.StringIO())).resolve('chain:any')
@@ -361,50 +361,6 @@ async def test_resolver_reports_profile_problems(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(key_profiles, 'model', keyed)
     model = await models.resolve('openai@work:gpt-5')
     assert isinstance(model, TestModel) and model.custom_output_text == 'key profile openai@work:gpt-5'
-
-
-def test_chain_command(tmp_path: Path) -> None:
-    store = SettingsStore(tmp_path / 'config.db')
-    assert chain_command(store, []).startswith('No chains. Usage: /chain')
-    saved = chain_command(store, ['pool', 'openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra'])
-    assert saved == (
-        'Saved chain:pool (openai-codex:gpt-6-astra -> openai-codex@work:gpt-6-astra). Select it with /model chain:pool.'
-    )
-    assert chain_command(store, []) == 'chain:pool  openai-codex:gpt-6-astra -> openai-codex@work:gpt-6-astra'
-    assert chain_command(store, ['pool']) == chain_command(store, [])
-    assert 'chain:pool' in store.models()
-    assert chain_completions(store, []) == ['remove', 'pool']
-    assert chain_completions(store, ['remove', '']) == ['pool']
-    assert chain_completions(store, ['remove', 'pool', '']) == []
-    assert chain_completions(store, ['new', '']) == []  # only saved, non-chain models
-    store.add_model(name='openai:gpt-5')
-    assert chain_completions(store, ['new', '']) == ['openai:gpt-5']
-    problems = {
-        ('missing',): 'No chain named missing',
-        ('Bad', 'a:b', 'c:d'): "Chain name 'Bad'",
-        ('two', 'openai:gpt-5'): 'at least two models',
-        ('nested', 'chain:pool', 'openai:gpt-5'): 'cannot contain another chain',
-        ('bare', 'test', 'openai:gpt-5'): 'name the provider',
-        ('remove',): 'Usage',
-        ('remove', 'missing'): 'No chain named missing',
-    }
-    for args, problem in problems.items():
-        with pytest.raises(ValueError, match=problem):
-            chain_command(store, list(args))
-    store.set('model', 'chain:pool')
-    with pytest.raises(ValueError, match='saved default model'):
-        chain_command(store, ['remove', 'pool'])
-    assert 'pool' in store.chains()  # a refused removal keeps the chain the default still names
-    store.set('model', 'openai:gpt-5')
-    store.save_model_settings('chain:pool', {'max_tokens': 10})
-    assert chain_command(store, ['remove', 'pool']) == 'Removed chain:pool.'
-    assert store.chains() == {}
-    assert 'chain:pool' not in store.models()
-    assert store.model_settings('chain:pool') == {}
-    # Deleting it from the `/model` list removes the chain too, so `/chain` cannot still run it.
-    store.save_chain(name='pool', models=['openai:gpt-5', 'openai@work:gpt-5'])
-    assert store.remove_model(name='chain:pool')
-    assert store.chains() == {}
 
 
 def test_chains_and_profiles_take_their_model_settings(tmp_path: Path) -> None:
@@ -440,11 +396,13 @@ def test_chains_and_profiles_take_their_model_settings(tmp_path: Path) -> None:
     assert 'Reasoning' in summary
 
 
-async def test_shell_saves_and_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_chain(name='pool', models=['openai-codex:test', 'openai-codex@work:test'])
     inputs(
         monkeypatch,
         [
-            '/chain pool openai-codex:test openai-codex@work:test',
+            '/chain pool openai-codex:test',  # chains are made in the /model picker now
             '/model chain:pool',
             '/fast',
             'hello',
@@ -459,7 +417,6 @@ async def test_shell_saves_and_runs_a_chain_of_codex_accounts(tmp_path: Path, mo
 
     monkeypatch.setattr(CodexAuth, 'model', model)
     output = io.StringIO()
-    store = SettingsStore(tmp_path / 'config.db')
     await chat(
         Agent(TestModel()),
         deps=None,
@@ -468,7 +425,7 @@ async def test_shell_saves_and_runs_a_chain_of_codex_accounts(tmp_path: Path, mo
         console=Console(file=output, width=200),
     )
     text = output.getvalue()
-    assert 'Saved chain:pool' in text
+    assert 'Usage: /model [NAME] | /model add [NAME] | /model settings [NAME] | /model chains' in text
     assert 'Fast mode on for chain:pool' in text
     assert 'openai-codex:test answered' in text
     assert resolved == ['openai-codex:test', 'openai-codex@work:test']
