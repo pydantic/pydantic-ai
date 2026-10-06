@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
-
-import re
 
 from pydantic import BaseModel, Field, field_validator
 
 Tier = Literal['required', 'default_on', 'optional']
-ProposalKind = Literal['skill', 'instruction']
+ProposalKind = Literal['skill', 'instruction', 'policy']
 ProposalStatus = Literal['pending', 'accepted', 'dismissed', 'stale']
 """`stale`: was pending, but the latest run no longer finds the pattern often enough. Kept, not deleted."""
 
@@ -40,7 +39,9 @@ class Facet(BaseModel):
         description='True when the user asks for behavior the agent arguably should have done unprompted, '
         'or that the user likely asks for repeatedly (e.g. "keep watching CI until it passes").'
     )
-    workflow: bool = Field(description='True when the intent is a multi-step procedure rather than a one-line preference.')
+    workflow: bool = Field(
+        description='True when the intent is a multi-step procedure rather than a one-line preference.'
+    )
 
 
 # Tool-call markup a model sometimes leaks into a text field (e.g. a trailing `</parameter> </invoke>`).
@@ -51,6 +52,34 @@ def strip_markup(value: str) -> str:
     return _MARKUP.sub('', value).strip()
 
 
+# Anything that looks like a credential, so a command line or excerpt never carries one into the variable.
+_SECRETS = (
+    re.compile(r'\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}'),  # OpenAI/Anthropic-style keys
+    re.compile(r'\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}'),
+    re.compile(r'\bpylf_[A-Za-z0-9_]{16,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b'),
+    re.compile(r'(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}'),
+    re.compile(r'\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'),  # JWTs
+    re.compile(r'\b[A-Fa-f0-9]{40,}\b|\b[A-Za-z0-9+/]{48,}={0,2}'),  # long hex/base64 blobs
+)
+_SECRET_ASSIGNMENT = re.compile(
+    r'(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|AUTH)[A-Z0-9_]*)'
+    r'(\s*[=:]\s*|\s+)(["\']?)[^\s"\']{6,}\3'
+)
+_HOME = re.compile(r'(/Users/|/home/|C:\\Users\\)[^/\\\s]+')
+
+
+def redact_secrets(value: str) -> str:
+    """Replace credentials (and home-directory user names) with placeholders."""
+    for pattern in _SECRETS:
+        value = pattern.sub('<redacted>', value)
+    value = _SECRET_ASSIGNMENT.sub(lambda m: m[0] if '<redacted>' in m[0] else f'{m[1]}{m[2]}<redacted>', value)
+    return _HOME.sub(r'\1<user>', value)
+
+
+def clean_text(value: str) -> str:
+    return redact_secrets(strip_markup(value))
+
+
 class Evidence(BaseModel):
     user: str | None
     trace_id: str
@@ -59,6 +88,35 @@ class Evidence(BaseModel):
     timestamp: datetime
     excerpt: str
 
+    _clean = field_validator('excerpt')(redact_secrets)
+
+
+class PolicyMatch(BaseModel):
+    tool: str
+    command: str | None = None
+    args: dict[str, str] | None = None
+
+
+class PolicyRule(BaseModel):
+    """One `agent__<agent>.policy.rules` entry (contract-policy.md)."""
+
+    name: str
+    description: str
+    mode: Literal['observe', 'enforce'] = 'observe'
+    action: Literal['deny', 'ask']
+    match: PolicyMatch
+    monty: str | None = None
+    source: Literal['manual', 'fleet-miner'] = 'fleet-miner'
+    proposal_id: str | None = None
+
+    _clean = field_validator('name', 'description')(clean_text)
+
+
+class McpAllow(BaseModel):
+    """Hackathon extension: a policy proposal to add servers to `policy.mcp.allow` (no `rule`)."""
+
+    allow: list[str]
+
 
 class Proposal(BaseModel):
     id: str
@@ -66,7 +124,8 @@ class Proposal(BaseModel):
     name: str
     description: str
     text: str
-    suggested_tier: Tier
+    suggested_tier: Tier | None
+    """`None` for a policy rule only one person's actions motivated: worth a look, not a rollout."""
     rationale: str
     pattern: str
     distinct_users: int
@@ -80,8 +139,11 @@ class Proposal(BaseModel):
     """Miner version and drafting model, e.g. `fleet-miner 0.2 / gateway/anthropic:claude-sonnet-5-5`."""
     score: float | None = None
     """Hackathon extra: LLM confidence times the distinct-user spread factor (braindump's scoring)."""
+    rule: PolicyRule | None = None
+    """Set on `kind: 'policy'` proposals; always `mode: 'observe'` from the miner."""
+    mcp: McpAllow | None = None
 
-    _strip_markup = field_validator('id', 'name', 'description', 'text', 'rationale', 'pattern')(strip_markup)
+    _clean = field_validator('id', 'name', 'description', 'text', 'rationale', 'pattern')(clean_text)
 
 
 class Window(BaseModel):

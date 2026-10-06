@@ -61,7 +61,8 @@ async def extract_facets(
         payload = [{'span_id': p.span_id, 'prompt': p.text[:2000]} for p in session_prompts]
         async with semaphore:
             result = await agent.run(
-                'Prompts in this session, in order (extract a facet for every span_id):\n' + json.dumps(payload, indent=2)
+                'Prompts in this session, in order (extract a facet for every span_id):\n'
+                + json.dumps(payload, indent=2)
             )
         wanted = {p.span_id for p in todo}
         for facet in result.output.facets:

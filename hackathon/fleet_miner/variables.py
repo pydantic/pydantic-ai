@@ -14,9 +14,7 @@ LABEL = 'production'
 
 class VariablesClient:
     def __init__(self, api_key: str, *, base_url: str):
-        self._client = httpx.AsyncClient(
-            base_url=base_url, headers={'Authorization': f'bearer {api_key}'}, timeout=30
-        )
+        self._client = httpx.AsyncClient(base_url=base_url, headers={'Authorization': f'bearer {api_key}'}, timeout=30)
 
     async def __aenter__(self) -> VariablesClient:
         return self

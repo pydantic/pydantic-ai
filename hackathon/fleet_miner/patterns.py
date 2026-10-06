@@ -135,8 +135,13 @@ async def find_patterns(
 def save_patterns(path: Path, patterns: list[Pattern]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = [
-        {'id': p.id, 'pattern': p.pattern, 'confidence': p.confidence, 'existing_id': p.existing_id,
-         'span_ids': [u.span_id for u in p.prompts]}
+        {
+            'id': p.id,
+            'pattern': p.pattern,
+            'confidence': p.confidence,
+            'existing_id': p.existing_id,
+            'span_ids': [u.span_id for u in p.prompts],
+        }
         for p in patterns
     ]
     path.write_text(json.dumps(data, indent=2))
@@ -149,8 +154,11 @@ def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
     for item in json.loads(path.read_text()):
         group_prompts = [by_span[s] for s in item['span_ids'] if s in by_span]
         pattern = Pattern(
-            id=item['id'], pattern=item['pattern'], confidence=item['confidence'],
-            prompts=group_prompts, existing_id=item['existing_id'],
+            id=item['id'],
+            pattern=item['pattern'],
+            confidence=item['confidence'],
+            prompts=group_prompts,
+            existing_id=item['existing_id'],
         )
         for p in group_prompts:
             pattern.users.add(p.user or f'unknown:{p.session_id or p.trace_id}')
@@ -159,7 +167,20 @@ def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
     return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
 
 
-_GENERIC_DOMAINS = {'example', 'test', 'localhost', 'gmail', 'googlemail', 'outlook', 'hotmail', 'yahoo', 'icloud', 'proton', 'protonmail', 'pydantic'}
+_GENERIC_DOMAINS = {
+    'example',
+    'test',
+    'localhost',
+    'gmail',
+    'googlemail',
+    'outlook',
+    'hotmail',
+    'yahoo',
+    'icloud',
+    'proton',
+    'protonmail',
+    'pydantic',
+}
 
 
 _HOST_OWNER = re.compile(r"^([A-Za-z]+?)'?s-(?:MacBook|MBP|Mac|iMac|Laptop|PC|Desktop)", re.IGNORECASE)
@@ -167,6 +188,8 @@ _HANDLE_PATTERNS = (
     re.compile(r'(?<![\w.])@([A-Za-z0-9](?:[A-Za-z0-9-]{1,37}[A-Za-z0-9])?)\b'),
     re.compile(r'\bassign(?:ed|ee)?(?: it| the PR| this)? to @?([A-Za-z0-9-]{3,39})\b', re.IGNORECASE),
     re.compile(r'/(?:Users|home)/([A-Za-z0-9._-]{3,})/'),
+    re.compile(r"\b([A-Z][a-z]{2,})'s (?:coding )?agent\b"),  # attribution lines like "(Claude, X's coding agent)"
+    re.compile(r'\b(?:origin/)?([a-z]{3,})/[\w.-]+-\d{8}'),  # personal branch prefixes like name/topic-20261002
 )
 _NOT_HANDLES = {
     *('main', 'master', 'yourself', 'me', 'the', 'them', 'reviewer', 'author'),
@@ -193,10 +216,13 @@ def personal_identifiers(prompts: list[UserPrompt]) -> set[str]:
     return {f for f in found if len(f) >= 4 and f.lower() not in _NOT_HANDLES}
 
 
-def leaked_identifiers(draft: _Draft, identifiers: set[str]) -> set[str]:
-    """Which identifiers appear as whole words in any drafted field (so `douwebot` does not count as a name)."""
-    text = '\n'.join([draft.name, draft.description, draft.text, draft.rationale])
+def leaked_identifiers_in(text: str, identifiers: set[str]) -> set[str]:
+    """Which identifiers appear as whole words in `text` (so `douwebot` does not count as a name)."""
     return {i for i in identifiers if re.search(rf'(?<![\w-]){re.escape(i)}(?![\w-])', text, re.IGNORECASE)}
+
+
+def leaked_identifiers(draft: _Draft, identifiers: set[str]) -> set[str]:
+    return leaked_identifiers_in('\n'.join([draft.name, draft.description, draft.text, draft.rationale]), identifiers)
 
 
 def _redact(value: str, identifiers: set[str]) -> str:
@@ -305,11 +331,11 @@ MergeAction = Literal['new', 'updated', 'skipped', 'stale']
 
 
 def merge(
-    existing: list[Proposal], fresh: list[Proposal], *, stale_if_missing: bool = False
+    existing: list[Proposal], fresh: list[Proposal], *, stale_kinds: set[str] = frozenset()
 ) -> tuple[list[Proposal], dict[str, MergeAction]]:
     """Never re-propose an accepted or dismissed id; refresh a pending (or stale) one's evidence and draft.
 
-    With `stale_if_missing` (a full run), a pending proposal the run no longer qualifies becomes `stale`.
+    A pending proposal of a kind this run fully re-mined (`stale_kinds`) that it no longer qualifies becomes `stale`.
     """
     by_id = {p.id: p for p in existing}
     actions: dict[str, MergeAction] = {}
@@ -323,9 +349,8 @@ def merge(
             actions[proposal.id] = 'updated'
         else:
             actions[proposal.id] = 'skipped'
-    if stale_if_missing:
-        for id_, proposal in by_id.items():
-            if id_ not in actions and proposal.status == 'pending':
-                by_id[id_] = proposal.model_copy(update={'status': 'stale'})
-                actions[id_] = 'stale'
+    for id_, proposal in by_id.items():
+        if id_ not in actions and proposal.status == 'pending' and proposal.kind in stale_kinds:
+            by_id[id_] = proposal.model_copy(update={'status': 'stale'})
+            actions[id_] = 'stale'
     return list(by_id.values()), actions
