@@ -183,7 +183,12 @@ def _rows(surface: PromptSurface, *, width: int) -> list[str]:
     return [Text.from_ansi(row).plain for row in surface.transcript.frame(width=width, height=50).rows]
 
 
-async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_theme() -> None:
+async def test_live_panel_renders_streamed_markdown_again_for_a_new_width_and_theme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CI sets colour overrides; this test explicitly exercises truecolour.
+    monkeypatch.delenv('NO_COLOR', raising=False)
+    monkeypatch.delenv('FORCE_COLOR', raising=False)
     surface = PromptSurface(output=io.StringIO(), size=lambda: (120, 24))
     console = Console(file=surface, force_terminal=True, width=120, color_system='truecolor')
     renderer = StreamRenderer(console, stop_loading=lambda: None, smooth_seconds=0)
