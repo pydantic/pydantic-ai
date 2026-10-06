@@ -45,7 +45,7 @@ pydantic-monty = false
 pydantic-monty-client = false
 pydantic-monty-runtime = false
 pydantic-settings = false
-termflow-md = "2026-09-30T15:58:29Z"
+termflow-md = "2026-10-02T15:05:25Z"
 
 [manifest]
 members = [
@@ -6865,7 +6865,7 @@ requires-dist = [
     { name = "pyfiglet", specifier = ">=1.0.4" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "rich", specifier = ">=14" },
-    { name = "termflow-md", specifier = ">=0.11.0,<0.12" },
+    { name = "termflow-md", specifier = ">=1.0.0,<2" },
 ]
 provides-extras = ["typesafe"]
 
@@ -8897,16 +8897,16 @@ wheels = [
 
 [[package]]
 name = "termflow-md"
-version = "0.11.0"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pygments" },
     { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "wcwidth" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5c/45/3d38b72453163c005e0c29c53875d81243b4339a27dbab4c4f67ff835da6/termflow_md-0.11.0.tar.gz", hash = "sha256:25706c43d80c9ddb1cad971a559f834abe89680f20887d4f5735e9968cef9e5a", size = 182364, upload-time = "2026-09-30T15:58:28.403Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/ec/cf38d819349ab852baded77dff992012a3cd4614461191676eeb32549f3d/termflow_md-1.0.0.tar.gz", hash = "sha256:0e146d3165e8a9a23c708110759327ef05f093b904cdfe727b687f4c65dcb3c0", size = 236636, upload-time = "2026-10-02T15:05:24.864Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/bd/0b0b500fd09318dc35b2dfe2ca4405de6f6ba91f969736ba7eaa83b18562/termflow_md-0.11.0-py3-none-any.whl", hash = "sha256:05661df6235c73de34540d11faf6bf06bd7470496621a9cb84de40bf31e48767", size = 105318, upload-time = "2026-09-30T15:58:27.154Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/e2/91cb685251427298e7512de5c1a42268cfe0cf466bc8584f2fb88eff39f9/termflow_md-1.0.0-py3-none-any.whl", hash = "sha256:61a62900e6050680a57c9489c88f3af8039253e245362e92b65d9ab11f0e57df", size = 152901, upload-time = "2026-10-02T15:05:23.591Z" },
 ]
 
 [[package]]

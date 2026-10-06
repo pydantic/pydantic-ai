@@ -12,6 +12,7 @@ import pytest
 from prompt_toolkit.completion import CompleteEvent, Completer
 from prompt_toolkit.document import Document
 from rich.console import Console
+from rich.text import Text
 
 import pydantic_clai2
 from pydantic_ai import Agent, ModelRequestContext, RunContext, models
@@ -223,4 +224,54 @@ async def main(root: Path, mode: str) -> None:
         assert 'Keep the worktree if asked to remove it.' in text, text
 
 
-asyncio.run(main(Path(sys.argv[1]), sys.argv[2]))
+async def transcript_reload(root: Path) -> None:
+    """Reload live transcript instances, including their nested lines and Markdown streams."""
+    import pydantic_clai2._app as app
+    from pydantic_clai2.runtime.reloading import reload_clai
+    from pydantic_clai2.ui.prompt import prompt_transcript
+
+    transcript = prompt_transcript.TranscriptBuffer(max_lines=3, max_chars=100)
+    transcript.write('before\n')
+
+    def render(*, source: str, width: int) -> str:
+        return source + '\n'
+
+    block = transcript.markdown(render=render, width=80, changed=lambda: None)
+    block.extend('markdown')
+    block.write('markdown\n')
+    model = TestModel(call_tools=[], custom_output_text='hello')
+    agent = Agent(model)
+    output = io.StringIO()
+    for _ in range(2):
+        previous_type = type(transcript)
+        shell = reload_clai(
+            lambda: app.create_shell(
+                agent,
+                deps=None,
+                console=Console(file=output),
+                store=SettingsStore(root / 'transcript-config.db'),
+                transcript=transcript,
+                plugins=(),
+                usage_limits=None,
+                settings=None,
+                builtin_plugins=(),
+                project=ProjectSettings(),
+                load_plugins=False,
+            )
+        )
+        assert shell.transcript is transcript
+        assert type(transcript) is prompt_transcript.TranscriptBuffer
+        assert type(transcript) is not previous_type
+        assert type(block) is prompt_transcript.MarkdownBlock
+        block.write('continued\n')
+        with transcript.capture(shell.console):
+            shell.console.print('notice')
+        # Eviction exercises isinstance checks on objects created before module reload.
+        transcript.write('after\n')
+        frame = transcript.frame(width=80, height=24)
+        assert Text.from_ansi('\n'.join(frame.rows)).plain.splitlines()[-2:] == ['notice', 'after']
+
+
+asyncio.run(
+    transcript_reload(Path(sys.argv[1])) if sys.argv[2] == 'transcript' else main(Path(sys.argv[1]), sys.argv[2])
+)
