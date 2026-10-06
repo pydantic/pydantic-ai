@@ -1,5 +1,36 @@
 # Track A: clai2 under Logfire fleet control (hackathon)
 
+## Try it (colleagues)
+
+Make sure clai2's observability is already sending to **EU staging, logfire/clai2**. That's
+`/plugins configure observability`, then the project row, then "self-hosted" with `https://logfire-eu.pydantic.info`.
+Your sign-in email then tags your traces. Next, get the shared **read-variables API key** from Douwe and run:
+
+```bash
+export LOGFIRE_CLAI2_API_KEY='<read-variables key from Douwe>'
+export CLAI2_TEAM='<your team, e.g. ai or platform>'
+REV=ca08c9e15746e53a364fdf72d9156ce87492ad3a
+uvx --from 'git+https://github.com/pydantic/pydantic-ai@control-plane#subdirectory=src/pydantic_clai2' \
+  --with "logfire[variables] @ git+https://github.com/pydantic/logfire.git@$REV#subdirectory=logfire" \
+  --with "logfire-sdk @ git+https://github.com/pydantic/logfire.git@$REV#subdirectory=logfire-sdk" \
+  --with 'pydantic-handlebars>=0.2.1' \
+  clai2 -m gateway/anthropic:claude-sonnet-5-5
+```
+
+Notes on that command:
+
+- **Why the extra `--with` lines.** They pin the unreleased Logfire SDK (`logfire.agent_control`, logfire PR #2389).
+  Without them uv installs logfire from PyPI, which lacks it.
+- **Sending traces another way.** If you send with `LOGFIRE_TOKEN` instead of a setup-saved project, also
+  `export LOGFIRE_BASE_URL=https://logfire-eu.pydantic.info`.
+- **Storing the key in clai2 instead.** Instead of the env var, you can save the key in `/keys` (for example as
+  `LOGFIRE_VARIABLES`) and point the observability plugin's `api_key` setting at it, with
+  `{"api_key": {"name": "LOGFIRE_VARIABLES"}}`.
+- **What you'll see:**
+  - `◆ ... from Logfire` lines at startup and when something new is pushed;
+  - `/catalog` to browse and opt in;
+  - the model can load the company skills on demand.
+
 This branch (`control-plane`) is `main` plus Agent Control (#9066), and it lets clai2 take company config from
 Logfire managed variables:
 
@@ -17,8 +48,8 @@ Logfire managed variables:
 - **Notices.** At session start and at every prompt, clai2 prints what Logfire pushed since you last looked
   (`◆ Added company skill from Logfire: pr-shepherd`). The status row repeats the latest one. Updates arrive
   through the Logfire variables SSE stream, so no restart is needed. A change applies from your next prompt.
-- **Identity.** Every span of a run carries your `user.email` (from the `user_tag` setting) and `clai2.team` as
-  baggage. Agent Control targets on the same values, so per-team overrides and percentage rollouts work through
+- **Identity.** Every span of a run carries your `user.email` (from the `user_tag` setting) and `clai2.team`
+  (from `team` or `CLAI2_TEAM`) as baggage. Agent Control targets on the same values, so per-team overrides and percentage rollouts work through
   normal variable targeting.
 - **Agent name.** The stock agent is named `clai2`, so Logfire groups every user's runs as one agent.
 
@@ -40,6 +71,19 @@ You need:
 
 To publish a new version of a variable without the UI, run
 `uv run --env-file .env python publish.py agent__clai2 value.json` (the script is in the hackathon scratchpad).
+
+## Attributes on the spans (what the miner and the UI read)
+
+| Where | Attribute | Meaning |
+|---|---|---|
+| Every span of an agent run | `user.email`, `clai2.team` | Who ran it (baggage) |
+| Every span of an agent run | `clai2.prompt.source` | `typed`, `plugin` (automated continuation), `headless` (`-p`), or `subagent` |
+| Every span of an agent run | `clai2.fleet.active` | The company and catalog items in force, as sorted `kind:name` keys joined by commas |
+| Every span of an agent run | `logfire.variables.agent__clai2`, `logfire.variables.agent__clai2.version` | Label and version of the company config this run used |
+| Every span of an agent run | `logfire.managed.applied_sections` | Agent Control sections applied, such as `instructions` |
+| `prompt submitted` UI record | `kind`, `prompt`, `clai2.prompt.source` (`typed`), `user.email`, `clai2.team`, `agent_session_id` | One typed prompt, joinable without the session root |
+| `agent_control_config_hint` | `agent_control.variable_name`, `.agent_name`, `.baseline`, ... | The code baseline, once per process |
+| `Resolve variable agent__clai2` | `name`, `label`, `version`, `reason`, `targeting_key` | Each resolution |
 
 ## Known limitations
 

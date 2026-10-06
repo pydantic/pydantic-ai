@@ -97,7 +97,9 @@ class LogfireSettings(BaseModel):
         description='A /keys entry holding a Logfire API key with `project:read_variables`. Unset, '
         'LOGFIRE_CLAI2_API_KEY or LOGFIRE_API_KEY is used.',
     )
-    team: str | None = Field(default=None, description='Your team, sent with every span and used for targeting.')
+    team: str | None = Field(
+        default=None, description='Your team, sent with every span and used for targeting. Unset, CLAI2_TEAM is used.'
+    )
     allowed_catalog_plugins: list[str] = Field(
         default_factory=list[str],
         description='`module:Class` capability factories the Logfire catalog may enable as plugins.',
@@ -144,7 +146,9 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             _shutdown(self.instance)
             raise
         self._session_tracing = SessionTracing(
-            instance=self.instance, session_id=lambda: self.host.session_id, team=settings.team
+            instance=self.instance,
+            session_id=lambda: self.host.session_id,
+            team=settings.team or os.getenv('CLAI2_TEAM'),
         )
         self.fleet: Fleet | None = None
         self._notice = ''
