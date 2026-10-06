@@ -12,6 +12,7 @@ from termflow.tui.menu import Menu, MenuResult
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot, openrouter, vllm
+from pydantic_clai2.models.custom_params import expand_params
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
@@ -86,9 +87,13 @@ class ModelSettingsSource:
         row = self.effort_row()
         if row is None:
             return f'No reasoning effort control for {self.model}. Use /model settings for available controls.'
+        override = self._effort_override(row)
+        if args == ['reset']:
+            result = self.reset(row)
+            return f'{result}\n{override}' if override else result
+        if override:
+            return override
         if args:
-            if args == ['reset']:
-                return self.reset(row)
             if args[0] not in row.choices:
                 raise ValueError(f'Choose {", ".join(row.choices)}, or reset.')
             return self.apply(row, args[0])
@@ -96,6 +101,35 @@ class ModelSettingsSource:
             f'Configured reasoning effort for {self.model}: {self.current(row)} ({row.key}).\n'
             f'Supported values: {", ".join(row.choices)}. Use /effort VALUE or /effort reset.\n'
             'Thinking controls and custom parameters in /model settings still apply.'
+        )
+
+    def _effort_override(self, row: FieldRow) -> str | None:
+        custom = self._store.model_settings(self.model).get('custom_params')
+        if not isinstance(custom, dict):
+            return None
+        if row.key == 'anthropic_effort':
+            path = ('output_config', 'effort')
+        elif row.key == 'glm_reasoning_effort' or provider_of(self._settings_as) in (
+            'openai-chat',
+            'openrouter',
+            'vllm',
+        ):
+            path = ('reasoning_effort',)
+        else:
+            path = ('reasoning', 'effort')
+        value: JsonValue = expand_params(pairs=custom)
+        found: list[str] = []
+        for part in path:
+            if not isinstance(value, dict) or part not in value:
+                return None
+            value = value[part]
+            found.append(part)
+            # A scalar/null ancestor replaces the whole native reasoning/output_config object.
+            if not isinstance(value, dict):
+                break
+        return (
+            f'Custom {".".join(found)}={_JSON.dump_json(value).decode()} overrides configured effort for {self.model}. '
+            'Remove it with /model settings before using /effort to change effort.'
         )
 
     def effort_completions(self, args: list[str]) -> tuple[str, ...]:

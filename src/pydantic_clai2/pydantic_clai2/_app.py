@@ -484,20 +484,16 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
-    def effort_source() -> 'ModelSettingsSource':
-        from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
-
-        model = session.model or _model_label(agent)
-        return ModelSettingsSource(store, model, settings_as=context.settings_model(model))
-
     sessions = Sessions(session=session, store=conversations, context=context)
     commands = Commands()
     commands.register(
         Command(
             name='effort',
             description='View or set reasoning effort: /effort [VALUE|reset]',
-            handler=lambda args: effort_source().effort(args),
-            complete=lambda args: effort_source().effort_completions(args),
+            handler=lambda args: _effort_source(agent, context=context, selected_model=session.model).effort(args),
+            complete=lambda args: _effort_source(
+                agent, context=context, selected_model=session.model
+            ).effort_completions(args),
         )
     )
     commands.register(
@@ -1236,6 +1232,26 @@ def _reset_status(command: str, status: Status) -> None:
         status.output_tokens = None
         status.cost = None
         status.streamed_chars = 0
+
+
+def _effort_source(
+    agent: AbstractAgent[DepsT, OutputT], *, context: CommandContext, selected_model: str | None
+) -> 'ModelSettingsSource':
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+
+    model = selected_model or _model_label(agent)
+    settings_as = context.settings_model(model)
+    if selected_model is None and isinstance(agent.model, Model) and ':' not in model:
+        # Keep the run-settings storage identity, but use the supplied model's actual API controls.
+        if isinstance(agent.model, OpenAIChatModel):
+            provider = 'openai-chat'
+        elif isinstance(agent.model, OpenAIResponsesModel):
+            provider = 'openai'
+        else:
+            provider = agent.model.system
+        settings_as = f'{provider}:{model}'
+    return ModelSettingsSource(context.store, model, settings_as=settings_as)
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:

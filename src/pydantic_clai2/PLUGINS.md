@@ -2368,6 +2368,8 @@ effort. Any other value raises `ValueError`.
 The built-in `/effort [VALUE|reset]` shortcut uses the active model's
 `/model settings` effort control, including a plugin provider's `settings_from`
 mapping. It saves values under the plugin model identifier, not the mapped provider.
+Custom effort body parameters take precedence; `/effort` identifies these overrides
+and asks you to remove them before saving a native effort value.
 
 ### Add a sign-in to `/login`: `get_logins()`
 
