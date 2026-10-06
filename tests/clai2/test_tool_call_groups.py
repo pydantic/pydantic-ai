@@ -1,7 +1,7 @@
 """`display.tool_calls = grouped` counts consecutive calls by tool on one live line."""
 
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,7 @@ from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, 
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, resolve_settings
-from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.field_menu import CUSTOM, FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from pydantic_clai2.ui.menus.tool_calls_preview import tool_calls_preview
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -286,3 +286,7 @@ def test_set_menu_previews_each_style_in_the_choice_picker(tmp_path: Path, monke
     assert '● shell git status' in plain
     assert '● shell 3, read_file 2, shell 1' in plain
     assert menu.row_for('display.thinking') is not None
+    # A previewed setting that also takes typed values keeps its typed-value row, which has no sample.
+    keys = iter(['down', 'down', 'enter'])
+    result = menu.build_choices(replace(row, allow_custom=True)).run()
+    assert result.item is not None and result.item.value == CUSTOM
