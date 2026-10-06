@@ -403,7 +403,7 @@ again. `git-email` uses `git config user.email` (Git is queried only then), and
 `false` turns the tag off. Set **User tag** in
 `/plugins configure observability`.
 
-`ui_events` (default `false`) also records CLAI's UI interactions on the same
+`ui_events` (default `true`; set `false` to opt out) also records CLAI's UI interactions on the same
 instance, as spans and logs in the `clai2` instrumentation scope, which session
 roots and plugin load failures share: menus opened and how they closed, slash
 commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
