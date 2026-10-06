@@ -403,18 +403,25 @@ again. `git-email` uses `git config user.email` (Git is queried only then), and
 `false` turns the tag off. Set **User tag** in
 `/plugins configure observability`.
 
-`ui_events` (default `false`) also records CLAI's UI interactions on the same
+`ui_events` (default `true`; set `false` to opt out) also records CLAI's UI interactions on the same
 instance, as spans and logs in the `clai2` instrumentation scope, which session
 roots and plugin load failures share: menus opened and how they closed, slash
 commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
-resume. Attributes carry names and listed choices, never prompt text, typed
-values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
+resume. Attributes carry names and listed choices, never typed values or
+secrets. The exception follows `include_content`, like agent spans: while it is
+on, a `prompt submitted` record also carries the prompt's text as `prompt`, cut
+to 64,000 characters (`chars` keeps the full length). A `!` line records only
+its kind and length: it never reaches the agent, and it can hold a secret such
+as `!export KEY=...`. A slash command records only its name, never its
+arguments, because any plugin can add a command and its arguments can hold a
+secret. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
 `run_worker` opens every menu's span, so a new menu is covered without extra
 code.
 With `ui_events` on, the attributes that only hold names (`command`, `menu`,
 `setting`, `key_name`, ...) are exempt from scrubbing, since names like
-`OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.
+`OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted. So is
+`prompt`, which agent spans already record unscrubbed.
 
 Unload flushes and shuts down only this plugin's providers. Reload creates a new
 instance. The supplied agent and global providers are unchanged, and the existing
@@ -545,7 +552,8 @@ spans.
 
 The built-in `logfire_mcp` plugin (`pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
 the tools of Logfire's hosted MCP server through harness
-[`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
+[`LogfireMCP`](../../docs/harness/logfire-mcp.md), each named `logfire_` plus the
+server's name for it (`logfire_query_run`). It starts disabled.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
 `/plugins configure logfire_mcp` or `c` in `/plugins`.
@@ -670,7 +678,7 @@ this directory is an executable startup configuration, not a sandbox. The defaul
 Coder runs as your OS user and can modify it, just as it can modify your shell
 startup files. Use a separate OS identity or sandbox for untrusted agent work.
 
-Two ways to install one:
+Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
@@ -682,6 +690,41 @@ Two ways to install one:
    clai2 plugins add notify my_package.notify
    /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": true}'
    ```
+3. From inside CLAI, clone a trusted Git repository:
+
+   ```text
+   /plugins add https://github.com/your-org/my-plugin.git
+   /plugins add git@github.com:your-org/my-plugin.git
+   ```
+
+   Git must be installed and available on `PATH`. On Windows, CLAI resolves
+   `git.exe` only from absolute `PATH` directories outside the working directory.
+   The repository must have an `__init__.py` or `plugin.py`
+   at its root that defines one public `Plugin` subclass. If both exist,
+   `__init__.py` is used. Relative imports can load other files from the checkout.
+   Install the plugin's dependencies in CLAI's Python environment first; this
+   command does not install packages or run build scripts.
+
+   CLAI clones the default branch into `plugins/_git/my_plugin/` under its
+   configuration directory. The repository name becomes the plugin ID, with
+   hyphens and dots replaced by underscores. Names must start with a letter and
+   contain only letters, digits, dots, hyphens, or underscores. Existing plugins
+   and checkouts are never replaced. Network URLs must use HTTPS or SSH (including
+   `git@host:path`); these may also start with `git+`. SCP-style URLs require
+   `user@host:path`; use `ssh://host/path` for an SSH alias without an explicit user.
+   Local `file://` URLs work too.
+   Plaintext `http://` and `git://` transports are rejected because they cannot
+   authenticate the plugin code being downloaded.
+   Authentication uses your existing Git credentials without terminal prompts.
+   CLAI removes failed or cancelled clones. If the operating system prevents
+   cleanup, clear the leftover checkout directory before retrying.
+   If the plugin itself fails to load,
+   its checkout and declaration remain so you can fix it and `/plugins enable my_plugin`.
+   To update, run `!git -C <checkout-directory> pull --ff-only`, then
+   `/plugins reload my_plugin`. Reloading by itself does not fetch from Git.
+   `/plugins remove my_plugin` unloads it and forgets its declaration, but keeps
+   the checkout so local changes are not lost. To reinstall, delete the checkout
+   directory named in the response, then run `/plugins add GIT_URL` again.
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
@@ -870,9 +913,10 @@ same chain unconditionally. Its optional focus is free text, not shell arguments
 the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 `UsageLimitExceeded` cause summarisation to fall back to truncation; other exceptions
 propagate. `/plugins disable compaction` turns automatic compaction,
-`/compact`, and its context warning off; a declaration under the same name
-changes its settings (`strategy`, `threshold`, `protected_tokens`,
-`context_window`, `summarization_model`; see the README):
+`/compact`, and its context warning off. `/plugins configure compaction` edits its
+settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
+`summarization_model`; see the README) and reloads it for the next turn; it refuses
+while `coder` includes the plugin. A declaration under the same name changes them too:
 
 ```text
 /plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "context_window": 200000}'
@@ -1512,18 +1556,19 @@ failed. A plugin that is installed but fails to import one of its dependencies
 is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
 
-With arguments `/plugins` is a plain command, and `clai2 plugins ...` outside
-CLAI does the same thing:
+With arguments `/plugins` is a plain command. The standalone `clai2 plugins ...`
+commands edit saved declarations without loading plugin code. Git installation,
+configuration menus, and live reloading are available only inside a CLAI session:
 
 | Command | Does |
 |---|---|
 | `/plugins list` | show every plugin and whether it is on |
 | `/plugins add NAME module[:Class] [JSON]` | save it and load it now |
-| `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
+| `/plugins add GIT_URL` | clone a trusted repository and load its plugin (in a CLAI session only); see [where plugins live](#where-plugins-live) |
+| `/plugins remove NAME` | forget an installed declaration, keeping any Git checkout on disk; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
-| `/plugins configure NAME` | open a loaded plugin's settings menu (in a CLAI session only) |
-| `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
-| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure`; `enable` and `add` open it too |
+| `/plugins configure NAME` | open a loaded plugin's settings menu, if it overrides `configure` (in a CLAI session only); `enable` and `add` open it too |
+| `/plugins reload NAME` | re-import the file and load it again (in a CLAI session only; does not fetch Git updates) |
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,
@@ -1897,17 +1942,17 @@ has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
 The editor remains active during agent turns. Enter queues a separate turn with
-its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the oldest
-queued follow-up to the active run through core's
-`RunContext.enqueue(priority='asap')`, without starting another turn, cancelling
-tools, or changing the draft. Each press sends one message. If the run is no
-longer accepting steering, the message stays queued. Slash commands and exit
-signals are not steered or skipped over. With no queued message, Alt+Enter does
-nothing. When idle, Enter starts a turn. Shift-Enter inserts a newline when the
-terminal distinguishes it from Enter. Ctrl-J inserts a newline on terminals
-that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty keyboard
-reporting is enabled only while the editor owns input and released for menus
-and on exit.
+its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
+draft, or with an empty draft the oldest queued follow-up, to the active run
+through core's `RunContext.enqueue(priority='asap')`, without starting another
+turn or cancelling tools. Each press sends one message. Slash commands, `!` shell
+commands, and exit signals are never steered: such a draft, or any draft the run
+does not accept, is taken as Enter would take it, and such a queued message stays
+queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
+a newline when the terminal distinguishes it from Enter. Ctrl-J inserts a newline
+on terminals that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty
+keyboard reporting is enabled only while the editor owns input and released for
+menus and on exit.
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
@@ -2180,11 +2225,13 @@ again. Services with Dynamic Client Registration need none of this: add them as
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
-`await commit_messages(...)` persists and swaps it between turns, and
-`resolved_model()` is the model the next prompt will use. Local `!command`
-executions append a user message with the command, stdout, stderr, and
-completion status. They do not start an agent turn or fire turn hooks; the
-context reaches the model on the next prompt.
+`await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
+model CLAI or the user selected for the next prompt. A capability that selects a model, such as
+Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_model()` and the
+status row still name the selected one, and `/compact` and session naming (without a
+`sessions.naming_model`) run on it. Local `!command` executions append a user message
+with the command, stdout, stderr, and completion status. They do not start an
+agent turn or fire turn hooks; the context reaches the model on the next prompt.
 
 `host.session_id` is the current saved conversation ID, following `/clear` and
 `/resume`. During a run it identifies that run's conversation, including a
@@ -2605,7 +2652,13 @@ GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
 default to `thinking=true`, `service_tier=default`, reasoning effort `medium`,
 context `all_turns`, mode `standard`, summary `detailed`, and verbosity `low`.
 Explicit per-model values win; reset restores the family default without saving
-it as an override. Other models keep their existing defaults. Provider-specific
+it as an override. Other models keep their existing defaults. Family defaults
+follow the model each request uses and sit beneath the settings of
+capabilities, a plugin's or your agent's, so a capability can change them; an
+agent's own `model_settings` stay beneath the defaults. The values you saved for
+the session's model (the one you chose, or CLAI's default) are passed to each run
+and win over everything else on requests to that model; a request on a model a
+capability selected instead gets only that model's family defaults. Provider-specific
 fields are consumed only by APIs that support them; this does not add Responses
 controls to Chat Completions or other protocols.
 

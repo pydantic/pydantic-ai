@@ -5,7 +5,7 @@ import math
 import sys
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from threading import Thread
@@ -374,7 +374,11 @@ def create_shell(
     load_plugins: bool = True,
 ) -> '_Shell[DepsT, OutputT]':
     """Build shared session services, without attaching terminal input in headless mode."""
-    settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
+    settings = (
+        Settings.model_validate(settings.model_dump(exclude_unset=True))
+        if settings is not None
+        else Settings(model=None)
+    )
     store = store or SettingsStore()
     transcript = transcript if transcript is not None else TranscriptBuffer()
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
@@ -389,6 +393,7 @@ def create_shell(
     if summary is not None:
         session.summary = summary
     session.model = settings.model
+    session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
     models = _ModelResolver(console=console, store=store)
     session.resolve_model = models.resolve
@@ -431,8 +436,12 @@ def create_shell(
             ),
         )
     )
-    commands.register(Command(name='resume', description='Browse or restore a saved session', handler=sessions.command))
-    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command))
+    commands.register(
+        Command(
+            name='resume', description='Browse or restore a saved session', handler=sessions.command, during_turn=True
+        )
+    )
+    commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command, during_turn=True))
     commands.register(
         Command(
             name='login',
@@ -441,6 +450,7 @@ def create_shell(
             ),
             handler=models.login,
             complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
+            during_turn=True,
         )
     )
     commands.register(
@@ -452,15 +462,15 @@ def create_shell(
             during_turn=True,
         )
     )
-    commands.register(
-        Command(
-            name='set',
-            description='Change settings; no arguments opens the menu',
-            handler=lambda args: set_command(context, args),
-            complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
-            during_turn=True,
-        )
+    set_ = Command(
+        name='set',
+        description='Change settings; no arguments opens the menu',
+        handler=lambda args: set_command(context, args),
+        complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
+        during_turn=True,
     )
+    commands.register(set_)
+    commands.register(replace(set_, name='settings', description='Alias of /set'))
     commands.register(
         Command(
             name='theme',
@@ -752,9 +762,11 @@ class _Shell(Generic[DepsT, OutputT]):
             workspace=Path(self.session.workspace),
         )
         child.model = model or self.session.model
+        child.model_chosen = model is not None or self.session.model_chosen
         child.tool_retries = self.session.tool_retries
         child.resolve_model = self.session.resolve_model
-        child.model_settings = self.context.live_model_settings(child.model or _model_label(self.agent))
+        child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
+        child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
         return child
 
@@ -876,7 +888,8 @@ class _Shell(Generic[DepsT, OutputT]):
             if self.plugins_busy(text):
                 return
             with holding_output(self.editor.output.held if self.editor is not None else nullcontext):
-                await _execute_command(self.commands, text, console=self.console, status=self.status)
+                # A running conversation cannot be replaced, so the turn's footer counters stay.
+                await _execute_command(self.commands, text, console=self.console, status=None)
             self._show_status_segments()
 
     def _show_status_segments(self) -> None:
@@ -1026,7 +1039,8 @@ class _Shell(Generic[DepsT, OutputT]):
         self.session.plugins = self.run_plugins()
         model = self.session.model or _model_label(self.agent)
         try:
-            self.session.model_settings = self.context.live_model_settings(model)
+            self.session.model_settings = self.context.live_model_overrides(model)
+            self.session.model_defaults = self.context.model_defaults(model)
         except ValidationError as exc:
             self.console.print(
                 f'Invalid saved model settings for {model}. Fix or reset them with /model settings {model}.',
@@ -1049,7 +1063,7 @@ class _Shell(Generic[DepsT, OutputT]):
         # this model's saved settings reach its next request. A menu still open when it ends delays
         # the next prompt.
         ended = TurnEnd(text=start.text, outcome='cancelled')
-        with self.session_settings.turn():
+        with self.session_settings.turn(), self.speculation.turn():
             send, receive = create_memory_object_stream[str](math.inf)
             async with self.loader.turn(), create_task_group() as mid_turn:
                 mid_turn.start_soon(self._serve_mid_turn, receive)
@@ -1107,7 +1121,7 @@ def _report_interrupt(completed: bool, console: Console) -> None:
         console.print()
 
 
-async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status) -> None:
+async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status | None) -> None:
     try:
         result = await commands.execute_async(text)
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
@@ -1117,7 +1131,8 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
     except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
-    _reset_status(text, status)
+    if status is not None:
+        _reset_status(text, status)
 
 
 def _reset_status(command: str, status: Status) -> None:
@@ -1178,7 +1193,13 @@ async def _run_prompt(
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
 
+    def context_window(window: int) -> None:
+        # The `compaction` gauge, when loaded, already measured this request, honouring its override.
+        if status.context_window is None:
+            status.context_window = window
+
     session.on_context_usage = context_usage
+    session.on_context_window = context_window
     session.on_stream_event = observe
     status_line = StatusLine(console, status, enabled=screen.editor is None, spinner=spinner)
 
@@ -1220,4 +1241,5 @@ async def _run_prompt(
         status.activity = 'ready'
         status.cost = session_usage(session.messages).total.cost
         session.on_context_usage = None
+        session.on_context_window = None
         await renderer.finish()
