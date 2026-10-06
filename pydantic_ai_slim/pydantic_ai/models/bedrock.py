@@ -704,7 +704,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # Mirrors `prepare_request` precedence: when any explicit `bedrock_cache_*` setting is present, the
         # unified value contributes nothing, since it also adds nothing to the request. Each setting only takes
         # effect where the profile supports it.
-        if any(key in merged_settings for key in _CACHE_SETTINGS_KEYS):
+        if self._has_provider_cache_settings(merged_settings):
             settings = cast(BedrockModelSettings, merged_settings)
             supports_prompt_caching = self.profile.get('bedrock_supports_prompt_caching', False)
             return (

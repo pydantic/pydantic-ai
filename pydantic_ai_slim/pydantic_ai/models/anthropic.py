@@ -1025,7 +1025,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
         # Mirrors `prepare_request` precedence: when any explicit `anthropic_cache*` setting is present, the
         # unified value contributes nothing, since it also adds nothing to the request.
-        if any(key in merged_settings for key in _CACHE_SETTINGS_KEYS):
+        if self._has_provider_cache_settings(merged_settings):
             return tuple(cast(dict[str, Any], merged_settings).get(key) for key in _CACHE_SETTINGS_KEYS)
         return super()._effective_cache_settings(merged_settings)
 
@@ -2934,21 +2934,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Apply per-block `cache_control` to the last content block of the last message.
 
         If the last block already has `cache_control` (e.g. from an explicit `CachePoint`),
-        it is left unchanged to preserve the user's chosen TTL. When the previous request's
-        breakpoint is further back than the provider's lookback reaches (a wide fan-out of
-        parallel tool calls on Bedrock), the end of that request gets a breakpoint too.
+        it is left unchanged to preserve the user's chosen TTL. On Bedrock, when the previous
+        request's breakpoint is further back than the lookback reaches (a wide fan-out of parallel
+        tool calls), the end of that request gets a breakpoint too. The Claude API collapses runs
+        of tool blocks into one position, so it doesn't need one.
 
         Assumes `anthropic_messages` is non-empty.
         """
-        previous_tail = previous_tail_needing_breakpoint(
-            [message['role'] for message in anthropic_messages],
-            [
-                1 if isinstance(content := message['content'], str) else len(cast(list[BetaContentBlockParam], content))
-                for message in anthropic_messages
-            ],
-        )
-        if previous_tail is not None:
-            self._add_message_cache_control(anthropic_messages[previous_tail], ttl)
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            previous_tail = previous_tail_needing_breakpoint(
+                [message['role'] for message in anthropic_messages],
+                [
+                    1
+                    if isinstance(content := message['content'], str)
+                    else len(cast(list[BetaContentBlockParam], content))
+                    for message in anthropic_messages
+                ],
+            )
+            if previous_tail is not None:
+                self._add_message_cache_control(anthropic_messages[previous_tail], ttl)
         self._add_message_cache_control(anthropic_messages[-1], ttl)
 
     def _add_message_cache_control(self, message: BetaMessageParam, ttl: Literal['5m', '1h']) -> None:

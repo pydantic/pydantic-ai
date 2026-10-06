@@ -199,6 +199,10 @@ class TestPreviousTailNeedingBreakpoint:
         # 1 text + 11 tool calls, then 11 tool results: 23 blocks past the previous breakpoint.
         assert previous_tail_needing_breakpoint(['user', 'assistant', 'user'], [1, 12, 11]) == 0
 
+    def test_history_ending_with_assistant_needs_none(self):
+        """With a trailing assistant turn, the previous user turn is already the one that gets the breakpoint."""
+        assert previous_tail_needing_breakpoint(['user', 'assistant'], [1, 30]) is None
+
     def test_assistant_without_preceding_user(self):
         assert previous_tail_needing_breakpoint(['assistant', 'user'], [20, 20]) is None
 

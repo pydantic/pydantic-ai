@@ -102,7 +102,8 @@ def previous_tail_needing_breakpoint(roles: Sequence[str], block_counts: Sequenc
         block_counts: Each wire message's number of content blocks (tool calls included).
     """
     last_assistant = next((i for i in range(len(roles) - 1, -1, -1) if roles[i] == 'assistant'), None)
-    if last_assistant is None:
+    # A history that ends with an assistant turn (a prefill) has no newer user-side tail to move past it.
+    if last_assistant is None or last_assistant == len(roles) - 1:
         return None
     previous_tail = next((i for i in range(last_assistant - 1, -1, -1) if roles[i] != 'assistant'), None)
     if previous_tail is None or sum(block_counts[previous_tail + 1 :]) < LOOKBACK_SAFE_BLOCKS:

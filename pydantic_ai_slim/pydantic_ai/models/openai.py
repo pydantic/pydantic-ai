@@ -1143,17 +1143,19 @@ def _translate_openai_cache(
     return translated
 
 
-def _resolve_cache_retention(model: Model[Any], model_settings: ModelSettings | None) -> timedelta | None:
-    settings = merge_model_settings(model.settings, model_settings) or {}
-    # On GPT-5.6 and later, `prompt_cache_retention` is a deprecated *maximum* that doesn't extend the
-    # 30-minute minimum OpenAI guarantees, so it says nothing about how long the prefix stays cached.
-    # https://developers.openai.com/api/docs/guides/prompt-caching
-    if (
-        not model.profile.get('openai_supports_prompt_cache_breakpoints', False)
-        and settings.get('openai_prompt_cache_retention') == '24h'
-    ):
-        return timedelta(hours=24)
-    return model._max_cache_retention(*model._effective_cache_settings(settings))  # pyright: ignore[reportPrivateUsage]
+def _resolve_legacy_cache_retention(
+    profile: OpenAIModelProfile, default_settings: ModelSettings | None, model_settings: ModelSettings | None
+) -> timedelta | None:
+    """The 24-hour extended retention `openai_prompt_cache_retention` requests on models before GPT-5.6.
+
+    On GPT-5.6 and later, `prompt_cache_retention` is a deprecated *maximum* that doesn't extend the
+    30-minute minimum OpenAI guarantees, so it says nothing about how long the prefix stays cached.
+    https://developers.openai.com/api/docs/guides/prompt-caching
+    """
+    if profile.get('openai_supports_prompt_cache_breakpoints', False):
+        return None
+    settings = merge_model_settings(default_settings, model_settings) or {}
+    return timedelta(hours=24) if settings.get('openai_prompt_cache_retention') == '24h' else None
 
 
 @dataclass(init=False)
@@ -1219,7 +1221,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the prompt cache retention requested by OpenAI settings or the unified `cache` setting."""
-        return _resolve_cache_retention(self, model_settings)
+        return _resolve_legacy_cache_retention(
+            self.profile, self.settings, model_settings
+        ) or super().resolve_cache_retention(model_settings)
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
@@ -2311,7 +2315,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the prompt cache retention requested by OpenAI settings or the unified `cache` setting."""
-        return _resolve_cache_retention(self, model_settings)
+        return _resolve_legacy_cache_retention(
+            self.profile, self.settings, model_settings
+        ) or super().resolve_cache_retention(model_settings)
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)

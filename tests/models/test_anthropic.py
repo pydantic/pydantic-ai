@@ -145,6 +145,7 @@ with try_import() as imports_successful:
         BetaMessage,
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
+        BetaMessageParam,
         BetaMessageTokensCount,
         BetaOutputTokensDetails,
         BetaRawContentBlockDeltaEvent,
@@ -852,33 +853,53 @@ async def test_anthropic_cache_messages_uses_per_block_cache_control(
     )
 
 
-async def test_anthropic_cache_messages_marks_previous_request_after_wide_turn(allow_model_requests: None):
-    """After a turn with 12 parallel tool calls, the end of the previous request gets a breakpoint too.
+@pytest.mark.parametrize(
+    ('client_cls', 'base_url', 'expected'),
+    [
+        pytest.param(
+            AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com', [(0, 0), (2, 11)], id='bedrock'
+        ),
+        pytest.param(AsyncAnthropic, 'https://api.anthropic.com', [(2, 11)], id='claude-api'),
+    ],
+)
+def test_anthropic_cache_messages_marks_previous_request_after_wide_turn(
+    client_cls: Any, base_url: str, expected: list[tuple[int, int]]
+):
+    """On Bedrock, after a turn with 12 parallel tool calls, the end of the previous request gets a breakpoint too.
 
-    On Amazon Bedrock the cache lookback spans only about 20 content blocks and doesn't collapse runs of
-    tool blocks, so the moving breakpoint alone would miss the previous request's cache entry
-    (https://github.com/pydantic/pydantic-ai/issues/9404). The live miss is recorded in
-    `test_unified_cache_reads_history_after_wide_turn_real_api` in `test_bedrock.py`.
+    Bedrock's cache lookback spans only about 20 content blocks and doesn't collapse runs of tool blocks, so the
+    moving breakpoint alone would miss the previous request's cache entry
+    (https://github.com/pydantic/pydantic-ai/issues/9404); the live miss is recorded in
+    `test_unified_cache_reads_history_after_wide_turn_real_api` in `test_bedrock.py`. The Claude API collapses
+    those runs into one position, so it keeps a single message breakpoint. A unit test, since the property is the
+    placement relative to the previous request, which one recorded request can't show.
     """
-    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-    mock_client = MockAnthropic.create_mock(c)
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Check the weather everywhere.')]),
-        ModelResponse(parts=[TextPart('Checking.'), *calls]),
-        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    model = AnthropicModel(
+        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
+    )
+    messages: list[BetaMessageParam] = [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'Check the weather everywhere.'}]},
+        {
+            'role': 'assistant',
+            'content': [
+                {'type': 'text', 'text': 'Checking.'},
+                *({'type': 'tool_use', 'id': f'call_{i}', 'name': 'get_weather', 'input': {}} for i in range(12)),
+            ],
+        },
+        {
+            'role': 'user',
+            'content': [{'type': 'tool_result', 'tool_use_id': f'call_{i}', 'content': 'Sunny'} for i in range(12)],
+        },
     ]
 
-    await model.request(history, AnthropicModelSettings(anthropic_cache_messages=True), ModelRequestParameters())
+    model._apply_message_cache_control(messages, '5m')  # pyright: ignore[reportPrivateUsage]
 
-    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
     assert [
         (index, block_index)
         for index, message in enumerate(messages)
-        for block_index, block in enumerate(message['content'])
+        for block_index, block in enumerate(cast(list[dict[str, Any]], message['content']))
         if 'cache_control' in block
-    ] == [(0, 0), (2, 11)]
+    ] == expected
 
 
 async def test_anthropic_cache_messages_preserves_existing_cache_point(allow_model_requests: None):
