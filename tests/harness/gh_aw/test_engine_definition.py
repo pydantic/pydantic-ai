@@ -39,6 +39,7 @@ if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
 
 DEFINITION = Path(__file__).parents[3] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
+CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_clai2'
 
 _CLI_PACKAGES = ('argcomplete', 'prompt_toolkit', 'pyperclip', 'rich')
 
@@ -249,7 +250,7 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0'
 
 
-def launch(tmp_path: Path, env: dict[str, str]) -> _Invocation:
+def launch(tmp_path: Path, env: dict[str, str], *, extra_python_path: Path | None = None) -> _Invocation:
     """Run the harness script against an interpreter that records instead of running."""
     actions = tmp_path / 'actions'
     actions.mkdir(parents=True, exist_ok=True)
@@ -281,6 +282,7 @@ def launch(tmp_path: Path, env: dict[str, str]) -> _Invocation:
     prompt.write_text(PROMPT, encoding='utf-8')
     record = tmp_path / 'record.json'
 
+    pythonpath_env: dict[str, str] = {'PYTHONPATH': str(extra_python_path)} if extra_python_path is not None else {}
     completed = subprocess.run(
         ['node', str(actions / 'harness.cjs'), 'pai'],
         env={
@@ -292,6 +294,7 @@ def launch(tmp_path: Path, env: dict[str, str]) -> _Invocation:
             'GH_AW_PROMPT': str(prompt),
             'GH_AW_TEST_RECORD': str(record),
             'pythonLocation': str(python_location),
+            **pythonpath_env,
             **env,
         },
         capture_output=True,
@@ -736,8 +739,18 @@ async def test_imported_tools_and_gateway_mcp_tools_both_execute(
     )
     config = gateway_config(tmp_path)
     config.parent.mkdir(parents=True)
+    # The subprocess runs in the temporary checkout; `tests` is not an installed package there.
     config.write_text(
-        json.dumps({'mcpServers': {'gateway': {'command': sys.executable, 'args': ['-m', 'tests.mcp_server']}}}),
+        json.dumps(
+            {
+                'mcpServers': {
+                    'gateway': {
+                        'command': sys.executable,
+                        'args': [str(Path(__file__).parents[3] / 'tests' / 'mcp_server.py')],
+                    }
+                }
+            }
+        ),
         encoding='utf-8',
     )
     invocation = launch(
@@ -990,7 +1003,7 @@ class TestLauncherProgram:
             env={
                 'PATH': os.environ['PATH'],
                 'HOME': str(tmp_path / 'home'),
-                'PYTHONPATH': str(module_dir),
+                'PYTHONPATH': f'{module_dir}:{CLAI2_SOURCE}',
                 'GH_AW_SESSION_FRAME_KEY': FRAME_KEY,
                 'GH_AW_TEST_IMPORTS': str(imports),
                 'PYTHONIOENCODING': 'utf-8',
@@ -1036,7 +1049,7 @@ class TestLauncherProgram:
 
     @requires_cli
     def test_cli_argument_error_finishes_the_generated_recorder_without_run_events(self, tmp_path: Path) -> None:
-        invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
+        invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'), extra_python_path=CLAI2_SOURCE)
         invalid_argument = '--gh-aw-invalid'
         completed = subprocess.run(
             [
@@ -1073,6 +1086,7 @@ class TestLauncherProgram:
         invocation = launch(
             tmp_path,
             {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'broken_agent:agent'},
+            extra_python_path=CLAI2_SOURCE,
         )
 
         completed = subprocess.run(

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from .test_engine_definition import launch, proxy_env
+from .test_engine_definition import CLAI2_SOURCE, launch, proxy_env
 
 # Configure is real; only outbound HTTP is replaced. The CLI boundary records the
 # resulting public configuration instead of making a model request.
@@ -97,9 +97,10 @@ def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: 
             'LOGFIRE_CONFIG_DIR': str(workspace),
             'LOGFIRE_CREDENTIALS_DIR': str(credentials),
         },
+        extra_python_path=CLAI2_SOURCE,
     )
     completed = subprocess.run(
-        [sys.executable, '-P', '-c', PROBE, invocation.program, 'agent.json'],
+        [sys.executable, '-P', '-c', PROBE, invocation.program, invocation.target],
         cwd=workspace,
         env={
             **invocation.env,
