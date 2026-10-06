@@ -1,0 +1,100 @@
+"""Mouse selection over the live panel's painted cells.
+
+The panel reports mouse buttons to scroll with the wheel, which stops most terminals from
+selecting text themselves. So a left-button drag selects here instead, in reading order like a
+terminal's own selection, and the release copies it out.
+"""
+
+import re
+from dataclasses import dataclass
+from typing import TypeAlias
+
+from termflow.live import ScreenBuffer
+from termflow.live.buffer import REVERSE
+
+Cell: TypeAlias = tuple[int, int]
+"""A zero-based `(row, column)` on screen."""
+
+LEFT = 0
+MOTION = 32
+"""Added to the button while it moves held down."""
+WHEEL_UP = 64
+WHEEL_DOWN = 65
+_MODIFIERS = 4 | 8 | 16
+"""Shift, Alt, and Ctrl add these to the button."""
+_REPORT = re.compile(r'\x1b\[<(\d+);(\d+);(\d+)([mM])')
+
+
+@dataclass(frozen=True, kw_only=True)
+class MouseReport:
+    """One decoded SGR mouse report."""
+
+    button: int
+    """The button, motion, and wheel code, without modifiers."""
+    cell: Cell
+    released: bool
+
+
+def mouse_report(data: str) -> MouseReport | None:
+    """Decode `CSI < button ; column ; row M|m`, or `None` for anything else."""
+    report = _REPORT.fullmatch(data)
+    if report is None:
+        return None
+    button, column, row, final = report.groups()
+    return MouseReport(button=int(button) & ~_MODIFIERS, cell=(int(row) - 1, int(column) - 1), released=final == 'm')
+
+
+@dataclass(kw_only=True)
+class Selection:
+    """A left-button drag from `anchor` to `head`, kept highlighted until cleared."""
+
+    anchor: Cell | None = None
+    head: Cell | None = None
+    """Where the drag is now; `None` until the held button moves, so a click selects nothing."""
+    held: bool = False
+
+    def clear(self) -> bool:
+        """Forget the selection, as when the cells under it move; `True` if cells were highlighted."""
+        highlighted = self.anchor is not None and self.head is not None
+        self.anchor = self.head = None
+        self.held = False
+        return highlighted
+
+    def feed(self, report: MouseReport) -> bool:
+        """Track a press, drag, and release of the left button; `True` when a release ends a drag."""
+        if report.released:
+            ended = self.held and self.head is not None
+            self.held = False
+            return ended
+        if report.button == LEFT:
+            self.anchor, self.head, self.held = report.cell, None, True
+        elif report.button == LEFT | MOTION and self.held:
+            self.head = report.cell
+        return False
+
+    def span(self, *, width: int, height: int) -> range:
+        """Frame indexes from the earlier end to the later one, inclusive."""
+        if self.anchor is None or self.head is None:
+            return range(0)
+        start, end = sorted((self.anchor, self.head))
+
+        def index(cell: Cell) -> int:
+            row, column = cell
+            return min(max(row, 0), height - 1) * width + min(max(column, 0), width - 1)
+
+        return range(index(start), index(end) + 1)
+
+    def highlight(self, frame: ScreenBuffer) -> None:
+        """Show the selected cells in reverse video."""
+        for index in self.span(width=frame.width, height=frame.height):
+            frame.attrs[index] ^= REVERSE
+
+    def text(self, frame: ScreenBuffer) -> str:
+        """The selected characters, one line per row, without trailing blanks."""
+        span = self.span(width=frame.width, height=frame.height)
+        width = frame.width
+        rows = range(span.start // width, (span.stop - 1) // width + 1)
+        return '\n'.join(
+            ''.join(frame.chars[max(span.start, row * width) : min(span.stop, (row + 1) * width)]).rstrip()
+            for row in rows
+        )

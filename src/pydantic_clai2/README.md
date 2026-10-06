@@ -255,8 +255,14 @@ of your draft or submitted message. The editor sits below a Termflow live transc
 Both partial and completed output paint above it without repainting unchanged
 input cells. PageUp/PageDown and the mouse wheel scroll the transcript without
 changing the draft. New output leaves a scrolled view in place; returning to the
-bottom or submitting follows new output again. Hold Shift or Option to select
-text with the mouse, depending on your terminal. On exit, CLAI prints the retained
+bottom or submitting follows new output again. Drag with the mouse to select
+text; releasing the button copies it to the clipboard and the footer says so.
+Locally CLAI copies with `pbcopy` on macOS, `clip` on Windows, and `wl-copy`,
+`xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
+terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
+*Applications in terminal may access clipboard*; tmux: `set-clipboard on`).
+Holding Shift (Option in iTerm2) still uses the terminal's own selection in most
+terminals. On exit, CLAI prints the retained
 transcript into native terminal scrollback. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
 with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
