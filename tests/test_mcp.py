@@ -625,20 +625,20 @@ class TestMCPToolsetIntegration:
         server: FastMCP[None] = FastMCP('apps_server')
 
         @server.tool(meta={'ui': {'visibility': ['app']}})
-        async def save_checkpoint() -> str:
-            return 'saved'
+        async def save_checkpoint() -> None:
+            """Saves the view state; only the UI calls this."""
 
         @server.tool(meta={'ui': {'visibility': []}})
-        async def hidden_everywhere() -> str:
-            return 'hidden'
+        async def hidden_everywhere() -> None:
+            """Visible to neither the model nor the UI."""
 
         @server.tool(meta={'ui': {'visibility': ['app', 'model']}})
-        async def create_view() -> str:
-            return 'created'
+        async def create_view() -> None:
+            """Opens the view; both the model and the UI call this."""
 
         @server.tool(meta={'ui': {'resourceUri': 'ui://view'}})
-        async def read_me() -> str:
-            return 'read'
+        async def read_me() -> None:
+            """Carries UI metadata without a `visibility`."""
 
         toolset = MCPToolset(server)
         async with toolset:
