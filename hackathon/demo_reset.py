@@ -59,6 +59,7 @@ def _value(config: VariableConfig, label: str = 'production') -> Any:
 
 
 def curated_agent(current: dict[str, Any] | None) -> dict[str, Any]:
+    """The demo's company config, keeping production's policy rules (observe, except Monty rules)."""
     current = dict(current or {})
     policy = dict(current.get('policy') or {})
     rules = [{**rule, 'mode': 'enforce' if rule.get('monty') else 'observe'} for rule in policy.get('rules') or []]
@@ -71,6 +72,7 @@ def curated_agent(current: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def reset_proposals(current: dict[str, Any] | None) -> dict[str, Any]:
+    """Every proposal back to `pending`, real ones kept."""
     value = dict(current or {'proposals': []})
     value['proposals'] = [
         {**proposal, 'status': 'pending', 'accepted_tier': None, 'accepted_at': None}
@@ -91,6 +93,7 @@ def _diff(name: str, before: Any, after: Any) -> str:
 
 
 def main() -> None:
+    """Print the plan and diff; with `--yes`, apply it."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--yes', action='store_true', help='apply the reset; without it nothing is written')
     parser.add_argument('--keep-catalog', action='store_true', help='leave catalog__clai2 as it is')
@@ -118,7 +121,7 @@ def main() -> None:
     }
     if not args.keep_catalog:
         if args.catalog_file:
-            with open(args.catalog_file) as file:
+            with open(args.catalog_file, encoding='utf-8') as file:
                 targets[CATALOG] = json.load(file)
         else:
             targets[CATALOG] = _value(configs[CATALOG])  # pyright: ignore[reportArgumentType]
