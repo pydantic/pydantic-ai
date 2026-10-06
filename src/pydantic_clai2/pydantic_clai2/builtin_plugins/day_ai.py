@@ -109,8 +109,11 @@ class DayAIPlugin(Plugin[DayAISettings, DepsT]):
             raise UserError(f'Save {KEY_NAME} in /keys, or sign in to Day AI from an interactive CLAI session first.')
         console.print('Opening your browser to sign in to Day AI.', style=theme.color(theme.MUTED))
         # A throwaway connection runs the sign-in now, so a failure fails the load rather than the next prompt.
-        async with Client(_transport()):
-            pass
+        try:
+            async with Client(_transport()):
+                pass
+        except Exception as exc:
+            raise UserError(f'Could not sign in to Day AI: {exc}. {SETUP}') from exc
 
 
 _AUTOMATIC = 'automatic'

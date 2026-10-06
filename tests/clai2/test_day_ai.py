@@ -26,7 +26,7 @@ from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, api_keys
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.mcp import TokenStore
+from pydantic_clai2.mcp import SignIn as MCPSignIn, TokenStore, http_client
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
@@ -227,9 +227,22 @@ async def test_nothing_chosen_loads_no_capability_and_says_how_to_connect(tmp_pa
 async def test_failed_sign_in_leaves_nothing_loaded(tmp_path: Path) -> None:
     SignIn.error = RuntimeError('authorization denied')
     shell = Shell(tmp_path, terminal=True, settings={'auth': 'oauth'})
-    with pytest.raises(PluginError, match="Plugin 'day_ai': RuntimeError: authorization denied"):
+    with pytest.raises(PluginError) as raised:
         await shell.loader.enable('day_ai')
+    assert (
+        str(raised.value) == f"Plugin 'day_ai': UserError: Could not sign in to Day AI: authorization denied. {SETUP}"
+    )
     assert shell.loader.capabilities() == []
+
+
+async def test_browser_sign_in_is_an_auth_the_transport_client_accepts() -> None:
+    """The client is built in the HTTPX FastMCP drives, so it takes the sign-in rather than rejecting it."""
+    transport = day_ai._transport()  # pyright: ignore[reportPrivateUsage]
+    assert transport.httpx_client_factory is http_client
+    assert isinstance(transport.auth, MCPSignIn)
+    async with http_client(auth=transport.auth) as client:
+        assert client.auth is transport.auth
+        assert not client.follow_redirects
 
 
 async def test_headless_browser_sign_in_fails_clearly(tmp_path: Path) -> None:
