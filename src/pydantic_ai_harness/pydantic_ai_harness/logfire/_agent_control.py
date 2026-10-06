@@ -62,6 +62,7 @@ from pydantic_ai_harness.logfire._managed_variable import (
     ManagedVariableCapability,
     resolution_reason,
 )
+from pydantic_ai_harness.policy import Policy
 
 if TYPE_CHECKING:
     from logfire.variables import ResolvedVariable
@@ -347,6 +348,9 @@ class AgentControlConfig(AgentConfig):
     contract's `InstructionBlock` drops unknown keys, so names are kept on the side here, keyed by text;
     the real change belongs in `logfire.agent_control` as an optional `InstructionBlock.name`.
     """
+
+    policy: Policy | None = None
+    """Hackathon: tool-call rules, an MCP allowlist and locked items, applied by `PolicyRules` (and clients)."""
 
     _instruction_names: dict[str, str] = PrivateAttr(default_factory=dict[str, str])
 

@@ -39,6 +39,8 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai_harness.logfire import AgentControlConfig
+from pydantic_ai_harness.policy import Approver, Policy, PolicyDecision, PolicyRules
+from pydantic_clai2 import policy_state
 
 ItemKind = Literal['skill', 'mcp_server', 'plugin', 'instruction']
 
@@ -211,8 +213,31 @@ class Fleet:
             items.append(ActiveItem(item.kind, item.name, item.description, 'catalog', item.payload))
         return items
 
+    def policy(self) -> Policy | None:
+        """The organization policy published with the company config, if any."""
+        return self.config()[0].policy
+
+    def _locked(self) -> frozenset[str]:
+        policy = self.policy()
+        return frozenset(policy.locked) if policy is not None else frozenset()
+
+    def compliance(self, active: Sequence[ActiveItem]) -> dict[str, str]:
+        """The compliance attributes for a run: policy version, what the user opted out of, locked items held."""
+        _, version = self.config()
+        state = self._user_state()
+        defaults_on = {_key(item.kind, item.name) for item in self.catalog().items if item.default == 'on'}
+        opted_out = sorted(key for key in state.opted_out if key in defaults_on)
+        keys = {item.key for item in active} | {'plugin:observability'}  # This code runs inside observability.
+        return {
+            'clai2.policy.version': version or '',
+            'clai2.catalog.opted_out': ','.join(opted_out),
+            'clai2.policy.locked_ok': 'true' if self._locked() <= keys else 'false',
+        }
+
     def _enabled(self, item: CatalogItem, state: _UserState) -> bool:
         key = _key(item.kind, item.name)
+        if key in self._locked():
+            return True
         if item.default == 'on':
             return key not in state.opted_out
         return key in state.opted_in
@@ -275,6 +300,8 @@ class Fleet:
                 return f'No catalog item {key!r}. Run /catalog to list them.'
             key = matches[0]
         item = catalog[key]
+        if not on and key in self._locked():
+            return f'{item.name} is {policy_state.LOCKED_MESSAGE}; it cannot be disabled.'
         state = self._load()
         user = state.users.setdefault(self.user(), _UserState())
         user.opted_in = [k for k in user.opted_in if k != key]
@@ -390,10 +417,17 @@ class FleetControl(AbstractCapability[None]):
     fleet: Fleet
     id: str | None = 'clai2_fleet'
 
+    approver: Approver | None = None
+    record: Callable[[PolicyDecision], None] | None = None
+
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
         capabilities = self.fleet.capabilities()
-        active = ','.join(sorted(item.key for item in self.fleet.active()))
-        return CombinedCapability([_AdoptionBaggage(active=active), *capabilities])
+        items = self.fleet.active()
+        baggage = {ACTIVE_ITEMS_ATTRIBUTE: ','.join(sorted(item.key for item in items)), **self.fleet.compliance(items)}
+        rules = PolicyRules(
+            policy=self.fleet.policy, approver=self.approver, record=self.record, attribute_prefix='clai2.policy'
+        )
+        return CombinedCapability([_AdoptionBaggage(baggage=baggage), rules, *capabilities])
 
 
 ACTIVE_ITEMS_ATTRIBUTE = 'clai2.fleet.active'
@@ -404,11 +438,11 @@ ACTIVE_ITEMS_ATTRIBUTE = 'clai2.fleet.active'
 class _AdoptionBaggage(AbstractCapability[None]):
     """Puts which company and catalog items this run had on every span, so Logfire can show who adopted what."""
 
-    active: str
+    baggage: dict[str, str]
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost', wraps=(Instrumentation,))
 
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        with logfire.set_baggage(**{ACTIVE_ITEMS_ATTRIBUTE: self.active}):
+        with logfire.set_baggage(**self.baggage):
             return await handler()

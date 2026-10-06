@@ -11,6 +11,7 @@ next run uses it. Its first row runs the project setup in `logfire_setup`.
 """
 
 import os
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -23,7 +24,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, Va
 
 from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai_harness.ask_user import AskUserRequest, Question, QuestionOption
 from pydantic_ai_harness.logfire import AgentControl
+from pydantic_ai_harness.policy import PolicyDecision, decision_attributes
+from pydantic_clai2 import policy_state
+from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.fleet import Fleet, FleetControl
 from pydantic_clai2.builtin_plugins.logfire_session import SessionTracing, git_email
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
@@ -187,9 +192,37 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             self.fleet.agent_variable,
             targeting_key=lambda _: tracing.email,
             attributes=lambda _: tracing.identity(),
-            client_features=('catalog',),
+            client_features=('catalog', 'policy'),
         )
-        return (self._session_tracing, self.instrumentation, control, FleetControl(fleet=self.fleet))
+        fleet_control = FleetControl(fleet=self.fleet, approver=self._approve)
+        return (self._session_tracing, self.instrumentation, control, fleet_control)
+
+    async def _approve(self, decision: PolicyDecision) -> bool:
+        """Put an `ask` rule's call to the user with the `ask_user` picker; no terminal means no."""
+        if not sys.stdin.isatty():
+            return False
+        question = Question(
+            header='Policy',
+            question=(
+                f'Your organization policy {decision.rule!r} asks before this {decision.tool_name} call: '
+                f'{decision.subject}'
+            )[:400],
+            options=(
+                QuestionOption(label='Allow', description='Run it this once.'),
+                QuestionOption(label='Deny', description='Skip it and tell the agent.'),
+            ),
+        )
+        answerer = TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)
+        response = await answerer(AskUserRequest(questions=(question,)))
+        return not response.cancelled and bool(response.answers) and response.answers[0].selected == ('Allow',)
+
+    def _record_outside_run(self, decision: PolicyDecision) -> None:
+        """A decision made outside an agent run (the MCP allowlist), on the session root with who made it."""
+        attributes = {**decision_attributes(decision, prefix='clai2.policy'), **self._session_tracing.identity()}
+        tracer = self.instance.config.get_tracer_provider().get_tracer(telemetry.SCOPE)
+        with telemetry.parent_span(self._session_tracing.root()):
+            with tracer.start_as_current_span('policy decision', attributes=attributes):
+                pass
 
     def get_commands(self) -> Sequence[Command]:
         if self.fleet is None:
@@ -244,6 +277,17 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     # The UI lifecycle goes only to this plugin's own instance: every enabled copy of the plugin hears these events.
     async def on_session_start(self, event: SessionStart) -> None:
         self._session_tracing.start(await _user_email(self.settings))
+        if self.fleet is not None:
+            fleet = self.fleet
+            policy_state.install(
+                policy_state.PolicySource(
+                    policy=fleet.policy,
+                    record=self._record_outside_run,
+                    pushed_mcp_servers=lambda: frozenset(
+                        item.name for item in fleet.active() if item.kind == 'mcp_server'
+                    ),
+                )
+            )
         self._announce_changes()
         if self.settings.ui_events:
             self._unsubscribe = telemetry.subscribe(
@@ -268,6 +312,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 self._clai2.log('info', 'turn {outcome}', attributes={'outcome': event.outcome})
 
     async def on_session_end(self, event: SessionEnd) -> None:
+        policy_state.install(None)
         # Stop receiving UI events before the instance shuts down.
         if self._unsubscribe is not None:
             self._unsubscribe()

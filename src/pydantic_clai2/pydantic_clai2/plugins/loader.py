@@ -15,6 +15,7 @@ from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
+from pydantic_clai2 import policy_state
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
@@ -627,6 +628,9 @@ class PluginLoader(Generic[DepsT]):
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now and remember it as disabled."""
+        if policy_state.locked(f'plugin:{name}'):
+            # Hackathon: client-side, so it stops accidents rather than a user determined to edit their config.
+            raise ValueError(f'{name} is {policy_state.LOCKED_MESSAGE}.')
         entry = self._entry(name)
         _requested('disable', name)
         requires = self._requirements(entry)
