@@ -67,7 +67,8 @@ class ToolCallGroup:
         if not self._rows[-1] and self.console.is_terminal and isinstance(self.console.file, PromptSurface):
             self._block = self.console.file.markdown(render=self._render, width=self.console.width)
         if self._block is not None:
-            self._block.extend(f'{name}\n')
+            # One `+name` line per call, so an empty name stays distinct from the empty line `close` adds.
+            self._block.extend(f'+{name}\n')
         rows = len(self._rows)
         _count(self._rows, name, width=self.console.width)
         if len(self._rows) > rows:
@@ -112,11 +113,11 @@ class ToolCallGroup:
         return output.getvalue()
 
     def _render(self, *, source: str, width: int) -> str:
-        """The whole group again, for a width or theme it was not drawn at; `source` holds one name per call."""
+        """The whole group again, for a width or theme it was not drawn at; `source` holds one `+name` line per call."""
         rows: list[list[_Streak]] = [[]]
-        for name in source.splitlines():
-            if name:
-                _count(rows, name, width=width)
+        for line in source.splitlines():
+            if line:
+                _count(rows, line[1:], width=width)
         # `close` ends the source with an empty line for the group's blank one.
         blank = '\n' if source.endswith('\n\n') else ''
         return ''.join(self._ansi(row, width=width) for row in rows) + blank

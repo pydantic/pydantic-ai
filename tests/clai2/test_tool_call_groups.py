@@ -291,6 +291,14 @@ async def test_live_prompt_replay_inside_another_print_keeps_that_print_out_of_t
     assert _rows(surface, width=60)[:3] == ['● shell 2, grep 1', '', 'next']
 
 
+def test_live_prompt_replays_a_call_with_an_empty_name() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    group = ToolCallGroup(Console(file=surface, force_terminal=True, width=80), colors=None)
+    group.add('')  # A model can call a tool it was never given, by any name.
+    group.close()
+    assert _rows(surface, width=40)[:2] == ['●  1', '']
+
+
 async def test_abort_ends_the_line() -> None:
     output = io.StringIO()
     renderer = grouped(output)
