@@ -941,7 +941,9 @@ is restored on exit, and your picks are printed to the transcript afterwards.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
-multi-select questions. Enter submits nonblank text. Esc returns to the choices
+multi-select questions. With `Other` highlighted, start typing; you do not need
+to press Enter first, and number keys type digits there instead of picking
+choices. Enter submits nonblank text. Esc returns to the choices
 and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
