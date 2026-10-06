@@ -94,6 +94,7 @@ from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
 from ..conversation import Conversation
+from ..models.fallback import FallbackModel
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
@@ -465,7 +466,7 @@ class _ResolvedSpec:
 
     capability: CombinedCapability[Any] | None
     instructions: list[_instructions.AgentInstruction[Any]]
-    model: str | None
+    model: str | list[str] | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
     name: str | None
@@ -1019,7 +1020,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if capabilities:
             all_capabilities.extend(capabilities)
 
-        effective_model = model or validated_spec.model
+        effective_model = model or (
+            _model_from_spec(validated_spec.model) if validated_spec.model is not None else None
+        )
 
         agent = Agent(
             model=effective_model,
@@ -1519,7 +1522,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
             if model is None and resolved.model is not None:
-                model = resolved.model
+                model = _model_from_spec(resolved.model)
             # Output retries: run param > spec > agent default
             if effective_output_retries is None and resolved.output_retries is not None:
                 effective_output_retries = resolved.output_retries
@@ -2224,7 +2227,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if not _utils.is_set(name) and resolved.name is not None:
                 name = resolved.name
             if not _utils.is_set(model) and resolved.model is not None:
-                model = resolved.model
+                model = _model_from_spec(resolved.model)
             if not _utils.is_set(instructions) and resolved.instructions:
                 instructions = resolved.instructions
             if not _utils.is_set(model_settings) and resolved.model_settings is not None:
@@ -4901,6 +4904,12 @@ def _synthetic_capability_id(cls: type[AbstractCapability[Any]], *, taken: Colle
         candidate = f'<{base_id}:{uuid4().hex[:6]}>'
         if candidate not in taken:
             return candidate
+
+
+def _model_from_spec(model: str | list[str]) -> models.Model | str:
+    if isinstance(model, list):
+        return FallbackModel(model[0], *model[1:])
+    return model
 
 
 def _validate_spec(

@@ -2438,7 +2438,15 @@ def test_model_json_schema_with_capabilities():
             },
             'additionalProperties': False,
             'properties': {
-                'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Model'},
+                'model': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'items': {'type': 'string'}, 'minItems': 1, 'type': 'array'},
+                        {'type': 'null'},
+                    ],
+                    'default': None,
+                    'title': 'Model',
+                },
                 'name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Name'},
                 'description': {
                     'anyOf': [{'type': 'string'}, {'type': 'null'}],

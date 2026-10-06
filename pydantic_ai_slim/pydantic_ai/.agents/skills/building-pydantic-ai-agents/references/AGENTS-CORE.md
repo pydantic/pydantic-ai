@@ -128,6 +128,12 @@ result = agent.run_sync('Find recent papers on AI safety', deps=UserContext(user
 
 Template strings are part of the spec flow, so route template-string questions here too.
 
+For fallback models, set the spec's `model` to a non-empty list of model names. The list
+creates a `FallbackModel` that tries models in order on `ModelAPIError`, using its default
+fallback conditions. This works with `Agent.from_file`, `Agent.from_spec`, `run(spec=...)`,
+and `override(spec=...)`; an explicit `model=` replaces the entire list. For custom
+`fallback_on` conditions or individually configured models, pass a `FallbackModel` in Python.
+
 ## Choose or Configure Models
 
 Model strings use the `"provider:model-name"` format.

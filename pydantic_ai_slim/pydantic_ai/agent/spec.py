@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast
 
 from pydantic import BaseModel, Field, model_serializer
 from pydantic_core import from_json, to_json
@@ -35,7 +35,8 @@ class AgentSpec(BaseModel):
 
     # $schema is included to avoid validation fails from the `$schema` key, see `_add_json_schema` below for context
     json_schema_path: str | None = Field(default=None, alias='$schema')
-    model: str | None = None
+    model: str | Annotated[list[str], Field(min_length=1)] | None = None
+    """Model name, or a non-empty list of model names to try in order using `FallbackModel`."""
     name: str | None = None
     description: TemplateStr[Any] | str | None = None
     instructions: TemplateStr[Any] | str | list[TemplateStr[Any] | str] | None = None
@@ -195,7 +196,7 @@ class AgentSpec(BaseModel):
         # - extra='forbid' enables strict validation in the generated schema
         # When adding or removing fields on AgentSpec, update this class to match.
         class _AgentSpecSchema(BaseModel, extra='forbid', arbitrary_types_allowed=True):
-            model: str | None = None
+            model: str | Annotated[list[str], Field(min_length=1)] | None = None
             name: str | None = None
             description: str | None = None
             instructions: str | list[str] | None = None

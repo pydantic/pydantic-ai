@@ -76,6 +76,23 @@ When `deps_type` is passed, [template strings](#template-strings) in the spec's 
 
 For more control over spec loading, use [`AgentSpec.from_file`][pydantic_ai.agent.AgentSpec.from_file] to load the spec separately before passing it to `Agent.from_spec`.
 
+### Fallback models
+
+Set `model` to a non-empty list of model names to try them in order:
+
+```yaml {title="agent_with_fallback.yaml" test="skip"}
+model:
+  - anthropic:claude-opus-5
+  - openai:gpt-6.1-sol
+instructions: You are a helpful assistant.
+```
+
+The list creates a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] with its default behavior: a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] triggers the next model. Other errors propagate. If all models fail, it raises [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup]. See [fallback models](models/overview.md#fallback-model) for details.
+
+This form also works with `Agent.from_spec`, `agent.run(spec=...)`, and `agent.override(spec=...)`. An explicit `model=` argument takes precedence over the entire list. Spec `model_settings` apply to whichever model handles the request.
+
+Model names in the list are resolved when the fallback model is constructed, including when `defer_model_check=True`. To configure individual model settings, custom providers, or `fallback_on` conditions, construct a `FallbackModel` in Python and pass it as `model=`.
+
 ## Template strings
 
 [`TemplateStr`][pydantic_ai.template.TemplateStr] provides Handlebars-style templates (`{{variable}}`) that are rendered against the agent's [dependencies](dependencies.md) at runtime. In spec files, strings containing `{{` are automatically converted to template strings:
@@ -130,7 +147,7 @@ The [`AgentSpec`][pydantic_ai.agent.AgentSpec] model represents the full spec st
 
 | Field | Type | Description |
 |---|---|---|
-| `model` | `str \| None` | [Model](models/overview.md) name |
+| `model` | `str \| list[str] \| None` | [Model](models/overview.md) name, or a non-empty ordered list of [fallback models](#fallback-models) |
 | `name` | `str \| None` | Agent name |
 | `description` | `str \| None` | Agent description (supports [templates](#template-strings)) |
 | `instructions` | `str \| list[str] \| None` | [Instructions](agent.md#instructions) (supports [templates](#template-strings)) |
