@@ -1980,7 +1980,8 @@ compact numbered picker. Use Up/Down and Enter, or press an option's number to
 select it. For multiple selections, Enter or a number toggles a choice; select
 `Done` to submit. At least one choice is required. Esc or Ctrl-C declines the
 whole request, which the model is told so it can make a stated choice and carry
-on. Several questions show progress in the title. The editor's draft is
+on. Several questions show progress in the title. The tool's transcript line
+names the questions by header, not their raw JSON. The editor's draft is
 preserved, and your picks are printed to the transcript afterwards.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
