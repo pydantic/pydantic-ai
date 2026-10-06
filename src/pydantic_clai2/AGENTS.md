@@ -308,6 +308,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content; typed text goes only through `prompt_text`, which the subscriber's `include_content` gates |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert, its settings menu |
 | `commands.py` | `Command`, the registry, completion |
+| `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
 | `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue, timed double-Esc gesture, and menu handoff |
