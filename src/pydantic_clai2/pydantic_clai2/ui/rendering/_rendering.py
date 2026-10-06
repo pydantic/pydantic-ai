@@ -355,9 +355,13 @@ class StreamRenderer:
         if isinstance(event, FunctionToolResultEvent):
             self._tool_output.discard_call(event.part.tool_call_id)
         if self._group is not None:
-            if isinstance(event, FunctionToolCallEvent):
+            if not isinstance(event, FunctionToolCallEvent):
+                return
+            if not self._tool_output.shows_diff(event):
                 self._group.add(event.part.tool_name)
-            return
+                return
+            # A count would repeat the header its diff prints under.
+            self._group.close()
         if self._grep_output.render(event):
             return
         if isinstance(event, FunctionToolCallEvent) and not self._tool_output.render_call(event):

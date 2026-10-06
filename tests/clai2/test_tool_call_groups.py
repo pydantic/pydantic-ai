@@ -26,6 +26,7 @@ from pydantic_clai2.config import Settings, resolve_settings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from pydantic_clai2.ui.menus.tool_calls_preview import tool_calls_preview
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.rendering.tool_group import ToolCallGroup
 from tests.clai2.menu_script import make_context
 
@@ -138,7 +139,18 @@ async def test_plugin_renderings_end_the_group() -> None:
     assert output.getvalue() == '● shell 2\n\nnote\n\n● shell 1\n\n'
 
 
-async def test_shell_and_arguments_are_ignored_but_a_diff_ends_the_group() -> None:
+def edited(index: int) -> FileEditedEvent:
+    return FileEditedEvent(
+        path='a.py',
+        root_dir='/tmp',
+        content_hash='h',
+        diff='-old\n+new',
+        truncated=False,
+        tool_call_id=f'edit_file-{index}',
+    )
+
+
+async def test_shell_and_arguments_are_ignored_but_edits_and_writes_print_as_in_detailed() -> None:
     output = io.StringIO()
     renderer = grouped(output, show_tool_output=True)
     await renderer.on_stream_event(call('shell', command='ls'))
@@ -158,24 +170,23 @@ async def test_shell_and_arguments_are_ignored_but_a_diff_ends_the_group() -> No
         await renderer.on_stream_event(event)
     await renderer.on_stream_event(Notice())  # An unrelated capability event leaves the group alone.
     await renderer.on_stream_event(call('edit_file', 1, path='a.py'))
-    await renderer.on_stream_event(
-        FileEditedEvent(
-            path='a.py',
-            root_dir='/tmp',
-            content_hash='h',
-            diff='-old\n+new',
-            truncated=False,
-            tool_call_id='edit_file-1',
-        )
-    )
+    await renderer.on_stream_event(edited(1))
     await renderer.on_stream_event(call('write_file', 2, path='b.py'))
     await renderer.on_stream_event(
         FileWrittenEvent(path='b.py', root_dir='/tmp', content_hash='h', tool_call_id='write_file-2')
     )
     await renderer.finish()
-    assert output.getvalue() == (
-        '● shell 1, edit_file 1\n\n● edit_file a.py\n\n-old\n+new\n\n● write_file 1\n\n● write_file b.py\n\n\n'
-    )
+    assert output.getvalue() == '● shell 1\n\n● edit_file a.py\n\n-old\n+new\n\n● write_file b.py\n\n\n'
+
+
+async def test_a_diff_ends_a_group_opened_after_its_call() -> None:
+    output = io.StringIO()
+    renderer = grouped(output)
+    await renderer.on_stream_event(call('edit_file', 1, path='a.py'))
+    await renderer.on_stream_event(call('read_file', 2, path='b.py'))
+    await renderer.on_stream_event(edited(1))
+    await renderer.finish()
+    assert output.getvalue() == '● edit_file a.py\n\n● read_file 1\n\n-old\n+new\n\n'
 
 
 async def test_a_tool_that_no_longer_fits_starts_the_next_line() -> None:
@@ -192,6 +203,32 @@ async def test_wrapped_lines_on_a_terminal_each_end_where_they_were_drawn() -> N
     await feed(renderer, 'shell shell grep read_file')
     await renderer.finish()
     assert output.getvalue() == ('\r● shell 1\r● shell 2\r● shell 2, grep 1\n\r● read_file 1\n\n')
+
+
+def _rows(surface: PromptSurface, *, width: int) -> list[str]:
+    return [Text.from_ansi(row).plain for row in surface.transcript.frame(width=width, height=50).rows]
+
+
+async def test_live_prompt_output_printed_during_a_group_lands_after_its_line() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    console = Console(file=surface, force_terminal=True, width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, tool_calls='grouped')
+    await feed(renderer, 'shell shell')
+    console.print('> /set')  # A command typed mid-turn echoes while the group is open.
+    await feed(renderer, 'shell')
+    await renderer.finish()
+    assert _rows(surface, width=80)[:3] == ['● shell 3', '> /set', '']
+
+
+async def test_live_prompt_wraps_the_group_again_for_a_new_width() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (20, 24))
+    renderer = StreamRenderer(
+        Console(file=surface, force_terminal=True, width=20), stop_loading=lambda: None, tool_calls='grouped'
+    )
+    await feed(renderer, 'shell shell grep read_file')
+    await renderer.finish()
+    assert _rows(surface, width=20)[:3] == ['● shell 2, grep 1', '● read_file 1', '']
+    assert _rows(surface, width=80)[:2] == ['● shell 2, grep 1, read_file 1', '']
 
 
 async def test_abort_ends_the_line() -> None:

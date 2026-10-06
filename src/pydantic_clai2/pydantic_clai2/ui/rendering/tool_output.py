@@ -141,6 +141,10 @@ class ToolOutput:
             summary += f' (+{len(lines) - 1} command lines)'
         print_tool_header(self.console, name=name, argument=summary)
 
+    def shows_diff(self, event: FunctionToolCallEvent) -> bool:
+        """Whether the call prints a diff, which it does in every `display.tool_calls` style."""
+        return event.part.tool_name in ('write_file', 'edit_file')
+
     def render_call(self, event: FunctionToolCallEvent) -> bool:
         """Show arguments once, before execution, including for failed calls."""
         name = event.part.tool_name
