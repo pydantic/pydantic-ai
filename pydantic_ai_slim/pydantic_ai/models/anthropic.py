@@ -1322,10 +1322,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
-        if _last_cacheable_block_has_cache_control(anthropic_messages):
-            # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
-            # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
-            auto_cache_control = None
+        # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
+        # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
+        auto_cache_control = None if _last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
@@ -1706,10 +1705,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
-        if _last_cacheable_block_has_cache_control(anthropic_messages):
-            # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
-            # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
-            auto_cache_control = None
+        # The API rejects automatic caching when the last block's explicit breakpoint has a different TTL, and
+        # ignores it when the TTL is the same, since both mark the same breakpoint. The explicit one wins.
+        auto_cache_control = None if _last_cacheable_block_has_cache_control(anthropic_messages) else auto_cache_control
         self._limit_cache_points(
             system_prompt, anthropic_messages, tools, automatic_caching=auto_cache_control is not None
         )
