@@ -458,10 +458,6 @@ async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Clie
     assert result == 'timed out cleanly'
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason='the cancellation backstop needs `Task.cancelling()` (Python 3.11+); on 3.10 the absorbed cancel legitimately completes',
-)
 async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(client: Client) -> None:
     """A cancelled workflow cannot complete after its streaming model activity absorbs cancellation."""
     global _cancellation_activity_cancel_absorbed, _cancellation_activity_started

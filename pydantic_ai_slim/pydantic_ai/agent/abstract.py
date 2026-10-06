@@ -146,7 +146,7 @@ class AgentRunEvents(
     the context manager without iterating therefore never starts a run (https://github.com/pydantic/pydantic-ai/issues/6162).
 
     This is a hand-written iterator class rather than an `async def` generator on purpose: generator cleanup
-    runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.10/3.11
+    runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.11
     can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
     error (https://github.com/pydantic/pydantic-ai/issues/5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
     context.

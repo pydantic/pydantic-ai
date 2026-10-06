@@ -890,7 +890,7 @@ def _same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) ->
 
 
 async def _end_failed_session(plugin: Plugin[BaseModel, DepsT]) -> BaseException | None:
-    """Return the handler's failure rather than raising it: 3.10 tasks drop a `CancelledError`'s message."""
+    """Return the handler's failure rather than raising it."""
     try:
         with fail_after(5):
             await plugin.on_session_end(SessionEnd(reason='error'))
