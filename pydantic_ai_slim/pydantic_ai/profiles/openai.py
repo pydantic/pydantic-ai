@@ -99,13 +99,18 @@ _ALWAYS_ON_REASONING = _ReasoningSupport(
 )
 """The model always reasons; it doesn't accept `reasoning_effort='none'`."""
 
-_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna')
+_GPT_6_MODEL_PREFIXES = ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol')
 
 _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
     # GPT-6 Astra reasons by default and does not accept `effort='none'` (its guide migrates
     # `none`/`minimal` users to `low`); it carries over GPT-5.6's `reasoning.mode` and
     # `reasoning.context='all_turns'` per https://developers.openai.com/api/docs/models/gpt-6-astra.
     'gpt-6-astra': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=True, supports_context=True
+    ),
+    # GPT-6.1 Sol follows GPT-6 Astra rather than GPT-6 Sol: it rejects `effort='none'`.
+    # https://developers.openai.com/api/docs/models/gpt-6.1-sol
+    'gpt-6.1-sol': _ReasoningSupport(
         enabled_by_default=True, can_be_disabled=False, supports_mode=True, supports_context=True
     ),
     # GPT-6 Sol and Luna retain GPT-5.6's default medium reasoning and accept `effort='none'`.
@@ -164,9 +169,8 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
 prefix (e.g. `'gpt-5.3-chat'`) must be listed before the broader one it would otherwise match
 (e.g. `'gpt-5.3'`), and every newer family before the plain `'gpt-5'` catch-all.
 Models that don't match any prefix don't reason. Every cell was verified against the live
-Responses API (2026-07) except the GPT-6 family, which is pinned from its published model guide;
-Sol/Luna reasoning and tool requests were also verified live (2026-09). The full resolved matrix
-is pinned in `tests/profiles/test_openai.py`."""
+Responses API (2026-07; the GPT-6 family 2026-09). The full resolved matrix is pinned in
+`tests/profiles/test_openai.py`."""
 
 
 def _reasoning_support(model_name: str) -> _ReasoningSupport:
@@ -241,8 +245,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether a streamed Chat Completions response must include a non-null `finish_reason`. Default: `False`.
 
     When enabled, reaching clean EOF before any chunk supplies a `finish_reason` raises
-    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. This defaults to `False` because
-    OpenAI-compatible APIs do not consistently guarantee the field."""
+    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
+    This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
 
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
@@ -380,6 +384,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_supports_prompt_cache_diagnostics: bool
+    """Whether the Responses endpoint serves prompt cache diagnostics for this model. Default: `False`.
+
+    When `True`, requests pass the most recent response from the same provider as
+    `prompt_cache_options.comparison_response_id`, unless the
+    [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics]
+    setting is `False`. Set by `OpenAIProvider` for GPT-5.6 and later models; OpenAI-compatible Responses
+    endpoints may reject the field (OpenRouter does), so it stays off for them.
+    """
+
     openai_responses_requires_streaming: bool
     """Whether the Responses endpoint serves streaming responses only. Default: `False`.
 
@@ -418,7 +432,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models, including gpt-5.6
     # (its responses label messages with `phase`, as recorded in the reasoning-mode cassette) and
-    # gpt-6 models (mainline continuation; not yet live-verified).
+    # gpt-6 models (live-verified 2026-09).
     # See https://developers.openai.com/api/docs/guides/prompt-guidance.
     supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES))
 
@@ -429,7 +443,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
     supports_image_output = (
-        model_name.startswith(('gpt-5', 'gpt-6-sol', 'gpt-6-luna'))
+        model_name.startswith(('gpt-5', *_GPT_6_MODEL_PREFIXES))
         or 'o3' in model_name
         or '4.1' in model_name
         or '4o' in model_name
@@ -437,7 +451,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # OpenAI's native `tool_search` tool with `defer_loading` is available on gpt-5.4 and later
     # mainline families (https://developers.openai.com/api/docs/guides/tools-tool-search; GPT-5.6
-    # verified live; GPT-6 Astra per its model guide's supported tools). Like the other gates in
+    # and the GPT-6 family verified live). Like the other gates in
     # this function, this enumerates known versions rather than matching open-endedly, so a new
     # family must be added here explicitly once confirmed; until then it falls back to local search.
     supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES))
@@ -502,11 +516,16 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_session_seeding': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
-        'supports_webrtc': False,
+        # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
+        'supports_webrtc': True,
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
-        'supports_thinking': False,
+        # The backend runs web search; Live refuses every other native Responses tool (checked live).
+        'supported_native_tools': frozenset({WebSearchTool}),
+        # The delegated backend does the reasoning, so `thinking` sets its effort. Whether a given backend
+        # reasons at all is its own profile's call, so a backend that doesn't still ignores the setting.
+        'supports_thinking': True,
         'emits_input_speech_events': False,
         'synthesizes_turn_boundary': True,
         # The spoken replies are inferred turns; the requests that spend tokens are the backend's.

@@ -20,8 +20,10 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import Session, chat, image_input
-from pydantic_clai2.image_input import (
+from pydantic_clai2 import Session, chat
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.prompt import image_input
+from pydantic_clai2.ui.prompt.image_input import (
     ImageBuffer,
     ImageInput,
     clipboard_images,
@@ -30,8 +32,6 @@ from pydantic_clai2.image_input import (
     read_image,
     read_images,
 )
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.settings_store import SettingsStore
 
 
 @pytest.fixture
@@ -193,7 +193,7 @@ async def test_shell_image_and_text_turns(image_path: Path, tmp_path: Path, term
             return request_context
 
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
-        pipe.send_text(f'\x1b[200~"{image_path}"\x1b[201~describe\ntext only\n/exit\n')
+        pipe.send_text(f'\x1b[200~"{image_path}"\x1b[201~describe\rtext only\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None), capabilities=[Capture()]),
             deps=None,
@@ -251,9 +251,9 @@ async def test_image_hooks_and_expired_history(image_path: Path, tmp_path: Path,
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'caption.py').write_text(
-        'def activate(host):\n'
-        "    @host.on('turn_start')\n"
-        '    async def start(event):\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Caption(Plugin):\n'
+        '    async def on_turn_start(self, event):\n'
         "        assert event.text == 'caption'\n"
         + {
             'rewrite': "        event.text = 'rewritten'\n",
@@ -276,7 +276,7 @@ async def test_image_hooks_and_expired_history(image_path: Path, tmp_path: Path,
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
         text = '[image:1234abcd]' if action == 'expired' else f'\x1b[200~{image_path}\x1b[201~'
-        pipe.send_text(text + 'caption\n/exit\n')
+        pipe.send_text(text + 'caption\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None), capabilities=[Capture()]),
             deps=None,
@@ -433,16 +433,8 @@ async def test_image_can_be_retried_after_selecting_a_model(
     monkeypatch.setattr(image_input, 'uuid4', lambda: UUID('12345678-0000-0000-0000-000000000000'))
     agent = Agent()
     output = io.StringIO()
-    transcript: list[str] = []
-
-    class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            transcript.append(text)
-            return super().write(text)
-
-    monkeypatch.setattr('pydantic_clai2.live_prompt.PromptSurface', Surface)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
-        pipe.send_text(f'\x1b[200~{image_path}\x1b[201~caption\n/set model test\n[image:12345678]caption\n/exit\n')
+        pipe.send_text(f'\x1b[200~{image_path}\x1b[201~caption\r/set model test\r[image:12345678]caption\r/exit\r')
         await chat(
             agent,
             deps=None,
@@ -451,4 +443,5 @@ async def test_image_can_be_retried_after_selecting_a_model(
         )
     assert 'Choose a model first' in output.getvalue()
     assert 'expired' not in output.getvalue()
-    assert 'success' in (''.join(transcript) if terminal else output.getvalue())
+    # The live editor prints the session into the terminal's scrollback when it closes.
+    assert 'success' in output.getvalue()

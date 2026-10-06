@@ -40,9 +40,9 @@ ends the session, including from [a tool that hangs up](tools.md#ending-the-sess
 ## Connection and handshake
 
 The connection is opened when the `session()` context is entered, and the shared
-`handshake_timeout` setting (default 30 seconds) bounds how long the session waits for each
-realtime protocol handshake event on providers with an explicit handshake (OpenAI, Azure OpenAI,
-and xAI). A handshake that times out raises
+`handshake_timeout` setting (default 30 seconds) bounds how long the session waits for the
+provider handshake: each handshake event on OpenAI, Azure OpenAI, and xAI, and the whole session
+setup on Gemini. A handshake that times out raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError]; a rejected WebSocket upgrade raises
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (see [Errors](#errors)).
 
@@ -80,7 +80,7 @@ Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
 On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) the same policy applies to an
-unexpected drop, but a *clean* close is treated as the browser hanging up: the sideband is a control
+unexpected drop (except on GPT-Live, whose sideband is not reconnected), but a *clean* close is treated as the browser hanging up: the sideband is a control
 channel, so a normal close ends iteration without a session error or reconnect attempt even when a
 `reconnect` policy is set. The close frame alone can't distinguish a hangup from a
 WebSocket-terminating proxy closing the sideband cleanly mid-call (a restart or graceful rotation),
@@ -90,7 +90,16 @@ connections at the infrastructure layer rather than relying on the `reconnect` p
 ### State restoration
 
 OpenAI and Azure OpenAI have no cross-connection server state, so Pydantic AI replays local message
-history into the new session. Prior transcript turns survive; in-flight audio does not.
+history into the new session. Prior transcript turns survive; in-flight audio does not. GPT-Live does
+the same by default, or forks a session stored with `openai_live_store=True`, so the new session has
+the whole conversation on OpenAI's side.
+
+Replay sends text, not audio, so a spoken user turn with no transcript (input transcription is off,
+or its transcript never arrived) replays as the text `[The user spoke; no transcript is available.]`.
+The new session then sees that the user said something before each answer, rather than an answer
+out of nowhere. The marker is only sent to the provider: the session's
+[message history](history.md) keeps the turn as the [`SpeechPart`][pydantic_ai.messages.SpeechPart]
+it was.
 
 Gemini and xAI use native in-process session resumption, enabled automatically when a `reconnect`
 policy is present (an explicit `google_enable_session_resumption=False` alongside a policy raises
@@ -148,12 +157,14 @@ button, or [a tool](tools.md#ending-the-session-from-a-tool) — await
 completion even if that task is cancelled while it waits, and both a concurrent `close()` and the
 `async with` exit wait for the same teardown, so the session is fully closed by the time the block
 is left. While the session is being iterated the loop ends, leaving the `async with` block does not
-raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled.
+raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is settled. On a
+[WebRTC sideband](deployment.md#browser-webrtc-server-sideband), `close()` only detaches from the
+browser's call; [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] ends it.
 
 For external policy such as an idle timeout or maximum call duration, run a watchdog task that calls
 `close()`:
 
-```python
+```python {test="skip - the watchdog sleeps for the whole call budget"}
 import asyncio
 
 from pydantic_ai import Agent

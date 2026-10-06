@@ -6,12 +6,15 @@ import json
 import os
 import re
 from collections.abc import Generator, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from cassetter import RawRequest, RawResponse
+
+from pydantic_ai.realtime import _session as realtime_session  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._core import SessionCore
 
 from .. import cassette_hooks
 from ..conftest import sanitize_filename, try_import
@@ -134,10 +137,19 @@ def _zero_sdp_addresses(request: RawRequest) -> RawRequest:
         # Zero every address the regex finds, not just when an ICE candidate is present: an SDP whose
         # only address is the `c=IN IP4/IP6` connection line (no `a=candidate:` lines) would otherwise
         # be recorded with the recorder's real address intact.
-        request.body = _SDP_ADDRESS_RE.sub(
-            lambda match: match['prefix'] + (b'0.0.0.0' if b'.' in match['address'] else b'::'), request.body
-        )
+        request.body = _zero_addresses(request.body)
+        # GPT-Live takes the offer inside a JSON body, where its line breaks are escaped.
+        with suppress(ValueError):
+            payload: Any = json.loads(request.body)
+            transport: Any = cast(dict[str, Any], payload).get('transport') if isinstance(payload, dict) else None
+            if isinstance(transport, dict) and isinstance(sdp := cast(dict[str, Any], transport).get('sdp'), str):
+                transport['sdp'] = _zero_addresses(sdp.encode()).decode()
+                request.body = json.dumps(payload).encode()
     return request
+
+
+def _zero_addresses(sdp: bytes) -> bytes:
+    return _SDP_ADDRESS_RE.sub(lambda match: match['prefix'] + (b'0.0.0.0' if b'.' in match['address'] else b'::'), sdp)
 
 
 @pytest.fixture(scope='module')
@@ -152,6 +164,31 @@ def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
         'before_record_request': _zero_sdp_addresses,
         'before_record_response': _scrub_ephemeral_secret,
     }
+
+
+@pytest.fixture(autouse=True)
+def _shadow_core(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Run the new session core in shadow of the current one, and fail on anything the two disagree about.
+
+    Every session over a connection that identifies its responses, turns, and inputs (the OpenAI protocol)
+    builds its history twice; they must match when it closes. A test whose trace the current core gets
+    wrong in a way the new one fixes says so with `@pytest.mark.shadow_divergence(reason)`.
+    """
+    monkeypatch.setattr(realtime_session, '_CORE_MODE', 'shadow')
+    divergences: list[str] = []
+    compare = realtime_session.RealtimeSession._compare_shadow  # pyright: ignore[reportPrivateUsage]
+
+    def recorded(session: realtime_session.RealtimeSession, core: SessionCore) -> None:
+        compare(session, core)
+        divergences.extend(session._shadow_divergences)  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(realtime_session.RealtimeSession, '_compare_shadow', recorded)
+    yield
+    node = cast('pytest.Item', request.node)  # pyright: ignore[reportUnknownMemberType]
+    if node.get_closest_marker('shadow_divergence') is None:
+        assert not divergences, '\n'.join(divergences)
+    else:
+        assert divergences, 'the session cores agree on this trace now: drop its `shadow_divergence` mark'
 
 
 @pytest.fixture(autouse=True)
@@ -243,6 +280,36 @@ def openai_live_ws_cassette(
     if not openai_imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai_live') as cassette:
+        yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
+def openai_live_ws_and_http_cassette(
+    request: pytest.FixtureRequest, openai_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """Like `openai_live_ws_cassette`, for a test that also records an HTTP VCR cassette.
+
+    The WebSocket cassette gets its own subdirectory, as for `openai_ws_sideband_cassette`, so the two
+    don't collide.
+    """
+    if not openai_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'openai_live', subdir='test_openai_live_ws_and_http') as cassette:
+        yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
+def openai_live_ws_sideband_cassette(
+    request: pytest.FixtureRequest, openai_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """An `OpenAIProvider` whose GPT-Live sideband WebSocket is cassette-backed.
+
+    Stored under its own subdirectory, like `openai_ws_sideband_cassette`, so it doesn't collide with the
+    HTTP VCR cassette of the offer the session was started with.
+    """
+    if not openai_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'openai_live', subdir='test_openai_live_ws_sideband') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
 
 

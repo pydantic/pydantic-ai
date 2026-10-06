@@ -6,18 +6,18 @@ import pytest
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_menu import (
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_options import model_options
+from pydantic_clai2.models.model_settings import model_defaults
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import (
     ModelSettingsSource,
     build_model_settings_picker,
     model_settings_command,
     model_settings_summary,
 )
-from pydantic_clai2.model_options import model_options
-from pydantic_clai2.model_settings import model_defaults
-from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.menu_script import Script, make_context, pick
 
 
@@ -41,6 +41,67 @@ def test_defaults_apply_without_saved_preferences(tmp_path: Path, provider: str,
 @pytest.mark.parametrize('model', ['openai:gpt-5.5', 'openai:gpt-5.60', 'gpt-60', 'gpt-5.6ish', 'test', ''])
 def test_other_models_unchanged(model: str) -> None:
     assert model_defaults(model=model) == {}
+
+
+@pytest.mark.parametrize(('provider', 'ttl'), [('anthropic', '5m'), ('gateway/anthropic', '5m'), ('claude-code', '1h')])
+def test_anthropic_cache_defaults(tmp_path: Path, provider: str, ttl: str) -> None:
+    context, _ = make_context(tmp_path)
+    model = f'{provider}:claude-sonnet-4-6'
+    expected = {
+        'anthropic_cache': ttl,
+        'anthropic_cache_instructions': ttl,
+        'anthropic_cache_tool_definitions': ttl,
+    }
+    assert context.model_settings(model) == expected
+    assert context.store.model_settings(model) == {}
+    source = ModelSettingsSource(context.store, model)
+    menu = FieldMenu(source, searchable=False)
+    for key in expected:
+        row = menu.row_for(key)
+        assert row is not None
+        assert source.current(row) == ttl
+    context.store.save_model_settings(model, {key: False for key in expected})
+    assert context.model_settings(model) == {key: False for key in expected}
+
+
+@pytest.mark.parametrize('provider', ['anthropic', 'claude-code'])
+async def test_cache_defaults_reach_anthropic_request(
+    tmp_path: Path, provider: str, allow_model_requests: None
+) -> None:
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+
+    from pydantic_ai import Agent, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
+
+    context, _ = make_context(tmp_path)
+    client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(type='text', text='Done')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    agent = Agent(model, instructions='Static instructions')
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        """Look up information."""
+        return 'result'
+
+    await agent.run(
+        'Continue',
+        model_settings=context.model_settings(f'{provider}:claude-sonnet-4-6'),
+        message_history=[
+            ModelRequest(parts=[UserPromptPart('Start')]),
+            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call')]),
+            ModelRequest(parts=[ToolReturnPart('lookup', 'result', tool_call_id='call')]),
+        ],
+    )
+    request = get_mock_chat_completion_kwargs(client)[0]
+    expected = {'type': 'ephemeral', 'ttl': '1h' if provider == 'claude-code' else '5m'}
+    assert request['cache_control'] == expected
+    assert request['system'][-1]['cache_control'] == expected
+    assert request['tools'][-1]['cache_control'] == expected
+    assert model.resolve_cache_retention(None) is None  # Library defaults remain opt-in.
 
 
 def test_bare_identity_and_override_reset(tmp_path: Path) -> None:

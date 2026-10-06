@@ -9,7 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+
+
+@pytest.fixture(autouse=True)
+def disable_subprocess_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Subprocess coverage adds import overhead to the CLI startup hang guard.
+    for name in tuple(os.environ):
+        if name.startswith('COVERAGE_'):
+            monkeypatch.delenv(name)
 
 
 @pytest.mark.parametrize('args', [[], ['--model', 'test', '--request-limit', '12'], ['--request-limit', '0']])

@@ -29,6 +29,8 @@ from pytest_mock import MockerFixture
 import pydantic_ai._http
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
+from pydantic_ai._cache_health import ConversationCacheMarkStore
+from pydantic_ai.capabilities import instrumentation as instrumentation_capability
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -47,7 +49,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
+from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from . import cassette_hooks
@@ -106,6 +108,10 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
+    )
+    config.addinivalue_line(
+        'markers',
+        'shadow_divergence(reason): the realtime session cores are known to disagree on this trace; reason required',
     )
 
 
@@ -370,10 +376,6 @@ def anyio_backend(pytestconfig: pytest.Config) -> str:
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # coverage reads Python source files while collecting coverage data. Remove these once
-    # https://github.com/cbornet/blockbuster/pull/69 is released in a compatible version.
-    ('os.stat', 'coverage/python.py', 'get_python_source'),
-    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
     # example printing from inside a running event loop trips the detector on the harness's own
     # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
@@ -408,6 +410,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     ('io.TextIOWrapper.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     ('io.BufferedReader.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    # Decoding the first stream from an Anthropic Bedrock client loads botocore's `bedrock-runtime` service model
+    # from disk, once per process (`lru_cache`).
+    ('os.stat', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('os.listdir', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('io.BufferedReader.read', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
     # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
@@ -656,6 +664,13 @@ def no_instrumentation_by_default():
     ImageGenerator.instrument_all(False)
 
 
+@pytest.fixture(autouse=True)
+def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
+    id (or pin the clock) must not see each other's."""
+    monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
+
+
 try:
     import logfire
     from opentelemetry import context as otel_context
@@ -747,12 +762,15 @@ def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
     if vcr.play_count == 0 and not strict_usage:
         return
 
-    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
-    if unused_indexes:
-        pytest.fail(
-            f'Cassette {vcr.path} did not play all interactions: '
-            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
-        )
+    # Each protocol numbers its interactions from 0, and `play_counts` only covers HTTP.
+    unused = {
+        'HTTP': [index for index in range(len(vcr.interactions)) if vcr.play_counts.get(index, 0) == 0],
+        'gRPC': [index for index, played in enumerate(vcr.grpc_played_indices) if not played],
+        'WebSocket': [index for index, played in enumerate(vcr.ws_played_indices) if not played],
+    }
+    if any(unused.values()):
+        details = '; '.join(f'unused {protocol} indexes: {indexes}' for protocol, indexes in unused.items() if indexes)
+        pytest.fail(f'Cassette {vcr.path} did not play all interactions: {details}')
 
 
 @pytest.fixture(autouse=True)
@@ -860,15 +878,14 @@ async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
 
 
 _HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
-_HttpClientCache: TypeAlias = 'dict[tuple[str, int, int], _HttpClient]'
+_HttpClientCache: TypeAlias = 'dict[tuple[str, str], _HttpClient]'
 
 
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
     """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
 
-    Within a single test, calls with the same (timeout, connect) args reuse the same
-    client. On teardown, all clients are closed — no process-global state leaks.
+    Within a single test, calls with the same arguments reuse the same client. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
     companion `close_httpx_clients` fixture handles async cleanup first.
@@ -881,7 +898,8 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         family: str, factory: Callable[..., _HttpClient], expected: type[_HttpClient]
     ) -> Callable[..., _HttpClient]:
         def cached_per_test(**kwargs: Any) -> _HttpClient:
-            key = (family, kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+            # `repr`, because `Timeout` and `Limits` arguments compare by value but aren't hashable.
+            key = (family, repr(sorted(kwargs.items())))
             if key not in cache or cache[key].is_closed:
                 cache[key] = factory(**kwargs)
             client = cache[key]

@@ -1,216 +1,243 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br
-      connection:
-      - keep-alive
-      content-length:
-      - '670'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
     method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Give me details about Barcelona
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      output_config:
-        format:
-          schema:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-              country:
-                type: string
-              population:
-                type: integer
-            required:
-            - city
-            - country
-            - population
-            type: object
-          type: json_schema
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_coordinates
     uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '616'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=15516
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      content:
-      - caller:
-          type: direct
-        id: toolu_01XMSifipsUF53jokN1mo3X1
-        input:
-          city: Barcelona
-        name: get_coordinates
-        type: tool_use
-      id: msg_01C8QmrbcFeawb8HGtqFhip5
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 744
-        output_tokens: 53
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1025'
+      - "615"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Give me details about Barcelona
-          type: text
-        role: user
-      - content:
-        - id: toolu_01XMSifipsUF53jokN1mo3X1
-          input:
-            city: Barcelona
-          name: get_coordinates
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 41.3874° N, 2.1686° E
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Give me details about Barcelona
             type: text
-          is_error: false
-          tool_use_id: toolu_01XMSifipsUF53jokN1mo3X1
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      output_config:
-        format:
-          schema:
+        model: claude-sonnet-4-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+                population:
+                  type: integer
+              additionalProperties: false
+              required:
+              - city
+              - country
+              - population
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_coordinates
+          description: ""
+          input_schema:
             additionalProperties: false
             properties:
               city:
                 type: string
-              country:
-                type: string
-              population:
-                type: integer
             required:
             - city
-            - country
-            - population
             type: object
-          type: json_schema
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_coordinates
-    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '569'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=3204
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-952cfa3ec4f97bfd59c2fb04c6e46056-1384d4f9c3d91c78-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3eaaMbTps3STcWYir1","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":744,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_018Z7VFy3hRjGFWgwTdGrFF4","name":"get_coordinates","input":{},"caller":{"type":"direct"}}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Barc"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"elona\"}"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":744,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":53}     }
+
+        event: message_stop
+        data: {"type":"message_stop"            }
+
+  recorded_at: 2026-09-29T16:28:35.431142+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "936"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
       content:
-      - text: '{"city": "Barcelona", "country": "Spain", "population": 1620343}'
-        type: text
-      id: msg_01Q2ioDWsW1Do18uRg3fXkGa
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 824
-        output_tokens: 23
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: Give me details about Barcelona
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_018Z7VFy3hRjGFWgwTdGrFF4
+            type: tool_use
+            name: get_coordinates
+            input:
+              city: Barcelona
+        - role: user
+          content:
+          - tool_use_id: toolu_018Z7VFy3hRjGFWgwTdGrFF4
+            type: tool_result
+            content:
+            - text: 41.3874° N, 2.1686° E
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+                population:
+                  type: integer
+              additionalProperties: false
+              required:
+              - city
+              - country
+              - population
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_coordinates
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-4563cfe60f02e6b3a328f6ec8c9f32c1-4ffb3b7ee2bb6286-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3ehcmXMFKMy49Rytr8","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":824,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"city\": \"Barcelona\", \"country\":"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \"Spain\", \"population\": 1"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"636"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"762"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"}"} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":824,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":23}   }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-09-29T16:28:36.979808+00:00

@@ -65,6 +65,7 @@ acp = ["agent-client-protocol>=0.11,<0.12"]
 exa = ["exa-py>=2.16.0"]
 # 2.0 changed tool-result serialization in a way the durable bridge does not handle yet.
 aws-lambda = ["aws-durable-execution-sdk-python>=1.7.0,<2 ; python_full_version >= '3.11'"]
+absurd = ["absurd-sdk>=0.5.0,<1"]
 # 3.2 types `page_age` as `datetime | str`, and the toolset formats it as a `datetime`.
 youdotcom = ["youdotcom>=3.1.2,<3.2"]
 mongodb = ["pymongo>=4.17.0"]
