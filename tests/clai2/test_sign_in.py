@@ -4,7 +4,6 @@ import gc
 import io
 import socket
 import threading
-import time
 import webbrowser
 from collections.abc import AsyncIterator, Callable
 
@@ -52,6 +51,8 @@ class Service:
         self.error = error
         self.hang = hang
         self.shown: Callable[[str], object] | None = None
+        self.started = threading.Event()
+        """Set once the sign-in has shown its first lines, for a waiting screen that runs on another thread."""
 
     def signed_in(self) -> bool | None:
         return self.state
@@ -60,6 +61,7 @@ class Service:
         self.shown = show
         show('Open https://example.test/one')
         show('Open https://example.test/two')
+        self.started.set()
         if self.error is not None:
             raise self.error
         if self.hang:
@@ -103,8 +105,7 @@ async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monk
     seen: list[tuple[str, str]] = []
 
     def run_choice(menu: Menu) -> MenuResult:
-        while service.shown is None:  # pragma: no cover -- depends on which task starts first
-            time.sleep(0.01)
+        assert service.started.wait(timeout=5)
         read_key: Callable[[], str] = menu._read_key  # pyright: ignore[reportPrivateUsage]
         preview = menu._preview  # pyright: ignore[reportPrivateUsage]
         assert preview is not None and service.shown is not None
