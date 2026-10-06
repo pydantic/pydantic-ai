@@ -82,6 +82,7 @@ spec = ["pydantic-ai-slim[spec]=={{ version }}"]
 mcp-tasks = ["pydantic-ai-slim[mcp-tasks]=={{ version }}"]
 realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
 openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
+openai-chatgpt = ["pydantic-ai-slim[openai-chatgpt]=={{ version }}"]
 google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
 xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
 

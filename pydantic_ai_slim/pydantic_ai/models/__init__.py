@@ -162,6 +162,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'fireworks',
         'nebius',
         'openai-codex',
+        'openai-chatgpt',
         'openrouter',
         'ovhcloud',
         'sambanova',
@@ -1829,6 +1830,10 @@ def infer_model(  # noqa: C901
         from .github_copilot import GitHubCopilotModel
 
         return GitHubCopilotModel(model_name, provider=provider)
+    elif model_kind == 'openai-chatgpt':
+        from .openai_chatgpt import OpenAIChatGPTModel
+
+        return OpenAIChatGPTModel(model_name, provider=provider)
     elif model_kind == 'openai-codex':
         from .openai_codex import OpenAICodexModel
 
