@@ -93,15 +93,25 @@ class PromptSurface(io.StringIO):
                 self._holds -= 1
 
     def write(self, text: str) -> int:
-        """Record output and repaint, forwarding palette controls to the terminal."""
+        """Record output and repaint, forwarding palette controls to the terminal.
+
+        A write of controls alone repaints on the next frame instead of now: a palette change
+        arrives as several writes, and a frame painted between them would split the sequence.
+        """
         with self._lock:
-            for control in _TERMINAL_OSC.findall(text):
+            controls = _TERMINAL_OSC.findall(text)
+            for control in controls:
                 self.output.write(control)
+            if controls:
+                self.output.flush()
+                # Every cell's colours changed, so the next frame repaints them all.
                 self._previous = None
             self.transcript.write(text)
-            if text:
-                self._partial = not text.endswith('\n')
-            self.changed()
+            if content := _TERMINAL_OSC.sub('', text):
+                self._partial = not content.endswith('\n')
+                self.changed()
+            elif controls:
+                self._dirty = True
         return len(text)
 
     def changed(self) -> None:

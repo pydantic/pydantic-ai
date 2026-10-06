@@ -5,6 +5,7 @@ import io
 import pytest
 from rich.console import Console
 from rich.text import Text
+from termflow.themes import reset_palette
 
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, FRAME_INTERVAL, LEAVE, MODES_OFF, MODES_ON, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -206,10 +207,33 @@ def test_palette_controls_reach_the_terminal_and_repaint(terminator: str) -> Non
     screen.surface.paint(ROWS)
     start = len(screen.terminal.getvalue())
     screen.write(f'\x1b]11;#0a1929{terminator}')
-    update = screen.terminal.getvalue()[start:]
-    assert update.startswith(f'\x1b]11;#0a1929{terminator}')
-    assert '\x1b[2J' in update
+    assert screen.terminal.getvalue()[start:] == f'\x1b]11;#0a1929{terminator}', 'the frame waits for the next refresh'
+    screen.surface.refresh()
+    assert '\x1b[2J' in screen.terminal.getvalue()[start:], 'every cell repaints in the new colours'
     assert screen.surface.transcript.frame(width=80, height=2).rows == ('',)
+
+
+async def test_palette_reset_reaches_the_terminal_unsplit_on_a_slow_runner() -> None:
+    """Termflow writes a reset as three controls; no frame may paint between them, however slow."""
+    screen = Screen()
+    screen.surface.paint(ROWS)
+    screen.write('partial')
+    await screen.surface.drain()
+    start = len(screen.terminal.getvalue())
+
+    class Slow(io.StringIO):
+        def write(self, text: str) -> int:
+            screen.now += 1  # Every write lands after the frame interval.
+            return screen.surface.write(text)
+
+    reset_palette(output=Slow())
+    update = screen.terminal.getvalue()[start:]
+    assert update == '\x1b]104\x07\x1b]111\x07\x1b]110\x07'
+    screen.surface.refresh()
+    assert screen.terminal.getvalue()[start:].count('\x1b[2J') == 1, 'one repaint, not one per control'
+    await screen.surface.drain()
+    rows = [Text.from_ansi(row).plain for row in screen.surface.transcript.frame(width=80, height=5).rows]
+    assert rows == ['partial', ''], 'controls are not content, so no blank line follows'
 
 
 def test_scrolling_holds_the_view_while_output_arrives_and_returns_to_follow() -> None:
