@@ -1937,6 +1937,11 @@ class Writes(Plugin):
 CLAI flushes any streaming text before it prints what you return, so your output
 never lands in the middle of a paragraph.
 
+`/resume` shows the restored conversation through the same renderers. It sends
+`FunctionToolCallEvent` and `FunctionToolResultEvent` built from the saved
+messages, so a renderer for those also draws resumed turns. Events that only
+streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
+
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,

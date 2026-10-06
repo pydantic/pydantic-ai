@@ -85,6 +85,7 @@ from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._branding import print_banner
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.history import render_history
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
@@ -580,12 +581,15 @@ def create_shell(
         Command(name='help', description='Show commands', handler=lambda args: f'{commands.help(args)}\n{SHELL_HELP}')
     )
 
-    def clear(_: list[str]) -> str:
-        session.clear()
+    def reset_screen() -> None:
         console.clear()
         # Forget the old output too, or a resize or the exit printout would show it again.
         transcript.clear()
         _print_welcome(project, console)
+
+    def clear(_: list[str]) -> str:
+        session.clear()
+        reset_screen()
         return ''
 
     clear_ = Command(
@@ -731,6 +735,15 @@ def create_shell(
         )
     )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
+
+    async def show_resumed(messages: Sequence[ModelMessage]) -> None:
+        # The live panel swaps to the restored conversation; startup output above it stays.
+        if shell.editor is not None:
+            reset_screen()
+        renderer = _stream_renderer(console, settings=context.settings, renderers=loader.renderers(), smooth=False)
+        await render_history(messages, console=console, renderer=renderer)
+
+    sessions.on_resume = show_resumed
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     TranscriptBuffer.rebind(transcript)
     return shell
@@ -1215,6 +1228,24 @@ def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
     return model.model_name if model else 'agent default'
 
 
+def _stream_renderer(
+    console: Console, *, settings: Settings, renderers: Sequence[Renderer], smooth: bool = True
+) -> StreamRenderer:
+    """The renderer for a turn's events, configured by the display settings."""
+    return StreamRenderer(
+        console,
+        stop_loading=lambda: None,
+        show_thinking=settings.thinking,
+        smooth_seconds=settings.smooth_seconds,
+        show_tool_output=settings.tool_output,
+        shell_lines=settings.shell_lines,
+        grep_lines=settings.grep_lines,
+        tool_arg_chars=settings.tool_arg_chars,
+        renderers=renderers,
+        smooth=smooth,
+    )
+
+
 async def _run_prompt(
     session: Session[DepsT, OutputT],
     text: str | None,
@@ -1228,16 +1259,8 @@ async def _run_prompt(
     images: Sequence[BinaryContent] = (),
     tasks: Tasks | None = None,
 ) -> TurnEnd:
-    renderer = StreamRenderer(
-        console,
-        stop_loading=lambda: None,
-        show_thinking=settings.thinking,
-        smooth_seconds=settings.smooth_seconds,
-        show_tool_output=settings.tool_output,
-        shell_lines=settings.shell_lines,
-        grep_lines=settings.grep_lines,
-        tool_arg_chars=settings.tool_arg_chars,
-        renderers=[*renderers, task_row] if tasks is not None else renderers,
+    renderer = _stream_renderer(
+        console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
     )
     status.streamed_chars = 0
     status.output_tokens = None

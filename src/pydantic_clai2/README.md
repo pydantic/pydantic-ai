@@ -1188,6 +1188,14 @@ or execute pending tools. Background naming may make a separate, tool-free model
 request. Your current model, working directory, credentials, and approved plugins
 remain in effect. The saved model name is shown for reference.
 
+Resuming shows the restored conversation in the terminal: the last 10 prompts
+with their answers, reasoning, and tool calls, drawn the way they streamed.
+Older turns are summarized in one line; the model still receives the whole
+history. Inside CLAI, `/resume` replaces the visible conversation, as `/clear`
+does, and your terminal's own scrollback keeps the previous one. Output that
+only streamed, such as shell previews and diffs, is not saved, so those tools
+show their call line.
+
 The browser follows Code Puppy's project/session design:
 
 - Projects on the left, with session counts. The current directory is preselected.
