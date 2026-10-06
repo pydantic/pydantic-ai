@@ -343,6 +343,7 @@ def test_codex_compaction_replaces_the_history(tmp_path: Path) -> None:
 def test_codex_headers_titles_and_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = codex_sessions.home()
     assert root == Path.home() / '.codex'
+    # No index yet, or one that cannot be read.
     assert codex_sessions.titles(root) == {}
     path = codex_session(tmp_path)
     write_jsonl(
@@ -381,6 +382,7 @@ async def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
     write_jsonl(Path.home() / '.claude' / 'projects' / '-work' / 'blank.jsonl', [])
     # Listed, but gone by the time it is read, as a transcript deleted meanwhile is.
     (Path.home() / '.claude' / 'projects' / '-work' / 'deleted.jsonl').symlink_to(tmp_path / 'missing')
+    (codex.parent / 'rollout-2026-10-01T13-00-00-gone.jsonl').symlink_to(tmp_path / 'missing')
     catalog = ImportCatalog(('claude', 'codex'))
     first, second = catalog.listing()
     assert (first.title, first.title_source, first.tags) == ('Verbose flag', 'generated', ('codex',))
@@ -395,7 +397,7 @@ async def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
     assert imported.messages() == claude_code_sessions.messages(claude)
     assert find_import('codex', CODEX_ID).summary == first
     assert find_import('codex', CODEX_ID).path == codex
-    for source, native_id in (('claude', 'missing'), ('claude', '../escape'), ('codex', '*')):
+    for source, native_id in (('claude', 'missing'), ('claude', '../escape'), ('codex', '*'), ('codex', 'gone')):
         with pytest.raises(LookupError, match=r'No .* session'):
             find_import(source, native_id)  # pyright: ignore[reportArgumentType]
     assert import_source('codex') == 'codex'

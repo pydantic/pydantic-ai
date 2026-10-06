@@ -49,10 +49,13 @@ def find(root: Path, native_id: str) -> Path | None:
 
 def titles(root: Path) -> dict[str, str]:
     """Session names from Codex's index, the latest name for each session winning."""
-    index = root / 'session_index.jsonl'
-    if not index.is_file():
+    try:
+        return {
+            text(entry.get('id')): text(entry.get('thread_name')) for entry in records(root / 'session_index.jsonl')
+        }
+    except OSError:
+        # Names are optional: without the index, sessions keep their first prompt as the title.
         return {}
-    return {text(entry.get('id')): text(entry.get('thread_name')) for entry in records(index)}
 
 
 def header(path: Path) -> Header | None:

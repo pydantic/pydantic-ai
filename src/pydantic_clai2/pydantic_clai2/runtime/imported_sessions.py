@@ -82,6 +82,14 @@ class ImportedSession:
         return _SOURCES[self.source].messages(self.path)
 
 
+def _modified(path: Path) -> float | None:
+    """A transcript's modification time, or `None` once it is gone, as one deleted since it was listed is."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
 def _imported(source: ImportSource, path: Path, *, modified: float, titles: dict[str, str]) -> ImportedSession | None:
     spec = _SOURCES[source]
     try:
@@ -123,12 +131,8 @@ class ImportCatalog:
             root = spec.home()
             self._titles[source] = spec.titles(root)
             for path in spec.files(root):
-                try:
-                    modified = path.stat().st_mtime
-                except OSError:
-                    # Removed since it was listed, or a broken link: skip it rather than the whole browser.
-                    continue
-                self._files.append((modified, source, path))
+                if (modified := _modified(path)) is not None:
+                    self._files.append((modified, source, path))
         self._files.sort(reverse=True)
         self._read: dict[Path, ImportedSession | None] = {}
         self._by_id: dict[str, ImportedSession] = {}
@@ -161,9 +165,10 @@ def find_import(source: ImportSource, native_id: str) -> ImportedSession:
     root = spec.home()
     # The ID becomes part of a glob pattern, so it may hold only the characters session IDs use.
     path = spec.find(root, native_id) if re.fullmatch(r'[\w-]+', native_id) else None
-    imported = (
-        None if path is None else _imported(source, path, modified=path.stat().st_mtime, titles=spec.titles(root))
-    )
+    modified = None if path is None else _modified(path)
+    imported = None
+    if path is not None and modified is not None:
+        imported = _imported(source, path, modified=modified, titles=spec.titles(root))
     if imported is None:
         raise LookupError(f'No {spec.label} session: {native_id}')
     return imported
