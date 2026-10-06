@@ -8,7 +8,7 @@ request would exercise.
 
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import pytest
@@ -36,7 +36,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 def _history(idle: timedelta) -> list[ModelMessage]:
@@ -350,5 +350,5 @@ def test_outlook_defaults_now_to_current_time():
 
 
 def _recent_history() -> list[ModelMessage]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return [ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now)]

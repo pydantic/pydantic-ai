@@ -196,6 +196,13 @@ inference without emitting a passing review or other fabricated agent result. Th
 non-model provider-health monitor owns incident issue creation and recovery; do not
 enable gh-aw's generic failure-as-issue reporting for these workflows.
 
+Older compiled workflows that pass `MINIMAX_API_KEY` without a `ZAI_API_KEY`
+environment entry are intentionally blocked without an operational incident.
+They fetch this controller from the default branch, so the skip applies even
+before their branch receives the provider migration. Update the branch from
+`main` to restore agent runs. An empty or missing Z.ai credential in current
+configuration still follows the normal provider-health checks.
+
 The controller keeps one assigned operational incident for a matching failure
 scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
 in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow from

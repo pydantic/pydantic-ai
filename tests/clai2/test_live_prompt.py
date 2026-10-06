@@ -29,6 +29,7 @@ from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
+from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
 
@@ -52,7 +53,9 @@ async def editor(*, output: io.StringIO | None = None) -> AsyncGenerator[tuple[L
         async with live.opened():
             yield live, pipe, output
         assert console.file is output
-        assert output.getvalue().endswith('\x1b[?25h\x1b[?2026l')
+        value = output.getvalue()
+        assert value.rindex(LEAVE) > value.rindex(ENTER), 'the editor returns the main screen'
+        assert value.rindex(MODES_OFF) > value.rindex(MODES_ON)
 
 
 async def test_long_paste_submission_and_history() -> None:
@@ -103,22 +106,30 @@ async def test_option_backspace_deletes_word_before_cursor(sequence: str) -> Non
 
 
 async def test_completed_and_partial_output_never_repaint_editor() -> None:
-    async with editor() as (live, _, output):
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, _, _):
         live.buffer.replace('retained draft')
         live.paint()
-        start = len(output.getvalue())
+        editor_rows = terminal.lines()[-4:]
+        start = len(terminal.getvalue())
         for chunk in ('streaming ', 'partial', '\n', 'next line\n'):
             live.console.file.write(chunk)
             live.console.file.flush()
-        assert output.getvalue()[start:] == 'streaming partial\nnext line\n'
+        live.output.refresh()
+        update = terminal.getvalue()[start:]
+        assert 'retained draft' not in update and '\x1b[2J' not in update
+        assert terminal.lines()[:2] == ['streaming partial', 'next line']
+        assert terminal.lines()[-4:] == editor_rows
         assert live.buffer.text == 'retained draft'
+        start = len(terminal.getvalue())
         live.paint()
-        assert output.getvalue()[start:] == 'streaming partial\nnext line\n'
+        assert terminal.getvalue()[start:] == ''
 
 
 @pytest.mark.parametrize('thinking', [False, True])
 async def test_real_termflow_writes_do_not_clear_input(thinking: bool) -> None:
-    async with editor() as (live, _, output):
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, _, output):
         live.buffer.replace('retained draft')
         live.paint()
         start = len(output.getvalue())
@@ -126,9 +137,12 @@ async def test_real_termflow_writes_do_not_clear_input(thinking: bool) -> None:
         part = ThinkingPart(content='A thinking burst') if thinking else TextPart(content='A response burst\n')
         await renderer.on_stream_event(PartStartEvent(index=0, part=part))
         await renderer.finish()
+        live.output.refresh()
         assert live.buffer.text == 'retained draft'
         text = output.getvalue()[start:]
-        assert 'A thinking burst' in Text.from_ansi(text).plain if thinking else 'A response burst' in text
+        # Only changed cells are sent, so read the screen rather than the bytes.
+        assert ('Thinking A thinking burst' if thinking else 'A response burst') in terminal.lines()[0]
+        assert 'retained draft' not in text
         for forbidden in ('\x1b[J', '\x1b[2K', '\x1b[?25h', '┌', '└'):
             assert forbidden not in text
 
@@ -144,6 +158,7 @@ async def test_menu_suspension_preserves_draft_and_output() -> None:
             assert output.getvalue()[start:] == ''
             async with live.suspended():
                 live.console.print('menu output')
+                live.output.refresh()
                 assert 'menu output' in output.getvalue()
             assert live.buffer.text == 'draft'
         assert 'draft' in Text.from_ansi(output.getvalue()).plain
@@ -530,7 +545,7 @@ async def test_blocked_completion_does_not_hold_terminal_ownership(menu: bool) -
                     assert live.buffer.text == '/blocked '
                     live.commands.unregister(['blocked'])
         assert not finished.is_set()
-        assert output.getvalue().endswith('\x1b[?25h\x1b[?2026l')
+        assert output.getvalue().endswith(LEAVE)
         before = output.getvalue()
     finally:
         release.set()
@@ -622,3 +637,81 @@ async def test_removing_queued_prompt_does_not_discard_pending_wake(wake: bool) 
             with anyio.move_on_after(0) as waiting:
                 await live.read()
             assert waiting.cancelled_caught
+
+
+async def test_page_keys_and_wheel_scroll_the_transcript_without_touching_the_draft() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, _pipe, _):
+        for index in range(60):
+            live.output.write(f'line {index}\n')
+        live.buffer.replace('draft')
+        live.notice = 'kept notice'
+        live.paint()
+        newest = terminal.lines()[0]
+        live.feed('pageup')
+        assert live.output.view.anchor is not None
+        assert terminal.lines()[0] != newest
+        assert live.buffer.text == 'draft' and live.notice == 'kept notice'
+        paged = terminal.lines()[0]
+        live.feed('mouse', '\x1b[<0;10;5M')  # A click scrolls nothing.
+        assert terminal.lines()[0] == paged
+        live.feed('mouse', '\x1b[<68;10;5M')  # Shift+wheel up.
+        assert terminal.lines()[0] == f'line {int(paged.split()[1]) - WHEEL_ROWS}'
+        live.feed('mouse', 'not a mouse report')
+        live.feed('pagedown')
+        live.feed('pagedown')
+        assert live.output.view.anchor is None
+        live.feed('pageup')
+        live.feed('enter')
+        assert await live.read() == 'draft'
+        assert live.output.view.anchor is None, 'submitting returns to the newest output'
+
+
+async def test_wheel_reports_arrive_through_the_decoder() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal) as (live, pipe, _):
+        for index in range(60):
+            live.output.write(f'line {index}\n')
+        live.paint()
+        pipe.send_text('\x1b[<64;10;5M')
+        with anyio.fail_after(2):
+            while live.output.view.anchor is None:
+                await anyio.sleep(0.01)
+        pipe.send_text('\x1b[6~')
+        with anyio.fail_after(2):
+            while live.output.view.anchor is not None:  # pyright: ignore[reportUnnecessaryComparison] -- changed by input
+                await anyio.sleep(0.01)
+
+
+async def test_steering_returns_the_transcript_to_the_newest_output() -> None:
+    steered: list[str] = []
+
+    def steer(text: str) -> bool:
+        steered.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        for index in range(60):
+            live.output.write(f'line {index}\n')
+        live.paint()
+        # The draft steers.
+        live.feed('pageup')
+        assert live.output.view.anchor is not None
+        live.buffer.replace('steer the draft')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is None
+        # A queued prompt steers.
+        live.buffer.replace('steer the queue')
+        live.feed('enter')
+        live.feed('pageup')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is None
+        # A command never steers, so the view stays where the user scrolled.
+        live.buffer.replace('/help')
+        live.feed('enter')
+        live.feed('pageup')
+        live.feed('alt-enter')
+        assert live.output.view.anchor is not None
+        assert await live.read() == '/help'
+    assert steered == ['steer the draft', 'steer the queue']

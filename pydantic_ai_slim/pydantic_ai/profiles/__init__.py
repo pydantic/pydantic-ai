@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from textwrap import dedent
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
@@ -475,12 +475,12 @@ def prompt_cache_outlook(
         return 'unknown'
 
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     # Historical messages may carry naive timestamps; assume UTC so the subtraction is well-defined.
     if last_timestamp.tzinfo is None:
-        last_timestamp = last_timestamp.replace(tzinfo=timezone.utc)
+        last_timestamp = last_timestamp.replace(tzinfo=UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
 
     idle = now - last_timestamp
     return 'warm' if idle <= retention else 'cold'

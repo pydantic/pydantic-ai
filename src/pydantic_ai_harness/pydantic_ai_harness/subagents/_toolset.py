@@ -631,7 +631,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         timeout = sub_agent.timeout_seconds
         try:
             result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             if timeout is None or isinstance(exc, HookTimeoutError):
                 # The child itself timed out: a hook overran its own budget, or no
                 # delegation budget is set at all. That is a child crash, so the

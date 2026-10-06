@@ -9,12 +9,11 @@ Tests verify that the correct tool_choice value is sent to each provider's API.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool

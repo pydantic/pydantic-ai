@@ -4,7 +4,7 @@ import asyncio
 import warnings
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NotRequired, Self
 
 import pytest
 from dirty_equals import IsJson, IsList
@@ -12,7 +12,7 @@ from dirty_equals import IsJson, IsList
 # `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from typing_extensions import NotRequired, Self, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
