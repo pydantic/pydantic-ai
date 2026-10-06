@@ -1360,8 +1360,6 @@ class GoogleRealtimeModel(RealtimeModel):
                     try:
                         session = await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
                     except TimeoutError as e:
-                        # On Python 3.10, `asyncio.TimeoutError` isn't the built-in `TimeoutError` that
-                        # the initial dial and a reconnect's retry both handle.
                         raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
             cm = opening
             return session

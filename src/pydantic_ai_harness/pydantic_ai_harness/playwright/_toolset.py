@@ -1761,8 +1761,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         try:
             return await asyncio.wait_for(awaitable, timeout_ms / 1000)
         except TimeoutError as exc:
-            # asyncio.wait_for raises asyncio.TimeoutError, which is a distinct class
-            # from the builtin TimeoutError on Python 3.10 (aliased only from 3.11).
+            # Map the timeout to Playwright's error type so the tool's error handler catches it.
             raise PlaywrightTimeoutError(f'Timeout {timeout_ms}ms exceeded.') from exc
 
     def _timeout_error(self, timeout_ms: int | None) -> str | None:

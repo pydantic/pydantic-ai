@@ -19,7 +19,7 @@ from pathlib import Path
 
 # The workflows install exactly one pinned third-party package for these
 # scripts: pydantic, the typed boundary in `triage_models`. The repo-wide ban
-# on `typing.TypedDict` exists for pydantic validation on Python 3.10/3.11;
+# on `typing.TypedDict` exists for pydantic validation on Python 3.11;
 # these scripts only run on the newer runner Python.
 from typing import Annotated, Any, Literal, TypedDict, cast  # noqa: TID251
 
