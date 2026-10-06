@@ -601,8 +601,9 @@ Two built-in plugins connect to [Logfire](https://pydantic.dev/logfire): `observ
 sends traces of your runs there, and the Logfire plugin (id `logfire_mcp`, command
 `/logfire`) lets the agent query your data through Logfire's MCP server. Both ask
 which Logfire with the same picker: Logfire US, Logfire EU, or another typed as a
-host, the URL you open it at, or its MCP URL. Whichever you pick in one, the other
-starts from.
+host, the URL you open it at, or its MCP URL. The one you last picked in either is
+remembered, and the other plugin's picker starts there until it has a Logfire of
+its own.
 
 [PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
 
