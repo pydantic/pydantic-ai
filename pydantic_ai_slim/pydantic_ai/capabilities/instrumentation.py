@@ -478,12 +478,16 @@ class Instrumentation(AbstractCapability[Any]):
 
         if health.not_enabled:
             span.set_attribute('pydantic_ai.cache.not_enabled', True)
-            not_enabled_attributes: dict[str, str | int] = {'input_tokens': response.usage.input_tokens}
-            if response.provider_name is not None:
-                not_enabled_attributes['provider_name'] = response.provider_name
-            if response.model_name is not None:  # pragma: no branch
-                not_enabled_attributes['model_name'] = response.model_name
-            span.add_event('pydantic_ai.cache.not_enabled', attributes=not_enabled_attributes)
+            not_enabled_attributes = {
+                'input_tokens': response.usage.input_tokens,
+                'provider_name': response.provider_name,
+                'model_name': response.model_name,
+            }
+            # OTel attributes cannot be `None`.
+            span.add_event(
+                'pydantic_ai.cache.not_enabled',
+                attributes={key: value for key, value in not_enabled_attributes.items() if value is not None},
+            )
             return
 
         collapse = health.collapse

@@ -43,7 +43,9 @@ with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 with try_import() as google_imports:
@@ -578,3 +580,24 @@ class TestCachingNotEnabled:
         assert model._caching_not_enabled(None)
         assert WrapperModel(model)._caching_not_enabled(None)
         assert not model._caching_not_enabled(AnthropicModelSettings(anthropic_cache_instructions=False))
+
+    @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+    def test_bedrock_provider_setting_counts_as_configured(self, bedrock_provider: BedrockProvider):
+        model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+        assert model._caching_not_enabled(None)
+        assert not model._caching_not_enabled(BedrockModelSettings(bedrock_cache_messages=False))
+
+    @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+    def test_openai_chat_provider_setting_counts_as_configured(self):
+        model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
+        assert model._caching_not_enabled(None)
+        assert not model._caching_not_enabled(OpenAIChatModelSettings(openai_cache_instructions=False))
+        assert model.resolve_cache_retention(OpenAIChatModelSettings(openai_cache_instructions=False)) == timedelta(
+            minutes=30
+        )
+
+    @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+    def test_openrouter_provider_setting_counts_as_configured(self):
+        model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key='test'))
+        assert model._caching_not_enabled(None)
+        assert not model._caching_not_enabled(OpenRouterModelSettings(openrouter_cache_messages=False))

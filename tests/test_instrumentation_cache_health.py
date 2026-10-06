@@ -32,7 +32,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.settings import CacheSetting, ModelSettings
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import try_import
@@ -938,19 +938,10 @@ def test_concurrent_runs_of_a_new_conversation_keep_each_others_marks() -> None:
 
 
 class ProviderCacheFunctionModel(FunctionModel):
-    """A model that needs caching configured, with a provider-specific `provider_cache` setting.
-
-    Like `anthropic_cache_instructions` and friends, the setting takes precedence over the unified
-    `cache` setting when present, including when it's `False`.
-    """
+    """A model that needs caching configured, with a provider-specific `provider_cache` setting."""
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return 'provider_cache' in merged_settings
-
-    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
-        if 'provider_cache' in merged_settings:
-            return (cast(dict[str, Any], merged_settings)['provider_cache'],)
-        return super()._effective_cache_settings(merged_settings)
 
 
 def not_enabled_cache_spans(
