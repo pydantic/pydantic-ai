@@ -36,12 +36,12 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Annotated, Any, ClassVar, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, assert_never, cast
 from urllib.parse import quote
 
 from pydantic import Field, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import TypedDict, assert_never
+from typing_extensions import TypedDict
 
 # The delegated backend is an ordinary Responses call, so its usage is mapped by the same code that
 # maps a direct one — including the cache and reasoning breakdowns genai-prices reads.

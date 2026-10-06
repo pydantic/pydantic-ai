@@ -13,7 +13,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import anyio
@@ -115,7 +115,7 @@ class _SignalingModel(RealtimeModel):
     ) -> RealtimeClientSecret:
         self.calls.append((instructions, tools, model_settings))
         self.expires_after_seconds = expires_after_seconds
-        return RealtimeClientSecret(value='ek_test', expires_at=datetime.now(timezone.utc))
+        return RealtimeClientSecret(value='ek_test', expires_at=datetime.now(UTC))
 
 
 async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
@@ -312,7 +312,7 @@ async def test_create_client_secret(openai_api_key: str, request: pytest.Fixture
     assert secret.expires_at.tzinfo is not None
     # The secret expires shortly after recording, so only a live response can remain future-dated.
     recording = request.config.getoption('record_mode') == 'rewrite'
-    assert not recording or secret.expires_at > datetime.now(timezone.utc)
+    assert not recording or secret.expires_at > datetime.now(UTC)
 
 
 @pytest.mark.vcr
@@ -331,7 +331,7 @@ async def test_agent_create_client_secret(openai_api_key: str, request: pytest.F
     assert secret.value
     assert secret.expires_at.tzinfo is not None
     recording = request.config.getoption('record_mode') == 'rewrite'
-    assert not recording or secret.expires_at > datetime.now(timezone.utc)
+    assert not recording or secret.expires_at > datetime.now(UTC)
 
 
 async def test_create_client_secret_missing_value() -> None:
@@ -438,7 +438,7 @@ def test_client_secret_value_absent_from_repr() -> None:
     # `provider_details`) must leak into logs via the dataclass repr.
     secret = RealtimeClientSecret(
         value='ek_live_secret',
-        expires_at=datetime.now(timezone.utc),
+        expires_at=datetime.now(UTC),
         provider_details={'session': {'instructions': 'secret system prompt'}},
     )
     rendered = repr(secret)

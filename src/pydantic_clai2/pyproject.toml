@@ -17,7 +17,7 @@ name = "pydantic-clai2"
 dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "A capability-aware streaming terminal client for Pydantic AI"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 
@@ -30,7 +30,8 @@ dependencies = [
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     "genai-prices>=0.1.7",
-    "termflow-md>=0.11.0,<0.12",
+    # 1.0 adds `termflow.live` (ScreenBuffer, render_diff, Widget), which paints the transcript panel.
+    "termflow-md>=1.0.0,<2",
     "pyfiglet>=1.0.4",
     "prompt-toolkit>=3.0.52",
     "python-dotenv>=1.2.2",
@@ -41,7 +42,6 @@ dependencies = [
     "pillow>=12.3.0",
     # Default telemetry plugin: https://github.com/pydantic/pydantic-ai-harness/issues/979.
     "logfire>=4.31.0",
-    "exceptiongroup>=1.0.2; python_version < '3.11'",
 ]
 
 # Providers whose SDK CLAI does not install by default. `/model` names the extra when it is missing.

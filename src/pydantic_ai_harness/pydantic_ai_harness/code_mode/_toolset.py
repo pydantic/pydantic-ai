@@ -11,12 +11,12 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeGuard
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, Self, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
-from typing_extensions import NotRequired, Self, TypedDict, TypeIs
+from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
