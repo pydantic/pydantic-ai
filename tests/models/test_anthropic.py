@@ -854,16 +854,11 @@ async def test_anthropic_cache_messages_uses_per_block_cache_control(
 
 
 @pytest.mark.parametrize(
-    ('client_cls', 'base_url', 'expected'),
-    [
-        pytest.param(
-            AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com', [(0, 0), (2, 11)], id='bedrock'
-        ),
-        pytest.param(AsyncAnthropic, 'https://api.anthropic.com', [(2, 11)], id='claude-api'),
-    ],
+    ('client', 'expected'),
+    [pytest.param('bedrock', [(0, 0), (2, 11)], id='bedrock'), pytest.param('claude-api', [(2, 11)], id='claude-api')],
 )
 def test_anthropic_cache_messages_marks_previous_request_after_wide_turn(
-    client_cls: Any, base_url: str, expected: list[tuple[int, int]]
+    client: Literal['bedrock', 'claude-api'], expected: list[tuple[int, int]]
 ):
     """On Bedrock, after a turn with 12 parallel tool calls, the end of the previous request gets a breakpoint too.
 
@@ -874,9 +869,12 @@ def test_anthropic_cache_messages_marks_previous_request_after_wide_turn(
     those runs into one position, so it keeps a single message breakpoint. A unit test, since the property is the
     placement relative to the previous request, which one recorded request can't show.
     """
-    model = AnthropicModel(
-        'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
+    anthropic_client = (
+        mock_anthropic_client(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com')
+        if client == 'bedrock'
+        else mock_anthropic_client(AsyncAnthropic, 'https://api.anthropic.com')
     )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=anthropic_client))
     messages: list[BetaMessageParam] = [
         {'role': 'user', 'content': [{'type': 'text', 'text': 'Check the weather everywhere.'}]},
         {
