@@ -337,6 +337,42 @@ def _instruction_key(part: InstructionPart) -> str | None:
     return str(part.id) if part.id is not None else None
 
 
+ADDITIVE_ID_PREFIX = 'fleet:'
+"""Hackathon: an instruction entry whose `id` starts with this adds a *named* block instead of addressing one.
+
+A centrally pushed instruction needs a stable name -- to say what arrived, to roll it out and back, and to
+attribute adoption -- but an `id` normally names a block the code assembled. Entries under this prefix are
+never matched against code blocks and never reported as unmatched; the part they add is named after the rest
+of the id.
+"""
+
+
+def _split_additive(config: AgentConfig) -> tuple[AgentConfig, list[tuple[str, str]]]:
+    """Take the named additive entries out of `config`, as `(name, text)` pairs in order."""
+    entries = config.instructions
+    if not isinstance(entries, list):
+        return config, []
+    named: list[tuple[str, str]] = []
+    kept: list[Any] = []
+    for entry in entries:
+        entry_id = getattr(entry, 'id', None)
+        text = getattr(entry, 'instructions', None)
+        if isinstance(entry_id, str) and entry_id.startswith(ADDITIVE_ID_PREFIX):
+            if text:
+                named.append((_part_name(entry_id.removeprefix(ADDITIVE_ID_PREFIX)), text))
+            continue
+        kept.append(entry)
+    if not named and len(kept) == len(entries):
+        return config, []
+    return config.model_copy(update={'instructions': kept or None}), named
+
+
+def _part_name(slug: str) -> str:
+    """A valid `InstructionPart.name`: no `:` (the id delimiter), and never the reserved `agent`."""
+    name = slug.replace(':', '-') or 'fleet'
+    return 'fleet-agent' if name == 'agent' else name
+
+
 def _blocks(parts: Sequence[InstructionPart]) -> list[Block]:
     """The assembled instruction parts as the contract's neutral blocks."""
     return [Block(text=part.content, id=_instruction_key(part), dynamic=part.dynamic) for part in parts]
@@ -914,6 +950,7 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
         config = self._current_config()
         if config is None or not config.instructions:
             return request_context
+        config, named = _split_additive(config)
         parameters = request_context.model_request_parameters
         parts = list(parameters.instruction_parts or [])
         blocks = _blocks(parts)
@@ -936,16 +973,17 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
                 applied_parts.append(replace(replaceable[block.id].pop(0), content=block.text))
             else:
                 applied_parts.append(self._added_part(block.text, ctx))
+        applied_parts.extend(self._added_part(text, ctx, name=name) for name, text in named)
         self._plan_issues('instructions', applied.issues)
         if applied_parts != parts:
             request_context.model_request_parameters = replace(parameters, instruction_parts=applied_parts)
         return request_context
 
-    def _added_part(self, text: str, ctx: RunContext[AgentDepsT]) -> InstructionPart:
+    def _added_part(self, text: str, ctx: RunContext[AgentDepsT], *, name: str | None = None) -> InstructionPart:
         """One added block as a part, rendered against `deps` when `render_template` is set."""
         if not self.render_template:
-            return InstructionPart(content=text)
-        return InstructionPart(content=TemplateStr[AgentDepsT](text).render(ctx.deps), dynamic=True)
+            return InstructionPart(content=text, name=name)
+        return InstructionPart(content=TemplateStr[AgentDepsT](text).render(ctx.deps), dynamic=True, name=name)
 
     def _emit_config_hint(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> None:
         """Report what this agent says in code, once per process, on one span.

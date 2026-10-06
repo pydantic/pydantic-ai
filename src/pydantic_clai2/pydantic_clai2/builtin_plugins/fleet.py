@@ -40,7 +40,9 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 
-ItemKind = Literal['skill', 'mcp_server', 'plugin']
+ItemKind = Literal['skill', 'mcp_server', 'plugin', 'instruction']
+INSTRUCTION_PREFIX = 'fleet:'
+"""Pushed instruction blocks are named `fleet:<slug>`; AgentControl adds them rather than matching code blocks."""
 
 
 class FleetSkill(BaseModel):
@@ -140,9 +142,11 @@ class Change:
     tier: str
 
     def describe(self) -> str:
+        verb = {'added': 'New', 'updated': 'Updated', 'removed': 'Removed'}[self.action]
         if self.kind == 'instructions':
-            verb = {'added': 'New', 'updated': 'Updated', 'removed': 'Removed'}[self.action]
             return f'{verb} company instructions from Logfire'
+        if self.kind == 'instruction':
+            return f'{verb} company instruction from Logfire: {self.name}'
         noun = {'skill': 'skill', 'mcp_server': 'MCP server', 'plugin': 'plugin'}
         where = 'company' if self.tier == 'company' else 'catalog'
         return f'{self.action.capitalize()} {where} {noun.get(self.kind, self.kind)} from Logfire: {self.name}'
@@ -187,6 +191,10 @@ class Fleet:
         config, _ = self.config()
         items = [
             *(
+                ActiveItem('instruction', name, '', 'company', {'instructions': text})
+                for name, text in _named_instructions(config)
+            ),
+            *(
                 ActiveItem('skill', skill.name, skill.description, 'company', skill.model_dump())
                 for skill in config.skills or ()
             ),
@@ -226,6 +234,8 @@ class Fleet:
         return built
 
     def _build(self, item: ActiveItem) -> AbstractCapability[None] | None:
+        if item.kind == 'instruction':
+            return None  # AgentControl adds these to the prompt itself.
         if item.kind == 'skill':
             skill = FleetSkill.model_validate({'name': item.name, **item.payload})
             body = f'# Skill: {skill.name}\n\n{skill.instructions}' if skill.instructions else f'# Skill: {skill.name}'
@@ -346,6 +356,17 @@ class Fleet:
 
 def _capability_id(name: str) -> str:
     return re.sub(r'[^A-Za-z0-9_-]', '_', name) or 'item'
+
+
+def _named_instructions(config: AgentConfig) -> list[tuple[str, str]]:
+    """The pushed instructions that carry a name, as `(slug, text)`."""
+    named: list[tuple[str, str]] = []
+    for block in config.instructions or ():
+        block_id = getattr(block, 'id', None)
+        text = getattr(block, 'instructions', None)
+        if isinstance(block_id, str) and block_id.startswith(INSTRUCTION_PREFIX) and text:
+            named.append((block_id.removeprefix(INSTRUCTION_PREFIX), text))
+    return named
 
 
 def _is_added(block: object) -> bool:
