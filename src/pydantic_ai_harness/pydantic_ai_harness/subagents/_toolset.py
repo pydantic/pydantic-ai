@@ -605,7 +605,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 # Installed only for a record, and a record exists only under the owner that `current` returns.
                 if owner is not None and record is not None:  # pragma: no branch
                     record.messages = child_ctx.messages
-                    await owner.notify(record, event)
+                    # The model streaming this request, so an observer can show the child's context usage.
+                    model = child_ctx.model
+                    await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
                 yield event
 
         if self._event_stream_handler is not None:

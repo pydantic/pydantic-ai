@@ -14,7 +14,7 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionToolCallEvent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, PartStartEvent, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -29,7 +29,7 @@ from pydantic_ai_harness.ask_user import (
     QuestionOption,
 )
 from pydantic_ai_harness.subagents import DelegationTasks, SubAgent, SubAgents
-from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.ask_user_menu import (
     AskUserPlugin,
     QuestionMenu,
@@ -37,6 +37,7 @@ from pydantic_clai2.builtin_plugins.ask_user_menu import (
     render_answer,
 )
 from pydantic_clai2.plugins import PluginHost, load_plugin
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallStartedEvent
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste
@@ -215,6 +216,63 @@ def test_render_answer_lists_picks_or_the_decline() -> None:
     text = output.getvalue()
     assert '● Approach: Patch\n● Targets: api.py, db.py\n' in text
     assert '● You declined to answer' in text
+
+
+@pytest.mark.parametrize('sandboxed', [False, True])
+async def test_call_header_names_the_questions_without_raw_json(sandboxed: bool) -> None:
+    """The header once showed `questions=[{"header":...`; the picker below shows each question in full."""
+    output = io.StringIO()
+    host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
+    plugin = load_plugin(AskUserPlugin, host).plugin
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None, renderers=[plugin.render])
+    questions = {'questions': [APPROACH.model_dump(mode='json'), TARGETS.model_dump(mode='json')]}
+    if sandboxed:
+        call = ToolCallPart('ask_user_question', questions, tool_call_id='code__1')
+        await renderer.on_stream_event(SandboxCallStartedEvent(tool_call_id='code__1', call=call))
+        assert output.getvalue() == '● run_code\n\n● ask_user_question Approach, Targets\n\n'
+    else:
+        await renderer.on_stream_event(FunctionToolCallEvent(ToolCallPart('ask_user_question', questions)))
+        assert output.getvalue() == '● ask_user_question Approach, Targets\n\n'
+
+
+@pytest.mark.parametrize('args', ['{"questions": [{"head', {'questions': 'none'}, {}])
+async def test_call_header_without_readable_questions_shows_only_the_tool_name(args: str | dict[str, object]) -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=80)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
+    renderable = load_plugin(AskUserPlugin, host).plugin.render(
+        FunctionToolCallEvent(ToolCallPart('ask_user_question', args))
+    )
+    console.print(renderable)
+    assert output.getvalue() == '● ask_user_question\n'
+    assert load_plugin(AskUserPlugin, host).plugin.render(FunctionToolCallEvent(ToolCallPart('other', args))) is None
+
+
+async def test_call_header_with_many_questions_stays_on_one_row() -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=40)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
+    questions = [APPROACH.model_copy(update={'header': f'Q{index}'}).model_dump() for index in range(10)]
+    console.print(
+        load_plugin(AskUserPlugin, host).plugin.render(
+            FunctionToolCallEvent(ToolCallPart('ask_user_question', {'questions': questions}))
+        )
+    )
+    assert output.getvalue() == '● ask_user_question Q0, Q1, Q2, Q3, Q4,…\n'
+
+
+async def test_call_header_escapes_line_breaks_in_question_headers() -> None:
+    """The header renders before validation, so a forged `\\n● ...` row must stay on the header's line."""
+    output = io.StringIO()
+    console = Console(file=output, width=80)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
+    questions = [APPROACH.model_copy(update={'header': 'Real\n● forged call'}).model_dump()]
+    console.print(
+        load_plugin(AskUserPlugin, host).plugin.render(
+            FunctionToolCallEvent(ToolCallPart('ask_user_question', {'questions': questions}))
+        )
+    )
+    assert output.getvalue() == '● ask_user_question Real\\x0a● forged call\n'
 
 
 async def test_plugin_declares_capability_and_renderer() -> None:
@@ -576,13 +634,14 @@ async def test_wheel_and_page_keys_scroll_the_transcript_while_answering(questio
     surface = PromptSurface(output=terminal, size=lambda: (80, 24))
     for index in range(60):
         surface.write(f'line {index}\n')
-    # Wheel up, a click, then a page back and forth: none of them type into the custom answer.
-    question_pipe.send_text('3\x1b[<64;10;5M\x1b[<0;10;5M\x1b[5~\x1b[6~x\r')
+    # Wheel up, a click, a drag that copies, then a page back and forth: none of them type into the answer.
+    question_pipe.send_text('3\x1b[<64;10;5M\x1b[<0;10;5M\x1b[<0;1;1M\x1b[<32;7;1M\x1b[<0;7;1m\x1b[5~\x1b[6~x\r')
     # The fake terminal is a TTY, so an auto colour system would downgrade, and Rich caches that
     # downgrade on the shared parsed style, leaking into later truecolor tests on this worker.
     console = Console(file=surface, width=80, height=24, color_system=None)
     response = await TerminalAnswerer(full_screen=ScreenLog(), console=console)(AskUserRequest(questions=(APPROACH,)))
     assert response.answers == (AskUserAnswer(header='Approach', custom_answer='x'),)
     assert surface.view.anchor is not None, 'the view stays where the user scrolled'
+    assert '\x1b]52;c;' in terminal.getvalue(), 'the drag copied the transcript'
     assert 'How should we do it?' not in terminal.lines()
     assert 'line 50' in terminal.lines()

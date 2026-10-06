@@ -8,14 +8,16 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from pydantic import HttpUrl, JsonValue, ValidationError
 from rich.console import Console
 
+import pydantic_clai2.mcp._settings as mcp_settings
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
@@ -81,6 +83,22 @@ async def test_http_client_rejects_redirects(monkeypatch: pytest.MonkeyPatch) ->
         assert isinstance(client.auth, httpx.BasicAuth)
     async with http_client(follow_redirects=True) as client:
         assert not client.follow_redirects, 'FastMCP asks for redirects; the endpoint stays fixed'
+
+
+async def test_http_client_is_the_httpx_fastmcp_drives(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FastMCP 4's sign-in is an `httpx2.Auth`, which a legacy `httpx` client rejects as an invalid `auth`."""
+
+    def fastmcp_4_client(
+        headers: dict[str, str] | None = None, timeout: httpx2.Timeout | None = None, auth: httpx2.Auth | None = None
+    ) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(headers=headers, timeout=timeout, auth=auth, follow_redirects=True)
+
+    monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', fastmcp_4_client)
+    sign_in = httpx2.BasicAuth('user', 'password')
+    async with http_client(auth=cast(httpx.Auth, sign_in), follow_redirects=True) as client:
+        assert isinstance(client, httpx2.AsyncClient)
+        assert client.auth is cast(httpx.Auth, sign_in)
+        assert not client.follow_redirects
 
 
 async def test_builtin_is_enabled_and_the_dashboard_is_the_front_door() -> None:

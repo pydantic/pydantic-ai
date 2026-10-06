@@ -11,7 +11,7 @@ Names are descriptive, stable, lowercase words joined by hyphens, such as
 
 import re
 
-SUPPORTED_FEATURES: frozenset[str] = frozenset({'logfire-user-tag', 'fleet-control'})
+SUPPORTED_FEATURES: frozenset[str] = frozenset({'logfire-user-tag', 'logfire-httpx', 'fleet-control'})
 """Feature names this build implements. Add a name in the change that adds the code behind it."""
 
 CAPABILITY_REQUIREMENTS: dict[str, dict[str, frozenset[str]]] = {}
