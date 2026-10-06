@@ -151,15 +151,22 @@ class SettingsStore:
         with self._connect() as connection:
             return self._requirements_row(connection, _stored_plugin_id(plugin_id))
 
-    def save_plugin(self, plugin: PluginSettings, *, requires: Requirements | None = None) -> None:
+    def save_plugin(
+        self, plugin: PluginSettings, *, requires: Requirements | None = None, overwrite: bool = True
+    ) -> None:
         """Persist an explicitly trusted plugin declaration with the writer's requirement tags.
 
         `requires` is what the plugin declares for its settings. Stored tags on values left unchanged
         are kept, so saving never strips a tag another build attached. Both rows change in one transaction.
+        `overwrite=False` atomically rejects an existing declaration, including a legacy ID alias.
         """
         current_id = canonical_plugin_id(plugin.id)
         plugin = plugin.model_copy(update={'id': _stored_plugin_id(current_id)})
         with self._connect() as connection:
+            if not overwrite:
+                connection.execute('BEGIN IMMEDIATE')
+                if connection.execute('SELECT 1 FROM plugins WHERE id IN (?, ?)', (current_id, plugin.id)).fetchone():
+                    raise ValueError(f'Plugin {current_id} already exists; it has not been changed.')
             old = connection.execute('SELECT declaration FROM plugins WHERE id = ?', (plugin.id,)).fetchone()
             saved = _saved_declaration(old[0]) if old is not None else {}
             # Tags without a declaration were left by a build that deleted it without knowing this table,
