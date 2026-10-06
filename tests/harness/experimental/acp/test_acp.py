@@ -185,8 +185,9 @@ def _user_texts(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts:
             if not isinstance(part, UserPromptPart):
                 continue
-            if isinstance(part.content, str):  # pragma: no cover - adapter always sends list content
-                texts.append(part.content)
+            if isinstance(part.content, str):
+                # ACP prompts always use list content.
+                texts.append(part.content)  # pragma: no cover
             else:
                 texts.extend(item for item in part.content if isinstance(item, str))
     return texts
