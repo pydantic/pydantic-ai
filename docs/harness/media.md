@@ -68,7 +68,7 @@ store = MongoMediaStore(client=client, database='agent_media')
 `PostgresMediaStore` takes a caller-owned asyncpg-compatible pool, described by the `PostgresPool` protocol exported from this package. The harness imports no driver and defines no extra for it: the application installs the driver and owns the pool, and the store does not close it. Each blob is one row in the `media` table (`table=` renames it; names outside `[a-z_][a-z0-9_]*` or longer than 63 characters are rejected, lowercase because PostgreSQL folds unquoted identifiers and `'Media'` would share a table with `'media'`), keyed by its sha256 digest, so a second `put` of the same bytes is a no-op (`ON CONFLICT (sha256) DO NOTHING`). The bytes are one `BYTEA` value, which PostgreSQL caps at 1 GB, and there is no streaming API, so a blob has to fit in process memory in both directions.
 
 ```bash
-pip install asyncpg  # or: uv add asyncpg
+pip/uv-add asyncpg
 ```
 
 On its first operation the store issues `CREATE TABLE IF NOT EXISTS` in a transaction that first takes `pg_advisory_xact_lock` on a hash of the table name, so processes that start together do not collide. The connecting role therefore needs `CREATE` on the schema for that first call. There is no migration step: an existing `media` table with a different layout is left as it is and the first `put` or `get` fails on a missing column, so pass `table=` when the database already has a table of that name.
