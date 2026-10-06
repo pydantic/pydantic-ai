@@ -32,6 +32,10 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
 
+Analysing the agent's own source code, rather than shielding a run in progress:
+
+* [`pydantic-ai-trustabl`](https://github.com/trustabl/pydantic-ai-tool) - `Trustabl` adds a `scan_repository` tool that runs the [Trustabl](https://github.com/trustabl/agent-reliability-analyzer) static analyzer over the repository in the run's workspace and returns a summarised `TrustablScan`: an inventory of the agents, tools, subagents, skills and MCP servers it found, a severity histogram, and the findings above a configurable floor. Reports unsafe tool grants, missing turn limits, untyped tools, prompt-injectable shell tools, and fetch calls with no timeout, so the agent can verify each finding and fix it with its own tools. Analysis is deterministic and runs locally; no code is uploaded and no model sits in the analysis path.
+
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships sandboxed [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) and [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) capabilities, plus [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) for running tool calls as sandboxed Python. As a community alternative:
