@@ -959,6 +959,12 @@ CLAI2 enables Anthropic conversation, static-instruction, and tool-schema cachin
 These are CLI defaults only; plain Pydantic AI agents are unchanged. Saved cache settings override
 the defaults. Automatic caching advances to the last cacheable block, including tool results.
 
+`/effort` shows the active model's configured reasoning effort and supported values.
+`/effort high` (or another listed value) saves it for that model; `/effort reset`
+removes the native effort override. Custom parameters stay unchanged: remove any
+that override effort with `/model settings` first. Models without an effort
+control say so. Like `/fast`, `/effort` waits for the current turn to finish.
+
 First select `openai-codex:gpt-6-astra` with `/model`, then open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to

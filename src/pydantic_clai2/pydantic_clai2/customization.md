@@ -663,6 +663,12 @@ followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
 CLAI already runs, aliases like openai-chat included, is rejected with
 ValueError.
 
+`/effort` shows the active model's configured reasoning effort and supported values.
+`/effort high` (or another listed value) saves it for that model; `/effort reset`
+removes the native effort override. Custom parameters stay unchanged: remove any
+that override effort with `/model settings` first. Models without an effort
+control say so. Like `/fast`, `/effort` waits for the current turn to finish.
+
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
 **Fast (priority)** to request fast processing, or **Standard (default)** to

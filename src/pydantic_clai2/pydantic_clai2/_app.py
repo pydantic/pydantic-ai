@@ -30,6 +30,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
+from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
@@ -581,6 +582,14 @@ def create_shell(
 
     sessions = Sessions(session=session, store=conversations, context=context)
     commands = Commands()
+    commands.register(
+        Command(
+            name='effort',
+            description='View or set reasoning effort: /effort [VALUE|reset]',
+            handler=lambda args: effort_command(context, args, model=session.model or _model_label(agent)),
+            complete=lambda args: effort_completions(context, args, model=session.model or _model_label(agent)),
+        )
+    )
     commands.register(
         Command(
             name='fast',
