@@ -203,8 +203,8 @@ def browser(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 # The in-process MCP server, not CLAI's client, leaves a session stream for the collector (`mcp.server.streamable_http`).
 @pytest.mark.filterwarnings(
-    'ignore:Exception ignored while calling deallocator <function MemoryObjectReceiveStream.__del__'
-    ':pytest.PytestUnraisableExceptionWarning'
+    # Python 3.14 says "while calling deallocator"; earlier versions say "in:".
+    r'ignore:Exception ignored .*MemoryObjectReceiveStream\.__del__:pytest.PytestUnraisableExceptionWarning'
 )
 async def test_oauth_runs_never_open_a_browser_and_sign_in_is_only_on_request(
     oauth_server: str, browser: list[str]
