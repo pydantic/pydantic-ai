@@ -1192,7 +1192,7 @@ Resuming shows the restored conversation in the terminal: the last 10 prompts
 with their answers, reasoning, and tool calls, drawn the way they streamed.
 Older turns are summarized in one line; the model still receives the whole
 history. Inside CLAI, `/resume` replaces the visible conversation, as `/clear`
-does, and your terminal's own scrollback keeps the previous one. Output that
+does: the previous one stays saved but is not shown again. Output that
 only streamed, such as shell previews and diffs, is not saved, so those tools
 show their call line.
 

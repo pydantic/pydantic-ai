@@ -163,9 +163,10 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
     assert '> hello' not in text and 'fresh answer' not in text
     assert text.count('/new starts a session') == 1
     assert text.index('> saved turn') < text.index('saved answer') < text.index('Resumed')
-    # Native scrollback keeps the conversation the panel replaced, as `/clear` does.
+    # Like `/clear`, the exit printout forgets the replaced conversation and keeps the resumed one.
     printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
-    assert printed.index('> hello') < printed.index('> saved turn') < printed.index('Resumed')
+    assert '> hello' not in printed
+    assert printed.index('> saved turn') < printed.index('Resumed') < printed.index('Goodbye.')
 
 
 async def test_startup_resume_shows_history_below_the_startup_output(
