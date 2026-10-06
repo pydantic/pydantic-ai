@@ -48,7 +48,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.plugins._factories import build, import_file, settings_capability
 from pydantic_clai2.plugins._git import ADD_USAGE, CHECKOUTS_DIR, checkout_dir, install_git_plugin
-from pydantic_clai2.plugins.compatibility import INCLUDED, included_by
+from pydantic_clai2.plugins.compatibility import INCLUDED, Binds, included_by
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
@@ -839,7 +839,7 @@ class PluginLoader(Generic[DepsT]):
         return importlib.reload(module) if fresh else module
 
 
-def _binds(capability: AbstractCapability[DepsT], kind: type[object]) -> bool:
+def _binds(capability: AbstractCapability[DepsT], kind: Binds) -> bool:
     """Whether any part of `capability` is a `kind`."""
     if isinstance(capability, kind):
         return True
@@ -859,7 +859,7 @@ def _includes(factory: str, loaded: LoadedPlugin[DepsT]) -> frozenset[str]:
     return frozenset(
         included
         for included, kind in INCLUDED.get(factory, {}).items()
-        if kind is None or any(_binds(capability, kind) for capability in bound)
+        if any(_binds(capability, kind) for capability in bound)
     )
 
 
