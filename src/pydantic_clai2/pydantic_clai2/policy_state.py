@@ -24,12 +24,15 @@ class PolicySource:
 
 
 _source: PolicySource | None = None
+_recorded: set[tuple[str, bool]] = set()
+"""MCP servers recorded this session, by name and mode, so each is recorded once per session."""
 
 
 def install(source: PolicySource | None) -> None:
-    """Set (or with `None`, clear) the policy source."""
+    """Set (or with `None`, clear) the policy source; each session records its MCP decisions afresh."""
     global _source
     _source = source
+    _recorded.clear()
 
 
 def current() -> PolicySource | None:
@@ -47,7 +50,6 @@ def locked(key: str) -> bool:
 LOCKED_MESSAGE = 'locked by your organization'
 
 _gated: 'weakref.WeakSet[object]' = weakref.WeakSet()
-_recorded: set[tuple[str, bool]] = set()
 
 
 def mark_gated(toolset: object) -> None:

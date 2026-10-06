@@ -1,0 +1,72 @@
+"""Hackathon fleet control: what a run reports as loaded, and per-session MCP policy records."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import logfire
+from logfire.variables import VariablesConfig
+
+from pydantic_ai_harness.policy import PolicyDecision
+from pydantic_clai2 import policy_state
+from pydantic_clai2.builtin_plugins.fleet import Fleet
+
+
+def _fleet(tmp_path: Path, agent: dict[str, Any], catalog: dict[str, Any]) -> Fleet:
+    def var(name: str, value: dict[str, Any]) -> dict[str, Any]:
+        label = {'version': 1, 'serialized_value': json.dumps(value)}
+        return {
+            'name': name,
+            'labels': {'production': label},
+            'rollout': {'labels': {'production': 1.0}},
+            'overrides': [],
+        }
+
+    config = VariablesConfig.model_validate(
+        {'variables': {'agent__clai2': var('agent__clai2', agent), 'catalog__clai2': var('catalog__clai2', catalog)}}
+    )
+    instance = logfire.configure(
+        local=True, send_to_logfire=False, console=False, variables=logfire.LocalVariablesOptions(config=config)
+    )
+    return Fleet(instance=instance, name='clai2', state_file=tmp_path / 'state.json')
+
+
+def test_an_item_that_fails_to_load_is_reported_not_announced(tmp_path: Path) -> None:
+    skill = {'name': 'pr-shepherd', 'description': 'Babysit PRs', 'instructions': 'Watch CI.'}
+    bad = {'kind': 'plugin', 'name': 'bad', 'default': 'on', 'payload': {'factory': 'os:system'}}
+    fleet = _fleet(tmp_path, {'skills': [skill]}, {'items': [bad]})
+
+    build = fleet.prepare()
+    assert [item.key for item in build.loaded] == ['skill:pr-shepherd']
+    assert [(item.key, error.split(':')[0]) for item, error in build.failed] == [('plugin:bad', 'ValueError')]
+    assert [change.describe() for change in fleet.changes(build)] == ['Added company skill from Logfire: pr-shepherd']
+    # The run uses the build its turn announced, and the next run builds afresh.
+    assert fleet.take() is build
+    assert fleet.take() is not build
+    # Failing again later is not reported as a removal.
+    assert fleet.changes(fleet.build()) == []
+
+
+def test_mcp_policy_records_once_per_session() -> None:
+    from pydantic_ai_harness.policy import MCPPolicy, Policy
+
+    recorded: list[PolicyDecision] = []
+    policy = Policy(mcp=MCPPolicy(allow=['deepwiki'], mode='observe'))
+
+    def start_session() -> None:
+        policy_state.install(
+            policy_state.PolicySource(policy=lambda: policy, record=recorded.append, pushed_mcp_servers=frozenset)
+        )
+
+    try:
+        start_session()
+        assert policy_state.mcp_allowed('context7', 'https://mcp.context7.com/mcp', subject='context7')
+        assert policy_state.mcp_allowed('context7', 'https://mcp.context7.com/mcp', subject='context7')
+        assert policy_state.mcp_allowed('deepwiki', '', subject='deepwiki')
+        start_session()
+        assert policy_state.mcp_allowed('context7', 'https://mcp.context7.com/mcp', subject='context7')
+    finally:
+        policy_state.install(None)
+    assert [(d.tool_name, d.outcome) for d in recorded] == [('mcp:context7', 'would_deny')] * 2

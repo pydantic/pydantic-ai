@@ -133,6 +133,15 @@ class ActiveItem:
 
 
 @dataclass(frozen=True)
+class Build:
+    """One build of the fleet config for a run: the capabilities, the items they came from, and what failed."""
+
+    capabilities: list[AbstractCapability[None]]
+    loaded: list[ActiveItem]
+    failed: list[tuple[ActiveItem, str]]
+
+
+@dataclass(frozen=True)
 class Change:
     """Something that arrived from Logfire since the user last saw the fleet config."""
 
@@ -167,7 +176,7 @@ class Fleet:
     agent_variable: Variable[FleetAgentConfig] = field(init=False)
     catalog_variable: Variable[Catalog] = field(init=False)
     _mcp: dict[str, AbstractToolset[None]] = field(default_factory=dict[str, AbstractToolset[None]], init=False)
-    warnings: list[str] = field(default_factory=list[str], init=False)
+    _prepared: Build | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.agent_variable = Variable(
@@ -244,18 +253,31 @@ class Fleet:
 
     # Capabilities
 
-    def capabilities(self) -> list[AbstractCapability[None]]:
-        self.warnings.clear()
-        built: list[AbstractCapability[None]] = []
+    def build(self) -> Build:
+        """Build every active item; one that fails is reported, not counted as loaded."""
+        capabilities: list[AbstractCapability[None]] = []
+        loaded: list[ActiveItem] = []
+        failed: list[tuple[ActiveItem, str]] = []
         for item in self.active():
             try:
                 capability = self._build(item)
             except Exception as error:  # noqa: BLE001 -- one bad pushed item must not stop the run
-                self.warnings.append(f'Skipped {item.kind} {item.name!r} from Logfire: {error}')
+                failed.append((item, f'{type(error).__name__}: {error}'))
                 continue
+            loaded.append(item)
             if capability is not None:
-                built.append(capability)
-        return built
+                capabilities.append(capability)
+        return Build(capabilities=capabilities, loaded=loaded, failed=failed)
+
+    def prepare(self) -> Build:
+        """Build for the turn about to start, so its notices and its run agree on what loaded."""
+        self._prepared = self.build()
+        return self._prepared
+
+    def take(self) -> Build:
+        """The build `prepare` made for this turn's run, or a fresh one (a nested or headless run)."""
+        build, self._prepared = self._prepared or self.build(), None
+        return build
 
     def _build(self, item: ActiveItem) -> AbstractCapability[None] | None:
         if item.kind == 'instruction':
@@ -318,11 +340,16 @@ class Fleet:
         self._save(state)
         return f'{"Enabled" if on else "Disabled"} {item.name} ({item.kind}); it applies from your next prompt.'
 
-    def changes(self, *, mark_seen: bool = True) -> list[Change]:
-        """What was added, updated, or removed since the user last saw the fleet config."""
+    def changes(self, build: Build, *, mark_seen: bool = True) -> list[Change]:
+        """What was added, updated, or removed since the user last saw the fleet config, among what loaded.
+
+        An item that failed to build is neither news nor a removal: the user sees the failure instead, and
+        the item is announced once it loads.
+        """
         config, _ = self.config()
+        failed = {item.key for item, _ in build.failed}
         current: dict[str, tuple[str, str, str, str]] = {}
-        for item in self.active():
+        for item in build.loaded:
             current[item.key] = (item.kind, item.name, item.tier, _digest(dict(item.payload)))
         named_texts = {text for _, text in _named_instructions(config)}
         added_instructions = [
@@ -342,11 +369,12 @@ class Fleet:
                 changes.append(Change('added', kind, name, tier))
             elif previous != digest:
                 changes.append(Change('updated', kind, name, tier))
-        for key in user.seen.keys() - current.keys():
+        for key in user.seen.keys() - current.keys() - failed:
             kind, _, name = key.partition(':')
             changes.append(Change('removed', kind, name, ''))
         if mark_seen and changes:
-            user.seen = {key: value[3] for key, value in current.items()}
+            kept = {key: digest for key, digest in user.seen.items() if key in failed}
+            user.seen = {**kept, **{key: value[3] for key, value in current.items()}}
             self._save(state)
         return changes
 
@@ -421,8 +449,8 @@ class FleetControl(AbstractCapability[None]):
     record: Callable[[PolicyDecision], None] | None = None
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
-        capabilities = self.fleet.capabilities()
-        items = self.fleet.active()
+        build = self.fleet.take()
+        capabilities, items = build.capabilities, build.loaded
         baggage = {ACTIVE_ITEMS_ATTRIBUTE: ','.join(sorted(item.key for item in items)), **self.fleet.compliance(items)}
         rules = PolicyRules(
             policy=self.fleet.policy, approver=self.approver, record=self.record, attribute_prefix='clai2.policy'

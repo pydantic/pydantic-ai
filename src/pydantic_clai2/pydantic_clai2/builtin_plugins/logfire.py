@@ -254,7 +254,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         if self.fleet is None:
             return
         try:
-            changes = self.fleet.changes()
+            build = self.fleet.prepare()
+            changes = self.fleet.changes(build)
         except Exception as error:  # noqa: BLE001 -- a control-plane hiccup must not block the prompt
             self.host.console.print(f'Logfire fleet config unavailable: {error}', style=theme.color(theme.WARNING))
             return
@@ -262,8 +263,13 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             self.host.console.print(f'◆ {change.describe()}', style=theme.color(theme.ACCENT), markup=False)
         if changes:
             self._notice = changes[-1].describe()
-        for warning in self.fleet.warnings:
-            self.host.console.print(warning, style=theme.color(theme.WARNING), markup=False)
+        for item, error in build.failed:
+            noun = {'mcp_server': 'MCP server'}.get(item.kind, item.kind)
+            self.host.console.print(
+                f"Couldn't load {noun} {item.name} from Logfire: {error}",
+                style=theme.color(theme.WARNING),
+                markup=False,
+            )
 
     async def configure(self) -> str:
         """The settings menu; its project row runs the setup that signs in and picks where traces go."""
