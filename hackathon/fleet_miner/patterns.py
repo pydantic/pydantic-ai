@@ -44,7 +44,11 @@ Decide the kind:
   "Purpose" or "When to use" sections, no generic advice they didn't ask for (testing, linting, force-push warnings).
 - `instruction` when it is a standing preference or rule.
 
-`name`: a short kebab-case slug. `description`: one short sentence saying when it applies.
+`name`: a short kebab-case slug.
+`description`: for a skill, this one line is all the agent sees when deciding whether to load the skill, so write it
+as an explicit trigger naming the concrete situation, starting with "Load whenever" or "Load when" (e.g. "Load
+whenever you open or push to a pull request, to keep going until CI and review bots are green."), not a summary.
+For an instruction, one short sentence saying when it applies.
 `suggested_tier`: `required` if nearly everyone would want it, `default_on` if broadly useful, `optional` if niche.
 `rationale`: one or two sentences: how many people asked, and what it saves them.
 
@@ -229,6 +233,9 @@ _NOT_HANDLES = {
     # Products and bots that get @-mentioned or assigned to, which skills should keep naming.
     *('github', 'gitlab', 'claude', 'codex', 'copilot', 'devin', 'coderabbit', 'macroscope', 'douwebot', 'logfire'),
     *('pydantic', 'anthropic', 'openai', 'gemini'),
+    # Words that fill the "name" slot of the handle patterns without being anyone's name (branch prefixes etc.).
+    *('agent', 'agents', 'feature', 'feat', 'fix', 'bugfix', 'hotfix', 'release', 'test', 'tests', 'chore', 'docs'),
+    *('claude-code', 'origin', 'fork', 'upstream', 'user', 'users', 'home', 'tmp'),
 }
 
 
@@ -347,17 +354,7 @@ def _evidence(pattern: Pattern, limit: int) -> list[Evidence]:
             picked.append(p)
             seen_users.add(p.user)
     picked += [p for p in pattern.prompts if p not in picked]
-    return [
-        Evidence(
-            user=p.user,
-            trace_id=p.trace_id,
-            span_id=p.span_id,
-            session_id=p.session_id,
-            timestamp=p.timestamp,
-            excerpt=p.text[:500],
-        )
-        for p in picked[:limit]
-    ]
+    return [Evidence(trace_id=p.trace_id, span_id=p.span_id, timestamp=p.timestamp) for p in picked[:limit]]
 
 
 MergeAction = Literal['new', 'updated', 'skipped', 'stale']

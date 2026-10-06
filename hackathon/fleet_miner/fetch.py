@@ -15,6 +15,10 @@ from .models import UserPrompt
 # clai2's `observability` plugin records every submitted prompt as a `prompt submitted` log under the
 # `CLAI session` root span, which carries `user.email` (see `pydantic_clai2.ui.telemetry`). Only typed
 # prompts count: slash commands (`kind != 'prompt'`) and discarded queued prompts are not user intent.
+# Track A tags its own test sessions; they are not anyone's real usage.
+NOT_TEST = """coalesce(r.attributes->>'clai2.test', 'false') NOT IN ('true', 'True', '1')
+  AND coalesce(r.attributes->>'clai2.team', '') != 'test'"""
+
 _SESSIONS = """
     SELECT trace_id,
            max(attributes->>'user.email') AS user_email,
@@ -44,6 +48,7 @@ WHERE r.span_name = 'prompt submitted'
   AND coalesce(r.attributes->>'route', '') != 'discarded queued'
   -- Records from before clai2 tagged sources are typed by definition: the UI only records what was submitted.
   AND coalesce(r.attributes->>'clai2.prompt.source', 'typed') = 'typed'
+  AND {NOT_TEST}
 ORDER BY r.start_timestamp
 """
 
@@ -57,6 +62,7 @@ LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.service_name = 'pydantic-clai2'
   AND r.attributes->>'pydantic_ai.all_messages' IS NOT NULL
   AND {{source_filter}}
+  AND {NOT_TEST}
 ORDER BY r.start_timestamp
 """
 
@@ -82,6 +88,22 @@ async def fetch_prompts(
         run_rows = (await client.query_json_rows(sql, min_timestamp=since, limit=2_000))['rows']
         prompts += _from_agent_rows(run_rows, seen={(p.session_id or p.trace_id, p.text) for p in prompts})
     return _resolve_users(prompts)
+
+
+async def fetch_span_users(read_token: str, *, base_url: str, span_ids: set[str], since: datetime) -> dict[str, str]:
+    """Who is behind each of these spans (evidence from earlier runs, outside this run's prompts)."""
+    if not span_ids:
+        return {}
+    in_list = ', '.join(f"'{s}'" for s in sorted(span_ids) if s.isalnum())
+    sql = f"""
+SELECT r.span_id, {IDENTITY}
+FROM records r
+LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
+WHERE r.span_id IN ({in_list})
+"""
+    async with AsyncLogfireQueryClient(read_token, base_url=base_url, timeout=120) as client:
+        rows = (await client.query_json_rows(sql, min_timestamp=since, limit=10_000))['rows']
+    return {r['span_id']: r.get('user_email') or f'host:{r.get("host")}' for r in rows}
 
 
 def _resolve_users(prompts: list[UserPrompt]) -> list[UserPrompt]:

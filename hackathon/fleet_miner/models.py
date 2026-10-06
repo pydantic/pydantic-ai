@@ -81,14 +81,18 @@ def clean_text(value: str) -> str:
 
 
 class Evidence(BaseModel):
-    user: str | None
+    """A pointer into the traces, nothing more.
+
+    Every clai2 process downloads every variable in the project, so the stored document must not carry who said what:
+    no email, host or excerpt. The UI resolves the user and the text lazily from `trace_id`/`span_id`. `developer`
+    is a pseudonymous number, stable within one document, so the UI can show "3 developers" and group evidence.
+    (Older documents carried `user`, `session_id` and `excerpt`; those keys are dropped on load.)
+    """
+
     trace_id: str
     span_id: str
-    session_id: str | None
     timestamp: datetime
-    excerpt: str
-
-    _clean = field_validator('excerpt')(redact_secrets)
+    developer: int = 0
 
 
 class PolicyMatch(BaseModel):
@@ -132,6 +136,8 @@ class Proposal(BaseModel):
     sessions: int
     evidence: list[Evidence]
     status: ProposalStatus = 'pending'
+    status_reason: str | None = None
+    """Why a proposal was dismissed or marked stale by the miner, e.g. "test traffic"."""
     accepted_tier: Tier | None = None
     accepted_at: datetime | None = None
     source: Literal['fleet-miner'] = 'fleet-miner'
@@ -156,4 +162,16 @@ class ProposalsDoc(BaseModel):
 
     generated_at: datetime
     window: Window
+    min_users: int | None = None
+    """Distinct developers a pattern needed in the run that wrote this document."""
     proposals: list[Proposal] = []
+
+
+def pseudonymize(doc: ProposalsDoc, users_by_span: dict[str, str]) -> None:
+    """Number developers 1, 2, ... in order of first appearance across the whole document, in place."""
+    numbers: dict[str, int] = {}
+    for proposal in doc.proposals:
+        for evidence in proposal.evidence:
+            # Evidence whose span is outside this run's window keeps a number of its own rather than a guessed one.
+            user = users_by_span.get(evidence.span_id, f'unknown:{evidence.span_id}')
+            evidence.developer = numbers.setdefault(user, len(numbers) + 1)

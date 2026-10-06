@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
-from .fetch import _SESSIONS, IDENTITY
+from .fetch import _SESSIONS, IDENTITY, NOT_TEST
 from .models import Evidence, McpAllow, PolicyMatch, PolicyRule, Proposal, clean_text, redact_secrets
 from .patterns import leaked_identifiers_in
 
@@ -34,6 +34,7 @@ FROM records r
 LEFT JOIN ({_SESSIONS}) s ON r.trace_id = s.trace_id
 WHERE r.service_name = 'pydantic-clai2' AND r.span_name LIKE 'execute_tool %'
   AND r.attributes->>'gen_ai.tool.name' NOT IN ({{builtin_non_shell}})
+  AND {NOT_TEST}
 ORDER BY r.start_timestamp DESC
 """
 
@@ -242,7 +243,12 @@ async def mine_policy(
         return []
     commands = [c.command for c in calls if c.command]
     agent = Agent(
-        model, deps_type=_Deps, output_type=_PolicyDrafts, instructions=POLICY_INSTRUCTIONS, name='fleet_miner_policy'
+        model,
+        deps_type=_Deps,
+        output_type=_PolicyDrafts,
+        instructions=POLICY_INSTRUCTIONS,
+        name='fleet_miner_policy',
+        retries=3,
     )
 
     @agent.output_validator
@@ -298,7 +304,7 @@ async def mine_policy(
                 pattern=f'{groups[draft.category].key if draft.category in groups else draft.category}: {draft.command}',
                 distinct_users=users,
                 sessions=len({c.session_id for c in matched.calls}),
-                evidence=_evidence(matched, max_evidence, excerpts=segments, identifiers=identifiers),
+                evidence=_evidence(matched, max_evidence),
                 rule=rule,
                 generated_by=generated_by,
             )
@@ -323,9 +329,7 @@ async def mine_policy(
                 pattern=f'mcp server {draft.server}: {", ".join(draft.tool_globs)}',
                 distinct_users=users,
                 sessions=len({c.session_id for c in matched.calls}),
-                evidence=_evidence(
-                    matched, max_evidence, excerpts={c.span_id: c.tool for c in matched.calls}, identifiers=identifiers
-                ),
+                evidence=_evidence(matched, max_evidence),
                 mcp=McpAllow(allow=[draft.server]),
                 generated_by=generated_by,
             )
@@ -333,24 +337,14 @@ async def mine_policy(
     return proposals
 
 
-def _evidence(group: Group, limit: int, *, excerpts: dict[str, str], identifiers: set[str]) -> list[Evidence]:
-    """The matched part of each call only, with people's identifiers masked (secrets are masked by `Evidence`)."""
+def _evidence(group: Group, limit: int) -> list[Evidence]:
+    """Pointers to the matched calls, one per developer first to show the spread."""
     picked: list[ToolCall] = []
-    for call in group.calls:  # one per user first, to show the spread
+    for call in group.calls:
         if call.user not in {p.user for p in picked}:
             picked.append(call)
     picked += [c for c in group.calls if c not in picked]
-    return [
-        Evidence(
-            user=c.user,
-            trace_id=c.trace_id,
-            span_id=c.span_id,
-            session_id=c.session_id,
-            timestamp=c.timestamp,
-            excerpt=mask_identifiers(excerpts[c.span_id][:300], identifiers),
-        )
-        for c in picked[:limit]
-    ]
+    return [Evidence(trace_id=c.trace_id, span_id=c.span_id, timestamp=c.timestamp) for c in picked[:limit]]
 
 
 def mask_identifiers(text: str, identifiers: set[str]) -> str:

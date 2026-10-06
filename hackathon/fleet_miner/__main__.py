@@ -12,7 +12,7 @@ from pathlib import Path
 import logfire
 
 from . import facets as facets_mod, fetch, patterns as patterns_mod, policy as policy_mod
-from .models import Proposal, ProposalsDoc, UserPrompt, Window
+from .models import Proposal, ProposalsDoc, UserPrompt, Window, pseudonymize
 from .variables import VARIABLE, VariablesClient
 
 HERE = Path(__file__).parent
@@ -47,6 +47,9 @@ def _parser() -> argparse.ArgumentParser:
         '--drop-unreviewed-policy',
         action='store_true',
         help='remove policy proposals nobody accepted or dismissed yet (e.g. after changing how policy ids are made)',
+    )
+    parser.add_argument(
+        '--dismiss', action='append', default=[], metavar='ID=REASON', help='dismiss a pending or stale proposal'
     )
     parser.add_argument('--drop', action='append', default=[], help='remove this proposal id from the live document')
     parser.add_argument('--out', type=Path, help='write the proposals document to this file')
@@ -90,8 +93,40 @@ async def main(args: argparse.Namespace) -> None:
     existing = [p for p in existing if keep(p)]
     mine_prompts, mine_policy = 'prompts' in args.only, 'policy' in args.only and not args.fixture
     drafted = await _mine_prompts(args, prompts, existing) if mine_prompts else []
+    calls = await _fetch_calls(args) if mine_policy else []
+    identifiers = patterns_mod.personal_identifiers(prompts + _calls_as_prompts(calls))
     if mine_policy:
-        drafted += await _mine_policy(args, prompts)
+        # Once someone accepted or dismissed a rule for a risk category, don't re-propose that category with
+        # another action (ids are `policy-<category>-<action>`).
+        reviewed = {
+            p.id.rsplit('-', 1)[0] for p in existing if p.kind == 'policy' and p.status in ('accepted', 'dismissed')
+        }
+        drafted += [
+            p
+            for p in await policy_mod.mine_policy(
+                calls, model=args.pattern_model, min_users=args.min_users, identifiers=identifiers
+            )
+            if p.rule is None or p.id.rsplit('-', 1)[0] not in reviewed or any(e.id == p.id for e in existing)
+        ]
+    users_by_span = {p.span_id: p.user or p.span_id for p in prompts} | {c.span_id: c.user for c in calls}
+    # Evidence of earlier proposals can point at spans this run didn't fetch: look those up, so developer numbers
+    # stay truthful ("2 developers", not one number per unknown span).
+    if not args.fixture and existing:
+        earlier = [e for p in existing for e in p.evidence if e.span_id not in users_by_span]
+        if earlier:
+            users_by_span |= await fetch.fetch_span_users(
+                os.environ.get('LOGFIRE_CLAI2_READ_TOKEN') or os.environ['LOGFIRE_CLAI2_API_KEY'],
+                base_url=args.base_url,
+                span_ids={e.span_id for e in earlier},
+                since=min(e.timestamp for e in earlier) - timedelta(hours=1),
+            )
+    # Unify machines with emails where any record links them, as for the prompts themselves.
+    emails_by_host = {p.host: p.user for p in prompts if p.host and p.user and not p.user.startswith('host:')}
+    users_by_span = {
+        span: emails_by_host.get(user.removeprefix('host:'), user) if user.startswith('host:') else user
+        for span, user in users_by_span.items()
+    }
+    dismissals = dict(item.split('=', 1) for item in args.dismiss)
     stale_kinds = ({'skill', 'instruction'} if mine_prompts else set()) | ({'policy'} if mine_policy else set())
     merged, actions = patterns_mod.merge(existing, drafted, stale_kinds=stale_kinds)
     for proposal in drafted:
@@ -105,7 +140,12 @@ async def main(args: argparse.Namespace) -> None:
             print(f'\n--- [stale] `{id_}` no longer qualifies')
 
     start = min((p.timestamp for p in prompts), default=args.since if isinstance(args.since, datetime) else now)
-    doc = ProposalsDoc(generated_at=now, window=Window(start=start, end=now), proposals=merged)
+    doc = _finalize(
+        ProposalsDoc(generated_at=now, window=Window(start=start, end=now), min_users=args.min_users, proposals=merged),
+        users_by_span,
+        identifiers,
+        dismissals,
+    )
     if args.out:
         args.out.write_text(doc.model_dump_json(indent=2))
         print(f'\nWrote {args.out}')
@@ -120,7 +160,7 @@ async def main(args: argparse.Namespace) -> None:
         fresh, _ = patterns_mod.merge(
             [p for p in (current.proposals if current else []) if keep(p)], drafted, stale_kinds=stale_kinds
         )
-        return doc.model_copy(update={'proposals': fresh})
+        return _finalize(doc.model_copy(update={'proposals': fresh}), users_by_span, identifiers, dismissals)
 
     async with client:
         written = await client.update(build)
@@ -157,7 +197,7 @@ async def _mine_prompts(
     return await patterns_mod.draft_proposals(qualifying, model=args.pattern_model)
 
 
-async def _mine_policy(args: argparse.Namespace, prompts: list[UserPrompt]) -> list[Proposal]:
+async def _fetch_calls(args: argparse.Namespace) -> list[policy_mod.ToolCall]:
     calls = await policy_mod.fetch_tool_calls(
         os.environ.get('LOGFIRE_CLAI2_READ_TOKEN') or os.environ['LOGFIRE_CLAI2_API_KEY'],
         base_url=args.base_url,
@@ -167,15 +207,33 @@ async def _mine_policy(args: argparse.Namespace, prompts: list[UserPrompt]) -> l
     print(f'\n{len(calls)} tool calls ({commands} shell commands) from {len({c.user for c in calls})} users')
     for group in policy_mod.risk_groups(calls):
         print(f'   risk {group.key}: {len(group.calls)} calls, {len(group.users)} users')
-    # Identifiers of everyone involved, including handles that show up inside commands.
-    as_prompts = [
+    return calls
+
+
+def _calls_as_prompts(calls: list[policy_mod.ToolCall]) -> list[UserPrompt]:
+    """Tool calls as identity carriers, so handles that show up inside commands count as identifiers too."""
+    return [
         UserPrompt(trace_id=c.trace_id, span_id=c.span_id, timestamp=c.timestamp, text=c.command or '', user=c.user)
         for c in calls
     ]
-    identifiers = patterns_mod.personal_identifiers(prompts + as_prompts)
-    return await policy_mod.mine_policy(
-        calls, model=args.pattern_model, min_users=args.min_users, identifiers=identifiers
-    )
+
+
+def _finalize(
+    doc: ProposalsDoc, users_by_span: dict[str, str], identifiers: set[str], dismissals: dict[str, str]
+) -> ProposalsDoc:
+    """Make the document safe to hand to every clai2 process: numbered developers, no identifiers in any text."""
+    proposals: list[Proposal] = []
+    for p in doc.proposals:
+        update: dict[str, object] = {
+            f: policy_mod.mask_identifiers(getattr(p, f), identifiers)
+            for f in ('name', 'description', 'text', 'rationale', 'pattern')
+        }
+        if p.id in dismissals and p.status in ('pending', 'stale'):
+            update |= {'status': 'dismissed', 'status_reason': dismissals[p.id]}
+        proposals.append(p.model_copy(update=update, deep=True))
+    doc = doc.model_copy(update={'proposals': proposals})
+    pseudonymize(doc, users_by_span)
+    return doc
 
 
 if __name__ == '__main__':
