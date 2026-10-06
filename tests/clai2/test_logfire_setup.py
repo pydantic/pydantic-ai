@@ -191,7 +191,8 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     )
     assert harness.lines == [
         'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123',
-        'Saved a read-variables key for company config from Logfire (project:read_variables).',
+        'Saved a personal Logfire API key (project:read_variables).',
+        'Gateway not available for your role; using your own model keys.',
     ]
     assert harness.opened == ['https://logfire-us.pydantic.dev/auth/dev-123']
     new, *_, me, listed, minted, exchanged = harness.server.requests
@@ -201,7 +202,7 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     form = dict(httpx.QueryParams(exchanged.content.decode()))
     assert form['subject_token'] == 'user-token'
     assert form['audience'] == f'{US}/pydantic/clai2'
-    assert form['scope'] == 'project:read_variables'
+    assert form['scope'] == 'project:read_variables project:gateway_proxy'
     assert saved.api_key == KeyReference(name='LOGFIRE_VARIABLES_PYDANTIC_CLAI2')
     assert load_keys()['LOGFIRE_VARIABLES_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v2_us_variables'
     assert me.url.path == '/v1/account/me'

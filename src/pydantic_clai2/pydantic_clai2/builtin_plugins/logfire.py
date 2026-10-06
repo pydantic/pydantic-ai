@@ -113,6 +113,11 @@ class LogfireSettings(BaseModel):
         '(`catalog__<agent_control_name>`) from Logfire managed variables. Needs an API key that can read variables.',
     )
     agent_control_name: str = Field(default='clai2', min_length=1)
+    gateway: bool = Field(
+        default=False,
+        description='Run `gateway/...` models through the Pydantic AI Gateway with the `api_key` setup saved; '
+        'set by setup when your role allows the gateway.',
+    )
     project: str | None = Field(
         default=None, description='`organization/project` that setup picked, for links to Logfire.'
     )
@@ -219,6 +224,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                     'allowed_catalog_plugins',
                     'fleet_env_allow',
                     'project',
+                    'gateway',
                 ),
                 ['fleet-control'],
             ),
@@ -754,6 +760,7 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'account': LogfireAccount(email=email, token=chosen.token) if email else None,
         'send_to_logfire': 'if-token-present',
         'api_key': chosen.variables_key or config.api_key,
+        'gateway': chosen.gateway,
         'project': f'{chosen.project.organization_name}/{chosen.project.project_name}',
         'team': chosen.team,
     }

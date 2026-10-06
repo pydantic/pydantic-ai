@@ -110,6 +110,8 @@ class Chosen:
     project: Project
     account_email: str | None
     variables_key: KeyReference | None = None
+    gateway: bool = False
+    """Whether that key also has `project:gateway_proxy`, so models run through the Pydantic AI Gateway."""
     """A read-variables API key exchanged from the same sign-in, for fleet control; `None` if Logfire refused."""
     team: str | None = None
 
@@ -152,10 +154,14 @@ async def run_setup(
             )
         span.set('outcome', 'saved')
         span.set('fleet_control', variables is not None)
+        gateway = variables is not None and GATEWAY_SCOPE in (variables.scope or '').split()
+        span.set('gateway', gateway)
     if variables is None:
-        setup.announce('Logfire did not issue a read-variables key, so company config from Logfire stays off.')
+        setup.announce('Logfire did not issue a project API key, so company config from Logfire stays off.')
     else:
-        setup.announce(f'Saved a read-variables key for company config from Logfire ({variables.describe()}).')
+        setup.announce(f'Saved a personal Logfire API key ({variables.describe()}).')
+        if not gateway:
+            setup.announce('Gateway not available for your role; using your own model keys.')
     chosen_team = await run_worker(lambda: pick_team(setup.runners, current=team))
     return Chosen(
         token=KeyReference(name=name),
@@ -163,6 +169,7 @@ async def run_setup(
         project=project,
         account_email=account_email,
         variables_key=KeyReference(name=variables_name) if variables_name else None,
+        gateway=gateway,
         team=team if chosen_team is None else chosen_team or None,
     )
 
@@ -303,6 +310,8 @@ async def _write_token(http: httpx.AsyncClient, base_url: str, user_token: str, 
 TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange'
 API_KEY_TOKEN_TYPE = 'urn:pydantic:logfire:token-type:api-key'
 VARIABLES_SCOPE = 'project:read_variables'
+GATEWAY_SCOPE = 'project:gateway_proxy'
+"""Asked for in the same exchange; a role without it drops it silently (RFC 6749), so setup checks what came back."""
 
 
 class _ExchangedKey(BaseModel):
@@ -319,7 +328,7 @@ class _ExchangedKey(BaseModel):
 async def _variables_key(
     http: httpx.AsyncClient, base_url: str, user_token: str, project: Project
 ) -> _ExchangedKey | None:
-    """Exchange the sign-in (RFC 8693) for a personal, expiring API key that can only read managed variables.
+    """Exchange the sign-in (RFC 8693) for a personal, expiring API key: read managed variables, and use the gateway.
 
     Logfire mints it for the signed-in user and the chosen project, bounded by their role; it expires in 90 days.
     `None` when the server refuses, such as an older self-hosted Logfire: fleet control is optional.
@@ -333,7 +342,7 @@ async def _variables_key(
                 'subject_token_type': 'urn:ietf:params:oauth:token-type:access_token',
                 'requested_token_type': API_KEY_TOKEN_TYPE,
                 'audience': f'{base_url}/{project.organization_name}/{project.project_name}',
-                'scope': VARIABLES_SCOPE,
+                'scope': f'{VARIABLES_SCOPE} {GATEWAY_SCOPE}',
             },
         )
     except httpx.HTTPError:

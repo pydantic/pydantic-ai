@@ -76,6 +76,11 @@ def run(*, splash: Splash | None = None) -> None:
             os.chdir(worktree.path)
         project = load_project_settings(Path.cwd())
         overrides = store.overrides() | project.overrides
+        # Hackathon: one Logfire sign-in also sets up the AI Gateway; it is the default model unless one was picked.
+        from pydantic_clai2.managed import GATEWAY_DEFAULT_MODEL, apply_gateway
+
+        if apply_gateway(store) and 'model' not in overrides:
+            overrides['model'] = GATEWAY_DEFAULT_MODEL
         if model := args.model or os.getenv('CLAI_MODEL'):
             overrides['model'] = model
         if args.request_limit is not None:
