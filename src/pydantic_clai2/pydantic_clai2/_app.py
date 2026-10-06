@@ -28,6 +28,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
+from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
@@ -94,7 +95,6 @@ from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
 if TYPE_CHECKING:
     from pydantic_clai2.auth import CodexAuth
     from pydantic_clai2.models.accounts import Account
-    from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -490,10 +490,8 @@ def create_shell(
         Command(
             name='effort',
             description='View or set reasoning effort: /effort [VALUE|reset]',
-            handler=lambda args: _effort_source(agent, context=context, selected_model=session.model).effort(args),
-            complete=lambda args: _effort_source(
-                agent, context=context, selected_model=session.model
-            ).effort_completions(args),
+            handler=lambda args: effort_command(context, args, model=session.model or _model_label(agent)),
+            complete=lambda args: effort_completions(context, args, model=session.model or _model_label(agent)),
         )
     )
     commands.register(
@@ -1232,26 +1230,6 @@ def _reset_status(command: str, status: Status) -> None:
         status.output_tokens = None
         status.cost = None
         status.streamed_chars = 0
-
-
-def _effort_source(
-    agent: AbstractAgent[DepsT, OutputT], *, context: CommandContext, selected_model: str | None
-) -> 'ModelSettingsSource':
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
-    from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
-
-    model = selected_model or _model_label(agent)
-    settings_as = context.settings_model(model)
-    if selected_model is None and isinstance(agent.model, Model) and ':' not in model:
-        # Keep the run-settings storage identity, but use the supplied model's actual API controls.
-        if isinstance(agent.model, OpenAIChatModel):
-            provider = 'openai-chat'
-        elif isinstance(agent.model, OpenAIResponsesModel):
-            provider = 'openai'
-        else:
-            provider = agent.model.system
-        settings_as = f'{provider}:{model}'
-    return ModelSettingsSource(context.store, model, settings_as=settings_as)
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:

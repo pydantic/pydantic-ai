@@ -4,6 +4,7 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui.completion import CompleteEvent, Document
@@ -20,18 +21,18 @@ from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 
 
 @pytest.mark.parametrize(
-    'model,key',
+    'model,key,choices',
     [
-        ('openai-codex:gpt-6-astra', 'openai_reasoning_effort'),
-        ('openai@work:gpt-5', 'openai_reasoning_effort'),
-        ('anthropic:claude-sonnet-4-6', 'anthropic_effort'),
-        ('anthropic:claude-opus-4-6', 'anthropic_effort'),
-        ('vllm:glm-5.3', 'glm_reasoning_effort'),
-        ('test', None),
-        ('google-gla:gemini-3-pro-preview', None),
+        ('openai-codex:gpt-6-astra', 'openai_reasoning_effort', ('low', 'medium', 'high', 'xhigh', 'max')),
+        ('openai@work:gpt-5', 'openai_reasoning_effort', ('minimal', 'low', 'medium', 'high')),
+        ('anthropic:claude-sonnet-4-6', 'anthropic_effort', ('low', 'medium', 'high')),
+        ('anthropic:claude-opus-4-6', 'anthropic_effort', ('low', 'medium', 'high', 'max')),
+        ('vllm:glm-5.3', 'glm_reasoning_effort', ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')),
+        ('test', None, ()),
+        ('google-gla:gemini-3-pro-preview', None, ()),
     ],
 )
-async def test_effort_command(tmp_path: Path, model: str, key: str | None) -> None:
+async def test_effort_command(tmp_path: Path, model: str, key: str | None, choices: tuple[str, ...]) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     saved: dict[str, JsonValue] = {'future_setting': {'keep': True}, 'custom_params': {'unrelated': 1}}
     if key == 'openai_reasoning_effort':
@@ -53,28 +54,25 @@ async def test_effort_command(tmp_path: Path, model: str, key: str | None) -> No
     assert '/effort:' in await shell.commands.execute_async('/help')
     with pytest.raises(ValueError, match='Usage: /effort'):
         await shell.commands.execute_async('/effort high low')
-    source = ModelSettingsSource(store, model)
-    row = source.effort_row()
     completions = [c.text for c in shell.commands.get_completions(Document('/effort '), CompleteEvent())]
     assert list(shell.commands.get_completions(Document('/effort high '), CompleteEvent())) == []
     if key is None:
-        assert row is None and completions == []
+        assert completions == []
         for command in ('/effort', '/effort high', '/effort reset'):
             assert 'No reasoning effort control' in await shell.commands.execute_async(command)
         assert store.model_settings(model) == saved
         return
-    assert row is not None and row.key == key
-    assert completions == [*row.choices, 'reset']
-    assert f': {source.current(row)} ({key})' in await shell.commands.execute_async('/effort')
+    assert completions == [*choices, 'reset']
+    assert f'({key})' in await shell.commands.execute_async('/effort')
     assert store.model_settings(model) == saved  # Viewing never materializes defaults.
-    for value in row.choices:
+    for value in choices:
         assert 'Saved' in await shell.commands.execute_async(f'/effort {value}')
         assert SettingsStore(store.path).model_settings(model) == {**saved, key: value}
         assert f': {value} ({key})' in await shell.commands.execute_async('/effort')
     for invalid in ('banana', 'null', 'true'):
         with pytest.raises(ValueError, match='Choose'):
             await shell.commands.execute_async(f'/effort {invalid}')
-        assert store.model_settings(model) == {**saved, key: row.choices[-1]}
+        assert store.model_settings(model) == {**saved, key: choices[-1]}
     assert 'Reset' in await shell.commands.execute_async('/effort reset')
     assert store.model_settings(model) == saved
     await shell.commands.execute_async('/set model openai:gpt-5')
@@ -135,21 +133,25 @@ async def test_effort_for_supplied_model_instance(
         project=ProjectSettings(),
         headless=True,
     )
-    assert 'openai_reasoning_effort' in await shell.commands.execute_async('/effort')
-    assert 'high' in [c.text for c in shell.commands.get_completions(Document('/effort '), CompleteEvent())]
-    assert 'Saved' in await shell.commands.execute_async('/effort high')
-    assert store.model_settings('gpt-5') == {'openai_reasoning_effort': 'high'}
-    assert store.model_settings('openai:gpt-5') == {}
-    assert (shell.context.model_overrides('gpt-5') or {}).get('openai_reasoning_effort') == 'high'
-    # Chat Completions and Responses consume different custom effort parameters.
-    custom: dict[str, JsonValue] = (
-        {'reasoning_effort': 'low'} if model_class is OpenAIChatModel else {'reasoning.effort': 'low'}
+    # A bare supplied name has the same limitations as /model settings, not command-only inference.
+    assert shell.context.settings_model('gpt-5') == 'gpt-5'
+    assert 'openai_reasoning_effort' not in {row.key for row in ModelSettingsSource(store, 'gpt-5').rows()}
+    assert shell.context.model_settings('gpt-5') is None
+    assert shell.context.model_defaults('gpt-5')('gpt-5') is None
+    assert await shell.commands.execute_async('/effort') == snapshot(
+        'No reasoning effort control for gpt-5. Use /model settings for available controls.'
     )
-    store.save_model_settings('gpt-5', {'custom_params': custom})
-    assert 'overrides configured effort' in await shell.commands.execute_async('/effort high')
-    assert store.model_settings('gpt-5') == {'custom_params': custom}
-    await shell.commands.execute_async('/set model test')
-    assert 'No reasoning effort control for test' in await shell.commands.execute_async('/effort')
+    assert await shell.commands.execute_async('/effort high') == snapshot(
+        'No reasoning effort control for gpt-5. Use /model settings for available controls.'
+    )
+    assert list(shell.commands.get_completions(Document('/effort '), CompleteEvent())) == []
+    assert store.model_settings('gpt-5') == {}
+    # Selecting an explicit provider-qualified model still exposes its controls.
+    await shell.commands.execute_async('/set model openai:gpt-5')
+    assert await shell.commands.execute_async('/effort high') == snapshot(
+        'Saved openai_reasoning_effort for openai:gpt-5. Applies when this model is selected.'
+    )
+    assert store.model_settings('openai:gpt-5') == {'openai_reasoning_effort': 'high'}
 
 
 @pytest.mark.parametrize(
@@ -252,3 +254,47 @@ async def test_effort_custom_parameter_precedence(
     assert ('overrides configured effort' in reset) is conflict
     assert store.model_settings(model) == {'custom_params': custom}
     assert (shell.context.model_overrides(model) or {}).get('extra_body') == body
+
+
+async def test_effort_command_output(tmp_path: Path) -> None:
+    model = 'openai-codex:gpt-6-astra'
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=Settings(model=model),
+        store=store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    results = {}
+    for command in ('/effort', '/effort high', '/effort reset'):
+        results[command] = await shell.commands.execute_async(command)
+    store.save_model_settings(model, {'openai_reasoning_effort': 'high', 'custom_params': {'reasoning.effort': 'low'}})
+    results['custom view'] = await shell.commands.execute_async('/effort')
+    results['custom set'] = await shell.commands.execute_async('/effort high')
+    results['custom reset'] = await shell.commands.execute_async('/effort reset')
+    await shell.commands.execute_async('/set model test')
+    results['unsupported'] = await shell.commands.execute_async('/effort')
+    assert results == snapshot(
+        {
+            '/effort': """\
+Configured reasoning effort for openai-codex:gpt-6-astra: medium (openai_reasoning_effort).
+Supported values: low, medium, high, xhigh, max. Use /effort VALUE or /effort reset.
+Thinking controls and custom parameters in /model settings still apply.\
+""",
+            '/effort high': 'Saved openai_reasoning_effort for openai-codex:gpt-6-astra. Applies when this model is selected.',
+            '/effort reset': 'Reset openai_reasoning_effort for openai-codex:gpt-6-astra.',
+            'custom view': 'Custom reasoning.effort="low" overrides configured effort for openai-codex:gpt-6-astra. Remove it with /model settings before using /effort to change effort.',
+            'custom set': 'Custom reasoning.effort="low" overrides configured effort for openai-codex:gpt-6-astra. Remove it with /model settings before using /effort to change effort.',
+            'custom reset': """\
+Reset openai_reasoning_effort for openai-codex:gpt-6-astra.
+Custom reasoning.effort="low" overrides configured effort for openai-codex:gpt-6-astra. Remove it with /model settings before using /effort to change effort.\
+""",
+            'unsupported': 'No reasoning effort control for test. Use /model settings for available controls.',
+        }
+    )
