@@ -578,9 +578,10 @@ async def test_wheel_and_page_keys_scroll_the_transcript_while_answering(questio
         surface.write(f'line {index}\n')
     # Wheel up, a click, then a page back and forth: none of them type into the custom answer.
     question_pipe.send_text('3\x1b[<64;10;5M\x1b[<0;10;5M\x1b[5~\x1b[6~x\r')
-    response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=surface, width=80, height=24))(
-        AskUserRequest(questions=(APPROACH,))
-    )
+    # The fake terminal is a TTY, so an auto colour system would downgrade, and Rich caches that
+    # downgrade on the shared parsed style, leaking into later truecolor tests on this worker.
+    console = Console(file=surface, width=80, height=24, color_system=None)
+    response = await TerminalAnswerer(full_screen=ScreenLog(), console=console)(AskUserRequest(questions=(APPROACH,)))
     assert response.answers == (AskUserAnswer(header='Approach', custom_answer='x'),)
     assert surface.view.anchor is not None, 'the view stays where the user scrolled'
     assert 'How should we do it?' not in terminal.lines()
