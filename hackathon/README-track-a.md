@@ -2,13 +2,7 @@
 
 ## Try it (colleagues)
 
-Make sure clai2's observability is already sending to **EU staging, logfire/clai2**. That's
-`/plugins configure observability`, then the project row, then "self-hosted" with `https://logfire-eu.pydantic.info`.
-Your sign-in email then tags your traces. Next, get the shared **read-variables API key** from Douwe and run:
-
 ```bash
-export LOGFIRE_CLAI2_API_KEY='<read-variables key from Douwe>'
-export CLAI2_TEAM='<your team, e.g. ai or platform>'
 REV=ca08c9e15746e53a364fdf72d9156ce87492ad3a
 uvx --from 'git+https://github.com/pydantic/pydantic-ai@control-plane#subdirectory=src/pydantic_clai2' \
   --with "logfire[variables] @ git+https://github.com/pydantic/logfire.git@$REV#subdirectory=logfire" \
@@ -17,15 +11,24 @@ uvx --from 'git+https://github.com/pydantic/pydantic-ai@control-plane#subdirecto
   clai2 -m gateway/anthropic:claude-sonnet-5-5
 ```
 
-Notes on that command:
+Then, once, inside clai2:
+
+1. Run `/plugins configure observability` and press Enter on the project row.
+2. Choose "Self-hosted Logfire..." and enter `https://logfire-eu.pydantic.info`.
+3. Sign in, approve, and pick **logfire/clai2**.
+4. Type your team when asked, or press Esc to skip.
+
+Setup saves a write token for your traces. With the same sign-in, it also gets a personal read-variables key,
+which expires in 90 days and can only read this project's managed variables, so no key needs sharing. You can
+change the team later in the same menu.
+
+Notes:
 
 - **Why the extra `--with` lines.** They pin the unreleased Logfire SDK (`logfire.agent_control`, logfire PR #2389).
   Without them uv installs logfire from PyPI, which lacks it.
-- **Sending traces another way.** If you send with `LOGFIRE_TOKEN` instead of a setup-saved project, also
-  `export LOGFIRE_BASE_URL=https://logfire-eu.pydantic.info`.
-- **Storing the key in clai2 instead.** Instead of the env var, you can save the key in `/keys` (for example as
-  `LOGFIRE_VARIABLES`) and point the observability plugin's `api_key` setting at it, with
-  `{"api_key": {"name": "LOGFIRE_VARIABLES"}}`.
+- **Fallbacks.** If you'd rather not run setup, `LOGFIRE_CLAI2_API_KEY` (or `LOGFIRE_API_KEY`) and `CLAI2_TEAM`
+  still work. If you send traces with `LOGFIRE_TOKEN`, also set
+  `LOGFIRE_BASE_URL=https://logfire-eu.pydantic.info`.
 - **What you'll see:**
   - `◆ ... from Logfire` lines at startup and when something new is pushed;
   - `/catalog` to browse and opt in;
@@ -90,7 +93,9 @@ To publish a new version of a variable without the UI, run
 - **The cache prefix breaks.** A skill or instruction pushed mid-conversation changes the instructions and the
   deferred-capability catalog, which busts the provider prompt cache from that turn. The planned fix is to
   deliver the change as a delta message instead (#8188).
-- **No OAuth for reading variables yet.** clai2's device sign-in keeps only a write token. Reading variables
-  through OAuth needs a platform route that mints a project `read_variables` key, or an OAuth client for the
-  variables API.
+- **The read-variables key comes from sign-in.** Setup exchanges the device sign-in for a personal API key,
+  using RFC 8693 token exchange at `/api/oauth/token`. The key is scoped to `project:read_variables` and expires
+  after 90 days. clai2 doesn't refresh it: run setup again when it expires.
+- **No team from groups yet.** Logfire has no group API a user token can read: groups are admin-only in the UI API.
+  Defaulting the team from SCIM groups would need a backend change, such as `groups` on `/v1/account/me`.
 - **Opt-ins are per machine.** They live in `~/.config/pydantic-clai2/logfire/fleet_state.json`, keyed by email.
