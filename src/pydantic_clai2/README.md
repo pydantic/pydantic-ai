@@ -501,8 +501,9 @@ Uncommitted changes, ignored files, and untracked files are not copied. Project 
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the path and branch. A directory at that path that is not a Git
-worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
+CLAI prints the path and branch below its logo; a headless `--prompt` run prints
+them on stderr instead. A startup error names the kept checkout. A directory at
+that path that is not a Git worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery.
 
