@@ -1620,8 +1620,9 @@ Definition files are read as data and never executed.
   for reviewing the child's result.
 
 The editor panel shows the task tree, activity, elapsed time, and descendant
-counts. Successful rows disappear on completion; failed and stopped rows remain
-for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
+counts. The footer shows the context of the newest foreground child; see
+[Status line](#status-line). Successful rows disappear on completion; failed
+and stopped rows remain for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
 completed tasks for inspection. Live previews retain the latest 65,536 characters
 of an unfinished text part; settled responses retain their full history.
 Questions asked by children use the main
@@ -1976,6 +1977,17 @@ usage takes over when it lands. The retained-history cost (`$0.0123`) follows th
 output count, updated after each turn and hidden until a response has price data.
 After `/compact`, the footer keeps the previous figure until the next turn;
 `/cost` and `/usage` read the retained history immediately.
+
+While the main run waits on a subagent, the footer shows that subagent's own
+figures instead: its name and short task ID, the model it is using, its context
+over that model's window, its streamed output estimate, and its activity, such
+as `Explore [abcd1234]: claude-sonnet-4-5 | context: 8k/200k tokens | ~1,204
+streamed tokens | running: grep`. The newest such subagent wins, so a nested
+child takes the row from its parent. When it settles, the row returns to the
+next one still running, then to the main conversation, with its figures as they
+were. Background tasks, and children below one, stay in the task panel and
+leave the footer to the main run. A subagent's figures show `?` until its model
+reports them.
 
 The shell owns a pinned editor below a Termflow live transcript panel. It uses
 Termflow's cell buffer and changed-cell painter, not a second terminal canvas or
