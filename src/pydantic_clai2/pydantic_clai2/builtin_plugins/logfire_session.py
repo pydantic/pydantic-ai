@@ -1,5 +1,6 @@
 """A plugin-owned session root, shared by UI events and agent instrumentation."""
 
+import os
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -91,9 +92,13 @@ class SessionTracing(AbstractCapability[None]):
 
     def identity(self) -> dict[str, str]:
         """Who is running: baggage on every span of a run, and the attributes fleet targeting matches on."""
+        session_id = self.session_id()
         return {
             **({'user.email': self._email} if self._email else {}),
             **({'clai2.team': self.team} if self.team else {}),
+            **({'agent_session_id': session_id} if session_id else {}),
+            # Hackathon: test sessions say so, so fleet analysis (the miner) can leave them out.
+            **({'clai2.test': 'true'} if os.getenv('CLAI2_TEST') else {}),
         }
 
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
@@ -108,8 +113,7 @@ class SessionTracing(AbstractCapability[None]):
 
     def ui_identity(self) -> dict[str, str]:
         """What every UI record carries: the user, the team, and the session, so no join with the root is needed."""
-        session_id = self.session_id()
-        return {**self.identity(), **({'agent_session_id': session_id} if session_id else {})}
+        return self.identity()
 
 
 async def git_email() -> str | None:
