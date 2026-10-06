@@ -16,7 +16,7 @@ sensitive to request bodies, so a VCR test could pass green without pinning the 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from inline_snapshot import snapshot
@@ -46,7 +46,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts
 
-TS = datetime(2024, 1, 1, tzinfo=timezone.utc)
+TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 def capture_agent() -> tuple[Agent, list[list[ModelMessage]]]:
