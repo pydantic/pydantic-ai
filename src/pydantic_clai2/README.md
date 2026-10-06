@@ -1433,6 +1433,11 @@ contain secrets. Do not share the database between machines. An unfinished run
 whose recorded process is still alive is treated as busy; revision checks reject
 stale writers instead of overwriting another process's work.
 
+Resuming a busy session does not wait for it or take it over. CLAI copies its
+newest saved state, including the latest step checkpoint, into a new saved
+session titled with `(fork)`, and continues that copy. The original keeps
+running in its own process and may still change files; no tools are replayed.
+
 The built-in `persistence` plugin records additional Harness checkpoints before
 model requests, after model responses, and at settled tool-cycle boundaries.
 `/plugins disable persistence` disables that extra step capture, not conversation
