@@ -1,7 +1,8 @@
 """`display.tool_calls = grouped` counts consecutive calls by tool on one live line."""
 
 import io
-from dataclasses import dataclass, replace
+import itertools
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -231,6 +232,20 @@ async def test_live_prompt_wraps_the_group_again_for_a_new_width() -> None:
     assert _rows(surface, width=80)[:3] == ['● shell 2, grep 1, read_file 1', '', '']
 
 
+async def test_live_prompt_replay_inside_another_print_keeps_that_print_out_of_the_group() -> None:
+    size = [80, 24]
+    ticks = itertools.count(0, 10.0)
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (size[0], size[1]), clock=lambda: next(ticks))
+    console = Console(file=surface, force_terminal=True)
+    surface.paint(())  # An open editor: every write paints a frame.
+    renderer = StreamRenderer(console, stop_loading=lambda: None, tool_calls='grouped')
+    await feed(renderer, 'shell shell grep')
+    await renderer.finish()
+    size[0] = 60  # The frame this print paints replays the group at the new width.
+    console.print('next')
+    assert _rows(surface, width=60)[:3] == ['● shell 2, grep 1', '', 'next']
+
+
 async def test_abort_ends_the_line() -> None:
     output = io.StringIO()
     renderer = grouped(output)
@@ -239,9 +254,9 @@ async def test_abort_ends_the_line() -> None:
     assert output.getvalue() == '● shell 1\n\n'
 
 
-async def test_control_characters_in_a_name_are_inert() -> None:
+def test_control_characters_in_a_name_are_inert() -> None:
     output = io.StringIO()
-    group = ToolCallGroup(Console(file=output, width=80))
+    group = ToolCallGroup(Console(file=output, width=80), colors=None)
     group.add('sh\x1b[2Jell')
     group.close()
     assert '\x1b' not in output.getvalue()
@@ -273,7 +288,7 @@ def test_set_menu_previews_each_style_in_the_choice_picker(tmp_path: Path, monke
     context, _ = make_context(tmp_path)
     menu = FieldMenu(SettingsSource(context))
     row = menu.row_for('display.tool_calls')
-    assert row is not None and row.choices == ('detailed', 'grouped') and not row.allow_custom
+    assert row is not None and row.choices == ('detailed', 'grouped')
     output = io.StringIO()
     monkeypatch.setattr('sys.stdout', output)
     monkeypatch.setenv('COLUMNS', '100')
@@ -286,7 +301,7 @@ def test_set_menu_previews_each_style_in_the_choice_picker(tmp_path: Path, monke
     assert '● shell git status' in plain
     assert '● shell 3, read_file 2, shell 1' in plain
     assert menu.row_for('display.thinking') is not None
-    # A previewed setting that also takes typed values keeps its typed-value row, which has no sample.
+    # The typed-value row has no sample to preview.
     keys = iter(['down', 'down', 'enter'])
-    result = menu.build_choices(replace(row, allow_custom=True)).run()
+    result = menu.build_choices(row).run()
     assert result.item is not None and result.item.value == CUSTOM

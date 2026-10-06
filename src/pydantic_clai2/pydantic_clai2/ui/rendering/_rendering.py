@@ -39,8 +39,6 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
 )
-from pydantic_ai_harness.filesystem import FileEditedEvent, FileWrittenEvent
-from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent, SandboxCallOrder
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -272,9 +270,11 @@ class StreamRenderer:
         self._sandbox_calls = SandboxCallOrder()
         self.show_tool_output = show_tool_output
         self.tool_arg_chars = tool_arg_chars
-        self._tool_output = ToolOutput(console, shell_lines=shell_lines, show_output=show_tool_output)
+        self._tool_output = ToolOutput(
+            console, shell_lines=shell_lines, show_output=show_tool_output, tool_calls=tool_calls
+        )
         self._grep_output = GrepOutput(console, lines=grep_lines, show_output=show_tool_output)
-        self._group = ToolCallGroup(console) if tool_calls == 'grouped' else None
+        self._group = ToolCallGroup(console, colors=color_system(console)) if tool_calls == 'grouped' else None
         self.smooth_seconds = smooth_seconds
         self._thinking = False
         self._heading_printed = False
@@ -325,13 +325,10 @@ class StreamRenderer:
             await self._render_tool(event)
 
     async def _render_capability(self, event: CapabilityEvent) -> bool:
-        """Return whether the event was handled. A group hides shell output and yields to diffs."""
+        """Return whether the event was handled. A diff ends the tool-call group."""
         await self._drain()
-        if self._group is not None:
-            if isinstance(event, (CommandStartedEvent, CommandOutputEvent, CommandFinishedEvent)):
-                return True
-            if isinstance(event, (FileEditedEvent, FileWrittenEvent)):
-                self._group.close()
+        if self._group is not None and self._tool_output.prints_diff(event):
+            self._group.close()
         return self._tool_output.render(event)
 
     async def _render_sandbox_call(self, event: AgentStreamEvent) -> bool:
@@ -357,7 +354,7 @@ class StreamRenderer:
         if self._group is not None:
             if not isinstance(event, FunctionToolCallEvent):
                 return
-            if not self._tool_output.shows_diff(event):
+            if not self._tool_output.prints_diff(event):
                 self._group.add(event.part.tool_name)
                 return
             # A count would repeat the header its diff prints under.

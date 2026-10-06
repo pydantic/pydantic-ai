@@ -25,7 +25,7 @@ def tool_calls_preview(style: str, width: int) -> str:
     output = StringIO()
     console = Console(file=output, width=width, color_system='truecolor', highlight=False)
     if style == 'grouped':
-        group = ToolCallGroup(console)
+        group = ToolCallGroup(console, colors='truecolor')
         for name, _ in _CALLS:
             group.add(name)
         group.close()

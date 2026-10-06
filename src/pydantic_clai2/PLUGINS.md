@@ -1913,7 +1913,9 @@ diffs even in compact mode. Shell output and completion details and grep results
 are hidden from the terminal, not from the model. Set `/set display.tool_output true`
 to show those details; `display.shell_lines` and `display.grep_lines` then control
 preview lengths (20 lines each by default). This setting does not suppress file
-diffs, plugin renderers, or interactive questions.
+diffs, plugin renderers, or interactive questions. With `/set display.tool_calls grouped`,
+calls no renderer claims are counted by tool on one line instead, `display.tool_output`
+has no effect, and anything a renderer draws ends that line.
 
 CLAI shows unknown tool calls as `● tool_name`, with the name in pink. To show something
 better, return a Rich renderable (a `str` is fine). Return `None` to say "not mine,

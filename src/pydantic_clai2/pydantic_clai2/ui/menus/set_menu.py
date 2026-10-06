@@ -27,6 +27,7 @@ class SettingsSource:
         rows: list[FieldRow] = []
         for key, field in SETTING_FIELDS.items():
             info = Settings.model_fields[field]
+            preview: Callable[[str, int], str] | None = None
             if info.annotation is bool:
                 choices: tuple[str, ...] = ('true', 'false')
             elif key == 'display.theme':
@@ -37,6 +38,7 @@ class SettingsSource:
                 choices = tuple(known_model_names())
             elif key == 'display.tool_calls':
                 choices = TOOL_CALL_DISPLAYS
+                preview = tool_calls_preview
             elif key == 'updates.channel':
                 choices = UPDATE_CHANNELS
             else:
@@ -48,8 +50,7 @@ class SettingsSource:
                     default=shown(info.default),
                     choices=choices,
                     note='project' if self._context.from_project(key) else '',
-                    preview=tool_calls_preview if key == 'display.tool_calls' else None,
-                    allow_custom=key != 'display.tool_calls',
+                    preview=preview,
                 )
             )
         return rows

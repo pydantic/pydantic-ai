@@ -1,6 +1,10 @@
 """The grouped tool-call display: consecutive calls counted by tool name on one live line."""
 
+from __future__ import annotations
+
+import io
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.text import Text
@@ -9,6 +13,9 @@ from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
+
+if TYPE_CHECKING:
+    from pydantic_clai2.ui.rendering._rendering import ColorSystemName
 
 Run = tuple[str, int]
 """A tool name and how many consecutive calls it received."""
@@ -44,9 +51,10 @@ class ToolCallGroup:
     output printed while it is open lands after the line instead of on it.
     """
 
-    def __init__(self, console: Console) -> None:
-        """Count into `console`; nothing prints until the first call."""
+    def __init__(self, console: Console, *, colors: ColorSystemName | None) -> None:
+        """Count into `console`, styled in `colors`, which must be `console`'s colour system."""
         self.console = console
+        self.colors: ColorSystemName | None = colors
         self._rows: list[list[Run]] = [[]]
         self._block: MarkdownBlock | None = None
 
@@ -87,12 +95,11 @@ class ToolCallGroup:
         output.flush()
 
     def _ansi(self, row: list[Run], *, width: int, end: str = '\n') -> str:
-        """`row` styled by the stream's console, which would otherwise crop a replay to its own width."""
-        line = _line(row)
-        line.truncate(width, overflow='ellipsis')
-        with self.console.capture() as capture:
-            self.console.print(line, end=end, soft_wrap=True)
-        return capture.get()
+        """Style on a console of our own: a replay can run while the stream's console is mid-print."""
+        output = io.StringIO()
+        console = Console(file=output, force_terminal=True, color_system=self.colors, width=width)
+        console.print(_line(row), end=end, overflow='ellipsis', no_wrap=True)
+        return output.getvalue()
 
     def _render(self, *, source: str, width: int) -> str:
         """The whole group again, for a width or theme it was not drawn at; `source` holds one name per call."""
