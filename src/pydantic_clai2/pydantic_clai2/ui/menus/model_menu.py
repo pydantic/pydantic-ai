@@ -79,6 +79,39 @@ class ModelSettingsSource:
             )
         return rows
 
+    def effort(self, args: list[str]) -> str:
+        """View, set, or reset this model's native effort using the editor's validation."""
+        if len(args) > 1:
+            raise ValueError('Usage: /effort [VALUE|reset]')
+        row = self.effort_row()
+        if row is None:
+            return f'No reasoning effort control for {self.model}. Use /model settings for available controls.'
+        if args:
+            if args == ['reset']:
+                return self.reset(row)
+            if args[0] not in row.choices:
+                raise ValueError(f'Choose {", ".join(row.choices)}, or reset.')
+            return self.apply(row, args[0])
+        return (
+            f'Configured reasoning effort for {self.model}: {self.current(row)} ({row.key}).\n'
+            f'Supported values: {", ".join(row.choices)}. Use /effort VALUE or /effort reset.\n'
+            'Thinking controls and custom parameters in /model settings still apply.'
+        )
+
+    def effort_completions(self, args: list[str]) -> tuple[str, ...]:
+        """Complete only values supported by this model's effort control."""
+        row = self.effort_row()
+        return (*row.choices, 'reset') if row is not None and len(args) <= 1 else ()
+
+    def effort_row(self) -> FieldRow | None:
+        """The supported native effort control, preferring GLM over its OpenAI transport."""
+        options = model_options(model=self._settings_as)
+        rows = {row.key: row for row in self.rows()}
+        for key in ('glm_reasoning_effort', 'anthropic_effort', 'openai_reasoning_effort'):
+            if key in options:
+                return rows[key]
+        return None
+
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
         values = {**model_defaults(model=self._settings_as), **self._store.model_settings(self.model)}

@@ -68,6 +68,7 @@ from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.ui.menus.key_menu import keys_command
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
@@ -483,8 +484,20 @@ def create_shell(
             + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
         )
 
+    def effort_source() -> ModelSettingsSource:
+        model = session.model or _model_label(agent)
+        return ModelSettingsSource(store, model, settings_as=context.settings_model(model))
+
     sessions = Sessions(session=session, store=conversations, context=context)
     commands = Commands()
+    commands.register(
+        Command(
+            name='effort',
+            description='View or set reasoning effort: /effort [VALUE|reset]',
+            handler=lambda args: effort_source().effort(args),
+            complete=lambda args: effort_source().effort_completions(args),
+        )
+    )
     commands.register(
         Command(
             name='fast',
