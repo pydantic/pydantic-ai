@@ -10,7 +10,7 @@ from termflow.live import ScreenBuffer
 from termflow.live.buffer import REVERSE
 from termflow.themes import PALETTES, reset_palette
 
-from pydantic_clai2.ui.prompt.prompt_selection import Selection
+from pydantic_clai2.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
 from pydantic_clai2.ui.prompt.prompt_surface import (
     ENTER,
     FRAME_INTERVAL,
@@ -635,6 +635,12 @@ def test_cells_already_in_reverse_video_still_look_selected() -> None:
     frame.attrs[1] = REVERSE  # The editor's painted cursor, for example.
     Selection(anchor=(0, 0), head=(0, 2)).highlight(frame, rows=1, previous=None)
     assert [attrs & REVERSE for attrs in frame.attrs] == [REVERSE, REVERSE, REVERSE, 0]
+
+
+def test_malformed_mouse_reports_are_ignored() -> None:
+    assert mouse_report('\x1b[<' + '9' * 5000 + ';1;1M') is None, 'longer than `int` accepts'
+    assert mouse_report('\x1b[<0;1M') is None
+    assert mouse_report('\x1b[<0;10;5M') == MouseReport(button=0, cell=(4, 9), released=False)
 
 
 def test_selection_spans_clamp_to_the_frame() -> None:

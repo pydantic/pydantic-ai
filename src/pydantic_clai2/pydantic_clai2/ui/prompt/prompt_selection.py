@@ -22,7 +22,8 @@ WHEEL_UP = 64
 WHEEL_DOWN = 65
 _MODIFIERS = 4 | 8 | 16
 """Shift, Alt, and Ctrl add these to the button."""
-_REPORT = re.compile(r'\x1b\[<(\d+);(\d+);(\d+)([mM])')
+_REPORT = re.compile(r'\x1b\[<(\d{1,5});(\d{1,5});(\d{1,5})([mM])')
+"""Bounded fields: a malformed report too long for `int` is not a report, rather than an error."""
 
 
 @dataclass(frozen=True, kw_only=True)
