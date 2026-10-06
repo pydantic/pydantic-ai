@@ -289,8 +289,12 @@ class CodexAuth:
     def model(self, name: str) -> OpenAICodexModel:
         """Reuse each profile's core provider so it owns refresh and credential persistence."""
         ref = parse_model(name)
-        provider = self._providers.get(ref.account)
+        return OpenAICodexModel(ref.name, provider=self.account_provider(ref.account))
+
+    def account_provider(self, account: str) -> OpenAICodexProvider:
+        """The core provider for `openai-codex` or `openai-codex@PROFILE`, shared by models and usage checks."""
+        provider = self._providers.get(account)
         if provider is None:
-            source = self.source if ref.profile is None else CodexCredentials(account=ref.account)
-            provider = self._providers[ref.account] = OpenAICodexProvider(credential_source=source)
-        return OpenAICodexModel(ref.name, provider=provider)
+            source = self.source if account == CODEX else CodexCredentials(account=account)
+            provider = self._providers[account] = OpenAICodexProvider(credential_source=source)
+        return provider

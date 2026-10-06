@@ -402,14 +402,20 @@ class _ModelResolver:
 
     async def accounts(self, args: list[str]) -> str:
         """`/accounts`: list, add, rename, reorder, and sign out of accounts."""
+        from pydantic_clai2.models.usage import usage_fetcher
         from pydantic_clai2.ui.menus.accounts_menu import open_accounts_menu
 
         if args:
             raise ValueError('Usage: /accounts (opens the menu)')
         if self.store is None:  # pragma: no cover -- the shell always has a store.
             raise ValueError('Accounts need a settings database.')
+        auth = self.codex_auth()
         return await open_accounts_menu(
-            self.store, login=self.login, plugins=self.logins, forget=self.codex_auth().forget
+            self.store,
+            login=self.login,
+            plugins=self.logins,
+            forget=auth.forget,
+            usage=lambda item: usage_fetcher(item, codex=auth.account_provider, plugins=self.logins()),
         )
 
 

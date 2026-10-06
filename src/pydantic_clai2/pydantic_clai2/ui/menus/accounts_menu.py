@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from itertools import groupby
 
-from anyio import to_thread
+from anyio import create_task_group, to_thread
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.keys import Key
 from termflow.tui.menu import Menu, MenuResult
@@ -20,7 +20,9 @@ from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.accounts import Account, LoginChoice, accounts, login_choices, sign_out
 from pydantic_clai2.models.profiles import ALL, DEFAULT, check_name, provider_of, with_profile
+from pydantic_clai2.models.usage import UsageFetch
 from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.ui.menus.account_usage import UsageBoard
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE_DETAILS,
     TERMINAL,
@@ -35,7 +37,9 @@ from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 _HINT = 'a add · r rename · d sign out · [ ] reorder · enter sign in again · esc close'
 _ADD = 'add'
-_LIST_WIDTH = 36
+_REDRAW = 'accounts:usage'
+"""A key no keyboard sends and no handler takes: termflow repaints after it, showing new usage."""
+_LIST_WIDTH = 46
 
 
 @dataclass(frozen=True)
@@ -51,9 +55,12 @@ class _SignOut:
 class AccountsMenu:
     """Rows, details, and key actions; `build()` wires them into a termflow menu."""
 
-    def __init__(self, store: SettingsStore) -> None:
-        """Read accounts from `store` on every redraw, so changes show at once."""
+    def __init__(self, store: SettingsStore, usage: UsageBoard | None = None) -> None:
+        """Read accounts from `store` on every redraw, so changes show at once; `usage` fills in as it loads."""
         self._store = store
+        self.usage = usage if usage is not None else UsageBoard()
+        self._menu: Redrawable | None = None
+        """The open menu, once built, so `read_key` can swap in rows with new usage."""
         self.notice: str | None = None
         self._pending: list[str] = []
         """Arrow keys queued for the menu's key reader, so the cursor follows a moved account."""
@@ -69,7 +76,9 @@ class AccountsMenu:
             rows.append(MenuItem(provider, disabled=True))
             for item in group:
                 mark = '●' if item.signed_in else '○'
-                rows.append(MenuItem(f'  {mark} {item.name}', value=item, description=item.login))
+                usage = self.usage.summary(item.login)
+                label = f'  {mark} {item.name}' + (f'  {usage}' if usage else '')
+                rows.append(MenuItem(label, value=item, description=item.login))
         if not rows:
             rows.append(MenuItem('No accounts yet. Add one below.', disabled=True))
         return [*rows, MenuItem('+ Add an account...', value=_ADD), save_and_close_item()]
@@ -105,6 +114,8 @@ class AccountsMenu:
         if item in siblings and len(siblings) > 1:
             place = siblings.index(item) + 1
             lines += ['', f'{item.provider}@*:MODEL tries {len(siblings)} accounts;', f'this one is number {place}.']
+        if usage := self.usage.details(item.login):
+            lines += ['', *usage]
         if item.plugin_login is not None:
             lines += ['', 'Its plugin keeps the sign-in.']
         return lines
@@ -148,8 +159,18 @@ class AccountsMenu:
         return isinstance(row.value, Account) and row.value.login == self.focus
 
     def read_key(self) -> str:
-        """A queued arrow first, then the terminal."""
-        return self._pending.pop(0) if self._pending else menu_key()
+        """A queued arrow first, then a redraw for newly arrived usage, then the terminal.
+
+        Termflow calls this on the menu's own thread, every 50 ms while no key is pressed, so rows
+        swapped here never race a paint, and a search that hides every row still gets them.
+        """
+        if self._pending:
+            return self._pending.pop(0)
+        if self.usage.changed.is_set() and self._menu is not None:
+            self.usage.changed.clear()
+            self._menu.replace_items(self.items())
+            return _REDRAW
+        return menu_key()
 
     def build(self) -> Menu:
         """Wire rows, details, and keys into a termflow menu."""
@@ -157,8 +178,16 @@ class AccountsMenu:
         focused = next((index for index, row in enumerate(rows) if self._focused(row)), 1)
         builder = MenuBuilder('Accounts').style(markdown_style()).items(rows).list_width(_LIST_WIDTH)
         builder = builder.preview(self.details).initial_index(focused)
-        hotkeys = {'a': self.add, 'r': self.rename, 'd': self.sign_out, '[': self.move_up, ']': self.move_down}
-        return slash_search(builder, footer=_HINT, key_source=self.read_key, hotkeys=hotkeys)
+        hotkeys = {
+            'a': self.add,
+            'r': self.rename,
+            'd': self.sign_out,
+            '[': self.move_up,
+            ']': self.move_down,
+        }
+        menu = slash_search(builder, footer=_HINT, key_source=self.read_key, hotkeys=hotkeys)
+        self._menu = menu
+        return menu
 
 
 Login = Callable[[list[str]], Awaitable[str]]
@@ -170,16 +199,46 @@ async def open_accounts_menu(
     login: Login,
     plugins: Callable[[], Mapping[str, PluginLogin]],
     forget: Callable[[str], None],
+    usage: Callable[[Account], UsageFetch | None] = lambda _: None,
     runners: Runners = TERMINAL,
 ) -> str:
     """Show the menu until it closes; sign-ins run between its openings. Returns what changed.
 
     `login` is `/login`'s handler, `plugins` the loaded plugins' sign-ins, and `forget` drops a
-    cached provider once its account signs out.
+    cached provider once its account signs out. `usage` says how to fetch an account's usage;
+    fetches run in the background while the menu is open and stop when it closes.
     """
     menu = await to_thread.run_sync(AccountsMenu, store)
+    result = ''
+    async with create_task_group() as fetches:
+        try:
+            result = await _run_menu(
+                menu,
+                store,
+                login=login,
+                plugins=plugins,
+                forget=forget,
+                runners=runners,
+                load_usage=lambda items: menu.usage.load(fetches, items, usage),
+            )
+        finally:
+            fetches.cancel_scope.cancel()
+    return result
+
+
+async def _run_menu(
+    menu: AccountsMenu,
+    store: SettingsStore,
+    *,
+    login: Login,
+    plugins: Callable[[], Mapping[str, PluginLogin]],
+    forget: Callable[[str], None],
+    runners: Runners,
+    load_usage: Callable[[list[Account]], None],
+) -> str:
     messages: list[str] = []
     while True:
+        load_usage(await to_thread.run_sync(accounts, store))
         result = await run_worker(lambda: runners.run_list(menu.build()))
         value = result.item.value if not result.cancelled and result.item is not None else None
         if value == _ADD:
@@ -213,6 +272,7 @@ async def open_accounts_menu(
             menu.notice = await login([target])
         except (UserError, ValueError) as exc:
             menu.notice = str(exc)
+        menu.usage.forget(target)
         messages.append(menu.notice)
 
 
