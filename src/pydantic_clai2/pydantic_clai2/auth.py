@@ -31,7 +31,7 @@ from pydantic_clai2.config.credential_store import (
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
 from pydantic_clai2.models.accounts import remember
-from pydantic_clai2.models.profiles import ALL, account, parse_model, split_profile, with_profile
+from pydantic_clai2.models.profiles import ALL, DEFAULT, account, parse_model, split_profile, with_profile
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -71,6 +71,8 @@ async def login_command(
         name, profile = picked, None
     if profile == ALL:
         raise ValueError(f'{name}@* means every {name} account, so it cannot be signed in to. Run /login {name}@NAME.')
+    if profile == DEFAULT:
+        profile = None
     plugin = plugins.get(name)
     message = await _sign_in(name, profile=profile, codex=codex, plugins=plugins, store=store)
     # A plugin keeps its own tokens; for the rest, a saved login is what tells success from a cancelled prompt.

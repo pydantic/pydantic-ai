@@ -590,7 +590,15 @@ Logins you already had show up on their own.
 - **r** gives an account a name to show, such as your email.
 - **d** signs out, after asking. For a plugin's account, it only leaves the list;
   the plugin keeps its own sign-in.
-- **[** and **]** reorder accounts. The order is the order `@*` tries them in.
+- **[** and **]** reorder accounts. The order is the order `@*`, and a model
+  without an account, try them in.
+
+Each account shows its current usage as it loads, without holding up the menu:
+`5h 92% · 7d 43%` on the row, and a bar with the reset time for each limit on the
+right. CLAI reads it for ChatGPT/Codex (the five-hour and weekly windows) and
+GitHub Copilot (premium requests); plugins can report their own, as the Claude
+Code plugin does. `…` means it is still loading and `?` that the service did not
+answer; the right-hand panel says why.
 
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
@@ -598,6 +606,13 @@ as `PROVIDER@*:MODEL`: it runs on the first signed-in account and moves to the n
 when a request fails with a model API error, such as a rate or usage limit. Signing
 in to another account adds it to the rotation, with nothing else to change. If
 every account fails, CLAI lists why each one did.
+
+A model that names no account, such as `claude-code:claude-opus-5-5`, works the
+same way: once its provider has two or more signed-in accounts, it runs on all of
+them in `/accounts` order, as `@*` does. With one, it runs on that one. To run the
+default account alone, write `PROVIDER@default:MODEL`; picking an account in
+`/model add` saves it that way. `/set accounts.pool false` turns this off, so a
+model without an account runs on the default one only, as it did before.
 
 Under the menus, an account other than the default is a profile, written
 `PROVIDER@PROFILE`. You can type it instead:
@@ -610,17 +625,18 @@ Under the menus, an account other than the default is a profile, written
 /login openai@work               # any provider that takes an API key: a /keys entry or a typed key
 /model openai-codex@work:gpt-6-astra
 /model openai-codex@*:gpt-6-astra  # every signed-in Codex account, in /accounts order
+/model openai-codex@default:gpt-6-astra  # the default account alone
 ```
 
-A model without `@PROFILE` uses the default account, exactly as before. For
-Codex, Copilot, OpenRouter, and vLLM that is the existing login. Providers such as
+The default account is the one without `@PROFILE`. For Codex, Copilot,
+OpenRouter, and vLLM that is the existing login. Providers such as
 `openai` and `anthropic` still read their usual environment variables by default;
 a profile uses the key saved at `/login`. Anything else a provider needs, such as an
 Azure endpoint or an Ollama URL, still comes from the environment, and `/login`
 refuses to save the key until it is set. Plugins can support profiles too, such
 as `/login claude@work` for a plugin's `claude-code` models. A profile name is 1
-to 32 lowercase letters, digits, hyphens, or underscores; `default` is reserved
-for the account without a profile. Each profile's
+to 32 lowercase letters, digits, hyphens, or underscores; `default` names the
+account without a profile, and `/login NAME@default` signs in to it. Each profile's
 credentials are stored separately, the same way as the default login.
 
 A fallback chain does the same across different models or providers, such as Codex
@@ -639,7 +655,8 @@ Saving a chain adds `chain:NAME` to `/model`. A chain uses its first model's
 `chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
 `openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
 instead of falling back, so a missing login is not hidden. Older CLAI builds keep
-the rest of your settings, but cannot run a profile, `@*`, or chain model.
+the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
+model, and run a model without an account on the default account only.
 
 ## Settings and commands
 
@@ -662,6 +679,7 @@ values for known settings and unsupported database schema versions still cause a
 /set display.thinking false
 /set run.request_limit 10000
 /set run.tool_retries 3
+/set accounts.pool false
 ```
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the

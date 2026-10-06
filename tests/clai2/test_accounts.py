@@ -2,7 +2,7 @@
 
 import io
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -17,9 +17,10 @@ from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError, UserE
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import _ModelResolver  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2._app import _ModelResolver, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.auth import CodexAuth, login_command
 from pydantic_clai2.config.credential_store import has_credentials, save_codex_credentials
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import accounts as accounts_module, key_profiles
@@ -195,6 +196,98 @@ async def test_all_accounts_fall_back_in_list_order(tmp_path: Path) -> None:
     assert (await Agent(model).run('hi')).output == 'side answered opus'
 
 
+def pooling_resolver(store: SettingsStore, pooled: Callable[[], bool]) -> _ModelResolver:
+    def resolve(name: str) -> Model:
+        return TestModel(custom_output_text=f'default answered {name}')
+
+    def resolve_profile(name: str, profile: str) -> Model:
+        return TestModel(custom_output_text=f'{profile} answered {name}')
+
+    providers = {'claude-code': ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile)}
+    return _ModelResolver(
+        console=Console(file=io.StringIO()), plugins=lambda: providers, store=store, pool_accounts=pooled
+    )
+
+
+def answers(model: Model | str | None) -> list[str | None]:
+    members = model.models if isinstance(model, FallbackModel) else [model]
+    return [member.custom_output_text for member in members if isinstance(member, TestModel)]
+
+
+async def test_plain_names_pool_accounts_while_the_setting_is_on(tmp_path: Path) -> None:
+    store = store_at(tmp_path)
+    pooled = True
+    resolver = pooling_resolver(store, lambda: pooled)
+    remember(store, login='claude', profile=None, plugin=plugin_login())
+    # One signed-in account: the plain name runs on it alone.
+    assert answers(await resolver.resolve('claude-code:opus')) == ['default answered opus']
+    remember(store, login='claude', profile='work', plugin=plugin_login())
+    store.move_account(provider='claude-code', profile='work', offset=-1)
+    model = await resolver.resolve('claude-code:opus')
+    assert isinstance(model, FallbackModel)
+    assert answers(model) == ['work answered opus', 'default answered opus']
+    assert (await Agent(model).run('hi')).output == 'work answered opus'
+    # `@default` and a named profile each pin one account; `@*` still pools.
+    assert answers(await resolver.resolve('claude-code@default:opus')) == ['default answered opus']
+    assert answers(await resolver.resolve('claude-code@work:opus')) == ['work answered opus']
+    assert len(answers(await resolver.resolve('claude-code@*:opus'))) == 2
+    # A provider without accounts, or a name without a provider, is left as it was.
+    assert await resolver.resolve('openai:gpt-5') == 'openai:gpt-5'
+    assert await resolver.resolve('openai@default:gpt-5') == 'openai:gpt-5'
+    assert await resolver.resolve('test') == 'test'
+    pooled = False
+    assert answers(await resolver.resolve('claude-code:opus')) == ['default answered opus']
+    with pytest.raises(UserError, match=r'claude-code@Work:opus: Profile .Work. must be'):
+        await resolver.resolve('claude-code@Work:opus')
+
+
+async def test_set_accounts_pool_applies_to_the_next_run(tmp_path: Path) -> None:
+    store = store_at(tmp_path)
+    store.plugins_dir.mkdir(parents=True)
+    (store.plugins_dir / 'claude_pool.py').write_text("""
+from pydantic_ai.models.test import TestModel
+from pydantic_clai2.plugins import ModelProvider, Plugin
+
+
+def resolve(name):
+    return TestModel(custom_output_text='default')
+
+
+def resolve_profile(name, profile):
+    return TestModel(custom_output_text=profile)
+
+
+class ClaudePool(Plugin):
+    def get_model_providers(self):
+        return (ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile),)
+""")
+    remember(store, login='claude', profile=None, plugin=plugin_login())
+    remember(store, login='claude', profile='work', plugin=plugin_login())
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=store.load(),
+        store=store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    await shell.loader.load_all()
+    shell.session.model = 'claude-code:opus'
+    # The running turn keeps the model it bound, so `/accounts` opens at once instead of queueing.
+    assert shell.commands.runs_during_turn('/accounts')
+    try:
+        assert answers(await shell.session.resolved_model()) == ['default', 'work']
+        assert shell.context.set_setting(['accounts.pool', 'false']) == 'Saved accounts.pool. Applied.'
+        assert answers(await shell.session.resolved_model()) == ['default']
+        assert store.load().pool_accounts is False
+    finally:
+        await shell.loader.disable('claude_pool')
+
+
 def test_menu_rows_details_and_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = store_at(tmp_path)
     menu = AccountsMenu(store)
@@ -223,7 +316,7 @@ def test_menu_rows_details_and_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert 'Its plugin keeps the sign-in.' in menu.details(rows[1])
     assert 'signed out: Enter signs in (claude-code@old)' in menu.details(rows[2])
     default = menu.details(rows[4])
-    assert 'use      openai-codex:MODEL' in default and 'this one is number 1.' in default
+    assert 'use      openai-codex@default:MODEL' in default and 'this one is number 1.' in default
     monkeypatch.setattr(accounts_menu, 'terminal_size', lambda: (60, 20))
     menu.notice = 'A long notice that wraps across the narrow details pane so it can be read.'
     wrapped = menu.details(rows[4]).split('\n\n')[-1].splitlines()
@@ -380,16 +473,19 @@ def test_choose_account(tmp_path: Path) -> None:
     assert choose_account(store, 'openai-codex:gpt-6', cancelled.runners) is None
     # One named API-key account: the environment's default is offered too, but not all accounts.
     save_codex_credentials(account='openai@team', value='{}')
-    shown: list[list[str]] = []
+    shown: list[list[tuple[str, object]]] = []
 
     def run_choice(menu: object) -> MenuResult:
         assert isinstance(menu, accounts_menu.Menu)
-        shown.append([row.label for row in menu._items])  # pyright: ignore[reportPrivateUsage]
-        return pick('openai:gpt-5')
+        shown.append([(row.label, row.value) for row in menu._items])  # pyright: ignore[reportPrivateUsage]
+        return pick('openai@default:gpt-5')
 
     runners = Runners(run_list=menu_script([]).run_list, run_choice=run_choice)
-    assert choose_account(store, 'openai:gpt-5', runners) == 'openai:gpt-5'
-    assert shown == [['default', 'team  (openai@team)']]
+    assert choose_account(store, 'openai:gpt-5', runners) == 'openai@default:gpt-5'
+    # Picked accounts are pinned, so pooling plain names does not spread them over the others.
+    assert shown == [[('default', 'openai@default:gpt-5'), ('team  (openai@team)', 'openai@team:gpt-5')]]
+    assert choose_account(store, 'openai-codex:gpt-6', runners) == 'openai@default:gpt-5'
+    assert shown[1][0] == ('default  (openai-codex)', 'openai-codex@default:gpt-6')
 
 
 def test_model_add_asks_which_account(tmp_path: Path) -> None:

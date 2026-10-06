@@ -2370,7 +2370,9 @@ message saying the plugin has one account.
 Each successful `/login NAME` or `/login NAME@PROFILE` puts the account in
 `/accounts`, under your first model's prefix (`claude-code`, not `claude`), so
 users can add, order, and pick your accounts without typing a profile, and
-`PREFIX@*:MODEL` tries them in that order. CLAI cannot see your tokens, so it
+`PREFIX@*:MODEL` tries them in that order. So does `PREFIX:MODEL` once two or more
+are listed, unless the user turns `accounts.pool` off; `PREFIX@default:MODEL`
+reaches your `resolve`, never `resolve_profile`. CLAI cannot see your tokens, so it
 lists an account from the time it signed in until the user removes it there;
 removing one does not sign it out of your plugin, and the menu says so. Offer your
 own logout for that.

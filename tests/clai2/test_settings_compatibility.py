@@ -255,6 +255,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('display.spinner', '""'),
         ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
+        ('accounts.pool', '"off"'),
     ],
 )
 def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str, value_json: str) -> None:
@@ -266,6 +267,32 @@ def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str,
     with pytest.raises(ValidationError):
         store.load()
     assert store.path.read_bytes() == snapshot
+
+
+def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    # Literal rows an earlier build wrote, with a saved profile model and no `accounts.pool`.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.executemany(
+            'INSERT INTO settings VALUES (?, ?)',
+            [('model', '"claude-code@work:opus"'), ('display.thinking', 'false'), ('future.setting', '1')],
+        )
+    store = SettingsStore(path)
+    settings = store.load()
+    # Turning pooling on for existing databases is the intended default; named profiles stay pinned.
+    assert settings.pool_accounts is True
+    assert settings.model == 'claude-code@work:opus' and settings.thinking is False
+    config_command(store, ['set', 'accounts.pool', 'false'])
+    assert SettingsStore(path).load().pool_accounts is False
+    config_command(store, ['reset', 'accounts.pool'])
+    assert SettingsStore(path).load() == settings
+    with closing(sqlite3.connect(path)) as connection:
+        assert dict(connection.execute('SELECT key, value_json FROM settings')) == {
+            'model': '"claude-code@work:opus"',
+            'display.thinking': 'false',
+            'future.setting': '1',
+        }
 
 
 def test_incompatible_schema_is_not_modified(tmp_path: Path) -> None:

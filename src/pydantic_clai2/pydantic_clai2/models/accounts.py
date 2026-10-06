@@ -12,7 +12,7 @@ from functools import cache
 from pydantic_clai2.config.api_keys import forget_connection
 from pydantic_clai2.config.credential_store import has_credentials, profile_accounts
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
-from pydantic_clai2.models.profiles import account, provider_of, with_profile
+from pydantic_clai2.models.profiles import DEFAULT, account, provider_of, with_profile
 from pydantic_clai2.plugins import PluginLogin
 
 SUBSCRIPTIONS = ('openai-codex', 'github-copilot')
@@ -45,6 +45,10 @@ class Account:
     def model(self, name: str) -> str:
         """`name` run on this account, such as `openai-codex@work:gpt-6-astra`."""
         return with_profile(f'{self.provider}:{name}', self.profile)
+
+    def pinned(self, name: str) -> str:
+        """`name` on this account alone, even while `accounts.pool` pools plain names: the default is `@default`."""
+        return with_profile(f'{self.provider}:{name}', self.profile or DEFAULT)
 
 
 def accounts(store: SettingsStore) -> list[Account]:

@@ -48,7 +48,7 @@ from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import chain_command, chain_completions, settings_model as chain_settings_model
-from pydantic_clai2.models.profiles import ALL, provider_of
+from pydantic_clai2.models.profiles import ALL, DEFAULT, ModelRef, base_model, parse_model, provider_of
 from pydantic_clai2.plugins import (
     ModelProvider,
     PluginLogin,
@@ -97,6 +97,7 @@ if sys.version_info < (3, 11):
 
 if TYPE_CHECKING:
     from pydantic_clai2.auth import CodexAuth
+    from pydantic_clai2.models.accounts import Account
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -289,6 +290,14 @@ async def chat(
                 fresh = True
 
 
+def _parse(name: str) -> ModelRef:
+    """Split a model name, reporting a malformed profile as a `UserError` that names the model."""
+    try:
+        return parse_model(name)
+    except ValueError as exc:
+        raise UserError(f'{name}: {exc}') from None
+
+
 @dataclass(kw_only=True)
 class _ModelResolver:
     """Load provider integrations on demand, retaining Codex authentication per conversation."""
@@ -300,6 +309,8 @@ class _ModelResolver:
     """Sign-ins registered by loaded plugins, read per `/login` like `plugins`."""
     store: SettingsStore | None = None
     """Where a plugin sign-in saves its models."""
+    pool_accounts: Callable[[], bool] = lambda: False
+    """The `accounts.pool` setting, read per resolution so `/set` applies to the next run."""
     _auth: 'CodexAuth | None' = None
 
     def codex_auth(self) -> 'CodexAuth':
@@ -315,18 +326,29 @@ class _ModelResolver:
         return await login_command(args, codex=self.codex_auth(), plugins=self.logins(), store=self.store)
 
     async def resolve(self, name: str) -> Model | str:
-        """Build `PROVIDER[@PROFILE]:NAME` or `chain:NAME`; a core model without a profile stays a string."""
+        """Build `PROVIDER[@PROFILE]:NAME` or `chain:NAME`; a core model without a profile stays a string.
+
+        While `accounts.pool` is on, a name without a profile runs on every signed-in account, as `@*`
+        does, once its provider has two or more; `@default` runs the default account alone.
+        """
         from pydantic_clai2.models.chains import chain_name
-        from pydantic_clai2.models.profiles import parse_model
 
         if (chain := chain_name(name)) is not None:
             return await self._chain(chain)
-        try:
-            ref = parse_model(name)
-        except ValueError as exc:
-            raise UserError(f'{name}: {exc}') from None
+        ref = _parse(name)
         if ref.profile == ALL:
             return await self._all_accounts(ref.provider, ref.name)
+        if ref.profile == DEFAULT:
+            return await self._one_account(base_model(name))
+        if ref.profile is None and ref.provider and self.pool_accounts():
+            members = await self._pool(ref.provider)
+            if len(members) > 1:
+                return await self._fall_back(members, ref.name)
+        return await self._one_account(name)
+
+    async def _one_account(self, name: str) -> Model | str:
+        """Build a model on the one account it names, the default one when it names none."""
+        ref = _parse(name)
         if ref.provider in ('openrouter', 'vllm', 'github-copilot'):
             from pydantic_clai2.models import github_copilot, openrouter, vllm
 
@@ -359,14 +381,23 @@ class _ModelResolver:
 
     async def _all_accounts(self, provider: str, name: str) -> Model | str:
         """`PROVIDER@*:NAME`: the model on every signed-in account, in `/accounts` order, falling back in turn."""
-        from pydantic_ai.models.fallback import FallbackModel
+        members = await self._pool(provider)
+        if not members:
+            raise UserError(f'No {provider} account is signed in. Add one with /accounts.')
+        return await self._fall_back(members, name)
+
+    async def _pool(self, provider: str) -> 'list[Account]':
+        """The provider's signed-in accounts, in `/accounts` order; none without a settings store."""
         from pydantic_clai2.models.accounts import pool
 
         store = self.store
-        members = await to_thread.run_sync(lambda: pool(store, provider), abandon_on_cancel=True) if store else []
-        if not members:
-            raise UserError(f'No {provider} account is signed in. Add one with /accounts.')
-        first, *rest = [await self.resolve(member.model(name)) for member in members]
+        return await to_thread.run_sync(lambda: pool(store, provider), abandon_on_cancel=True) if store else []
+
+    async def _fall_back(self, members: 'list[Account]', name: str) -> Model | str:
+        """NAME on each account in turn, the next one taking over when a request fails."""
+        from pydantic_ai.models.fallback import FallbackModel
+
+        first, *rest = [await self._one_account(member.model(name)) for member in members]
         return FallbackModel(first, *rest) if rest else first
 
     async def accounts(self, args: list[str]) -> str:
@@ -426,6 +457,7 @@ def create_shell(
     context = CommandContext(
         settings=settings, store=store, clear_history=session.clear, apply_setting=session_settings, project=project
     )
+    models.pool_accounts = lambda: context.settings.pool_accounts
 
     def fast(args: list[str]) -> str:
         if args not in ([], ['on'], ['off']):

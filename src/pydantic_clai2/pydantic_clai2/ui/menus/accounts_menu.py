@@ -19,7 +19,7 @@ from termflow.tui.terminal import terminal_size
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.accounts import Account, LoginChoice, accounts, login_choices, sign_out
-from pydantic_clai2.models.profiles import ALL, check_name, provider_of, with_profile
+from pydantic_clai2.models.profiles import ALL, DEFAULT, check_name, provider_of, with_profile
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE_DETAILS,
@@ -99,7 +99,7 @@ class AccountsMenu:
             f'{item.provider} · {item.name}',
             'signed in' if item.signed_in else f'signed out: Enter signs in ({item.login})',
             '',
-            f'use      {item.model("MODEL")}',
+            f'use      {item.pinned("MODEL")}',
             f'login    /login {item.login}',
         ]
         if item in siblings and len(siblings) > 1:
@@ -330,7 +330,8 @@ def choose_account(store: SettingsStore, model: str, runners: Runners) -> str | 
 
     Offers each account, the default when it is not listed (an API key from the environment), and
     every account in turn (`PROVIDER@*`) when two or more are signed in. A model already naming an
-    account is returned as it is.
+    account is returned as it is. A picked account is pinned, the default one as `PROVIDER@default`,
+    so `accounts.pool` does not spread it over the others.
     """
     provider, _, name = model.partition(':')
     if '@' in provider:
@@ -338,9 +339,9 @@ def choose_account(store: SettingsStore, model: str, runners: Runners) -> str | 
     options = [item for item in accounts(store) if item.provider == provider_of(model)]
     if not any(item.profile is not None for item in options):
         return model
-    rows = [MenuItem(f'{item.name}  ({item.login})', value=item.model(name)) for item in options if item.signed_in]
+    rows = [MenuItem(f'{item.name}  ({item.login})', value=item.pinned(name)) for item in options if item.signed_in]
     if not any(item.profile is None for item in options):
-        rows.insert(0, MenuItem('default', value=model))
+        rows.insert(0, MenuItem('default', value=with_profile(model, DEFAULT)))
     if sum(item.signed_in for item in options) > 1:
         rows.append(MenuItem('all accounts, in /accounts order', value=with_profile(model, ALL)))
     result = runners.run_choice(
