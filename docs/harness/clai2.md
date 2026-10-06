@@ -381,7 +381,10 @@ settings, merged over the stock ones, such as `{'coder': {'agent_folders': []}}`
 `capabilities` adds your own capabilities, bound beside the built-ins so delegated
 tasks carry them too. Plugins close when the `async with` block exits.
 
-To serve it to an editor, pass the agent to [`run_acp_stdio`](acp.md). With a
+To serve it to an editor, pass the agent to [`run_acp_stdio`](acp.md). Every session
+then works in `workspace`. To follow the folder each client session opens instead,
+return a `workspace` from a `session_config`, as
+[Rooting tools at the workspace](acp.md#rooting-tools-at-the-workspace) shows. With a
 capability that requires approval, such as a `ToolGuardrail` returning
 `GuardrailResult.approve()`, pass `plugin_settings={'coder': {'sub_agents': False}}`:
 a delegated task cannot yet pass an approval up to the client

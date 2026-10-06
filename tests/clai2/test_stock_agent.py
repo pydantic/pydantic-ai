@@ -12,6 +12,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import JsonValue
 
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.capabilities import Capability, LocalWorkspace, Thinking
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ToolReturnPart, UserPromptPart
@@ -232,11 +233,13 @@ async def test_plugins_get_their_settings_and_close_on_exit(
 
 
 async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A host's own model name, thinking, and guardrail, with delegation and disk agents off."""
+    """A host's own model name, thinking, and a guardrail that defers `shell` for approval, as over ACP.
+
+    Delegation and disk agents are off; the approved command runs without the host's LLM credentials.
+    """
     monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'gateway-secret')
     monkeypatch.setenv('HOST_VARIABLE', 'forwarded')
     requests: list[tuple[str, ModelSettings, set[str]]] = []
-    guarded: list[str] = []
 
     async def resolve(self: object, name: str) -> Model | str:
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -250,18 +253,24 @@ async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: py
 
         return FunctionModel(stream_function=stream, model_name=name, profile=ModelProfile(supports_thinking=True))
 
-    def guard(call: ToolCallInfo) -> GuardrailResult:
-        guarded.append(call.name)
-        return GuardrailResult.allow()
+    def ask_first(call: ToolCallInfo) -> GuardrailResult:
+        return GuardrailResult.approve() if call.name == 'shell' else GuardrailResult.allow()
 
     monkeypatch.setattr(_app._ModelResolver, 'resolve', resolve)  # pyright: ignore[reportPrivateUsage]
     async with open_stock_agent(
         workspace=tmp_path,
         model='gateway/anthropic:claude-opus-5-5',
-        capabilities=[Thinking(effort='high'), ToolGuardrail(guard=guard)],
+        capabilities=[Thinking(effort='high'), ToolGuardrail(guard=ask_first)],
         plugin_settings={'coder': {'sub_agents': False, 'agent_folders': []}},
     ) as agent:
-        result = await agent.run('Print the environment.')
+        paused = await agent.run('Print the environment.', output_type=[str, DeferredToolRequests])
+        assert isinstance(paused.output, DeferredToolRequests)
+        assert [call.tool_name for call in paused.output.approvals] == ['shell']
+        result = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=paused.output.build_results(approve_all=True),
+            output_type=[str, DeferredToolRequests],
+        )
     [(name, settings, tools)] = requests
     assert name == 'gateway/anthropic:claude-opus-5-5'
     assert settings == snapshot(
@@ -273,6 +282,6 @@ async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: py
         }
     )
     assert 'delegate_task' not in tools
-    assert guarded == ['shell']
+    assert isinstance(result.output, str)
     assert 'HOST_VARIABLE=forwarded' in result.output
     assert 'gateway-secret' not in result.output
