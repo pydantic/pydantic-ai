@@ -20,7 +20,7 @@ from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT, RemoteServer, http_client
+from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT, http_client
 from pydantic_clai2.plugins.sign_in import SignInRequired, not_signed_in
 
 _TOKENS = 'mcp-oauth-token'
@@ -172,8 +172,8 @@ class SignIn(OAuth):
 class _StoredOnly(SignIn):
     """For runs: stored tokens, refreshed when they expire, and a `SignInRequired` where FastMCP would open a browser."""
 
-    def __init__(self, name: str, *, refusal: str) -> None:
-        super().__init__(name)
+    def __init__(self, name: str, *, callback_host: str, refusal: str) -> None:
+        super().__init__(name, callback_host=callback_host)
         self._refusal = refusal
 
     async def redirect_handler(self, authorization_url: str) -> None:
@@ -183,8 +183,8 @@ class _StoredOnly(SignIn):
 class _Shown(SignIn):
     """For `OAuthSignIn.sign_in`: show the link too, for a browser that does not open (over SSH, say)."""
 
-    def __init__(self, name: str, *, show: Callable[[str], object]) -> None:
-        super().__init__(name)
+    def __init__(self, name: str, *, callback_host: str, show: Callable[[str], object]) -> None:
+        super().__init__(name, callback_host=callback_host)
         self._show = show
 
     async def redirect_handler(self, authorization_url: str) -> None:
@@ -215,6 +215,8 @@ class OAuthSignIn:
     """Connect over SSE rather than Streamable HTTP."""
     init_timeout: float | None = None
     """Seconds a run allows for the handshake; `None` keeps FastMCP's default."""
+    callback_host: str = '127.0.0.1'
+    """The loopback host the browser returns to; some servers register only `localhost`."""
 
     def signed_in(self) -> bool | None:
         """Whether tokens are stored; `None` when the keyring cannot be read."""
@@ -226,7 +228,7 @@ class OAuthSignIn:
 
     def transport(self) -> StreamableHttpTransport | SSETransport:
         """A run's transport. Each call holds its own tokens, so a sign-out reaches the next run."""
-        return self._transport(_StoredOnly(self.name, refusal=not_signed_in(self)))
+        return self._transport(_StoredOnly(self.name, callback_host=self.callback_host, refusal=not_signed_in(self)))
 
     def client(self) -> Client[StreamableHttpTransport | SSETransport]:
         """A run's connection; see `transport`."""
@@ -234,7 +236,8 @@ class OAuthSignIn:
 
     async def sign_in(self, *, show: Callable[[str], object]) -> None:
         """Connect once, so FastMCP opens the browser and stores the tokens."""
-        async with Client(self._transport(_Shown(self.name, show=show)), init_timeout=OAUTH_TIMEOUT):
+        auth = _Shown(self.name, callback_host=self.callback_host, show=show)
+        async with Client(self._transport(auth), init_timeout=OAUTH_TIMEOUT):
             pass
 
     def _transport(self, auth: SignIn) -> StreamableHttpTransport | SSETransport:
@@ -242,13 +245,3 @@ class OAuthSignIn:
         if self.sse:
             return SSETransport(self.url, headers=headers, auth=auth, httpx_client_factory=http_client)
         return StreamableHttpTransport(self.url, headers=headers, auth=auth, httpx_client_factory=http_client)
-
-
-def oauth(name: str, server: RemoteServer) -> OAuth | None:
-    """A sign-in handler with keyring-backed tokens; FastMCP refreshes them or opens the browser on connect."""
-    return sign_in(name) if server.auth else None
-
-
-def sign_in(name: str) -> OAuth:
-    """Browser sign-in whose tokens are kept in the `mcp-NAME` credential."""
-    return SignIn(name)

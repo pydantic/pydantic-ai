@@ -32,7 +32,8 @@ configuration in your editor, and switch on OAuth sign-in for remote servers.
 lists them all. Saved servers are available to the agent from the next prompt,
 with tool names prefixed by the server name. A server connects on the first
 prompt that needs it (or `/mcp start`) and stays connected; one that cannot
-connect is marked `error` and left out rather than failing the prompt. A
+connect is marked `error` and left out rather than failing the prompt. An OAuth
+server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
@@ -1985,8 +1986,10 @@ check apply every saved setting as they always did.
 
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
 settings menu (`/plugins configure notion` reopens it). The token is picked from
-`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
-signs in through the browser. Plugin settings never hold the token. See
+`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one,
+`/notion login` signs in through the browser. Plugin settings never hold the token.
+No built-in plugin opens a browser while loading or during a prompt: each signs in
+only from its settings menu or its `login` command, and Esc cancels the wait. See
 [PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
 `/plugins enable linear` gives the agent Linear's hosted MCP tools, read-only by

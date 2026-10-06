@@ -1,16 +1,19 @@
 """The built-in `posthog` plugin: its settings menu, its `/keys` reference, and the connection it builds."""
 
 import io
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
+import anyio
 import httpx
 import keyring
 import pytest
 from fastmcp import Client
-from fastmcp.client.auth import OAuth
+from fastmcp.client.auth.oauth import TokenStorageAdapter
 from fastmcp.client.transports import StreamableHttpTransport
 from keyring.errors import KeyringLocked
+from mcp.shared.auth import OAuthToken
 from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui.menu import MenuResult
@@ -19,6 +22,8 @@ from termflow.tui.textinput import TextInputResult
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.posthog import PostHog
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import posthog
@@ -28,18 +33,51 @@ from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore
+from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.ui.menus.field_menu import CUSTOM, is_save_and_close, save_and_close_item
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
-from tests.clai2.menu_script import Script, pick, typed
+from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
 
 pytestmark = pytest.mark.anyio
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'posthog')
 CLOSE = MenuResult(cancelled=True)
 KEY = 'POSTHOG_PERSONAL_API_KEY'
+NOT_SIGNED_IN = 'Not signed in to PostHog. Run /posthog login to sign in.'
+
+
+class SignIn:
+    """Stands in for `OAuthSignIn.sign_in`, which would open the browser; it stores tokens as FastMCP would."""
+
+    attempts: int = 0
+    error: Exception | None = None
+    unfinished: bool = False
+    """The browser sign-in is never completed, so it waits until cancelled."""
+
+    @staticmethod
+    async def sign_in(method: OAuthSignIn, *, show: Callable[[str], object]) -> None:
+        assert method.name == posthog.TOKENS and method.service == 'PostHog'
+        SignIn.attempts += 1
+        if SignIn.error is not None:
+            raise SignIn.error
+        if SignIn.unfinished:
+            await anyio.sleep_forever()
+        await store_sign_in(method.url)
+
+
+@pytest.fixture(autouse=True)
+def sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(OAuthSignIn, 'sign_in', SignIn.sign_in)
+    monkeypatch.setattr(SignIn, 'attempts', 0)
+    monkeypatch.setattr(SignIn, 'error', None)
+    monkeypatch.setattr(SignIn, 'unfinished', False)
+
+
+async def store_sign_in(url: str = US_URL) -> None:
+    tokens = TokenStorageAdapter(TokenStore(posthog.TOKENS), server_url=url)
+    await tokens.set_tokens(OAuthToken(access_token='access', token_type='Bearer', expires_in=3600))
 
 
 class Shell:
@@ -68,6 +106,15 @@ class Shell:
         [capability] = self.loader.capabilities()
         assert isinstance(capability, PostHog)
         return capability  # pyright: ignore[reportUnknownVariableType]
+
+    async def run_capability(self) -> PostHog[None] | None:
+        """What a run gets from the browser sign-in's per-run factory."""
+        [entry] = self.loader.entries()
+        assert entry.loaded is not None
+        plugin = entry.loaded.plugin
+        assert isinstance(plugin, posthog.PostHogPlugin)
+        assert self.loader.capabilities() == [plugin.for_run]
+        return await plugin.for_run(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
 
 
 def script(
@@ -435,40 +482,130 @@ async def test_status_command_in_key_mode(tmp_path: Path) -> None:
     assert await commands.execute_async('/posthog') == f'PostHog (read-only, {US_URL}) connects with {KEY} from /keys.'
     api_keys.delete_key(name=KEY)
     assert f'PostHog uses {KEY}, which is missing from /keys.' in await commands.execute_async('/posthog')
-    with pytest.raises(ValueError, match='Usage: /posthog'):
+    with pytest.raises(ValueError, match=r'Usage: /posthog \[login \| logout \| status\]'):
         await commands.execute_async('/posthog key')
 
 
 async def test_browser_sign_in_status_and_logout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    shell = Shell(tmp_path, {'auth': 'browser', 'read_only': False}, terminal=False)
+    shell = Shell(tmp_path, {'auth': 'browser', 'read_only': False, 'features': ['sql']}, terminal=False)
     await shell.loader.enable('posthog')
-    capability = shell.capability()
-    before = capability.client
-    assert isinstance(before, Client) and before._init_timeout == OAUTH_TIMEOUT  # pyright: ignore[reportPrivateUsage]
-    connection = transport(capability)
-    assert isinstance(connection.auth, OAuth) and connection.headers == {}
+    assert await shell.run_capability() is None
     commands = shell.commands
-    assert 'not signed in' in await commands.execute_async('/posthog')
-    await TokenStore(posthog.TOKENS).put('token', {'access_token': 'x'}, collection='mcp-oauth-token')
-    assert await commands.execute_async('/posthog') == (
-        f'PostHog (read-write, {US_URL}) is signed in through the browser.'
+    status = f'PostHog (read-write, {US_URL}) uses browser sign-in.'
+    assert await commands.execute_async('/posthog') == f'{status} {NOT_SIGNED_IN}'
+    await store_sign_in(f'{US_URL}?features=sql')
+    assert await commands.execute_async('/posthog status') == f'{status} Signed in to PostHog.'
+    capability = await shell.run_capability()
+    assert capability is not None
+    connection = transport(capability)
+    assert connection.url == f'{US_URL}?features=sql' and connection.headers == {}
+    assert isinstance(connection.auth, MCPSignIn)
+    assert await commands.execute_async('/posthog logout') == (
+        'Signed out of PostHog. Run /posthog login to sign in again.'
     )
-
-    def delete(service: str, account: str) -> None:
-        pass
-
-    monkeypatch.setattr(keyring, 'delete_password', delete)
-    assert 'Signed out' in await commands.execute_async('/posthog logout')
-    assert capability.client is not before, 'the live sign-in is replaced, not reused'
-    assert isinstance(transport(capability).auth, OAuth)
+    assert await shell.run_capability() is None, 'the next run has no tools rather than reusing the old sign-in'
     [registered] = [command for command in commands if command.name == 'posthog']
-    assert list(registered.complete([''])) == ['logout'] and list(registered.complete(['logout', ''])) == []
+    assert list(registered.complete([''])) == ['login', 'logout', 'status']
+    assert list(registered.complete(['logout', ''])) == []
 
     def locked(service: str, account: str) -> str | None:
         raise KeyringLocked('locked')
 
     monkeypatch.setattr(keyring, 'get_password', locked)
-    assert 'unknown sign-in state' in await commands.execute_async('/posthog')
+    assert 'the keyring could not be read' in await commands.execute_async('/posthog')
+    assert SignIn.attempts == 0
+
+
+async def test_no_browser_sign_in_loads_without_tools_and_says_how(tmp_path: Path) -> None:
+    """Loading waits for every plugin, so a browser left open at load would leave CLAI unable to run anything."""
+    SignIn.unfinished = True
+    for terminal in (True, False):
+        folder = tmp_path / f'terminal-{terminal}'
+        folder.mkdir()
+        shell = Shell(folder, {'auth': 'browser'}, terminal=terminal)
+        with anyio.fail_after(5):
+            await shell.loader.enable('posthog')
+            assert await shell.run_capability() is None
+        assert NOT_SIGNED_IN in shell.output.getvalue()
+        assert 'has no key' not in shell.output.getvalue()
+        assert SignIn.attempts == 0
+        await shell.loader.close('exit')
+
+
+async def test_posthog_login_signs_in_and_the_next_run_connects_without_a_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        'pydantic_clai2.plugins.sign_in.RUNNERS', Script(lists=[], choices=[UNTIL_CLOSED], texts=[]).runners
+    )
+    shell = Shell(tmp_path, {'auth': 'browser', 'url': EU_URL}, terminal=False)
+    await shell.loader.enable('posthog')
+    assert await shell.run_capability() is None
+    assert await shell.commands.execute_async('/posthog login') == 'Signed in to PostHog.'
+    capability = await shell.run_capability()
+    assert capability is not None, 'no reload needed'
+    assert transport(capability).url == EU_URL
+    assert transport(capability).headers == {'x-posthog-read-only': 'true'}
+    assert SignIn.attempts == 1
+    await shell.loader.close('exit')
+
+
+async def test_choosing_the_browser_in_the_menu_signs_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    shell = Shell(tmp_path)
+    script(monkeypatch, lists=[])
+    await shell.loader.enable('posthog')
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('browser'), UNTIL_CLOSED])
+    assert await shell.loader.configure('posthog') == 'Saved Sign-in.\nSigned in to PostHog.'
+    assert shell.saved()['auth'] == 'browser'
+    assert await shell.run_capability() is not None
+    assert SignIn.attempts == 1
+    await shell.loader.close('exit')
+
+
+async def test_choosing_the_browser_when_already_signed_in_or_cancelling_does_not_open_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await store_sign_in()
+    shell = Shell(tmp_path)
+    script(monkeypatch, lists=[])
+    await shell.loader.enable('posthog')
+    shown = script(monkeypatch, lists=[pick('auth'), pick('auth')], choices=[CLOSE, pick('browser')])
+    assert await shell.loader.configure('posthog') == 'Saved Sign-in.'
+    assert shown.opened == ['list', 'choice', 'list', 'choice', 'list']
+    assert SignIn.attempts == 0
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('key')])
+    assert await shell.loader.configure('posthog') == 'Saved Sign-in.'
+    assert shell.saved()['auth'] == 'key'
+    assert SignIn.attempts == 0
+    await shell.loader.close('exit')
+
+
+async def test_esc_cancels_an_unfinished_sign_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    SignIn.unfinished = True
+    shell = Shell(tmp_path)
+    script(monkeypatch, lists=[])
+    await shell.loader.enable('posthog')
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('browser'), CLOSE])
+    with anyio.fail_after(5):
+        message = await shell.loader.configure('posthog')
+    assert message == 'Saved Sign-in.\nPostHog sign-in cancelled. Run /posthog login to try again.'
+    assert SignIn.attempts == 1
+    assert await shell.run_capability() is None
+    await shell.loader.close('exit')
+
+
+async def test_failed_sign_in_is_reported_and_adds_no_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    SignIn.error = RuntimeError('Client failed to connect: authorization denied')
+    shell = Shell(tmp_path)
+    script(monkeypatch, lists=[])
+    await shell.loader.enable('posthog')
+    script(monkeypatch, lists=[pick('auth')], choices=[pick('browser'), UNTIL_CLOSED])
+    assert await shell.loader.configure('posthog') == (
+        'Saved Sign-in.\nCould not sign in to PostHog: Client failed to connect: authorization denied. '
+        'Run /posthog login to try again.'
+    )
+    assert await shell.run_capability() is None
+    await shell.loader.close('exit')
 
 
 @pytest.mark.parametrize(

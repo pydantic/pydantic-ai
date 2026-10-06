@@ -54,6 +54,10 @@ they agree in the same PR.
   `event.cancel()`). Nothing collects a list of return values.
 - **Fail closed, one way.** A raising handler on a decidable moment cancels the
   action and reports the error. No per-registration "fail open" flag.
+- **Sign in only when the user asks.** Loading waits for every plugin and a run
+  waits for its tools, so neither may open a browser or wait on a sign-in. Use
+  `plugins/sign_in.py`: a `SignInMethod` (`mcp.OAuthSignIn` for MCP OAuth),
+  `sign_in_now` from a menu or `/NAME login`, and no tools while signed out.
 - **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
   core's, reached through a `Hooks` capability. Do not wrap a core hook in a
   plugin method.
@@ -337,6 +341,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
 | `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
+| `plugins/sign_in.py` | the shared sign-in API: `SignInMethod`, the Esc-cancellable waiting screen (`sign_in_now`), `/NAME login\|logout\|status`, the signed-out notice, `SignInRequired` |
 | `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
 | `runtime/speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
 | `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |

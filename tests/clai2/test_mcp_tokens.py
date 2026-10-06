@@ -27,7 +27,6 @@ from pydantic_clai2.mcp import (
     SSEServer,
     StdioServer,
     TokenStore,
-    oauth,
 )
 from pydantic_clai2.mcp._runtime import (
     _sign_in_required as sign_in_required,  # pyright: ignore[reportPrivateUsage]
@@ -91,8 +90,9 @@ async def test_unreadable_bundle_means_signing_in_again(vault: Vault) -> None:
 
 
 def test_oauth_uses_the_keyring_store() -> None:
-    assert oauth('x', HTTPServer(type='http', url=HttpUrl(URL))) is None
-    assert isinstance(oauth('x', SSEServer(type='sse', url=HttpUrl(URL), auth='oauth')), OAuth)
+    assert sign_in_for('x', HTTPServer(type='http', url=HttpUrl(URL))) is None
+    method = sign_in_for('x', SSEServer(type='sse', url=HttpUrl(URL), auth='oauth'))
+    assert method is not None and isinstance(method.transport().auth, OAuth)
 
 
 def make(tmp_path: Path, script: Script | None = None) -> tuple[MCPCommand, MCPStore]:
