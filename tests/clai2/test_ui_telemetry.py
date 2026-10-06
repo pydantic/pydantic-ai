@@ -270,11 +270,11 @@ async def test_unexpected_command_errors_are_recorded_under_the_command(content_
     def rate_limited(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, json={'message': 'API rate limit exceeded'})
 
-    def bleeding() -> UpdateChannel:
-        return 'bleeding'
+    def main_channel() -> UpdateChannel:
+        return 'main'
 
     updates = Updates(
-        channel=bleeding,
+        channel=main_channel,
         current=Installed(version='1.0.0', tool=True),
         fetch=partial(latest, transport=httpx.MockTransport(rate_limited)),
     )
