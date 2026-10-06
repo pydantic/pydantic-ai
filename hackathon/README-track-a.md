@@ -2,37 +2,30 @@
 
 ## Try it (colleagues)
 
-```bash
-REV=ca08c9e15746e53a364fdf72d9156ce87492ad3a
-uvx --from 'git+https://github.com/pydantic/pydantic-ai@control-plane#subdirectory=src/pydantic_clai2' \
-  --with "logfire[variables] @ git+https://github.com/pydantic/logfire.git@$REV#subdirectory=logfire" \
-  --with "logfire-sdk @ git+https://github.com/pydantic/logfire.git@$REV#subdirectory=logfire-sdk" \
+One command. It installs this branch, enrols your clai2 in the Pydantic Logfire project, and uses the AI Gateway:
+
+```zsh
+CLAI2_MANAGED_URL=https://logfire-eu.pydantic.info/logfire/clai2 uvx --refresh-package pydantic-clai2 \
+  --from 'git+https://github.com/pydantic/pydantic-ai@control-plane#subdirectory=src/pydantic_clai2' \
+  --with 'logfire[variables] @ git+https://github.com/pydantic/logfire.git@ca08c9e15746e53a364fdf72d9156ce87492ad3a#subdirectory=logfire' \
+  --with 'logfire-sdk @ git+https://github.com/pydantic/logfire.git@ca08c9e15746e53a364fdf72d9156ce87492ad3a#subdirectory=logfire-sdk' \
   --with 'pydantic-handlebars>=0.2.1' \
-  clai2 -m gateway/anthropic:claude-sonnet-5-5
+  clai2
 ```
 
-Then, once, inside clai2:
+What happens:
 
-1. Run `/plugins configure observability` and press Enter on the project row.
-2. Choose "Self-hosted Logfire..." and enter `https://logfire-eu.pydantic.info`.
-3. Sign in, approve, and pick **logfire/clai2**.
-4. Type your team when asked, or press Esc to skip.
-
-Setup saves a write token for your traces. With the same sign-in, it also gets a personal read-variables key,
-which expires in 90 days and can only read this project's managed variables, so no key needs sharing. You can
-change the team later in the same menu.
-
-Notes:
-
-- **Why the extra `--with` lines.** They pin the unreleased Logfire SDK (`logfire.agent_control`, logfire PR #2389).
-  Without them uv installs logfire from PyPI, which lacks it.
-- **Fallbacks.** If you'd rather not run setup, `LOGFIRE_CLAI2_API_KEY` (or `LOGFIRE_API_KEY`) and `CLAI2_TEAM`
-  still work. If you send traces with `LOGFIRE_TOKEN`, also set
-  `LOGFIRE_BASE_URL=https://logfire-eu.pydantic.info`.
-- **What you'll see:**
-  - `◆ ... from Logfire` lines at startup and when something new is pushed;
-  - `/catalog` to browse and opt in;
-  - the model can load the company skills on demand.
+- **First launch.** clai2 says "Your organization manages clai2 through Logfire (logfire)" and shows a sign-in link.
+  After you approve it, one sign-in sets up:
+  - traces to logfire/clai2;
+  - a personal API key that reads the company config and uses the AI Gateway (90 days);
+  - an optional team.
+- **Model.** The default becomes `gateway/anthropic:claude-sonnet-5-5`; no model keys needed.
+- **Later launches.** No prompt. An expired or revoked key brings the sign-in back. Ctrl-C at the sign-in exits.
+- **While managed.** Observability can't be turned off, and the Logfire project can't be switched.
+- **Instead of the env var,** IT can drop `url = "…"` in `/Library/Application Support/clai2/managed.toml`
+  (macOS) or `/etc/clai2/managed.toml` (Linux). The file wins over the env var. An optional `agent` key or
+  `?agent=` query parameter picks the Agent Control name (default `clai2`).
 
 This branch (`control-plane`) is `main` plus Agent Control (#9066), and it lets clai2 take company config from
 Logfire managed variables:
