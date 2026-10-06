@@ -22,7 +22,7 @@ from rich.console import Console
 
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AgentCapability, LocalWorkspace
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
@@ -66,8 +66,8 @@ from pydantic_clai2.runtime._session import (
     Session,
     SessionModels,
     StockAgent,
-    command_env,
     current_session_id,
+    local_workspace,
     resolve_model_name,
 )
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
@@ -183,12 +183,16 @@ async def open_stock_agent(
 
     The agent has the `coder`, `repo_context`, and `compaction` built-ins as the CLI configures them,
     then `capabilities`, all bound at construction so delegated tasks carry them too. It works in
-    `workspace` on this machine; commands get this process's environment minus LLM provider API keys.
-    Model names, its own and any a run passes, resolve as in the CLI and get CLAI's per-model defaults.
+    `workspace` on this machine unless one of `capabilities` supplies a workspace, such as a sandbox.
+    Commands get this process's environment minus LLM provider API keys. Model names, the agent's own
+    and any a run passes, resolve as in the CLI and get CLAI's per-model defaults. Without `model`,
+    each run must pass one.
 
     `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
     `{'coder': {'sub_agents': False}}`. Nothing saved for the `clai2` CLI applies: no saved or drop-in
-    plugins, no project `.clai/settings.json`, no saved model settings.
+    plugins, no project `.clai/settings.json`, no saved model settings or `chain:` fallback chains.
+    Raises `UserError` when `plugin_settings` names another plugin, and `PluginSettingsError` when a
+    built-in rejects its merged settings.
 
     The agent and its plugins close when the context exits.
     """
@@ -204,7 +208,10 @@ async def open_stock_agent(
         plugin.model_copy(update={'settings': {**plugin.settings, **overrides.get(plugin.id, {})}})
         for plugin in stock.values()
     ]
-    template = create_stock_agent(model if isinstance(model, Model) else None)
+    # Unlike `create_stock_agent`, no guide to customizing the terminal app, whose plugins never load here.
+    template = StockAgent(
+        model if isinstance(model, Model) else None, deps_type=type(None), output_type=str, capabilities=[]
+    )
     reason: SessionEndReason = 'error'
     # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
     with TemporaryDirectory(prefix='clai2-') as config, open(os.devnull, 'w', encoding='utf-8') as sink:
@@ -223,11 +230,12 @@ async def open_stock_agent(
         try:
             for declaration in declarations:
                 await loader.load(declaration.id)
+            bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
+            if (local := local_workspace(bound, workspace)) is not None:
+                bound.append(local)
             agent = template.with_plugins(
                 [
-                    LocalWorkspace[None](workspace, env=command_env()),
-                    *loader.run_capabilities(),
-                    *capabilities,
+                    *bound,
                     SessionModels[None](lambda _, name: resolve_model_name(models.resolve, name)),
                     ModelDefaults[None](lambda name: default_model_settings(model=name, saved={})),
                 ],

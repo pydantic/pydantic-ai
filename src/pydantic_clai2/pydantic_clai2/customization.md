@@ -721,12 +721,13 @@ to stderr with a nonzero exit status. `-m` also works in the interactive CLI.
 pydantic_clai2 is an async context manager that yields the CLI's stock agent without the
 terminal, for agent.run, run_stream_events, iter, or harness run_acp_stdio. It binds the
 coder, repo_context, and compaction built-ins, then `capabilities`, so delegated tasks carry
-them. The tools work in `workspace`. Model names resolve as in the CLI, with CLAI's
-per-model defaults. `plugin_settings` merges settings over a built-in's stock ones, for
-example {'coder': {'sub_agents': False, 'agent_folders': []}}. Saved, drop-in, and project
-plugins, .clai/settings.json, and saved model settings do not apply; nor do ask_user,
-observability, or mcp. When approvals end the run, as over ACP, set coder sub_agents to
-false: a delegated task's approval fails the run
+them. The tools work in `workspace` unless a passed capability supplies a workspace, such as
+a sandbox. Model names resolve as in the CLI, with CLAI's per-model defaults.
+`plugin_settings` merges settings over a built-in's stock ones, for example
+{'coder': {'sub_agents': False, 'agent_folders': []}}. Saved, drop-in, and project plugins,
+.clai/settings.json, saved model settings, and chain: fallback chains do not apply; nor do
+ask_user, observability, mcp, or this guide. When approvals end the run, as over ACP, set
+coder sub_agents to false: a delegated task's approval fails the run
 (https://github.com/pydantic/pydantic-ai/issues/4302).
 
 ## Managed delegation UI

@@ -12,13 +12,15 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import JsonValue
 
-from pydantic_ai.capabilities import Capability
+from pydantic_ai.capabilities import Capability, LocalWorkspace, Thinking
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
 from pydantic_clai2 import _app, open_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -31,15 +33,16 @@ def _answered(messages: list[ModelMessage]) -> str | None:
     return str(returned[0].content) if returned else None
 
 
-async def test_tools_and_instructions_come_from_the_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    checkout = tmp_path / 'checkout'
-    checkout.mkdir()
-    (checkout / 'AGENTS.md').write_text('Answer in haiku.')
-    (checkout / 'notes.txt').write_text('from the checkout')
-    elsewhere = tmp_path / 'elsewhere'
-    elsewhere.mkdir()
-    (elsewhere / 'notes.txt').write_text('from the working directory')
-    monkeypatch.chdir(elsewhere)
+@pytest.mark.parametrize('sandboxed', [False, True])
+async def test_tools_and_instructions_come_from_the_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool
+) -> None:
+    """The given `workspace`, or the one a host capability supplies; never the working directory."""
+    for name in ('checkout', 'sandbox', 'elsewhere'):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / 'AGENTS.md').write_text(f'Rules from the {name}.')
+        (tmp_path / name / 'notes.txt').write_text(f'Notes from the {name}.')
+    monkeypatch.chdir(tmp_path / 'elsewhere')
     instructions: list[str] = []
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -49,10 +52,15 @@ async def test_tools_and_instructions_come_from_the_workspace(tmp_path: Path, mo
         instructions.append(info.instructions or '')
         yield {0: DeltaToolCall(name='read_file', json_args='{"path": "notes.txt"}', tool_call_id='read')}
 
-    async with open_stock_agent(workspace=str(checkout), model=FunctionModel(stream_function=stream)) as agent:
+    async with open_stock_agent(
+        workspace=str(tmp_path / 'checkout'),
+        model=FunctionModel(stream_function=stream),
+        capabilities=[LocalWorkspace[None](tmp_path / 'sandbox', id='sandbox')] if sandboxed else [],
+    ) as agent:
         result = await agent.run('Read notes.txt')
-    assert 'from the checkout' in result.output
-    assert 'Answer in haiku.' in instructions[0]
+    root = 'sandbox' if sandboxed else 'checkout'
+    assert f'Notes from the {root}.' in result.output
+    assert f'Rules from the {root}.' in instructions[0]
 
 
 @pytest.mark.parametrize(
@@ -78,6 +86,7 @@ async def test_plugin_settings_override_the_stock_coder(
     tools = {tool.name for tool in parameters.function_tools}
     instructions = '\n'.join(part.content for part in parameters.instruction_parts or ())
     assert 'read_file' in tools
+    assert 'read_clai_customization_guide' not in tools
     assert ('delegate_task' in tools) is delegates
     assert ('Reviews diffs' in instructions) is disk_agents
 
@@ -220,3 +229,50 @@ async def test_plugins_get_their_settings_and_close_on_exit(
             if fail:
                 raise RuntimeError('host failed')
     assert log.read_text() == f'stock host:{"error" if fail else "exit"}'
+
+
+async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host's own model name, thinking, and guardrail, with delegation and disk agents off."""
+    monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'gateway-secret')
+    monkeypatch.setenv('HOST_VARIABLE', 'forwarded')
+    requests: list[tuple[str, ModelSettings, set[str]]] = []
+    guarded: list[str] = []
+
+    async def resolve(self: object, name: str) -> Model | str:
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            if (answer := _answered(messages)) is not None:
+                yield answer
+                return
+            settings = ModelSettings(**(info.model_settings or {}))
+            settings['thinking'] = info.model_request_parameters.thinking or False
+            requests.append((name, settings, {tool.name for tool in info.function_tools}))
+            yield {0: DeltaToolCall(name='shell', json_args='{"command": "env"}', tool_call_id='env')}
+
+        return FunctionModel(stream_function=stream, model_name=name, profile=ModelProfile(supports_thinking=True))
+
+    def guard(call: ToolCallInfo) -> GuardrailResult:
+        guarded.append(call.name)
+        return GuardrailResult.allow()
+
+    monkeypatch.setattr(_app._ModelResolver, 'resolve', resolve)  # pyright: ignore[reportPrivateUsage]
+    async with open_stock_agent(
+        workspace=tmp_path,
+        model='gateway/anthropic:claude-opus-5-5',
+        capabilities=[Thinking(effort='high'), ToolGuardrail(guard=guard)],
+        plugin_settings={'coder': {'sub_agents': False, 'agent_folders': []}},
+    ) as agent:
+        result = await agent.run('Print the environment.')
+    [(name, settings, tools)] = requests
+    assert name == 'gateway/anthropic:claude-opus-5-5'
+    assert settings == snapshot(
+        {
+            'anthropic_cache': '5m',
+            'anthropic_cache_instructions': '5m',
+            'anthropic_cache_tool_definitions': '5m',
+            'thinking': 'high',
+        }
+    )
+    assert 'delegate_task' not in tools
+    assert guarded == ['shell']
+    assert 'HOST_VARIABLE=forwarded' in result.output
+    assert 'gateway-secret' not in result.output

@@ -352,7 +352,7 @@ does not rerun the CLI or recursively reload third-party packages. Use
 
 ## The stock agent in your own code
 
-`open_stock_agent` opens the agent `clai2` runs, without the terminal. Use it with
+`open_stock_agent` opens CLAI's stock coding agent without the terminal. Use it with
 `agent.run`, `run_stream_events`, `iter`, or anything else that takes an agent:
 
 ```python
@@ -363,7 +363,7 @@ from pydantic_clai2 import open_stock_agent
 
 
 async def main() -> None:
-    async with open_stock_agent(workspace=Path.cwd(), model='anthropic:claude-sonnet-4-6') as agent:
+    async with open_stock_agent(workspace=Path.cwd(), model='anthropic:claude-opus-5-5') as agent:
         result = await agent.run('Summarize this repository in one paragraph.')
         print(result.output)
 
@@ -372,10 +372,11 @@ asyncio.run(main())
 ```
 
 The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
-in `clai2`. The file and shell tools work in `workspace`, and `AGENTS.md` or `CLAUDE.md`
-is read from it. Model names resolve as in `clai2`, with CLAI's per-model defaults.
-Nothing else you saved for `clai2` applies: no saved, drop-in, or project plugins, no
-`.clai/settings.json`, and no `/model settings`. `plugin_settings` changes a built-in's
+in `clai2`. The file and shell tools work in `workspace`, unless a capability you pass
+supplies a workspace, and `AGENTS.md` or `CLAUDE.md` is read from it. Model names
+resolve as in `clai2`, with CLAI's per-model defaults. Nothing else you saved for
+`clai2` applies: no saved, drop-in, or project plugins, no `.clai/settings.json`, no
+`/model settings`, and no `chain:` fallback chains. `plugin_settings` changes a built-in's
 settings, merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
 `capabilities` adds your own capabilities, bound beside the built-ins so delegated
 tasks carry them too. Plugins close when the `async with` block exits.
