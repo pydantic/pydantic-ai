@@ -15,11 +15,11 @@ import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Annotated, Any, Generic, Literal, cast
+from typing import Annotated, Any, Generic, Literal, Self, cast
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
-from typing_extensions import Self, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -795,7 +795,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
         except MontyTypingError as e:
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
-        except MontySyntaxError as e:  # pragma: no cover -- backstop; the type checker parses first
+        # Backstop: the type checker parses the code first. `lax` because the errors handled below
+        # are still matched against this clause.
+        except MontySyntaxError as e:  # pragma: lax no cover
             raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
             if budget_exhausted:

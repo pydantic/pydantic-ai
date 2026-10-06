@@ -298,7 +298,7 @@ def _typecheck_examples(examples: Sequence[CodeExample], work_dir: Path) -> dict
     environments: dict[str, list[dict[str, Any]]] = {}
     for index, example in enumerate(examples):
         prefix_settings = example.prefix_settings()
-        python_version = prefix_settings.get('py', '3.10')
+        python_version = prefix_settings.get('py', '3.11')
         example_dir = work_dir / f'py{python_version}' / str(index)
         example_dir.mkdir(parents=True)
         for req in filter(None, prefix_settings.get('requires', '').split(',')):
@@ -553,7 +553,7 @@ def test_docs_examples(
 
     _check_python_version(python_version, max_python_version)
 
-    ruff_target_version: str = 'py310'
+    ruff_target_version: str = 'py311'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         ruff_target_version = f'py{python_version_info[0]}{python_version_info[1]}'
@@ -939,6 +939,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='image_generator', args={'subject': 'robot', 'style': 'punk'}, tool_call_id='0001'
     ),
     "subject='robot' style='punk'": '<svg/>',
+    'Generate an illustration of a cafe, then write alt text for it.': ToolCallPart(
+        tool_name='generate_image', args={'prompt': 'An illustration of a cozy corner cafe'}
+    ),
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
@@ -1705,6 +1708,8 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'generate_image':
+        return ModelResponse(parts=[TextPart('A cozy corner cafe with warm light spilling onto the sidewalk.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_preferred_language':
         return ModelResponse(
             parts=[

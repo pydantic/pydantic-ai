@@ -8,10 +8,12 @@ translation rules that only show up under conditions a recorded call doesn't rel
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
 import json
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
@@ -34,6 +36,10 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    PartEndEvent,
+    PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
@@ -49,10 +55,12 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeError,
     RealtimeModelProfile,
     RealtimeSession,
+    RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
     WebRTCSession,
     infer_realtime_model,
@@ -76,13 +84,13 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import try_import
+from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
     import httpx2
     import websockets
     from openai import AsyncOpenAI
-    from openai.types.live import ServerEvent, SessionConfig
+    from openai.types.live import SessionConfig
     from openai.types.shared import ReasoningEffort
     from pydantic import TypeAdapter
     from websockets.frames import Close
@@ -100,6 +108,7 @@ with try_import() as imports_successful:
         OpenAILiveModel,
         OpenAILiveModelSettings,
         OpenAILiveResponsesDelegation,
+        _ActedOnEvent,  # pyright: ignore[reportPrivateUsage]
         seed_input_items,
     )
 
@@ -116,6 +125,7 @@ def model() -> OpenAILiveModel:
 def _config(model: OpenAILiveModel, **kwargs: Any) -> dict[str, Any]:
     kwargs.setdefault('instructions', '')
     kwargs.setdefault('tools', [])
+    kwargs.setdefault('native_tools', [])
     kwargs.setdefault('messages', [])
     kwargs.setdefault('settings', OpenAILiveModelSettings())
     return model._session_config(**kwargs)  # pyright: ignore[reportPrivateUsage]
@@ -126,12 +136,12 @@ def _connection(**kwargs: Any) -> OpenAILiveConnection:
     return OpenAILiveConnection(object(), **kwargs)  # pyright: ignore[reportArgumentType]
 
 
-_server_events: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
+_acted_on_events: TypeAdapter[_ActedOnEvent] = TypeAdapter(_ActedOnEvent)
 
 
-def _event(payload: dict[str, Any]) -> ServerEvent:
+def _event(payload: dict[str, Any]) -> _ActedOnEvent:
     """Parse a raw Live frame the way the connection does, so tests drive real SDK event objects."""
-    return _server_events.validate_python(payload)
+    return _acted_on_events.validate_python(payload)
 
 
 def test_live_model_names_route_to_the_live_protocol(env: Any) -> None:
@@ -167,7 +177,8 @@ def test_profile(model: OpenAILiveModel) -> None:
         responses_are_requests=False,
         # Live reports its own context usage; the tokens it reports are the delegated backend's.
         response_usage_covers_context=False,
-        supported_native_tools=frozenset(),
+        # The delegated backend runs web search; Live refuses every other native Responses tool.
+        supported_native_tools=frozenset({WebSearchTool}),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=128_000,
@@ -363,7 +374,11 @@ async def test_an_image_needs_respond_true(model: OpenAILiveModel) -> None:
             # Without manual turn control, which Live doesn't have.
             await session.send(image, respond=True)
 
-    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['response.item.create', 'response.create']
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [
+        'response.item.create',
+        'response.create',
+        'session.close',
+    ]
 
 
 def test_seeding_projects_history_to_text() -> None:
@@ -1059,6 +1074,84 @@ def test_unknown_events_are_ignored() -> None:
     assert _connection()._map_frame('{"type": "session.something.new"}') == []  # pyright: ignore[reportPrivateUsage]
 
 
+def test_events_the_connection_does_not_act_on_are_ignored_even_if_malformed() -> None:
+    """An acknowledgement or notice changes nothing the session has said or heard, whatever its shape."""
+    assert _connection()._map_frame('{"type": "session.commentary.appended"}') == []  # pyright: ignore[reportPrivateUsage]
+    # A `type` that isn't a string names no event at all.
+    assert _connection()._map_frame('{"type": []}') == []  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    'frame',
+    [
+        pytest.param({'type': 'session.usage.updated', 'event_id': 'e', 'usage': {'seconds': 'many'}}, id='usage'),
+        pytest.param({'type': 'session.delegation.created', 'event_id': 'e'}, id='delegation'),
+        pytest.param({'type': 'response.event', 'event_id': 'e'}, id='backend-event'),
+        pytest.param({'type': 'error', 'event_id': 'e', 'error': 'boom'}, id='error'),
+        pytest.param({'type': 'session.closed', 'event_id': 'e'}, id='closed-without-reason'),
+    ],
+)
+def test_a_malformed_event_the_connection_acts_on_is_a_recoverable_error(frame: dict[str, Any]) -> None:
+    """Dropping it silently could lose the final usage, why the session ended, or delegated work."""
+    (event,) = _connection()._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(event, RealtimeSessionErrorEvent)
+    assert event.recoverable is True
+    assert event.message.startswith('Failed to parse OpenAI GPT-Live event:')
+    assert frame['type'] in event.message
+
+
+def test_a_frame_that_is_not_a_json_object_is_a_recoverable_error() -> None:
+    (event,) = _connection()._map_frame('[1, 2]')  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(event, RealtimeSessionErrorEvent) and event.recoverable is True
+
+
+def test_a_binary_frame_is_skipped() -> None:
+    """Live sends only text frames, so a binary one is skipped, as on the Realtime connection."""
+    assert _connection()._map_frame(b'{"type": "session.closed"}') == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_drifted_session_closed_still_records_usage_and_why_it_ended() -> None:
+    """`session.closed` is read for its usage and reason, so a change to its other fields loses neither."""
+    connection = _connection()
+    frame = {**_session_closed('expired', seconds=12), 'session': {'id': 's', 'shape': 'changed'}}
+
+    events = connection._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert [type(event).__name__ for event in events] == snapshot(['SessionUsage', 'RealtimeSessionErrorEvent'])
+    usage, error = events
+    assert isinstance(usage, SessionUsage) and usage.usage.audio_seconds == 12
+    assert isinstance(error, RealtimeSessionErrorEvent) and error.code == 'live_session_expired'
+
+
+@pytest.mark.parametrize(
+    'usage', [pytest.param({}, id='missing'), pytest.param({'usage': {'seconds': 'many'}}, id='drifted')]
+)
+def test_a_session_closed_whose_usage_drifted_still_ends_the_session_as_its_reason_says(
+    usage: dict[str, Any],
+) -> None:
+    """Losing the usage is reported, but must not also cost the reason the session ended."""
+    frame = {'type': 'session.closed', 'event_id': 'e', 'reason': 'expired', **usage}
+
+    parse_error, ended = _connection()._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(parse_error, RealtimeSessionErrorEvent) and parse_error.recoverable is True
+    assert 'session.closed' in parse_error.message
+    assert isinstance(ended, RealtimeSessionErrorEvent) and ended.code == 'live_session_expired'
+    assert ended.recoverable is False
+
+
+def test_a_session_closed_with_an_unknown_reason_is_an_abnormal_end() -> None:
+    """Only a close someone asked for is ordinary; a reason this version doesn't know is not assumed to be."""
+    events = _connection()._map_frame(json.dumps(_session_closed('server_error', seconds=3)))  # pyright: ignore[reportPrivateUsage]
+
+    assert [type(event).__name__ for event in events] == snapshot(['SessionUsage', 'RealtimeSessionErrorEvent'])
+    error = events[-1]
+    assert isinstance(error, RealtimeSessionErrorEvent)
+    assert error.code == 'live_session_server_error' and error.recoverable is False
+
+
 async def test_agent_rejects_text_output(model: OpenAILiveModel) -> None:
     """Live only speaks, so asking it for text fails before the session opens."""
     agent = Agent(instructions='hi')
@@ -1068,24 +1161,32 @@ async def test_agent_rejects_text_output(model: OpenAILiveModel) -> None:
 
 
 class _FakeWebSocket:
-    """A socket that yields queued frames and then goes quiet, so the turn clock can run out."""
+    """A socket that yields queued frames and then goes quiet, so the turn clock can run out.
 
-    def __init__(self, frames: list[str], *, delay: float = 0.0) -> None:
+    Like Live, it answers `session.close` with `session.closed`, reporting `closed_seconds` of usage.
+    """
+
+    def __init__(self, frames: list[str], *, delay: float = 0.0, closed_seconds: float = 0) -> None:
         self._frames = list(frames)
         self._delay = delay
+        self._closed_seconds = closed_seconds
+        self._arrived = asyncio.Event()
         self.sent: list[str] = []
         self.closed = False
 
     async def recv(self) -> str:
-        if self._frames:
-            if self._delay:
-                await anyio.sleep(self._delay)
-            return self._frames.pop(0)
-        await anyio.sleep_forever()
-        raise AssertionError('unreachable')  # pragma: no cover
+        while not self._frames:
+            self._arrived.clear()
+            await self._arrived.wait()
+        if self._delay:
+            await anyio.sleep(self._delay)
+        return self._frames.pop(0)
 
     async def send(self, data: str) -> None:
         self.sent.append(data)
+        if json.loads(data)['type'] == 'session.close':
+            self._frames.append(json.dumps(_session_closed('close_requested', seconds=self._closed_seconds)))
+            self._arrived.set()
 
 
 def _transcript_frame(delta: str, *, speaker: str = 'output') -> str:
@@ -1279,6 +1380,153 @@ def test_strict_tools_reach_the_backend(model: OpenAILiveModel) -> None:
     assert 'tool_choice' not in responses
     # With no agent instructions there is no backend prompt to send.
     assert 'instructions' not in responses
+
+
+def test_web_search_reaches_the_backend(model: OpenAILiveModel) -> None:
+    """`WebSearchTool` is advertised to the backend next to the function tools, with every option.
+
+    Live accepts any `web_search` shape at session start and hands it to the backend unchecked (an
+    unknown key only fails the first delegation), so the options are pinned here, where a drift would
+    otherwise go unseen until a search behaved differently.
+    """
+    tool = ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'})
+    web_search = WebSearchTool(
+        search_context_size='high',
+        user_location={'city': 'Amsterdam', 'country': 'NL'},
+        allowed_domains=['wikipedia.org'],
+        blocked_domains=['example.com'],
+        external_web_access=False,
+    )
+    responses = _config(model, tools=[tool], native_tools=[web_search])['delegation']['responses']
+
+    assert responses['tools'] == snapshot(
+        [
+            {'type': 'function', 'name': 'lookup', 'parameters': {'type': 'object'}},
+            {
+                'type': 'web_search',
+                'search_context_size': 'high',
+                'user_location': {'type': 'approximate', 'city': 'Amsterdam', 'country': 'NL'},
+                'filters': {'allowed_domains': ['wikipedia.org'], 'blocked_domains': ['example.com']},
+                'external_web_access': False,
+            },
+        ]
+    )
+    # With no function tools, web search is the backend's only tool.
+    assert _config(model, native_tools=[WebSearchTool()])['delegation']['responses']['tools'] == snapshot(
+        [{'type': 'web_search', 'search_context_size': 'medium'}]
+    )
+
+
+def test_a_backend_web_search_is_recorded_as_native_tool_parts() -> None:
+    """A finished `web_search_call` becomes the call and return parts a standard Responses run records."""
+    connection = _connection()
+    search = {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': 'd1',
+        'event': {
+            'type': 'response.output_item.done',
+            'sequence_number': 3,
+            'output_index': 1,
+            'item': {
+                'id': 'ws_1',
+                'type': 'web_search_call',
+                'status': 'completed',
+                'action': {'type': 'search', 'query': 'Amsterdam population', 'queries': ['Amsterdam population']},
+            },
+        },
+    }
+    connection._map_event(_event(_delegation_created('d1')))  # pyright: ignore[reportPrivateUsage]
+
+    first = connection._map_event(_event(search))  # pyright: ignore[reportPrivateUsage]
+    call = NativeToolCallPart(
+        tool_name='web_search',
+        args={'type': 'search', 'query': 'Amsterdam population', 'queries': ['Amsterdam population']},
+        tool_call_id='ws_1',
+        id='ws_1',
+        provider_name='openai',
+    )
+    result = NativeToolReturnPart(
+        tool_name='web_search',
+        content={'status': 'completed'},
+        tool_call_id='ws_1',
+        timestamp=IsNow(tz=UTC),
+        provider_name='openai',
+    )
+    assert first == [
+        PartStartEvent(index=0, part=call),
+        PartEndEvent(index=0, part=call),
+        PartStartEvent(index=1, part=result),
+        PartEndEvent(index=1, part=result),
+    ]
+    # A second search is numbered after the first, so its parts never replace the first's.
+    second = connection._map_event(_event(search))  # pyright: ignore[reportPrivateUsage]
+    assert [event.index for event in second if isinstance(event, PartStartEvent)] == [2, 3]
+
+
+def _output_item_done(item: dict[str, Any], *, delegation_id: str = 'd1') -> dict[str, Any]:
+    return {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': delegation_id,
+        'event': {'type': 'response.output_item.done', 'sequence_number': 1, 'output_index': 0, 'item': item},
+    }
+
+
+def _reasoning(item_id: str) -> dict[str, Any]:
+    return {'id': item_id, 'type': 'reasoning', 'summary': [], 'encrypted_content': f'enc-{item_id}'}
+
+
+_SEARCH_ITEM = {'id': 'ws_1', 'type': 'web_search_call', 'status': 'completed', 'action': {'type': 'search'}}
+
+
+def test_a_search_is_recorded_with_the_reasoning_that_led_to_it() -> None:
+    """OpenAI replays a search only with its reasoning item, so that is recorded with it, as a Responses run does.
+
+    Reasoning that leads to anything else (a function call, the answer) isn't recorded: nothing needs it.
+    """
+    connection = _connection()
+    connection._map_event(_event(_delegation_created('d1')))  # pyright: ignore[reportPrivateUsage]
+    connection._map_event(_event(_delegation_created('d2')))  # pyright: ignore[reportPrivateUsage]
+
+    def parts(frame: dict[str, Any]) -> list[str]:
+        events = connection._map_event(_event(frame))  # pyright: ignore[reportPrivateUsage]
+        return [
+            f'{type(e.part).__name__}:{getattr(e.part, "id", None)}' for e in events if isinstance(e, PartStartEvent)
+        ]
+
+    # Reasoning waits for what it leads to.
+    assert parts(_output_item_done(_reasoning('rs_1'))) == []
+    # Another delegation's reasoning is its own.
+    assert parts(_output_item_done(_reasoning('rs_other'), delegation_id='d2')) == []
+    assert parts(_output_item_done(_SEARCH_ITEM)) == [
+        'ThinkingPart:rs_1',
+        'NativeToolCallPart:ws_1',
+        'NativeToolReturnPart:None',
+    ]
+    # Reasoning before a function call or the answer is dropped when that arrives.
+    parts(_output_item_done(_reasoning('rs_2')))
+    call: dict[str, Any] = {'id': 'fc_1', 'type': 'function_call', 'call_id': 'c1', 'name': 'lookup', 'arguments': '{}'}
+    connection._map_event(_event(_output_item_done(call)))  # pyright: ignore[reportPrivateUsage]
+    assert parts(_output_item_done(_SEARCH_ITEM)) == ['NativeToolCallPart:ws_1', 'NativeToolReturnPart:None']
+    parts(_output_item_done(_reasoning('rs_2b')))
+    message: dict[str, Any] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'status': 'completed',
+        'content': [],
+    }
+    assert parts(_output_item_done(message)) == []
+    assert parts(_output_item_done(_SEARCH_ITEM)) == ['NativeToolCallPart:ws_1', 'NativeToolReturnPart:None']
+    # And so is reasoning a response ends with.
+    parts(_output_item_done(_reasoning('rs_3')))
+    connection._map_response_event(_backend_terminal('response.completed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    assert parts(_output_item_done(_SEARCH_ITEM, delegation_id='d2')) == [
+        'ThinkingPart:rs_other',
+        'NativeToolCallPart:ws_1',
+        'NativeToolReturnPart:None',
+    ]
 
 
 def _backend(model: OpenAILiveModel, **settings: Any) -> str:
@@ -1873,7 +2121,8 @@ async def test_context_text_over_the_cap_is_refused_before_sending(respond: bool
             await session.send(_text_of(500), respond=respond)
 
     assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == [
-        'session.commentary.append' if respond else 'session.thinking.append'
+        'session.commentary.append' if respond else 'session.thinking.append',
+        'session.close',
     ]
 
 
@@ -1904,7 +2153,7 @@ def test_a_new_transcript_segment_is_spaced_from_the_last() -> None:
     assert fragment('Sorry', speaker='input')[-1] == InputTranscript('Sorry')
 
 
-def _audio_frame(pcm: bytes) -> ServerEvent:
+def _audio_frame(pcm: bytes) -> _ActedOnEvent:
     return _event({'type': 'session.output_audio.delta', 'delta': base64.b64encode(pcm).decode()})
 
 
@@ -2387,6 +2636,525 @@ async def test_a_sideband_cannot_seed_history(model: OpenAILiveModel) -> None:
             pass  # pragma: no cover
 
 
+async def test_closing_a_session_records_the_seconds_live_reports_as_it_ends(model: OpenAILiveModel) -> None:
+    """Live reports its billed seconds only now and then, and last in `session.closed`, which `session.close` asks for.
+
+    A short call gets no periodic report at all (checked live: six seconds of audio, none), so without
+    this the call would record no seconds.
+    """
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started], closed_seconds=5)
+    with _patched_connect(ws):
+        async with Agent().realtime(model).session() as session:
+            # The session reads the connection, so a read is in flight when it closes: `session.closed`
+            # arrives on that read, which the closing connection picks up.
+            reading = asyncio.ensure_future(anext(aiter(session)))
+            await asyncio.sleep(0.01)
+    reading.cancel()
+
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.close']
+    assert session.usage.audio_seconds == 5
+
+
+async def test_final_usage_live_reported_before_the_session_stopped_reading_is_kept() -> None:
+    """A session that stops reading between `session.closed` and taking its usage still gets that usage, once."""
+    ws = _FakeWebSocket([])
+    connection = _LiveSink(ws)
+    connection._map_frame(json.dumps(_session_closed('expired', seconds=7)))  # pyright: ignore[reportPrivateUsage]
+
+    assert [report.usage.audio_seconds for report in await _ended(connection)] == [7]
+    assert await _ended(connection) == []
+    # Live already ended the session, so there is nothing to ask it.
+    assert ws.sent == []
+
+
+async def test_final_usage_already_taken_is_not_returned_again() -> None:
+    ws = _FakeWebSocket([json.dumps(_session_closed('close_requested', seconds=7))])
+    connection = _LiveSink(ws)
+    events = aiter(connection)
+    assert isinstance(await anext(events), SessionUsage)
+
+    assert await _ended(connection) == []
+    assert ws.sent == []
+
+
+async def _ended(connection: OpenAILiveConnection) -> list[SessionUsage]:
+    return [report async for report in connection._end_session()]  # pyright: ignore[reportPrivateUsage]
+
+
+class _LiveSink(OpenAILiveConnection):
+    def __init__(self, ws: _FakeWebSocket) -> None:
+        super().__init__(ws)  # pyright: ignore[reportArgumentType]
+
+
+async def test_ending_the_session_reads_every_frame_until_session_closed() -> None:
+    """Frames still arriving are handled as ever; only session-scoped usage is returned, the backend's has no reply left."""
+    usage_frame = json.dumps({'type': 'session.usage.updated', 'event_id': 'e', 'usage': {'seconds': 3}})
+    ws = _FakeWebSocket([usage_frame], closed_seconds=4)
+    connection = _LiveSink(ws)
+
+    reports = await _ended(connection)
+
+    assert [report.usage.audio_seconds for report in reports] == [3, 1]
+    # Only once: the provider session is over.
+    assert await _ended(connection) == []
+    assert len(ws.sent) == 1
+
+
+async def test_ending_a_closed_connection_sends_nothing() -> None:
+    ws = _FakeWebSocket([])
+    connection = _LiveSink(ws)
+    await connection.aclose()
+
+    assert await _ended(connection) == []
+    assert ws.sent == []
+
+
+async def test_ending_the_session_stops_when_the_socket_closes() -> None:
+    """A Live that closes the socket without `session.closed` leaves nothing more to read."""
+
+    class _ClosingSocket(_FakeWebSocket):
+        async def recv(self) -> str:
+            raise websockets.ConnectionClosedOK(Close(1000, ''), Close(1000, ''), True)
+
+    connection = _LiveSink(_ClosingSocket([]))
+
+    assert await _ended(connection) == []
+
+
+async def test_a_session_whose_socket_closed_is_not_asked_to_end_again() -> None:
+    class _ClosingSocket(_FakeWebSocket):
+        async def recv(self) -> str:
+            raise websockets.ConnectionClosedOK(Close(1000, ''), Close(1000, ''), True)
+
+    ws = _ClosingSocket([])
+    connection = _LiveSink(ws)
+    async for _ in connection:
+        pass  # pragma: no cover
+
+    assert await _ended(connection) == []
+    assert ws.sent == []
+
+
+async def test_backend_tokens_arriving_as_the_session_ends_count_as_session_usage() -> None:
+    """A backend response finishing during the drain has no reply left to land on, but its tokens are still billed."""
+    completed = {
+        'type': 'response.event',
+        'event_id': 'e1',
+        'delegation_id': 'd1',
+        'event': _backend_terminal(
+            usage={
+                'input_tokens': 10,
+                'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+                'output_tokens': 2,
+                'output_tokens_details': {'reasoning_tokens': 0},
+                'total_tokens': 12,
+            }
+        ),
+    }
+    ws = _FakeWebSocket([json.dumps(completed)], closed_seconds=4)
+
+    reports = await _ended(_LiveSink(ws))
+
+    assert [(report.usage.input_tokens, report.usage.audio_seconds, report.response_scoped) for report in reports] == [
+        (10, 0, False),
+        (0, 4, False),
+    ]
+
+
+async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
+    """A link that fails while Live is asked to end the session leaves nothing to wait for."""
+
+    class _DroppingSocket(_FakeWebSocket):
+        async def send(self, data: str) -> None:
+            self.sent.append(data)
+            if json.loads(data)['type'] == 'session.close':
+                self._frames.append('drop')
+                self._arrived.set()
+
+        async def recv(self) -> str:
+            if (raw := await super().recv()) == 'drop':
+                raise websockets.ConnectionClosedError(Close(1006, ''), None)
+            return raw
+
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _DroppingSocket([started])
+    with _patched_connect(ws), anyio.fail_after(1):
+        async with Agent().realtime(model).session() as session:
+            reading = asyncio.ensure_future(anext(aiter(session)))
+            await asyncio.sleep(0.01)
+    reading.cancel()
+
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.close']
+    assert session.usage.audio_seconds == 0
+
+
+async def test_a_session_that_expires_as_it_is_asked_to_end_still_reports_its_usage() -> None:
+    ws = _FakeWebSocket([json.dumps(_session_closed('expired', seconds=3))])
+
+    assert [report.usage.audio_seconds for report in await _ended(_LiveSink(ws))] == [3]
+
+
+# --- reconnecting -----------------------------------------------------------------------------------
+
+
+class _DroppingWebSocket(_FakeWebSocket):
+    """A socket that delivers its frames, then drops the way a lost connection does."""
+
+    async def recv(self) -> str:
+        if self._frames:
+            return self._frames.pop(0)
+        raise websockets.ConnectionClosedError(None, None)
+
+
+def _started(session_id: str, **session: Any) -> str:
+    return json.dumps(
+        {
+            'type': 'session.started',
+            'event_id': 'e',
+            'session': {'id': session_id, 'expires_at': 0, 'model': 'gpt-live-1', 'status': 'active', **session},
+        }
+    )
+
+
+@contextmanager
+def _patched_dials(*sockets: _FakeWebSocket) -> Any:
+    """Stand in for `websockets.connect`, answering each dial with the next socket and noting its URL."""
+    urls: list[str] = []
+    queue = list(sockets)
+
+    class _Opening:
+        def __init__(self, ws: _FakeWebSocket) -> None:
+            self.ws = ws
+
+        async def __aenter__(self) -> _FakeWebSocket:
+            return self.ws
+
+        async def __aexit__(self, *args: Any) -> None:
+            self.ws.closed = True
+
+    original = live_module.websockets.connect
+
+    def _connect(url: str, **kwargs: Any) -> _Opening:
+        urls.append(url)
+        return _Opening(queue.pop(0))
+
+    live_module.websockets.connect = _connect
+    try:
+        yield urls
+    finally:
+        live_module.websockets.connect = original
+
+
+_RECONNECT = OpenAILiveModelSettings(reconnect={'base_delay': 0.0, 'jitter': False, 'max_attempts': 2})
+_STORED_RECONNECT = OpenAILiveModelSettings(_RECONNECT, openai_live_store=True)
+
+
+async def _first_events(connection: OpenAILiveConnection, count: int) -> list[Any]:
+    events: list[Any] = []
+    with anyio.fail_after(5):
+        async for event in connection:  # pragma: no branch
+            events.append(event)
+            if len(events) == count:
+                break
+    return events
+
+
+async def test_a_drop_without_a_reconnect_policy_still_ends_the_session(model: OpenAILiveModel) -> None:
+    with _patched_dials(_DroppingWebSocket([_started('s1')])):
+        async with model.connect(
+            messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+            with pytest.raises(websockets.ConnectionClosedError):
+                await _first_events(connection, 1)
+
+
+async def test_a_session_with_no_history_reconnects_to_an_unseeded_session(model: OpenAILiveModel) -> None:
+    """Nothing to replay is not a reason to fail: the replacement just starts empty."""
+    first, second = _DroppingWebSocket([_started('s1')]), _FakeWebSocket([_started('s2')])
+    with _patched_dials(first, second) as urls:
+        async with model.connect(
+            messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+    assert urls == ['wss://api.openai.com/v1/live/sessions'] * 2
+    assert first.closed
+    replacement = json.loads(second.sent[0])['session']
+    assert 'input' not in replacement and replacement['model'] == 'gpt-live-1'
+
+
+async def test_a_replacement_session_is_seeded_with_the_history_so_far(model: OpenAILiveModel) -> None:
+    first, second = _DroppingWebSocket([_started('s1')]), _FakeWebSocket([_started('s2')])
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=['Look at this:', BinaryImage(data=b'x', media_type='image/png')])])
+    ]
+    with _patched_dials(first, second):
+        async with model.connect(
+            messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            connection.set_message_history(lambda: history)
+            # Like gpt-realtime's replay, a replay of the offered history restores the call.
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
+    # A replay has nothing to refuse: the image is left out rather than raising.
+    assert json.loads(second.sent[0])['session']['input'] == [
+        {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Look at this:'}]}
+    ]
+
+
+async def test_a_stored_session_is_forked_from_the_latest_session(model: OpenAILiveModel) -> None:
+    """Each fork is a new session, so the next drop forks that one."""
+    sockets = (
+        _DroppingWebSocket([_started('s1')]),
+        _DroppingWebSocket([_started('s2')]),
+        _FakeWebSocket([_started('s3')]),
+    )
+    settings = _STORED_RECONNECT
+    with _patched_dials(*sockets) as urls:
+        async with model.connect(
+            messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert await _first_events(connection, 2) == [RealtimeSessionReconnectEvent(state_restored=True)] * 2
+    assert urls == snapshot(
+        [
+            'wss://api.openai.com/v1/live/sessions',
+            'wss://api.openai.com/v1/live/sessions/s1/fork',
+            'wss://api.openai.com/v1/live/sessions/s2/fork',
+        ]
+    )
+    assert [json.loads(ws.sent[0])['session'] for ws in sockets[1:]] == [{}, {}]
+
+
+async def test_a_reconnect_that_keeps_failing_ends_the_session(model: OpenAILiveModel) -> None:
+    """A refused start counts as a failed attempt; once they're spent, the session ends with a reason."""
+    refused = json.dumps(
+        {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'The stored session was not found.'}}
+    )
+    sockets = (_DroppingWebSocket([_started('s1')]), _FakeWebSocket([refused]), _FakeWebSocket([refused]))
+    settings = _RECONNECT
+    with _patched_dials(*sockets):
+        async with model.connect(
+            messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            with anyio.fail_after(5):
+                # The stream ends after the error, rather than trying again.
+                [error] = [event async for event in connection]
+            assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
+            assert 'reconnect failed' in error.message
+            assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_call_the_lost_session_asked_for_is_not_answered_on_the_new_one() -> None:
+    """The new session has no record of the call (checked live), and its turn and usage start over."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)  # pragma: no cover
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return object(), 's2'
+
+    connection = _Sink(object(), dial=dial, reconnect={'base_delay': 0.0, 'jitter': False}, forks=True, session_id='s1')  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    connection._reported_seconds = 30.0  # pyright: ignore[reportPrivateUsage]
+
+    assert await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+    assert connection._session_id == 's2'  # pyright: ignore[reportPrivateUsage]
+    assert not connection._delegations and not connection._response_open  # pyright: ignore[reportPrivateUsage]
+    assert connection._silence_timeout() is None  # pyright: ignore[reportPrivateUsage]
+    assert connection._reported_seconds == 0.0  # pyright: ignore[reportPrivateUsage]
+    await connection.send(ToolResult('c1', output='too late'))
+    assert sent == []
+
+
+async def test_a_reconnect_budget_that_is_spent_is_not_retried() -> None:
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        raise AssertionError('no dial expected')  # pragma: no cover
+
+    connection = OpenAILiveConnection(object(), dial=dial, reconnect={'max_reconnects': 0})  # pyright: ignore[reportArgumentType]
+    assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+    assert not await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_replay_keeps_the_most_recent_history_within_lives_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live refuses more than 128 items or 8,192 tokens at the start, so a long call replays its recent end."""
+    many = [ModelRequest(parts=[UserPromptPart(content=f'message {i}')]) for i in range(200)]
+    items = await live_module.replay_input_items(many, provider_name='openai')
+    assert len(items) == 128
+    assert items[-1]['content'][0]['text'] == 'message 199'
+
+    long = [ModelRequest(parts=[UserPromptPart(content=' '.join(['word'] * 1000) + f' {i}')]) for i in range(20)]
+    items = await live_module.replay_input_items(long, provider_name='openai')
+    assert [item['content'][0]['text'].rsplit(' ', 1)[-1] for item in items] == [
+        '12',
+        '13',
+        '14',
+        '15',
+        '16',
+        '17',
+        '18',
+        '19',
+    ]
+
+
+class _ClosingWebSocket(_FakeWebSocket):
+    """A socket that delivers its frames, then closes cleanly, as Live does after `session.closed`."""
+
+    async def recv(self) -> str:
+        if self._frames:
+            return self._frames.pop(0)
+        raise websockets.ConnectionClosedOK(None, None)
+
+
+@pytest.mark.parametrize('reason', ['expired', 'connection_lost'])
+async def test_a_session_live_ends_itself_reconnects(model: OpenAILiveModel, reason: str) -> None:
+    """Live announces a duration limit or a lost connection before its clean close; the policy re-opens it."""
+    audio = json.dumps({'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='})
+    first = _ClosingWebSocket([_started('s1'), audio, json.dumps(_session_closed(reason))])
+    second = _FakeWebSocket([_started('s2')])
+    with _patched_dials(first, second) as urls:
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            events = await _first_events(connection, 3)
+    assert events == [
+        AudioDelta(data=b'\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f'),
+        ResponseDone(interrupted=True),
+        RealtimeSessionReconnectEvent(state_restored=True),
+    ]
+    assert urls[-1] == 'wss://api.openai.com/v1/live/sessions/s1/fork'
+
+
+async def test_a_session_the_safety_filter_ended_stays_ended(model: OpenAILiveModel) -> None:
+    first = _ClosingWebSocket([_started('s1'), json.dumps(_session_closed('content'))])
+    with _patched_dials(first):
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            with anyio.fail_after(5):
+                events = [event async for event in connection]
+    assert events[-1] == RealtimeSessionErrorEvent(
+        message='The OpenAI GPT-Live session ended: content.', code='live_session_content', recoverable=False
+    )
+
+
+async def test_a_session_live_refuses_to_fork_is_replayed_instead(model: OpenAILiveModel) -> None:
+    refused = json.dumps(
+        {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'The stored session was not found.'}}
+    )
+    sockets = (_DroppingWebSocket([_started('s1')]), _FakeWebSocket([refused]), _FakeWebSocket([_started('s2')]))
+    history = [ModelRequest(parts=[UserPromptPart(content='Hi')])]
+    with _patched_dials(*sockets) as urls:
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            connection.set_message_history(lambda: history)
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
+    assert urls[1:] == ['wss://api.openai.com/v1/live/sessions/s1/fork', 'wss://api.openai.com/v1/live/sessions']
+    replacement = json.loads(sockets[2].sent[0])['session']
+    assert replacement['store'] is True
+    assert replacement['input'] == [{'role': 'user', 'content': [{'type': 'input_text', 'text': 'Hi'}]}]
+
+
+async def test_a_stored_session_without_an_id_is_replayed() -> None:
+    """With no session to fork, a fork would start blank; replaying at least carries the history."""
+    dials: list[str | None] = []
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        dials.append(fork_from)
+        return _FakeWebSocket([]), 's2'
+
+    connection = OpenAILiveConnection(object(), dial=dial, reconnect={'base_delay': 0.0}, forks=True)  # pyright: ignore[reportArgumentType]
+    assert await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+    assert dials == [None]
+    assert not connection._restored  # pyright: ignore[reportPrivateUsage]
+
+
+class _SendDroppingWebSocket(_FakeWebSocket):
+    async def send(self, data: str) -> None:
+        raise websockets.ConnectionClosedError(None, None)
+
+
+async def test_a_drop_while_continuing_a_delegation_reconnects() -> None:
+    """The continuation goes out from the receive loop, so a drop there takes the same reconnect path."""
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return _FakeWebSocket([]), 's2'
+
+    ws = _SendDroppingWebSocket([_transcript_frame('Checking.')])
+    connection = OpenAILiveConnection(ws, dial=dial, reconnect={'base_delay': 0.0}, session_id='s1')  # pyright: ignore[reportArgumentType]
+    connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
+    events = await _first_events(connection, 2)
+    assert events[-1] == RealtimeSessionReconnectEvent(state_restored=False)
+    assert connection._session_id == 's2'  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_drop_while_continuing_without_a_policy_raises() -> None:
+    ws = _SendDroppingWebSocket([_transcript_frame('Checking.')])
+    connection = OpenAILiveConnection(ws)  # pyright: ignore[reportArgumentType]
+    connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(websockets.ConnectionClosedError):
+        await _first_events(connection, 2)
+
+
+async def test_a_spoken_turn_without_a_transcript_replays_as_a_marker() -> None:
+    """The fresh Live session sees that the user spoke before the answer, not an answer out of nowhere."""
+    messages = [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=BinaryContent(data=b'\x02\x03', media_type='audio/wav'))]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Booked for Friday.')]),
+    ]
+    items = await live_module.replay_input_items(messages, provider_name='openai')
+    assert items == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Booked for Friday.'}]},
+        ]
+    )
+
+
+async def test_a_message_too_long_to_replay_alone_is_skipped() -> None:
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='earlier')]),
+        ModelRequest(parts=[UserPromptPart(content=' '.join(['word'] * 9000))]),
+    ]
+    items = await live_module.replay_input_items(messages, provider_name='openai')
+    assert [item['content'][0]['text'] for item in items] == ['earlier']
+
+    # A skipped message doesn't take up one of the 128 places.
+    many = [ModelRequest(parts=[UserPromptPart(content=f'message {i}')]) for i in range(130)]
+    items = await live_module.replay_input_items([*many, *messages[1:]], provider_name='openai')
+    assert len(items) == 128
+    assert items[0]['content'][0]['text'] == 'message 2'
+
+
 def test_a_document_url_of_unknown_type_is_left_to_the_mapper() -> None:
     """Whether it can be sent is the Responses mapping's call, as on `OpenAIResponsesModel`."""
     assert not live_module._is_audio_or_video_url(DocumentUrl(url='https://example.com/noext'))  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize('ending', ['expired', 'connection_lost', 'dropped'])
+async def test_closing_after_a_reconnect_ends_the_replacement_session(model: OpenAILiveModel, ending: str) -> None:
+    """The session Live ended was replaced, so closing still asks the replacement to end, and records its seconds."""
+    if ending == 'dropped':
+        first: _FakeWebSocket = _DroppingWebSocket([_started('s1')])
+    else:
+        first = _ClosingWebSocket([_started('s1'), json.dumps(_session_closed(ending, seconds=3))])
+    second = _FakeWebSocket([_started('s2')], closed_seconds=6)
+    with _patched_dials(first, second):
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            with anyio.fail_after(5):
+                async for event in connection:  # pragma: no branch
+                    if isinstance(event, RealtimeSessionReconnectEvent):
+                        break
+                reports = await _ended(connection)
+
+    assert [report.usage.audio_seconds for report in reports] == [6]
+    assert [json.loads(frame)['type'] for frame in first.sent if json.loads(frame)['type'] == 'session.close'] == []
+    assert [json.loads(frame)['type'] for frame in second.sent[1:]] == ['session.close']

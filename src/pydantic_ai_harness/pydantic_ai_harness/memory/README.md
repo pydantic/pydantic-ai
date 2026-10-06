@@ -56,7 +56,9 @@ memory = Memory(
 )
 ```
 
-Only the current request retains the injected user-role part, so copies do not accumulate in message history. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
+Only the current request retains the injected user-role part, so copies do not accumulate in message history. A part saved to history by an earlier release is removed on the next request. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
+
+When combining it with compaction, list compaction before `Memory`; otherwise a later persistent rewrite replaces the request-only memory block.
 
 Set `inject_memory=False` for cache-stable prompts. The tools remain available, and the model can fetch memory only when it needs it:
 
@@ -247,7 +249,7 @@ The serializable backends are `memory`, `file`, and `sqlite`. A namespace callab
 | --- | --- |
 | Normal `Agent.run` calls | Supported with automatic injection or on-demand tools. |
 | Temporal and Prefect | Automatic snapshot loading is a journaled capability operation. On replay, the recorded snapshot is reused. `store_resolver` and a callable `namespace` run before that operation, so they must be deterministic and free of backend I/O; a per-tenant resolver that queries a backend is not workflow-safe. |
-| DBOS | Automatic snapshot loading is a DBOS step. Ordinary `FunctionToolset` calls are not DBOS-durable; wrap memory tool operations in application-provided DBOS steps when required. |
+| DBOS | Automatic snapshot loading and each memory tool call are DBOS steps. A recovered or forked workflow reuses their recorded results instead of reading or writing the store again. |
 
 `Memory` carries the stable default `id='memory'`, so durable recovery works without configuration. The memory backend and workflow state backend remain independent: durable execution does not make an in-memory notebook persistent.
 
