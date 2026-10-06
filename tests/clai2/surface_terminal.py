@@ -1,4 +1,4 @@
-"""Small VT screen fixture for the cursor, margin, and screen operations CLAI emits.
+"""Small VT screen fixture for the cursor and screen operations the live panel emits.
 
 Unlike StringIO assertions, this checks what remains on screen after rows move.
 Resize deliberately retains existing row coordinates, reproducing the stale-band
@@ -18,8 +18,6 @@ class SurfaceTerminal(io.StringIO):
         self.width, self.height = width, height
         self.cells = [[' '] * width for _ in range(height)]
         self.row = self.column = 0
-        self.saved = (0, 0)
-        self.top, self.bottom = 0, height - 1
         self.wrap = True
         self.history: list[str] = []
         self.main: tuple[list[list[str]], tuple[int, int]] | None = None
@@ -46,7 +44,6 @@ class SurfaceTerminal(io.StringIO):
         self.cells = [(row[:width] + [' '] * width)[:width] for row in self.cells[:height]]
         self.cells.extend([[' '] * width for _ in range(height - len(self.cells))])
         self.width, self.height = width, height
-        self.top, self.bottom = 0, height - 1
         self.row, self.column = min(self.row, height - 1), min(self.column, width - 1)
 
     def isatty(self) -> bool:
@@ -60,12 +57,7 @@ class SurfaceTerminal(io.StringIO):
         for token in re.findall(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?<>]*[A-Za-z]|\x1b.|[^\x1b]', text):
             if token.startswith('\x1b]'):
                 continue  # OSC: hyperlinks and palettes have no cells
-            if token == '\x1b7':
-                self.saved = (self.row, self.column)
-            elif token == '\x1b8':
-                self.row = min(self.saved[0], self.height - 1)
-                self.column = min(self.saved[1], self.width - 1)
-            elif token in ('\n', '\x1bD'):
+            if token in ('\n', '\x1bD'):
                 self.advance()
             elif token == '\r':
                 self.column = 0
@@ -80,11 +72,11 @@ class SurfaceTerminal(io.StringIO):
         return len(text)
 
     def advance(self) -> None:
-        if self.row == self.bottom:
-            if self.top == 0 and self.main is None:  # pragma: no branch
+        if self.row == self.height - 1:
+            if self.main is None:  # pragma: no branch
                 self.history.append(''.join(self.cells[0]).rstrip())
-            del self.cells[self.top]
-            self.cells.insert(self.bottom, [' '] * self.width)
+            del self.cells[0]
+            self.cells.append([' '] * self.width)
         else:
             self.row = min(self.row + 1, self.height - 1)
 
@@ -100,15 +92,7 @@ class SurfaceTerminal(io.StringIO):
             row, col = (int(part) for part in params.split(';'))
             self.row = min(max(0, row - 1), self.height - 1)
             self.column = min(max(0, col - 1), self.width - 1)
-        elif code == 'r':
-            self.top, self.bottom = (int(part) - 1 for part in params.split(';')) if params else (0, self.height - 1)
-            self.row = self.column = 0
-        elif code == 'A':
-            self.row = max(0, self.row - int(params))
         elif code == 'J' and params == '2':
             self.cells = [[' '] * self.width for _ in range(self.height)]
-        elif code == 'K':
-            start = 0 if params == '2' else self.column
-            self.cells[self.row][start:] = [' '] * (self.width - start)
         elif token in ('\x1b[?7h', '\x1b[?7l'):
             self.wrap = code == 'h'

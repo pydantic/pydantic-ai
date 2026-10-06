@@ -337,13 +337,15 @@ def test_transcript_scrolls_rows_within_one_wrapped_item_and_skips_empty_parts()
     view = TranscriptView(buffer)
     assert view.window(width=4, height=0) == []
 
-    # Empty Markdown parts have no rows, but still have an id.
+    # Empty Markdown parts have no rows, but still have an id. They were streamed at another
+    # width, so each window renders them again, and they stay empty.
     def render(*, source: str, width: int) -> str:
+        assert (source, width) == ('', 4)
         return ''
 
-    buffer.markdown(render=render, width=4, changed=lambda: None)
+    buffer.markdown(render=render, width=1, changed=lambda: None)
     buffer.write('abcdefghijklmnopqrstuvwxyz\n')
-    buffer.markdown(render=render, width=4, changed=lambda: None)
+    buffer.markdown(render=render, width=1, changed=lambda: None)
     assert view.window(width=4, height=3) == ['uvwx', 'yz', '']
     view.scroll(3)
     assert view.window(width=4, height=3) == ['ijkl', 'mnop', 'qrst']
