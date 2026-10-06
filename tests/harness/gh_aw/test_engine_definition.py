@@ -29,8 +29,11 @@ import pytest
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic_ai import Agent, ModelMessage, ToolReturnPart
+from pydantic_ai import Agent, ModelMessage, RunContext, ToolReturnPart
+from pydantic_ai.messages import PartEndEvent, TextPart
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
@@ -629,10 +632,62 @@ async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_env
         f'done\n{spoofed_line}'
     ]
     assert events[-1].data['status'] == 'success'
-    assert 'usage' in events[-1].data
+    usage = events[-1].data['usage']
+    assert isinstance(usage, dict)
+    assert 'input_tokens_include_cache' not in usage
 
     parsed = parse_log(tmp_path, session_log_path.read_text(encoding='utf-8'))
     assert parsed.log_entries == events
+
+
+def test_cached_usage_marks_input_tokens_as_including_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
+    event_output = io.StringIO()
+    monkeypatch.setattr(sys, '__stdout__', event_output)
+    module = import_generated_agent(invocation, monkeypatch)
+    run_usage = RunUsage(
+        input_tokens=150,
+        output_tokens=10,
+        cache_read_tokens=50,
+        cache_write_tokens=20,
+    )
+    context = RunContext[None](
+        deps=None,
+        model=TestModel(),
+        usage=run_usage,
+        prompt='count cached usage',
+        run_id='cached-usage-run',
+        conversation_id='cached-usage-session',
+    )
+    module._recorder.observe(context, PartEndEvent(index=0, part=TextPart(content='done')))
+    module._recorder.finish(exit_code=0)
+
+    assert run_usage.input_tokens == 150
+    assert run_usage.output_tokens == 10
+    assert run_usage.cache_read_tokens == 50
+    assert run_usage.cache_write_tokens == 20
+
+    frame_key = invocation.env['GH_AW_SESSION_FRAME_KEY']
+    prefix = f'\x1eGH-AW-SESSION/{frame_key} '
+    emitted = event_output.getvalue()
+    session_log_path = tmp_path / 'session.log'
+    session_log_path.write_text(f'{invocation.stdout}{emitted}', encoding='utf-8')
+    events = [
+        _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
+        for line in emitted.split('\n')
+        if line.startswith(prefix)
+    ]
+    assert events[-1].type == 'session.result'
+    assert events[-1].data['usage'] == {
+        'input_tokens': 150,
+        'output_tokens': 10,
+        'cache_creation_input_tokens': 20,
+        'cache_read_input_tokens': 50,
+        'input_tokens_include_cache': True,
+    }
+
+    parsed = parse_log(tmp_path, session_log_path.read_text(encoding='utf-8'))
+    assert parsed.log_entries[-1].data['usage'] == events[-1].data['usage']
 
 
 async def test_a_failed_stream_emits_one_partial_message_and_failure_result(

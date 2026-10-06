@@ -263,8 +263,10 @@ engine:
                   usage = {'input_tokens': _usage.input_tokens, 'output_tokens': _usage.output_tokens}
                   if _usage.cache_write_tokens:
                       usage['cache_creation_input_tokens'] = _usage.cache_write_tokens
-                  if _usage.cache_read_tokens:
-                      usage['cache_read_input_tokens'] = _usage.cache_read_tokens
+              if _usage.cache_read_tokens:
+                  usage['cache_read_input_tokens'] = _usage.cache_read_tokens
+              if _usage.cache_write_tokens or _usage.cache_read_tokens:
+                  usage['input_tokens_include_cache'] = True
               result: dict[str, object] = {'status': 'success' if exit_code == 0 else 'failure', 'sourceType': 'pydantic-ai'}
               if usage is not None:
                   result['usage'] = usage
