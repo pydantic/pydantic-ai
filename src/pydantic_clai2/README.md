@@ -360,14 +360,34 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 `updates.channel` picks where it looks:
 
 - `stable` (default): the newest release on PyPI.
-- `bleeding`: the newest commit on `main` that changes CLAI. It downloads that
-  commit's `.tar.gz` archive over HTTPS and uses `--overrides` to install CLAI,
-  harness, and core with their required extras. It needs no release and no `git`.
-  These builds report version `0.0.0+<full-commit-sha>`.
+- `bleeding`: the newest build from `main`. For each `main` commit that changes
+  CLAI, harness, or core, CI builds an sdist of each and publishes them to the
+  [`clai2-bleeding`](https://github.com/pydantic/pydantic-ai/releases/tag/clai2-bleeding)
+  prerelease, whose tag moves with them. CLAI reads `clai2-bleeding.json` there
+  to learn the commit, then uses `--overrides` to install CLAI, harness, and core
+  from that commit's sdists with their required extras. These are plain release
+  downloads, so they need no `git` and no GitHub API calls, which are rate
+  limited without a token. The status row names the build by its short commit.
 
 ```text
 /set updates.channel bleeding
 /update
+```
+
+To use another copy of the release, start CLAI with `CLAI_BLEEDING_URL` set to
+the folder that holds `clai2-bleeding.json`. A fork that runs the `CLAI2 bleeding`
+workflow publishes its own:
+
+```bash
+CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding clai2
+```
+
+To try a local checkout, build the same files and serve them over HTTP:
+
+```bash
+src/pydantic_clai2/scripts/build_bleeding.sh /tmp/clai2-bleeding
+python -m http.server --directory /tmp/clai2-bleeding 8000 &
+CLAI_BLEEDING_URL=http://localhost:8000 clai2
 ```
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
