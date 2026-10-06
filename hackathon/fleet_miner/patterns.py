@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -32,13 +33,16 @@ pattern as an earlier proposal, set `existing_id` to that proposal's id exactly 
 
 DRAFT_INSTRUCTIONS = """\
 Several developers at one company typed the same kind of request into their coding agents. Turn it into something
-pushed to every developer's agent, so nobody has to type it again. Keep it as short as what they typed.
+pushed to every developer's agent, so nobody has to type it again.
+
+Write clear, generalized guidance in your own words; do not copy their phrasing. Use what they typed as the measure
+of how much context it needs: if they got by with one line, yours is about one line, not three paragraphs. You are
+given the median length of their prompts: keep `text` close to that length, and never more than twice as long.
 
 Decide the kind:
-- `skill` when they asked for a sequence of steps. Write `text` as 3 to 8 short lines: the steps they actually
-  asked for, in their own words and order, plus at most one line saying when to stop. No headings, no "Purpose" or
-  "When to use" sections, no generic advice they didn't ask for (testing, linting, force-push warnings, ...).
-- `instruction` when it is a standing preference or rule. Write `text` as one or two sentences in their phrasing.
+- `skill` when they asked for a sequence of steps: the steps, and at most one stop condition. No headings, no
+  "Purpose" or "When to use" sections, no generic advice they didn't ask for (testing, linting, force-push warnings).
+- `instruction` when it is a standing preference or rule.
 
 `name`: a short kebab-case slug. `description`: one short sentence saying when it applies.
 `suggested_tier`: `required` if nearly everyone would want it, `default_on` if broadly useful, `optional` if niche.
@@ -155,7 +159,7 @@ def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
     return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
 
 
-_GENERIC_DOMAINS = {'gmail', 'googlemail', 'outlook', 'hotmail', 'yahoo', 'icloud', 'proton', 'protonmail', 'pydantic'}
+_GENERIC_DOMAINS = {'example', 'test', 'localhost', 'gmail', 'googlemail', 'outlook', 'hotmail', 'yahoo', 'icloud', 'proton', 'protonmail', 'pydantic'}
 
 
 _HOST_OWNER = re.compile(r"^([A-Za-z]+?)'?s-(?:MacBook|MBP|Mac|iMac|Laptop|PC|Desktop)", re.IGNORECASE)
@@ -201,17 +205,46 @@ def _redact(value: str, identifiers: set[str]) -> str:
     return value
 
 
+_MIN_TARGET_CHARS = 60
+"""Even a terse ask ("babysit it") needs a sentence once the conversation that gave it meaning is gone."""
+
+
+def median_prompt_chars(pattern: Pattern) -> int:
+    return max(_MIN_TARGET_CHARS, int(statistics.median(len(p.text) for p in pattern.prompts)))
+
+
+@dataclass
+class _DraftDeps:
+    identifiers: set[str]
+    target_chars: int
+
+    @property
+    def max_chars(self) -> int:
+        return 2 * self.target_chars
+
+
 async def draft_proposals(patterns: list[Pattern], *, model: str, max_evidence: int = 5) -> list[Proposal]:
     agent = Agent(
-        model, deps_type=set[str], output_type=_Draft, instructions=DRAFT_INSTRUCTIONS, name='fleet_miner_draft'
+        model,
+        deps_type=_DraftDeps,
+        output_type=_Draft,
+        instructions=DRAFT_INSTRUCTIONS,
+        name='fleet_miner_draft',
+        retries=3,
     )
 
     @agent.output_validator
-    def no_personal_identifiers(ctx: RunContext[set[str]], draft: _Draft) -> _Draft:
-        if leaked := leaked_identifiers(draft, ctx.deps):
+    def check_draft(ctx: RunContext[_DraftDeps], draft: _Draft) -> _Draft:
+        if leaked := leaked_identifiers(draft, ctx.deps.identifiers):
             raise ModelRetry(
                 f'The draft contains personal identifiers ({", ".join(sorted(leaked))}). '
                 'Replace each with the person\'s role, e.g. "the requested reviewer".'
+            )
+        # Length is a target, not a hard rule: after two tries, take what we have.
+        if len(draft.text) > ctx.deps.max_chars and ctx.retry < 2:
+            raise ModelRetry(
+                f'`text` is {len(draft.text)} characters; the users typed ~{ctx.deps.target_chars}. '
+                f'Shorten it to at most {ctx.deps.max_chars} characters.'
             )
         return draft
 
@@ -220,11 +253,13 @@ async def draft_proposals(patterns: list[Pattern], *, model: str, max_evidence: 
         numbers = {user: n for n, user in enumerate(dict.fromkeys(p.user for p in pattern.prompts), 1)}
         examples = [{'developer': numbers[p.user], 'prompt': p.text[:2000]} for p in pattern.prompts[:12]]
         identifiers = personal_identifiers(pattern.prompts)
+        target = median_prompt_chars(pattern)
         result = await agent.run(
             f'Pattern: {pattern.pattern}\n'
             f'Asked by {len(pattern.users)} distinct developers across {len(pattern.sessions)} sessions.\n'
+            f'Median prompt length: {target} characters. Target for `text`: about {target}, at most {2 * target}.\n'
             f'What they typed:\n{json.dumps(examples, indent=2)}',
-            deps=identifiers,
+            deps=_DraftDeps(identifiers=identifiers, target_chars=target),
         )
         draft = result.output
         if leaked := leaked_identifiers(draft, identifiers):  # pragma: no cover - only if retries ran out
