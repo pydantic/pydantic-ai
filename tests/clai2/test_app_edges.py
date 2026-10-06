@@ -14,6 +14,7 @@ from rich.color import Color
 from rich.console import Console
 from rich.text import Text
 from termflow.tui import MenuItem
+from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
@@ -33,6 +34,7 @@ from pydantic_clai2.ui.menus import key_menu
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
 from pydantic_clai2.ui.prompt.live_prompt import PromptWakeup
+from pydantic_clai2.ui.prompt.prompt_surface import ENTER
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.menu_script import Script, pick, typed
 from tests.clai2.test_tasks import task
@@ -154,6 +156,21 @@ async def test_double_interrupt_during_a_background_report_turn_exits(
     assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
     # The interrupt stops only children this turn started; one an earlier turn left cancelled stays resumable.
     assert not earlier.user_stopped
+
+
+async def test_settings_is_an_alias_of_set(tmp_path: Path) -> None:
+    shell = stock_shell(tmp_path, io.StringIO())
+    commands = shell.commands
+    assert '/settings: Alias of /set' in await commands.execute_async('/help')
+    assert 'settings' in [c.text for c in commands.get_completions(Document('/settin'), CompleteEvent())]
+    assert [c.text for c in commands.get_completions(Document('/settings display.thinking f'), CompleteEvent())] == [
+        'false'
+    ]
+    assert commands.runs_during_turn('/settings') and not commands.runs_during_turn('/settings model test')
+    await commands.execute_async('/settings display.thinking false')
+    assert await commands.execute_async('/set display.thinking') == 'False'
+    await commands.execute_async('/set display.thinking true')
+    assert await commands.execute_async('/settings display.thinking') == 'True'
 
 
 async def test_model_string_and_non_command_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -357,7 +374,8 @@ async def test_banner_keeps_brand_colours_under_every_theme(
         store=SettingsStore(tmp_path / 'config.db'),
         console=console,
     )
-    text = Text.from_ansi(output.getvalue())
+    # Before the live panel opens; its frames repaint the same banner from the transcript.
+    text = Text.from_ansi(output.getvalue().split(ENTER, 1)[0])
     logo_rows = [line for line in text.split() if {'█', '═'} & set(line.plain) or line.plain == 'CLAI 2.0']
     colours = [
         line.get_style_at_offset(console, len(line.plain) - len(line.plain.lstrip())).color for line in logo_rows

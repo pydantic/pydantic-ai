@@ -133,10 +133,12 @@ class QuestionMenu:
         )
 
     def run(self, *, console: Console, key_source: Callable[[], str | Paste]) -> tuple[str, ...] | str | None:
-        """Borrow the released editor surface, never entering the alternate screen."""
+        """Borrow the released editor's live panel, or open one for this question alone."""
         surface = console.file
+        owned = not isinstance(surface, PromptSurface)
         if not isinstance(surface, PromptSurface):
             surface = PromptSurface(output=surface, size=lambda: console.size)
+            console = Console(file=surface, width=console.width, height=console.height)
         try:
             console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
             with raw_mode():
@@ -149,7 +151,10 @@ class QuestionMenu:
                     if result is not None:
                         return result
         finally:
-            surface.release()
+            if owned:
+                surface.restore()
+            else:
+                surface.release()
 
 
 class TerminalAnswerer:
@@ -189,7 +194,7 @@ class TerminalAnswerer:
             else:
                 assert key_source is not None
                 operation = partial(menu.run, console=self._console, key_source=key_source)
-            selected = await run_worker(operation)
+            selected = await run_worker(operation, inline=True)
             if selected is None:
                 return AskUserResponse(cancelled=True)
             answers.append(

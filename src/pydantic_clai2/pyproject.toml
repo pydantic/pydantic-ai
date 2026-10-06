@@ -30,7 +30,8 @@ dependencies = [
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     "genai-prices>=0.1.7",
-    "termflow-md>=0.11.0,<0.12",
+    # 1.0 adds `termflow.live` (ScreenBuffer, render_diff, Widget), which paints the transcript panel.
+    "termflow-md>=1.0.0,<2",
     "pyfiglet>=1.0.4",
     "prompt-toolkit>=3.0.52",
     "python-dotenv>=1.2.2",

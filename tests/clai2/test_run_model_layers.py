@@ -343,6 +343,8 @@ async def test_outermost_capability_settings_beat_defaults(tmp_path: Path, stock
 async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
     """A capability's model replaces CLAI's default and resolves through CLAI; the GPT defaults do not follow it.
 
+    The capability's Claude model gets its own family defaults, the prompt-caching TTLs, instead.
+
     `resolved_model()`, which `/compact` and session naming run on, still names the selected model,
     as `PLUGINS.md` documents.
     """
@@ -381,16 +383,9 @@ async def test_saved_settings_stay_with_their_model(tmp_path: Path, stock: bool)
         agent=None if stock else Agent(recorder.resolve(name), deps_type=type(None), capabilities=[published]),
         recorder=recorder,
     )
-    assert recorder.calls == [
-        (
-            other,
-            {
-                'anthropic_cache': '5m',
-                'anthropic_cache_instructions': '5m',
-                'anthropic_cache_tool_definitions': '5m',
-            },
-        )
-    ]
+    # Only the Claude model's own caching defaults; nothing saved for the GPT model.
+    cache = {'anthropic_cache': '5m', 'anthropic_cache_instructions': '5m', 'anthropic_cache_tool_definitions': '5m'}
+    assert recorder.calls == [(other, cache)]
 
 
 async def test_agent_capability_settings_beat_family_defaults(tmp_path: Path) -> None:

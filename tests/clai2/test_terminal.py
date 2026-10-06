@@ -27,7 +27,7 @@ from pydantic_clai2.commands import Command, Commands, set_completions
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, TurnEnd, TurnStart
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_clai2.ui.rendering.splash import Splash
 
 
@@ -224,13 +224,7 @@ async def test_prompt_frame_stays_visible_during_tools(
     finish = anyio.Event()
     done = anyio.Event()
 
-    transcript: list[str] = []
-
     class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            transcript.append(text)
-            return super().write(text)
-
         def paint(self, rows: tuple[str, ...]) -> None:
             nonlocal frame
             super().paint(rows)
@@ -332,8 +326,8 @@ async def test_prompt_frame_stays_visible_during_tools(
     assert 'Turn not saved' not in output.getvalue()
     assert calls == 1
     assert not store.load().thinking
-    text = ''.join(transcript)
-    assert text.index('Finished work') < text.index('> next message\n')
+    printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    assert printed.index('Finished work') < printed.index('> next message\n')
 
 
 async def test_prompt_loop_commands(tmp_path: Path) -> None:

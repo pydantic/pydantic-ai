@@ -286,3 +286,11 @@ async def test_cursor_reports_are_not_draft_keys() -> None:
             assert events == []
         finally:
             keys.stop()
+
+
+def test_sgr_mouse_reports_are_one_key() -> None:
+    events: list[tuple[str, str]] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append((key, data)), eof=lambda: None)
+        keys.dispatch(KeyPress(Keys.Vt100MouseEvent, '\x1b[<64;10;5M'))
+    assert events == [('mouse', '\x1b[<64;10;5M')]
