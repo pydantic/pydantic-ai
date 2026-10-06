@@ -38,7 +38,9 @@ This branch (`control-plane`) is `main` plus Agent Control (#9066), and it lets 
 Logfire managed variables:
 
 - **Company tier: `agent__clai2`.** This is the `AgentConfig` from Agent Control, plus two sections. In detail:
-  - Instruction blocks without an `id` are added to the prompt.
+  - Instruction blocks without an `id` are added to the prompt. Give one a `name`
+    (`{"name": "run-tests-first", "instructions": "..."}`) to label it in notices and adoption
+    (`instruction:<name>`). Blocks with an `id` still override the code block with that id.
   - `skills: [{name, description, instructions}]` become deferred capabilities: the model sees each name and
     description and loads the body with `load_capability`.
   - `mcp_servers: [{name, url, headers}]` become Streamable HTTP MCP toolsets, with tools prefixed by the server
@@ -86,6 +88,7 @@ To publish a new version of a variable without the UI, run
 | Every span of an agent run | `logfire.managed.applied_sections` | Agent Control sections applied, such as `instructions` |
 | `prompt submitted` UI record | `kind`, `prompt`, `clai2.prompt.source` (`typed`), `user.email`, `clai2.team`, `agent_session_id` | One typed prompt, joinable without the session root |
 | `agent_control_config_hint` | `agent_control.variable_name`, `.agent_name`, `.baseline`, ... | The code baseline, once per process |
+| `agent_control_config_hint` | `agent_control.client_features` | `["named_instructions", "catalog"]` for clai2; plain `AgentControl` reports `["named_instructions"]` |
 | `Resolve variable agent__clai2` | `name`, `label`, `version`, `reason`, `targeting_key` | Each resolution |
 
 ## Known limitations
