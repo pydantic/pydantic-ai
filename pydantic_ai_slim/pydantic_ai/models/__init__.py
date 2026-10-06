@@ -597,6 +597,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         That is, neither the unified `cache` setting (including `cache=False`, which turns caching off on purpose)
         nor a provider-specific cache setting. Used by prompt-cache health to tell users how to enable caching.
+        Models that also cache implicitly, without any configuration, override this to return `False`.
         """
         if not self.profile.get('supports_cache', False):
             return False

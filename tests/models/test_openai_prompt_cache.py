@@ -2272,14 +2272,10 @@ async def test_openai_responses_explicit_cache_settings_win(
 
 
 def test_openai_cache_settings_resolution():
-    """GPT-5.6 caching counts as configured once any cache setting is present, and resolves its 30-minute TTL
-    unless `mode='explicit'` leaves only `CachePoint`s to cache."""
+    """GPT-5.6 resolves its 30-minute TTL unless `mode='explicit'` leaves only `CachePoint`s to cache, and is
+    never reported as having caching not enabled, since it caches implicitly without any configuration."""
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
-    assert model._caching_not_enabled(None)  # pyright: ignore[reportPrivateUsage]
-    assert not model._caching_not_enabled(  # pyright: ignore[reportPrivateUsage]
-        OpenAIResponsesModelSettings(openai_cache_instructions=False)
-    )
-    assert not model._caching_not_enabled(OpenAIResponsesModelSettings(cache=False))  # pyright: ignore[reportPrivateUsage]
+    assert not model._caching_not_enabled(None)  # pyright: ignore[reportPrivateUsage]
     assert model.resolve_cache_retention(OpenAIResponsesModelSettings(openai_cache_instructions=False)) == timedelta(
         minutes=30
     )

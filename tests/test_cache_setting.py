@@ -592,10 +592,11 @@ class TestCachingNotEnabled:
         assert not model._caching_not_enabled(BedrockModelSettings(bedrock_cache_messages=False))
 
     @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
-    def test_openai_chat_provider_setting_counts_as_configured(self):
+    def test_openai_is_never_reported(self):
+        """OpenAI caches implicitly even when nothing is configured, so unconfigured isn't uncached."""
         model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test'))
-        assert model._caching_not_enabled(None)
-        assert not model._caching_not_enabled(OpenAIChatModelSettings(openai_cache_instructions=False))
+        assert model.profile.get('supports_cache')
+        assert not model._caching_not_enabled(None)
         assert model.resolve_cache_retention(OpenAIChatModelSettings(openai_cache_instructions=False)) == timedelta(
             minutes=30
         )

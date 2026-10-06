@@ -93,8 +93,8 @@ def previous_tail_needing_breakpoint(roles: Sequence[str], block_counts: Sequenc
 
     A library-placed history breakpoint sits at the end of the last message, so the previous request put its
     breakpoint at the end of the last user-side message before the latest assistant message. When more than
-    `LOOKBACK_SAFE_BLOCKS` content blocks follow it, the caller adds a breakpoint there too, so the earlier cache write is an explicit breakpoint rather than
-    something the lookback has to reach.
+    `LOOKBACK_SAFE_BLOCKS` content blocks follow it, the caller adds a breakpoint there too, so the earlier
+    cache write is an explicit breakpoint rather than something the lookback has to reach.
 
     Args:
         roles: Each wire message's role, oldest first. Anything but `'assistant'` (tool results included) counts as

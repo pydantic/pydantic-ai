@@ -6,7 +6,7 @@ description: "Prompt caching in Pydantic AI: enable it across Anthropic, Bedrock
 
 Prompt caching lets a provider reuse the work it did on a prompt prefix it has seen recently (tool definitions, instructions, and the conversation so far) instead of processing it again, which makes long and multi-turn requests cheaper and faster.
 
-Some providers cache prompts implicitly, without any configuration: OpenAI's models before GPT-5.6, Gemini, DeepSeek and xAI, for example. Others need the request to opt in: Anthropic (including on Amazon Bedrock, Google Vertex AI and Microsoft Foundry), Amazon Bedrock's Claude and Nova models, OpenRouter's Anthropic and Gemini models, and OpenAI's GPT-5.6 and later, whose explicit cache breakpoints add to its implicit caching. On those, enable caching with the [`Caching`][pydantic_ai.capabilities.Caching] capability:
+Some providers cache prompts implicitly, without any configuration: OpenAI, Gemini, DeepSeek and xAI, for example. Others cache nothing unless the request opts in: Anthropic (including on Amazon Bedrock, Google Vertex AI and Microsoft Foundry), Amazon Bedrock's Claude and Nova models, and OpenRouter's Anthropic and Gemini models. OpenAI's GPT-5.6 and later sit in between: they cache implicitly, and also take a cache TTL and explicit breakpoints, such as one at the end of the instructions so separate conversations share them. On these models, enable caching with the [`Caching`][pydantic_ai.capabilities.Caching] capability:
 
 ```python {title="caching_capability.py"}
 from pydantic_ai import Agent

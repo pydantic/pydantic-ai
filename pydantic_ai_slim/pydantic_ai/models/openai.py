@@ -1228,6 +1228,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # OpenAI caches prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
+        return False
+
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
         if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
             return _openai_effective_cache_settings(cast(OpenAIChatModelSettings, merged_settings))
@@ -2321,6 +2325,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # OpenAI caches prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
+        return False
 
     def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
         if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
