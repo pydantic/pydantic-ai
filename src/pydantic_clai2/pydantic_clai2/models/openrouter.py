@@ -1,10 +1,11 @@
 """Authenticate and discover models through the native OpenRouter provider."""
 
-import asyncio
 import json
+from functools import partial
 from typing import Annotated
 
 import httpx
+from anyio import to_thread
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from rich.console import Console
@@ -17,8 +18,10 @@ from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import load_codex_credentials
+from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.openrouter_auth import OpenRouterAuth
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 
@@ -42,7 +45,7 @@ class ModelList(BaseModel):
 
 async def discover(connection: Connection, *, transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
     """Query only the requested endpoint; do not forward credentials across redirects."""
-    token = await asyncio.to_thread(resolve_key, token=connection.token)
+    token = await to_thread.run_sync(partial(resolve_key, token=connection.token), abandon_on_cancel=True)
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(transport=transport, timeout=20, follow_redirects=False) as client:
         try:
@@ -61,37 +64,33 @@ async def discover(connection: Connection, *, transport: httpx.AsyncBaseTranspor
     return names
 
 
-def save_connection(connection: Connection) -> None:
-    """Keep credentials out of command history and SQLite."""
+def save_connection(connection: Connection, *, account: str = 'openrouter') -> None:
+    """Keep credentials out of command history and SQLite; `account` is `openrouter@PROFILE` for a profile."""
     value = connection.model_dump(mode='json')
     if isinstance(connection.token, SecretStr):
         value['token'] = connection.token.get_secret_value()
-    save_key_connection(value=json.dumps(value), account='openrouter', token=connection.token)
+    save_key_connection(value=json.dumps(value), account=account, token=connection.token)
 
 
 def model(name: str) -> OpenRouterModel:
     """Resolve a saved OpenRouter selection through core, without global API-key fallbacks."""
-    raw = load_codex_credentials(account='openrouter')
+    ref = parse_model(name)
+    setup = '/model add > openrouter' if ref.profile is None else f'/login {ref.account}'
+    raw = load_codex_credentials(account=ref.account)
     if raw is None:
-        raise UserError('Connect first through /add_model > openrouter.')
+        raise UserError(f'Connect first through {setup}.')
     try:
         connection = Connection.model_validate_json(raw)
     except ValidationError:
-        raise UserError('Stored connection is invalid. Reconfigure through /add_model > openrouter.') from None
+        raise UserError(f'Stored connection is invalid. Reconfigure through {setup}.') from None
     provider = OpenRouterProvider(api_key=resolve_key(token=connection.token))
-    return OpenRouterModel(name.removeprefix('openrouter:'), provider=provider)
+    return OpenRouterModel(ref.name, provider=provider)
 
 
 def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.
     """Pick one discovered model in Termflow."""
-    result = (
-        MenuBuilder('OpenRouter models')
-        .items([MenuItem(name, value=name) for name in names])
-        .searchable()
-        .key_source(menu_key)
-        .build()
-        .run()
-    )
+    builder = MenuBuilder('OpenRouter models').items([MenuItem(name, value=name) for name in names])
+    result = slash_search(builder, footer='enter select · esc cancel', key_source=menu_key).run()
     return result.item.value if not result.cancelled and result.item and isinstance(result.item.value, str) else None
 
 
@@ -100,7 +99,7 @@ async def connect(context: CommandContext, args: list[str]) -> str:
     if args:
         raise ValueError('Usage: /openrouter (choose browser login or enter an API key privately)')
     try:
-        raw = await asyncio.to_thread(load_codex_credentials, account='openrouter')
+        raw = await to_thread.run_sync(partial(load_codex_credentials, account='openrouter'), abandon_on_cancel=True)
         connection = Connection.model_validate_json(raw) if raw else None
     except (ValidationError, UserError):
         connection = None
@@ -118,7 +117,7 @@ async def connect(context: CommandContext, args: list[str]) -> str:
     selected = await run_worker(lambda: choose(names))
     if selected is None:
         return 'Connection cancelled.'
-    await asyncio.to_thread(save_connection, connection)
+    await to_thread.run_sync(save_connection, connection, abandon_on_cancel=True)
     return context.set_setting(['model', f'openrouter:{selected}'])
 
 

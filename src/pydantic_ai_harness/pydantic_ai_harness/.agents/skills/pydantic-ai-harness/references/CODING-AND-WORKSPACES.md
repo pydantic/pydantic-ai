@@ -336,6 +336,9 @@ capability's commands in a Linux `bwrap` sandbox on that workspace's host:
   multiprocessing (use `get_context('spawn')`), need `network=True`: host network and ports, no filter.
 - File methods (and the `FileSystem`/`Coder` file tools) run in the sandbox as shell commands, so a
   swapped-in symlink can't lead a write outside the working dir.
+- A working dir containing `~` (SSH's default) gets `~/.ssh`, `~/.pam_environment`, `~/.bashrc`,
+  `~/.zshenv`, `~/.cshrc`, `~/.tcshrc`, `~/.config/fish` read-only (created if missing; a symlink there
+  is unavailable), since the next SSH login runs them on the host. Prefer a project `working_dir`.
 - The host PID namespace is shared, so `Shell` background jobs survive the call (and the run), and
   sandboxed commands can see and signal the host user's processes.
 - Not a hostile-agent boundary: commands read everything the host user can (hide `~/.ssh` with

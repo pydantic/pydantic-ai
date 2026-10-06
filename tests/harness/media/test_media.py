@@ -8,7 +8,7 @@ import json as _json
 import os
 import sqlite3
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeGuard
 
@@ -906,7 +906,7 @@ class TestSigV4Signer:
             access_key_id='AKIAIOSFODNN7EXAMPLE',
             secret_access_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
             content_type='image/png',
-            now=datetime(2013, 5, 24, tzinfo=timezone.utc),
+            now=datetime(2013, 5, 24, tzinfo=UTC),
         )
         assert headers['host'] == 'examplebucket.s3.amazonaws.com'
         assert headers['x-amz-date'] == '20130524T000000Z'
@@ -929,7 +929,7 @@ class TestSigV4Signer:
             access_key_id='K',
             secret_access_key='S',
             content_type=None,
-            now=datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            now=datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC),
         )
         a = sign_request(**common)  # type: ignore[arg-type]
         b = sign_request(**common)  # type: ignore[arg-type]
@@ -944,7 +944,7 @@ class TestSigV4Signer:
             access_key_id='K',
             secret_access_key='S',
             content_type=None,
-            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            now=datetime(2024, 1, 1, tzinfo=UTC),
         )
         sig_a = sign_request(body=b'aaa', **kwargs)['authorization']  # type: ignore[arg-type]
         sig_b = sign_request(body=b'bbb', **kwargs)['authorization']  # type: ignore[arg-type]

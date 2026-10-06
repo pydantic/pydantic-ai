@@ -1,10 +1,8 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Self, overload
 from urllib.parse import urlparse
-
-from typing_extensions import Self
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -43,7 +41,7 @@ except ImportError:  # pragma: no cover
     _api_key_sentinel = None
 
 
-_DEFAULT_VOICE_LIVE_API_VERSION = '2026-04-10'
+_DEFAULT_VOICE_LIVE_API_VERSION = '2026-07-15'
 """Default Azure AI Voice Live API version when neither `AZURE_VOICELIVE_API_VERSION` nor an argument is set."""
 
 

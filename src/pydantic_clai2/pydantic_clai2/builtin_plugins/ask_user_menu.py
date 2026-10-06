@@ -1,6 +1,9 @@
-"""The built-in `ask_user` plugin: inline questions that keep the transcript visible."""
+"""Let the model ask you multiple-choice questions inline, without leaving the transcript.
 
-from collections.abc import Callable
+The built-in `ask_user` plugin: inline questions that keep the transcript visible.
+"""
+
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from functools import partial
@@ -11,6 +14,8 @@ from rich.text import Text
 from termflow.tui.layout import truncate
 from termflow.tui.terminal import raw_mode
 
+from pydantic_ai import AgentStreamEvent
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.ask_user import (
     AskUser,
     AskUserAnswer,
@@ -19,11 +24,12 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
     Question,
 )
-from pydantic_clai2.plugins import FullScreen, PluginHost
+from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.plugins import FullScreen, Plugin
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
-from pydantic_clai2.ui.prompt.question_input import Paste, question_input
+from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, Scroll, question_input
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -126,24 +132,33 @@ class QuestionMenu:
             theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
         )
 
-    def run(self, *, console: Console, key_source: Callable[[], str | Paste]) -> tuple[str, ...] | str | None:
-        """Borrow the released editor surface, never entering the alternate screen."""
+    def run(self, *, console: Console, key_source: Callable[[], QuestionKey]) -> tuple[str, ...] | str | None:
+        """Borrow the released editor's live panel, or open one for this question alone."""
         surface = console.file
+        owned = not isinstance(surface, PromptSurface)
         if not isinstance(surface, PromptSurface):
             surface = PromptSurface(output=surface, size=lambda: console.size)
+            console = Console(file=surface, width=console.width, height=console.height)
         try:
             console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
             with raw_mode():
                 while True:
                     surface.paint(self.frame(width=console.width, height=console.height))
                     key = key_source()
+                    if isinstance(key, Scroll):
+                        # Reading back through the transcript must not answer or edit the question.
+                        surface.scroll_key(key.key, key.data)
+                        continue
                     if key == 'ctrl-c' or (key == 'escape' and not self.editing_custom):
                         return None
                     result = self.choose(key)
                     if result is not None:
                         return result
         finally:
-            surface.release()
+            if owned:
+                surface.restore()
+            else:
+                surface.release()
 
 
 class TerminalAnswerer:
@@ -165,11 +180,14 @@ class TerminalAnswerer:
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""
         async with self._terminal, self._full_screen():
+            child_id = DelegationTasks.child_id()
+            if child_id is not None:
+                self._console.print(f'Task [{child_id[:8]}] requests your input', markup=False)
             with question_input() if self._runner is None else nullcontext(None) as key_source:
                 return await self.answer_questions(request=request, key_source=key_source)
 
     async def answer_questions(
-        self, *, request: AskUserRequest, key_source: Callable[[], str | Paste] | None
+        self, *, request: AskUserRequest, key_source: Callable[[], QuestionKey] | None
     ) -> AskUserResponse:
         """Keep one decoder for the batch so pasted text cannot escape to the next question."""
         answers: list[AskUserAnswer] = []
@@ -180,7 +198,7 @@ class TerminalAnswerer:
             else:
                 assert key_source is not None
                 operation = partial(menu.run, console=self._console, key_source=key_source)
-            selected = await run_worker(operation)
+            selected = await run_worker(operation, inline=True)
             if selected is None:
                 return AskUserResponse(cancelled=True)
             answers.append(
@@ -207,7 +225,11 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     return text
 
 
-def activate(host: PluginHost[None]) -> None:
-    """Register `AskUser` with the terminal answerer and a transcript line per answer."""
-    host.add(AskUser(answerer=TerminalAnswerer(full_screen=host.full_screen, console=host.console)))
-    host.render(AskUserAnsweredEvent)(render_answer)
+class AskUserPlugin(Plugin):
+    """`AskUser` with the terminal answerer, and a transcript line per answer."""
+
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
+
+    def render(self, event: AgentStreamEvent) -> RenderableType | None:
+        return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None

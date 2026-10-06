@@ -1,5 +1,5 @@
 ---
-description: "Choose how to persist Pydantic AI conversations: store message history in your database, use the Harness for persistence and memory, or use durable execution."
+description: "Choose how to persist Pydantic AI conversations: store a `Conversation` in your database, use the Harness for persistence and memory, or use durable execution."
 ---
 
 # Persistence
@@ -8,7 +8,7 @@ description: "Choose how to persist Pydantic AI conversations: store message his
 
 | You want to… | Use | Where it lives |
 |---|---|---|
-| Save a conversation and pick it up later — a chat thread, a support ticket, an assistant that remembers yesterday | [Serialize the message history](message-history.md#storing-and-loading-messages-to-json) into a column of your own database | Core |
+| Save a conversation and pick it up later — a chat thread, a support ticket, an assistant that remembers yesterday | [Store its `Conversation`](#storing-a-conversation-yourself) in a column of your own database | Core |
 | Not write the save-and-load code yourself, and get continue-and-fork for free | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | The agent to remember what it learned about someone *across* conversations, not just within one | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | A run to survive the process dying mid-tool-call, and resume exactly where it stopped | [Durable execution](durable_execution/overview.md) | Core |
@@ -17,17 +17,36 @@ For checkpoint-style persistence, [`StepPersistence`](https://pydantic.dev/docs/
 
 The first two rows are also the answer to "how do I give my agent memory?" for most of what people mean by it: an agent's memory of the conversation it is having *is* its message history. There is no separate memory system to add for that — storing the history and passing it back is the whole mechanism. Memory becomes [its own thing](#remembering-across-conversations) only once it has to outlive the thread.
 
-The rows compose: a durable engine keeps one run alive, `StepPersistence` records what each run did, a serialized history is what you hand to the next run, and `Memory` is what's left when the thread is over. Reaching for a durable engine because you wanted to store a chat thread is the common mistake — a `jsonb` column is enough for that.
+The rows compose: a durable engine keeps one run alive, `StepPersistence` records what each run did, a stored conversation is what you hand to the next run, and `Memory` is what's left when the thread is over. Reaching for a durable engine because you wanted to store a chat thread is the common mistake — a `jsonb` column is enough for that.
 
 ## Storing a conversation yourself
 
 Pydantic AI is deliberately unopinionated about your database. It gives you a full-fidelity serialization boundary and leaves the schema to you, because teams' choices here vary more than the framework can usefully guess: which table the history hangs off, which tenant column it needs, how long you keep it.
 
-The primitive is [`ModelMessagesTypeAdapter`](message-history.md#storing-and-loading-messages-to-json), which round-trips a message history to JSON and back — including fields that are never sent to the model, like a part's application-only `metadata`. Because that field is typed `Any`, values with no JSON form are normalized on the way through: a `tuple` reloads as a `list`, a `datetime` as its ISO string. The ["What survives a round-trip"](message-history.md#storing-and-loading-messages-to-json) note covers the edges. Store the bytes in a `jsonb` column or equivalent; no schema migration is needed when Pydantic AI adds a message part, because a history serialized by an older version still deserializes.
+The thing to store is a [`Conversation`][pydantic_ai.conversation.Conversation]. Every run hands you one as [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation], and every run takes one back as `conversation=`. It holds the messages and what lives outside them: the running [`usage`][pydantic_ai.conversation.Conversation.usage], the [`conversation_id`][pydantic_ai.conversation.Conversation.conversation_id] to key it by, and any [deferred tool requests](deferred-tools.md#pausing-a-conversation) the last run paused on. Store it as a field on a Pydantic model of your own, or on its own with [`ConversationTypeAdapter`][pydantic_ai.conversation.ConversationTypeAdapter]:
 
-To store a finished run rather than just its messages — keeping the output, usage, and conversation ID alongside — put an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] on a Pydantic model of your own and serialize that: see [Storing complete run results](message-history.md#storing-complete-run-results).
+```python {title="storing_a_conversation.py"}
+from pydantic_ai import Agent, ConversationTypeAdapter
 
-[`conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) is the key to store it under, and appending each run's [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] rather than rewriting the whole list keeps each write proportional to the turn. [Persisting sessions](message-history.md#persisting-sessions) walks through the pattern.
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+
+result = agent.run_sync('Tell me a joke.')
+stored = ConversationTypeAdapter.dump_json(result.conversation)  # (1)!
+
+conversation = ConversationTypeAdapter.validate_json(stored)
+result = agent.run_sync('Explain?', conversation=conversation)
+print(result.usage.requests)  # (2)!
+#> 2
+```
+
+1. JSON bytes for a `jsonb` column or equivalent, keyed by `result.conversation_id`.
+2. The second run counts on from the first, so a [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget covers the whole conversation rather than each run.
+
+It round-trips with the same fidelity as the message history's own [`ModelMessagesTypeAdapter`](message-history.md#storing-and-loading-messages-to-json), including fields that are never sent to the model, like a part's application-only `metadata`. Because that field is typed `Any`, values with no JSON form are normalized on the way through: a `tuple` reloads as a `list`, a `datetime` as its ISO string, and raw `bytes` as their base64 string. The ["What survives a round-trip"](message-history.md#storing-and-loading-messages-to-json) note covers the edges. No schema migration is needed when Pydantic AI adds a message part, because a conversation serialized by an older version still deserializes.
+
+Rewriting the whole conversation on every turn keeps the code simple, but makes each write as large as the conversation so far. To keep writes proportional to the turn, store the messages in a table of their own, appending each run's [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] with `ModelMessagesTypeAdapter`, and keep the rest of the conversation beside them: its `usage`, its `conversation_id`, and its `deferred_tool_requests`, which a paused conversation can't be resumed without. Reassemble it as `Conversation(messages=..., usage=..., conversation_id=..., deferred_tool_requests=...)` to continue. [Persisting sessions](message-history.md#persisting-sessions) walks through both.
+
+To keep a finished run's output alongside its conversation, store the [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] itself: see [Storing complete run results](message-history.md#storing-complete-run-results).
 
 ### Storing a history a chat UI sent you
 
@@ -53,11 +72,11 @@ Store the Pydantic AI side and convert at the edge, rather than storing the prot
 !!! note "Client-supplied history is not trusted state"
     If the history you load came from a browser, sanitize it before passing it to an agent. See [Loading untrusted history](message-history.md#loading-untrusted-history) and the [trust boundary](message-history.md#trust-boundary-for-client-supplied-history).
 
-### What a history alone doesn't carry
+### Why a conversation rather than its messages
 
-Messages carry more than they look like they do: [`run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) are stamped onto each one, so a conversation reloaded from storage stays correlated in [Logfire](logfire.md) with no bookkeeping of your own, and each run's span reports that run's own token usage either way.
+Messages carry more than they look like they do: [`run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id) are stamped onto each one, so a history reloaded from storage stays correlated in [Logfire](logfire.md) with no bookkeeping of your own.
 
-What lives outside the messages is [`RunUsage`][pydantic_ai.usage.RunUsage]: the conversation's running total, including [`tool_calls`][pydantic_ai.usage.RunUsage.tool_calls], which no message records. Store it alongside the history and hand it back with `usage=` when [`UsageLimits`][pydantic_ai.usage.UsageLimits] should budget the whole conversation rather than each run. Carrying it changes nothing about what your traces show: each run's span reports that run's own tokens either way, so a conversation's spend is the sum of its runs.
+What they can't carry is why the [`Conversation`][pydantic_ai.conversation.Conversation] exists. Its [`usage`][pydantic_ai.conversation.Conversation.usage] is the conversation's running total, including [`tool_calls`][pydantic_ai.usage.RunUsage.tool_calls], which no message records; continue from the messages alone and every turn's [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget starts over from zero. And a run that [paused for deferred tools](deferred-tools.md#pausing-a-conversation) leaves calls that the messages show as unanswered without saying which need approval and which an external result, or what metadata they were deferred with. The conversation carries both. Carrying usage changes nothing about what your traces show: each run's span reports that run's own tokens either way, so a conversation's spend is the sum of its runs.
 
 Nor does a history reach past its own conversation. Replaying yesterday's threads to give an agent that continuity works until it doesn't: the prompt grows without bound, every request pays for it, and [compaction](capabilities/compaction.md) drops the parts you were counting on. [Remembering across conversations](#remembering-across-conversations) is a different mechanism.
 

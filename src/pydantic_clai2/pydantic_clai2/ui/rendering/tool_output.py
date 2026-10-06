@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
 from rich.console import Console
 from rich.text import Text
-from termflow.diff import DiffRenderer, DiffTheme
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
@@ -36,6 +35,32 @@ def print_tool_header(console: Console, *, name: str, argument: str | Text = '')
     elif argument:
         text.append(f' {terminal_text(argument)}', style=theme.color(theme.MUTED))
     console.print(text, overflow='ellipsis', no_wrap=True)
+    console.print()
+
+
+SHELL_COMMAND_ROWS = 10
+"""Most terminal rows a shell command header may take before the rest is summarized."""
+
+
+def print_shell_header(console: Console, command: str) -> None:
+    """Wrap the whole command under a hanging indent, so long one-liners and scripts stay readable.
+
+    Rows beyond `SHELL_COMMAND_ROWS` are replaced by a count; the model-facing command is unchanged.
+    """
+    if not command.strip():
+        print_tool_header(console, name='shell')
+        return
+    muted = theme.color(theme.MUTED)
+    head = Text('● ', style=muted)
+    head.append('shell ', style=theme.color(theme.ACCENT))
+    indent = Text(' ' * head.cell_len)
+    body = Text(terminal_text(command.strip('\n')), style=muted)
+    rows = body.wrap(console, max(console.width - head.cell_len, 1), overflow='fold')
+    for index, row in enumerate(rows[:SHELL_COMMAND_ROWS]):
+        row.rstrip()
+        console.print((head if index == 0 else indent) + row, overflow='ellipsis', no_wrap=True)
+    if len(rows) > SHELL_COMMAND_ROWS:
+        console.print(indent + Text(f'… +{len(rows) - SHELL_COMMAND_ROWS} lines', style=muted), no_wrap=True)
     console.print()
 
 
@@ -107,6 +132,9 @@ class ToolOutput:
         self._writes: dict[tuple[str | None, str, str], FileChangeRequestEvent] = {}
 
     def _header(self, name: str, argument: str) -> None:
+        if name == 'shell':
+            print_shell_header(self.console, argument)
+            return
         lines = argument.splitlines()
         summary = lines[0] if lines else ''
         if len(lines) > 1:
@@ -200,17 +228,10 @@ class ToolOutput:
         self.console.print()
 
     def _diff(self, diff: str, *, truncated: bool) -> None:
-        if not self.show_output:
-            return
         safe_diff = terminal_text(diff)
         if safe_diff:
             if self.console.is_terminal:
-                colors = (
-                    DiffTheme(addition=theme.DIFF_ADDITION, deletion=theme.DIFF_DELETION, marker_brighten=2.0)
-                    if theme.current() is None
-                    else None
-                )
-                self.console.file.write(DiffRenderer(theme=colors).render(safe_diff))
+                self.console.file.write(theme.diff_renderer().render(safe_diff))
                 self.console.file.flush()
             else:
                 self.console.print(safe_diff, markup=False, highlight=False)
@@ -245,7 +266,7 @@ class ToolOutput:
                 return True
             self._shell_finished(event)
         elif isinstance(event, FileChangeRequestEvent):
-            if self.show_output and event.operation == 'write':
+            if event.operation == 'write':
                 self._writes[event.tool_call_id, event.root_dir, event.path] = event
         elif isinstance(event, FileEditedEvent):
             key = (event.tool_call_id, 'edit_file')
@@ -258,8 +279,6 @@ class ToolOutput:
             if key not in self._headers:
                 self._header('write_file', event.path)
             self._headers.discard(key)
-            if not self.show_output:
-                return True
             request = self._writes.pop((event.tool_call_id, event.root_dir, event.path), None)
             if request is not None and not request.cancelled:
                 self._diff(request.diff, truncated=request.truncated)

@@ -15,10 +15,10 @@ install: .uv ## Install the package, dependencies, and pre-commit for local deve
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
-	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv314 uv sync --python 3.14 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
@@ -43,7 +43,7 @@ PYRIGHT_THREADS ?=
 
 .PHONY: typecheck-pyright
 typecheck-pyright:
-	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.10 or similar
+	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.11 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
 	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 	@# Pyright skips everything under a dot directory, so `.github/scripts` is a project of its own
@@ -69,21 +69,21 @@ typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
 test: ## Run tests without coverage (fast, for local dev)
-	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
+	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.11 or similar
 	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) pytest -n auto --dist=loadgroup --durations=20
 
 .PHONY: test-all-python
-test-all-python: ## Run tests on Python 3.10 to 3.13
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+test-all-python: ## Run tests on Python 3.11 to 3.14
 	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv314 uv run --python 3.14 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	@uv run coverage combine
 	@uv run coverage report
 
 .PHONY: testcov
 testcov: ## Run tests with coverage and generate an HTML report
-	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
+	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.11 or similar
 	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine
 	@uv run coverage report

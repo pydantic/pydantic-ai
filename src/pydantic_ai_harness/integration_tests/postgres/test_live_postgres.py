@@ -42,13 +42,12 @@ External assumptions:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import NoReturn
 from uuid import uuid4
 
@@ -161,7 +160,7 @@ async def _connect(*, retry_seconds: float = _CONNECT_RETRY_SECONDS) -> asyncpg.
             return await asyncpg.create_pool(  # pyright: ignore[reportUnknownMemberType]
                 url, min_size=1, max_size=4, timeout=_CONNECT_TIMEOUT_SECONDS
             )
-        except (OSError, asyncio.TimeoutError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
+        except (TimeoutError, OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
             # Only the type: the message of a connection error can quote the URL.
             failure = type(exc).__name__
         if time.monotonic() >= deadline:
@@ -477,7 +476,7 @@ async def test_register_and_get_run() -> None:
     """Every `RunRecord` field survives the round trip, microseconds included."""
     async with _live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
-        started_at = datetime(2024, 5, 6, 7, 8, 9, 123456, tzinfo=timezone.utc)
+        started_at = datetime(2024, 5, 6, 7, 8, 9, 123456, tzinfo=UTC)
         record = RunRecord(
             run_id='r1',
             conversation_id='c1',
@@ -512,7 +511,7 @@ async def test_list_runs_chronological() -> None:
     """Runs come back by `started_at`, not by insertion order."""
     async with _live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
-        base = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2024, 1, 1, tzinfo=UTC)
         await store.register_run(RunRecord(run_id='r3', started_at=base + timedelta(seconds=3)))
         await store.register_run(RunRecord(run_id='r1', started_at=base + timedelta(seconds=1)))
         await store.register_run(RunRecord(run_id='r2', started_at=base + timedelta(seconds=2)))
@@ -543,7 +542,7 @@ async def test_list_runs_sorts_by_instant_not_iso_string() -> None:
     async with _live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
         early_instant = datetime(2024, 1, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=5)))  # 2023-12-31T20:00Z
-        late_instant = datetime(2024, 1, 1, 0, 30, 0, tzinfo=timezone.utc)
+        late_instant = datetime(2024, 1, 1, 0, 30, 0, tzinfo=UTC)
         await store.register_run(RunRecord(run_id='late', started_at=late_instant))
         await store.register_run(RunRecord(run_id='early', started_at=early_instant))
 
@@ -619,7 +618,7 @@ async def test_save_and_load_snapshot() -> None:
             conversation_id='c1',
             parent_run_id='p1',
             agent_name='agent',
-            timestamp=datetime(2024, 5, 6, 7, 8, 9, 123456, tzinfo=timezone.utc),
+            timestamp=datetime(2024, 5, 6, 7, 8, 9, 123456, tzinfo=UTC),
         )
 
         await store.save_snapshot(snapshot)
@@ -726,7 +725,7 @@ async def test_tool_effect_upsert_and_scope() -> None:
     """A second record for one call replaces the first, per run."""
     async with _live_tables() as (pool, prefix):
         store = PostgresStepStore(pool, table=prefix, media_store=None)
-        started_at = datetime(2024, 5, 6, 7, 8, 9, tzinfo=timezone.utc)
+        started_at = datetime(2024, 5, 6, 7, 8, 9, tzinfo=UTC)
         completed = ToolEffectRecord(
             tool_call_id='t1',
             tool_name='add',
@@ -1212,7 +1211,7 @@ async def test_list_snapshots_skips_an_unparsable_row(caplog: pytest.LogCaptureF
                 f'INSERT INTO {prefix}_snapshots (run_id, step_index, timestamp, messages) VALUES ($1, $2, $3, $4)',
                 'r1',
                 1,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 'not json',
             )
 
@@ -1238,7 +1237,7 @@ async def test_snapshot_table_with_a_foreign_layout_fails_loudly_on_read() -> No
                 f'INSERT INTO {prefix}_snapshots (run_id, step_index, timestamp, messages) VALUES ($1, $2, $3, $4)',
                 'r1',
                 'zero',
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 '[]',
             )
         store = PostgresStepStore(pool, table=prefix, media_store=None)

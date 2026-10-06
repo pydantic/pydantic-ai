@@ -47,6 +47,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles.decision import DecisionModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -59,8 +60,8 @@ with try_import() as logfire_imports_successful:
 
 
 class InMemoryDecisionModel(DecisionModel[None]):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, *, profile: DecisionModelProfile | None = None):
+        super().__init__(profile=profile)
         self.requests: list[DecisionRequest] = []
 
     @property
@@ -890,6 +891,20 @@ async def test_levels_over_score_limit_are_a_pick_one(allow_model_requests: None
     assert question.criteria == {str(level): f'Level {level}' for level in range(11)}
 
 
+async def test_profile_score_limit(allow_model_requests: None):
+    """A limit in the profile is the model's own, so a class without one keeps to it."""
+    model = InMemoryDecisionModel(profile=DecisionModelProfile(decision_max_score_levels=10))
+    await Agent(model, output_type=ElevenLevelReview).run('Score this.')
+    assert isinstance(model.requests[0].questions['score'], ChoiceQuestion)
+
+
+async def test_profile_score_limit_overrides_the_class(allow_model_requests: None):
+    """A profile that sets no limit lifts the class's, as for a model behind the same API that has none."""
+    model = TenLevelDecisionModel(profile=DecisionModelProfile(decision_max_score_levels=None))
+    await Agent(model, output_type=ElevenLevelReview).run('Score this.')
+    assert isinstance(model.requests[0].questions['score'], ScoreQuestion)
+
+
 async def test_levels_over_score_limit_can_be_optional(allow_model_requests: None):
     model = TenLevelDecisionModel()
     result = await Agent(model, output_type=OptionalElevenLevelReview).run('Score this.')
@@ -1010,7 +1025,7 @@ async def escalate(ctx: RunContext[None]) -> str:
     return 'escalated'
 
 
-class Priority(str, Enum):
+class Priority(str, Enum):  # noqa: UP042
     """How soon the ticket needs a reply."""
 
     now = 'now'
@@ -1381,7 +1396,7 @@ def test_unsure_route_pickles():
     )
 
 
-class Reprioritise(str, Enum):
+class Reprioritise(str, Enum):  # noqa: UP042
     """Change how soon the ticket needs a reply."""
 
     now = 'now'
@@ -1457,7 +1472,7 @@ async def test_the_route_question_carries_the_agent_instructions(allow_model_req
     )
 
 
-class Bank(str, Enum):
+class Bank(str, Enum):  # noqa: UP042
     """The banks the customer's accounts can be with."""
 
     ing = 'ing'
@@ -2058,7 +2073,7 @@ async def test_a_route_with_nothing_to_ask_could_be_the_one_taken(allow_model_re
     assert list(model.requests[0].questions) == snapshot(['route'])
 
 
-class Area(str, Enum):
+class Area(str, Enum):  # noqa: UP042
     billing = 'billing'
     bug = 'bug'
 

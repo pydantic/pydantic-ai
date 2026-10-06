@@ -15,9 +15,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
-
-from typing_extensions import assert_never
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
@@ -78,7 +76,8 @@ from other conversations in the store.
 
 SCOPE_DEFAULT_CHANGE_IMPACT = (
     "Searches are now limited to the calling run's conversation instead of every run in the store, "
-    'so a caller relying on the old default silently stops seeing other conversations rather than erroring.'
+    'so a caller relying on the old default silently stops seeing other conversations rather than erroring. '
+    'This transitional warning will be removed in the next breaking release; the conversation-scoped default will remain.'
 )
 """Why the `scope` default change matters, for the deprecation warning both public entry points emit."""
 

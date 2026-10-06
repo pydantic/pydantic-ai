@@ -33,9 +33,9 @@ to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
 `~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
 to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
 not encrypted. Delete this file while CLAI is closed to clear saved input.
-`/new` clears model conversation history, not input recall. `/clear`, or bare
-`clear`, is an alias of `/new`. Model responses and tool results are not saved
-to this file.
+`/clear` (alias `/new`), or bare `clear`, clears model conversation history, not
+input recall, and clears the screen back to the startup banner.
+Model responses and tool results are not saved to this file.
 
 ## CI coverage
 
@@ -53,7 +53,9 @@ The choice is saved in SQLite and used for the next prompt without restarting.
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
-For API-key providers, set the provider's API key environment variable before starting.
+For API-key providers, export the provider's API key before starting, or put it in
+a `.env` in the launch directory. See [Environment variables](#environment-variables)
+for discovery, precedence, and trust requirements.
 Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
 can read and modify files and execute commands with your user permissions. Run it
 in a workspace you trust. CLAI does not add a sandbox or approval layer.
@@ -62,6 +64,24 @@ The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
 pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
+
+## Environment variables
+
+CLAI trusts the launch directory and its parents for automatic dotenv loading.
+A `.env` can change provider endpoints while reusing your exported API keys, and
+alter how tool subprocesses execute. Set `PYTHON_DOTENV_DISABLED=1` in your
+environment before launching CLAI in an untrusted directory.
+
+CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
+settings or importing agents and plugins. It searches the launch directory first,
+then its parents, and loads only the first file found. The search is not limited
+to Git repository boundaries. With `--worktree`, loading happens before switching
+directories. Missing files and named pipes are ignored. Unreadable or non-UTF-8
+files are skipped with a diagnostic on stderr.
+
+Use `.env` for provider API keys and settings such as `CLAI_MODEL` or
+`CLAI_NO_SPLASH`. Existing environment variables take precedence, including empty
+values. Keep `.env` files containing credentials out of version control.
 
 ## Git worktrees
 
@@ -75,8 +95,9 @@ py-cli clai2 -w
 
 A Git worktree is another checkout of the same repository with its own branch
 and working files. Run these commands inside a repository with at least one
-commit. `--worktree NAME` creates a `clai/NAME` branch from the current `HEAD`
-and starts CLAI at `<repository-root>/.worktrees/NAME`.
+commit. `--worktree NAME` creates a `clai-NAME` branch from the current `HEAD`
+and starts CLAI at `<repository-root>/.worktrees/NAME`. If that worktree already
+exists, CLAI reopens it; if only the `clai-NAME` branch exists, CLAI checks it out.
 `-w` is the short form; omit the name to generate one. Names start with a letter
 or digit and contain only ASCII letters, digits, hyphens, and underscores.
 
@@ -87,8 +108,8 @@ Uncommitted changes, ignored files, and untracked files are not copied. Project 
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the new path and branch. Existing branches and non-empty directories
-are rejected. If checkout fails, CLAI tries to remove only the branch it just
+CLAI prints the path and branch. A directory at that path that is not a Git
+worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery. The worktree and branch
 remain after exit, including startup
@@ -101,7 +122,7 @@ original repository root. Without `--force`, Git refuses to remove a dirty workt
 
 ```bash
 git worktree remove .worktrees/my-task
-git branch -d clai/my-task
+git branch -d clai-my-task
 ```
 
 !!! warning "Worktrees are not sandboxes"
@@ -116,10 +137,15 @@ authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes. The browser
 must be able to reach that callback on the machine running CLAI.
 
-Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
-not in SQLite or `~/.codex/auth.json`. Choose an OS-backed credential store: CLAI
+Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
+(`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
+that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
+backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
+at most once per session, so macOS asks for keychain access at most once, instead of
+once per saved credential. Logins that older versions saved as keyring entries are
+moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
 uses the configured backend and does not enforce its encryption or storage policy.
-Installing or selecting a plaintext backend can store tokens in plaintext. Core owns
+Installing or selecting a plaintext backend can store the key in plaintext. Core owns
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
@@ -146,7 +172,7 @@ From a source checkout:
 uv run --project pydantic-clai2 clai2
 ```
 
-Run `/login github-copilot`, then open `/add_model` and choose `github-copilot`.
+Run `/login github-copilot`, then open `/model add` and choose `github-copilot`.
 The provider menu also starts login when no credentials exist. No application
 registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -165,7 +191,7 @@ GitHub authorization does not establish Copilot access. The model menu queries
 your account's catalog and keeps only picker-enabled `/chat/completions` models.
 It includes current-model details and `Ctrl+S` settings. Subscription and
 organization policy still control inference access. A known ID also works with
-`/add_model github-copilot:claude-haiku-4.5`.
+`/model github-copilot:claude-haiku-4.5`.
 
 The `github-copilot` keyring account is separate from Codex and named API keys.
 Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
@@ -178,7 +204,7 @@ Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, and `COPILOT_GITHUB_TOKEN`, checked in that order when
 no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
 application's token files. Core owns inference and its telemetry; CLAI adds no
-login-specific spans. Bare `/login` continues to sign in to Codex.
+login-specific spans. Bare `/login` asks which sign-in to run.
 
 ## Settings and commands
 
@@ -203,18 +229,48 @@ value, default, what it does). Type to filter. Enter edits: booleans and the
 model get a picker (the model list is searchable, with "Type a value..." for
 anything not listed), everything else a typed input that validates as you go.
 An empty value resets. `R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`.
+edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+an alias of `/set` and accepts the same arguments.
 
-While a turn is running, `/set`, `/model`, `/add_model`, `/model_settings`,
-`/theme`, and `/spinner` typed without arguments open their menu right away
-instead of queueing. The turn keeps running: its output is held while the menu is open
+While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
+`/theme`, and `/spinner` typed without further arguments open their menu right
+away instead of queueing.
+The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
-running turn ends. With arguments, these commands queue like any other.
+running turn ends. `/model settings` edits to the running model apply to its
+next model request in the same turn. With arguments, these commands queue like
+any other.
+
+`/plugins` runs right away during a turn too, with or without arguments, so
+`/plugins disable NAME` does not wait behind the turn or your queued messages.
+Commands, status segments, and model providers change at once. The running turn
+keeps the tools and hooks it started with, because the agent binds them when a
+run begins; the change reaches the agent on your next prompt, and CLAI says so.
+A plugin turned off mid-turn finishes its cleanup when the turn ends. While a
+delegated task is running, `/plugins` still refuses changes, as between turns.
 
 ## Models and their settings
 
-`/model` opens a searchable provider list, then a model picker for that provider.
+`/model` selects from models you have already added. Choose **Add a model...**
+to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
+not yet in your list is added and selected; CLAI does not check that it exists, so a
+mistyped name fails on the next prompt with the provider's error. Model names normally
+start with a provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
+
+| Command | What it does |
+| --- | --- |
+| `/model` | Pick a saved model, add one, or delete one |
+| `/model NAME` | Select `NAME`, adding it first if needed |
+| `/model add` | Browse providers and their models |
+| `/model add NAME` | The same as `/model NAME` |
+| `/model settings` | Choose a saved model to configure |
+| `/model settings NAME` | Configure `NAME` |
+
+`/add_model` and `/model_settings` still work as deprecated spellings of
+`/model add` and `/model settings`.
+
+`/model add` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
 `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
@@ -263,7 +319,7 @@ Settings are validated before writes. `/set` updates the active settings snapsho
 legacy `/config` writes apply on restart; plugin changes apply on the next prompt.
 `--request-limit` controls the full prompt's model-request budget.
 
-Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/help`, `/new`, `/clear`, `/exit`, `/config`, `/plugins`, and `/reload`.
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/help`, `/clear` (alias `/new`), `/exit`, `/config`, `/plugins`, and `/reload`.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history
@@ -280,13 +336,13 @@ After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
 `importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
 and session with the updated code. The Python process, agent, dependencies passed
 to `chat`, conversation messages, selected model, and active settings are kept.
-Enabled plugins unload and activate again so their handlers use the refreshed
+Enabled plugins unload and load again so their handlers use the refreshed
 shell types. Disabled and unapproved project plugins stay off.
 
 If an import or shell rebuild fails, CLAI reports the error and restores the
-previous module bindings. Correct the source and retry `/reload`. Plugin hosts
-and their registrations are recreated. Installed module globals not overwritten
-by the new source can survive; initialize mutable state in `activate`.
+previous module bindings. Correct the source and retry `/reload`. Plugin
+instances and their contributions are recreated. Installed module globals not
+overwritten by the new source can survive; initialize mutable state in `__init__`.
 Import-time side effects cannot be undone.
 
 Reload ordering follows the modules' existing imports. Restart after changing
@@ -328,7 +384,7 @@ background. Browsing does not apply a palette or save a setting. Enter confirms;
 Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
 
 `default` preserves CLAI's existing brand colours, including Markdown, menus,
-status, and diff highlighting. Starting and exiting with this choice leaves your
+and status. Its diffs use green additions and red deletions. Starting and exiting with this choice leaves your
 terminal palette untouched. The default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
 
@@ -431,7 +487,7 @@ repeated completion heading before the diff or output.
 
 Native capability events drive specialized output: `FileEditedEvent` renders its
 bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
-uses. The default appearance keeps CLAI's existing addition and deletion
+uses. The default appearance uses Claude Code's green addition and red deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code syntax colours retain the Monokai default. Successful file writes also show the proposed diff from their matching
 `FileChangeRequestEvent`: new files show additions, overwrites show before/after
@@ -468,26 +524,31 @@ or cancellation. No model requests or telemetry are added for status reporting.
 ## Plugins
 
 Everything beyond the prompt loop is a plugin, including the default coding
-tools. A plugin is a Python file with an `activate(host)` function. Through
-`host` it can react to lifecycle moments and typed events, add `/commands`, give
-the agent tools, draw its own output, and read validated settings.
+tools. A plugin is a `Plugin` subclass that declares what it contributes the way
+a [capability](../capabilities/overview.md) does: it overrides methods to react to
+lifecycle moments, add `/commands`, give the agent capabilities, draw its own
+output, and take validated settings.
 
 ```python
-from pydantic_clai2.plugins import PluginHost, TurnEnd
+from pydantic_clai2.plugins import Plugin, TurnEnd
 
 
-def activate(host: PluginHost) -> None:
-    @host.on('turn_end')
-    async def ping(event: TurnEnd) -> None:
-        host.console.bell()
+class Bell(Plugin):
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        self.host.console.bell()
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:attr] [JSON]`. It is live for the
-next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
+Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
+importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
+repository with `/plugins add https://github.com/your-org/my-plugin.git` inside
+CLAI. Git repositories need an `__init__.py` or `plugin.py` at their root; install
+any dependencies in CLAI's Python environment first. See
+[where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md#where-plugins-live)
+for supported URLs and checkout management.
+The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Plugins are trusted code running as you.
 
-[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has the full list of hooks, events, and rules.
+[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
 
 ## Telemetry and references
 
@@ -496,18 +557,18 @@ requests, tools, and capability hooks when configured on the supplied agent.
 
 - [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)
 - [Capability events](https://pydantic.dev/docs/ai/capabilities/overview/)
-- [Code Puppy splash](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/splash.py)
-- [Code Puppy streaming](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/agents/event_stream_handler.py)
-- [Code Puppy command registry](https://github.com/code-puppy/code_puppy/blob/main/code_puppy/command_line/command_registry.py)
+- [Code Puppy splash](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/splash.py)
+- [Code Puppy streaming](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/agents/event_stream_handler.py)
+- [Code Puppy command registry](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/command_line/command_registry.py)
 
 See `THIRD_PARTY_NOTICES.md` for attribution.
 
 ## vllm connection
 
-Open `/model`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
 
 ## openrouter connection
 
-Open `/model`, choose `openrouter`, then paste an API key from https://openrouter.ai/keys in the masked prompt, then select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. This flow uses API-key authentication, not browser OAuth.
+Open `/model add`, choose `openrouter`, then paste an API key from https://openrouter.ai/keys in the masked prompt, then select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. This flow uses API-key authentication, not browser OAuth.
 
 The connection is saved in the configured Python keyring backend after selection; backend security depends on your keyring configuration. Tokens are not stored in SQLite or command history. The selected model persists across restarts. Select the provider again to browse its live models or reconfigure the saved connection. Discovery is explicit and has a 20-second network timeout; redirects are not followed. Agent inference uses Pydantic AI core.
