@@ -105,6 +105,14 @@ async def test_spec_model_list_explicit_model_wins(surface: Literal['construct',
     assert result.output == 'Explicit model'
 
 
+@pytest.mark.parametrize('spec_model', ['unknown:primary', ['unknown:primary', 'unknown:backup']])
+async def test_spec_model_outer_override_wins(spec_model: str | list[str]):
+    agent = Agent()
+    with agent.override(model=TestModel(custom_output_text='Override model')):
+        result = await agent.run('hello', spec=AgentSpec(model=spec_model))
+    assert result.output == 'Override model'
+
+
 @pytest.mark.parametrize('api_error', [False, True])
 async def test_spec_model_fallback_errors(monkeypatch: pytest.MonkeyPatch, api_error: bool):
     attempts = 0

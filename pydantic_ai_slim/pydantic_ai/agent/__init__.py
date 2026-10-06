@@ -1521,7 +1521,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         effective_tool_retries = retry_overrides.get('tools')
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
-            if model is None and resolved.model is not None:
+            if model is None and resolved.model is not None and self._override_model.get() is None:
                 model = _model_from_spec(resolved.model)
             # Output retries: run param > spec > agent default
             if effective_output_retries is None and resolved.output_retries is not None:
