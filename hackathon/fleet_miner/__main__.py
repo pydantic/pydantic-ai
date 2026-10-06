@@ -245,7 +245,12 @@ async def _mine_prompts(
     if not qualifying:
         say(f'\nNo pattern reached {args.min_users} distinct users.')
         return [], found
-    drafted = await patterns_mod.draft_proposals(qualifying, model=args.pattern_model)
+    drafted = await patterns_mod.draft_proposals(
+        qualifying,
+        model=args.pattern_model,
+        window_teams={p.team for p in prompts if p.team},
+        window_repos={p.repo_slug for p in prompts if p.repo_slug},
+    )
     by_id = {p.id: p for p in qualifying}
     for proposal in drafted:
         events = ((u.timestamp, u.user or u.span_id) for u in by_id[proposal.id].prompts)

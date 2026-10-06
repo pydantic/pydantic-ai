@@ -18,6 +18,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 
 from . import __version__
 from .llm_cache import CACHE_DIR, run_cached
+from .scope import measure_scope
 from .models import Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, strip_markup
 
 CLUSTER_INSTRUCTIONS = """\
@@ -56,13 +57,13 @@ For an instruction, one short sentence saying when it applies.
 `rationale`: one or two sentences: how many people asked, and what it saves them.
 
 `scope`: `repo` when the request only makes sense in one codebase (it names a specific repository, its paths,
-modules, scripts, CI jobs, branch conventions or tools unique to it), `company` when any developer on any repository
-could use it. `scope_reason`: one short sentence saying which detail makes it repo-specific, or null for `company`.
+modules, scripts, CI jobs, branch conventions or tools unique to it), `organization` when any developer on any
+repository could use it. `scope_reason`: one short sentence saying which detail makes it repo-specific, or null.
 Tools and bots used across many repos (gh, Macroscope, CI in general) do not make it repo-specific.
 
 Never include personal identifiers in any field: no people's names, GitHub usernames, handles or emails. Replace a
 person with their role ("the requested reviewer", "the PR author"). Do keep the names of tools, bots and repository
-conventions (e.g. Macroscope, douwebot, `SKIP=typecheck`): they are useful context for a company skill.
+conventions (e.g. Macroscope, douwebot, `SKIP=typecheck`): they are useful context for an organization-wide skill.
 """
 
 
@@ -85,7 +86,8 @@ class _Draft(BaseModel):
     text: str
     suggested_tier: Tier
     rationale: str
-    scope: Literal['company', 'repo']
+    scope: Literal['organization', 'repo']
+    """Only a fallback: the miner measures scope from evidence whenever repo or team data exists."""
     scope_reason: str | None = None
 
     _strip_markup = field_validator('name', 'description', 'text', 'rationale')(strip_markup)
@@ -436,7 +438,33 @@ class _DraftDeps:
         return 2 * self.target_chars
 
 
-async def draft_proposals(patterns: list[Pattern], *, model: str, max_evidence: int = 5) -> list[Proposal]:
+def _scope_fields(
+    pattern: Pattern, draft: _Draft, *, window_teams: set[str], window_repos: set[str]
+) -> dict[str, object]:
+    measured = measure_scope(
+        [(p.team, p.repo_slug) for p in pattern.prompts], window_teams=window_teams, window_repos=window_repos
+    )
+    if measured is not None:
+        scope, reason, applies_to = measured
+        return {'scope': scope, 'scope_reason': reason, 'applies_to': applies_to}
+    reason = draft.scope_reason or (
+        'Nothing in it is specific to one codebase.' if draft.scope == 'organization' else ''
+    )
+    tagged = sum(1 for p in pattern.prompts if p.team or p.repo_slug)
+    basis = (
+        f'only {tagged} of {len(pattern.prompts)} prompts carry repo or team data' if tagged else 'no repo or team data'
+    )
+    return {'scope': draft.scope, 'scope_reason': f'LLM judgment ({basis}): {reason}'.strip()}
+
+
+async def draft_proposals(
+    patterns: list[Pattern],
+    *,
+    model: str,
+    max_evidence: int = 5,
+    window_teams: set[str] = frozenset(),
+    window_repos: set[str] = frozenset(),
+) -> list[Proposal]:
     agent = Agent(
         model,
         deps_type=_DraftDeps,
@@ -487,7 +515,8 @@ async def draft_proposals(patterns: list[Pattern], *, model: str, max_evidence: 
             evidence=_evidence(pattern, max_evidence),
             score=pattern.score,
             generated_by=f'fleet-miner {__version__} / {model}',
-            **draft.model_dump(),
+            **draft.model_dump(exclude={'scope', 'scope_reason'}),
+            **_scope_fields(pattern, draft, window_teams=window_teams, window_repos=window_repos),
         )
 
     return list(await asyncio.gather(*(one(p) for p in patterns)))

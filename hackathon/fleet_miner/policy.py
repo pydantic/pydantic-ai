@@ -27,6 +27,7 @@ from .fetch import _SESSIONS, IDENTITY, NOT_TEST, OVERLAP
 from .llm_cache import run_cached
 from .models import Evidence, McpAllow, daily_trend, PolicyMatch, PolicyRule, Proposal, clean_text, redact_secrets
 from .patterns import leaked_identifiers_in
+from .scope import measure_scope
 
 TOOL_CALLS_SQL = f"""
 SELECT r.trace_id, r.span_id, r.start_timestamp, r.attributes->>'gen_ai.tool.name' AS tool,
@@ -77,6 +78,8 @@ class ToolCall:
     user: str
     session_id: str
     command: str | None
+    team: str | None = None
+    repo_slug: str | None = None
 
 
 @dataclass
@@ -130,6 +133,8 @@ async def fetch_tool_calls(
                 user=user,
                 session_id=r['session_id'] or r['trace_id'],
                 command=_command(r['tool'], r.get('arguments')),
+                team=r.get('team'),
+                repo_slug=r.get('repo_slug'),
             )
         )
     return calls
@@ -344,6 +349,7 @@ async def mine_policy(
                 evidence=_evidence(matched, max_evidence),
                 rule=rule,
                 trend=daily_trend(((c.timestamp, c.user) for c in matched.calls), *window),
+                **_scope_fields(matched.calls, calls),
                 generated_by=generated_by,
             )
         )
@@ -370,10 +376,27 @@ async def mine_policy(
                 evidence=_evidence(matched, max_evidence),
                 mcp=McpAllow(allow=[draft.server]),
                 trend=daily_trend(((c.timestamp, c.user) for c in matched.calls), *window),
+                **_scope_fields(matched.calls, calls),
                 generated_by=generated_by,
             )
         )
     return proposals
+
+
+def _scope_fields(matched: list[ToolCall], calls: list[ToolCall]) -> dict[str, Any]:
+    measured = measure_scope(
+        [(c.team, c.repo_slug) for c in matched],
+        window_teams={c.team for c in calls if c.team},
+        window_repos={c.repo_slug for c in calls if c.repo_slug},
+    )
+    if measured is None:
+        tagged = sum(1 for c in matched if c.team or c.repo_slug)
+        return {
+            'scope': 'organization',
+            'scope_reason': f'Default (only {tagged} of {len(matched)} matching calls carry repo or team data).',
+        }
+    scope, reason, applies_to = measured
+    return {'scope': scope, 'scope_reason': reason, 'applies_to': applies_to}
 
 
 def _evidence(group: Group, limit: int) -> list[Evidence]:

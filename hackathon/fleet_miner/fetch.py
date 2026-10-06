@@ -33,6 +33,7 @@ _SESSIONS = """
 # 2026-10-05 have no root at all: fall back to the machine as the user and the process as the session.
 IDENTITY = """coalesce(r.attributes->>'user.email', s.user_email) AS user_email,
        r.attributes->>'clai2.team' AS team,
+       r.attributes->>'clai2.repo_slug' AS repo_slug,
        r.otel_resource_attributes->>'host.name' AS host,
        coalesce(r.attributes->>'agent_session_id', s.session_id,
                 'process:' || (r.otel_resource_attributes->>'service.instance.id')) AS session_id"""
@@ -192,6 +193,8 @@ def _from_prompt_row(row: dict[str, Any]) -> UserPrompt:
         user=row.get('user_email'),
         host=row.get('host'),
         session_id=row.get('session_id'),
+        team=row.get('team'),
+        repo_slug=row.get('repo_slug'),
     )
 
 
@@ -219,6 +222,8 @@ def _from_agent_rows(rows: list[dict[str, Any]], *, seen: set[tuple[str, str]]) 
                 user=row.get('user_email'),
                 host=row.get('host'),
                 session_id=row.get('session_id'),
+                team=row.get('team'),
+                repo_slug=row.get('repo_slug'),
                 source='agent_run',
             )
         )

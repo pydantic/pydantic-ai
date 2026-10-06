@@ -25,6 +25,8 @@ class UserPrompt(BaseModel):
     user: str | None = None
     host: str | None = None
     session_id: str | None = None
+    team: str | None = None
+    repo_slug: str | None = None
     source: Literal['prompt_submitted', 'agent_run'] = 'prompt_submitted'
 
 
@@ -123,6 +125,12 @@ class McpAllow(BaseModel):
     allow: list[str]
 
 
+class AppliesTo(BaseModel):
+    teams: list[str] = []
+    repos: list[str] = []
+    """`owner/name` slugs."""
+
+
 class TrendPoint(BaseModel):
     """One day of a pattern: matching prompts (or, for policy, matching tool calls) and distinct developers."""
 
@@ -190,9 +198,18 @@ class Proposal(BaseModel):
     """Miner version and drafting model, e.g. `fleet-miner 0.2 / gateway/anthropic:claude-sonnet-5-5`."""
     score: float | None = None
     """Hackathon extra: LLM confidence times the distinct-user spread factor (braindump's scoring)."""
-    scope: Literal['company', 'repo'] = 'company'
-    """`repo` when the pattern looks specific to one codebase: suggest it for that repo's AGENTS.md instead."""
+    scope: Literal['organization', 'team', 'repo'] = 'organization'
+    """Who it should apply to, measured from the teams and repos of its evidence (see `scope.py`)."""
     scope_reason: str | None = None
+    """How the scope was decided: starts with "Measured:" or "LLM judgment (no repo or team data):"."""
+    applies_to: AppliesTo = Field(default_factory=lambda: AppliesTo())
+    """Suggested targets to pre-fill on Accept; empty lists mean the whole organization."""
+
+    @field_validator('scope', mode='before')
+    @classmethod
+    def _company_is_organization(cls, value: object) -> object:
+        return 'organization' if value == 'company' else value  # documents written before the rename
+
     trend: list[TrendPoint] | None = None
     """Pending proposals: per day over the window, for a sparkline."""
     impact: Impact | None = None
