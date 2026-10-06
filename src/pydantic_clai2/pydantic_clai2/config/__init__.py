@@ -25,6 +25,13 @@ class Settings(BaseModel):
     tool_retries: int = Field(
         default=3, ge=0, description='Default retries per tool call. Explicit tool retry limits take precedence.'
     )
+    pool_accounts: bool = Field(
+        default=True,
+        description=(
+            'A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, '
+            'as @* does. PROVIDER@default:MODEL runs the default account alone.'
+        ),
+    )
     speculative_code_mode: bool = Field(
         default=False,
         description=(
@@ -93,6 +100,7 @@ SETTING_FIELDS = {
     'display.smooth_seconds': 'smooth_seconds',
     'run.tool_retries': 'tool_retries',
     'run.speculative_code_mode': 'speculative_code_mode',
+    'accounts.pool': 'pool_accounts',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
     'updates.channel': 'update_channel',

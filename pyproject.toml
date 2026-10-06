@@ -208,9 +208,9 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# Admit termflow-md 0.11.0 for CLAI2's swappable agent-history primitives; later releases stay quarantined.
-# TODO: Remove after 2026-10-07 15:58 UTC.
-termflow-md = "2026-09-30T15:58:29Z"
+# Admit termflow-md 1.0.0 for CLAI2's live panel (`termflow.live`); later releases stay quarantined.
+# TODO: Remove after 2026-10-09 15:06 UTC.
+termflow-md = "2026-10-02T15:05:25Z"
 # Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
 # TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
 # This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
