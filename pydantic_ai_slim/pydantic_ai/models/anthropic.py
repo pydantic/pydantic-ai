@@ -4437,7 +4437,7 @@ def _last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessage
     That's the last cacheable block of the last message, the same one `anthropic_cache_messages` targets.
     https://platform.claude.com/docs/en/build-with-claude/prompt-caching
     """
-    content = anthropic_messages[-1]['content']
+    content = anthropic_messages[-1]['content'] if anthropic_messages else ''
     blocks = [] if isinstance(content, str) else cast(list[dict[str, Any]], content)
     last = next(
         (
