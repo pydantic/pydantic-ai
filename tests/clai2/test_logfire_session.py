@@ -20,13 +20,13 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
-from pydantic_clai2._app import create_shell
+from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins import logfire_session
 from pydantic_clai2.cli import headless
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import PluginHost, SessionEndReason, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.runtime._session import Session, current_session_id
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -242,6 +242,11 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         return saved.summary.id
 
     monkeypatch.setattr(SessionBrowser, 'run', select)
+
+    def announced() -> list[object]:
+        opened = [span for span in recorder.spans() if span.name == 'CLAI session opened']
+        return [(span.attributes or {})['agent_session_id'] for span in opened]
+
     store = SettingsStore(tmp_path / 'config.db')
     plugins = tuple(
         plugin.model_copy(update={'settings': {'ui_events': ui_events}})
@@ -262,6 +267,14 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
             == 0
         )
     else:
+        idle: list[object] = []
+        shell_run = _Shell[None, str].run
+
+        async def run(shell: _Shell[None, str]) -> SessionEndReason:
+            idle.extend(announced())
+            return await shell_run(shell)
+
+        monkeypatch.setattr(_Shell, 'run', run)
         with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
             pipe.send_text(('resumed\n' if run_turn else '') + '/exit\n')
             await chat(
@@ -272,11 +285,11 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
                 builtin_plugins=plugins,
                 resume='' if mode == 'browser' else saved.summary.id,
             )
+        # Announced again with the saved ID as soon as startup selects it, before any turn runs.
+        assert idle[-1] == saved.summary.id
     roots = [span for span in recorder.spans() if span.name == 'CLAI session']
     assert [(span.attributes or {})['agent_session_id'] for span in roots] == [saved.summary.id]
-    # Announced again with the saved ID once it is bound, at the latest at exit when no turn runs.
-    opened = [span for span in recorder.spans() if span.name == 'CLAI session opened']
-    assert (opened[-1].attributes or {})['agent_session_id'] == saved.summary.id
+    assert announced()[-1] == saved.summary.id
     root_context = roots[0].context
     assert root_context is not None
     ui = [

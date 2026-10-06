@@ -41,6 +41,8 @@ class _Sink:
 
 _sinks: list[_Sink] = []
 """Subscribed instances, newest last; only the newest receives UI telemetry."""
+_selection_watchers: list[Callable[[], object]] = []
+"""Called when startup selects the conversation it deferred session identity for, whatever `ui_events` says."""
 _emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
 """Set while a UI record is handed to its sink, which is when Logfire scrubs it: `keep_names` checks it."""
 
@@ -62,6 +64,23 @@ def subscribe(
             _sinks.remove(subscribed)
 
     return unsubscribe
+
+
+def on_conversation_selected(watcher: Callable[[], object]) -> Callable[[], None]:
+    """Call `watcher` each time startup has selected the conversation to resume, until the returned function is called.
+
+    A session root opened before then has a provisional ID; binding it right away makes the running session
+    findable by its saved ID, instead of only once a turn runs or CLAI exits.
+    """
+    _selection_watchers.append(watcher)
+
+    return partial(_selection_watchers.remove, watcher)
+
+
+def conversation_selected() -> None:
+    """Tell every watcher that startup has selected its conversation."""
+    for watcher in list(_selection_watchers):
+        watcher()
 
 
 @contextmanager
