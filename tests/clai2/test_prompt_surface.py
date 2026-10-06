@@ -630,6 +630,13 @@ def test_a_release_before_any_frame_copies_nothing() -> None:
     assert surface.transcript_key('mouse', release(4, 1)) is None
 
 
+def test_cells_already_in_reverse_video_still_look_selected() -> None:
+    frame = ScreenBuffer(4, 1)
+    frame.attrs[1] = REVERSE  # The editor's painted cursor, for example.
+    Selection(anchor=(0, 0), head=(0, 2)).highlight(frame, previous=None)
+    assert [attrs & REVERSE for attrs in frame.attrs] == [REVERSE, REVERSE, REVERSE, 0]
+
+
 def test_selection_spans_clamp_to_the_frame() -> None:
     selection = Selection(anchor=(-1, -5), head=(99, 99))
     assert selection.span(width=4, height=3) == range(0, 12)

@@ -89,18 +89,18 @@ def test_locally_the_clipboard_command_copies_in_the_background(monkeypatch: pyt
     monkeypatch.setattr(text_clipboard, 'copy_command', lambda: command)
     monkeypatch.delenv('SSH_CONNECTION', raising=False)
     monkeypatch.delenv('SSH_TTY', raising=False)
-    copied: list[tuple[ClipboardCommand, str]] = []
+    copied: list[tuple[ClipboardCommand, str, bool]] = []
     done = threading.Event()
 
     def record(*, command: ClipboardCommand, text: str) -> None:
-        copied.append((command, text))
+        copied.append((command, text, threading.current_thread().daemon))
         done.set()
 
     monkeypatch.setattr(text_clipboard, 'run_copy', record)
     output = io.StringIO()
     copy_text('copied', output=output)
     assert done.wait(5)
-    assert copied == [(command, 'copied')]
+    assert copied == [(command, 'copied', False)], 'not a daemon: exiting right after a copy must not lose it'
     assert output.getvalue() == '', 'no OSC 52 as well: some terminals ask before honouring it'
 
 

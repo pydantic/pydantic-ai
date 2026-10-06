@@ -80,4 +80,5 @@ def copy_text(text: str, *, output: IO[str]) -> None:
         output.write(make_clipboard_copy(text))
         output.flush()
         return
-    threading.Thread(target=run_copy, kwargs={'command': command, 'text': text}, name='clai-copy', daemon=True).start()
+    # Not a daemon: exiting right after a copy waits for it, at most `COPY_TIMEOUT`, rather than losing it.
+    threading.Thread(target=run_copy, kwargs={'command': command, 'text': text}, name='clai-copy', daemon=False).start()

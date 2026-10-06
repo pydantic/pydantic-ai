@@ -97,7 +97,8 @@ class Selection:
             self.clear()
             return
         for index in span:
-            frame.attrs[index] ^= REVERSE
+            # Set, not toggled: a cell that is already reverse video, such as the cursor, still looks selected.
+            frame.attrs[index] |= REVERSE
 
     def text(self, frame: ScreenBuffer) -> str:
         """The selected characters, one line per row, without trailing blanks."""
