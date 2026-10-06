@@ -681,17 +681,19 @@ account without a profile, and `/login NAME@default` signs in to it. Each profil
 credentials are stored separately, the same way as the default login.
 
 A fallback chain does the same across different models or providers, such as Codex
-first and Claude after it. It tries its models in order:
+first and Claude after it. It tries its models in order. Chains live in the `/model`
+picker, under **Fallback chains** below your models (`/model chains` opens it there):
 
-```text
-/chain best openai-codex@*:gpt-6-astra anthropic:claude-sonnet-4-5
-/model chain:best
-/chain                    # list chains
-/chain best               # show one
-/chain remove best
-```
+- **New fallback chain...** asks for a name, then for its models: **a** adds a saved
+  model or a typed `PROVIDER[@PROFILE]:MODEL` (including `PROVIDER@*:MODEL`), **d**
+  removes one, **[** and **]** move one earlier or later, and **Save chain** saves it.
+  Esc leaves without saving.
+- **Enter** on `chain:NAME` selects it, like any model; `/model chain:NAME` does too.
+- **Ctrl+E** changes a chain's models, **Ctrl+R** renames it, and **Ctrl+D** deletes
+  it, after asking. The model you are using, or your saved default, cannot be renamed
+  or deleted.
 
-Saving a chain adds `chain:NAME` to `/model`. A chain uses its first model's
+A chain uses its first model's
 `/model settings` controls and defaults, and saves overrides under
 `chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
 `openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
@@ -733,7 +735,7 @@ edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
 While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
-`/accounts`, `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
+`/model chains`, `/accounts`, `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
 `/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
 arguments open right away instead of queueing.
 The turn keeps running: its output is held while the menu is open
@@ -761,28 +763,31 @@ not change output-validation or HTTP transport retries.
 
 ## Models and their settings
 
-`/model` selects from models you have already added. Choose **Add a model...**
-to browse providers and select a new model without leaving the command. This
-option is available even when no models have been added.
+`/model` selects from models you have already added, and from your
+[fallback chains](#several-accounts-and-fallback-chains), listed after them.
+Choose **Add a model...** to browse providers and select a new model without
+leaving the command. This option is available even when no models have been
+added. **New fallback chain...** creates a chain in the same picker.
 
 `/model PROVIDER:NAME` switches directly to any model. A model not yet in your
 list is added and selected; CLAI does not check that it exists, so a mistyped
 name fails on the next prompt with the provider's error. Tab completes the saved
-list and the `add` and `settings` subcommands. Model names normally start with a
-provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
+list and the `add`, `settings`, and `chains` subcommands. Model names normally start with a
+provider (`openai:gpt-5`), so no real model is called `add`, `settings`, or `chains`.
 The currently configured model is kept in the list when upgrading.
 
 | Command | What it does |
 | --- | --- |
-| `/model` | Pick a saved model, add one, or delete one |
+| `/model` | Pick a saved model or chain, add one, or edit or delete one |
 | `/model NAME` | Select `NAME`, adding it first if needed |
 | `/model add` | Browse providers and their models |
 | `/model add NAME` | The same as `/model NAME` |
 | `/model settings` | Choose a saved model to configure |
 | `/model settings NAME` | Configure `NAME` |
+| `/model chains` | Open the picker on its fallback chains |
 
-`/model add` and `/model settings` still work as deprecated spellings of
-`/model add` and `/model settings`.
+`/add_model`, `/model_settings`, and `/chain` still work as deprecated spellings of
+`/model add`, `/model settings`, and `/model chains`.
 
 To remove a model you no longer use, highlight it and press **Ctrl+D** or
 **Delete**, then confirm **Delete model**. This removes it from the saved list and
@@ -1029,7 +1034,7 @@ the project file. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
-Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
+Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
 `/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,

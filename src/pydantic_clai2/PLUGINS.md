@@ -2399,7 +2399,7 @@ offer them without adding them first. A failed sign-in adds nothing.
 
 Users can sign in to more than one account per provider. An account other than
 the default is a profile: `/login NAME@PROFILE` signs in to it, and
-`PREFIX@PROFILE:MODEL` runs on it. A fallback chain (`/chain`) can then pool
+`PREFIX@PROFILE:MODEL` runs on it. A fallback chain (made in `/model`) can then pool
 accounts, moving to the next one when a request fails. To support profiles, set
 both optional fields:
 

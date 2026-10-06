@@ -156,7 +156,7 @@ class SettingsStore:
         connection.execute('DELETE FROM models WHERE name = ?', (name,))
         connection.execute('DELETE FROM model_settings WHERE model = ?', (name,))
         if name.startswith('chain:'):
-            # Removing a chain from `/model` removes the chain itself, so `/chain` cannot still run it.
+            # Removing a chain from `/model` removes the chain itself, so nothing can still run it.
             connection.execute('DELETE FROM model_chains WHERE name = ?', (name.removeprefix('chain:'),))
         return True
 
@@ -179,6 +179,25 @@ class SettingsStore:
                 (name, _CHAIN.dump_json(models).decode()),
             )
             connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (f'chain:{name}',))
+
+    def rename_chain(self, *, old: str, new: str) -> bool:
+        """Rename a chain with its `/model` entry and settings; return `False` if it is the saved default.
+
+        Raises `ValueError` if another session took `new` since the name was checked.
+        """
+        with self._connect() as connection:
+            # Keep the checks and the renames atomic across CLAI sessions, as removal does.
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
+            if row is not None and _JSON.validate_json(row[0]) == f'chain:{old}':
+                return False
+            taken = 'SELECT 1 FROM model_chains WHERE name = ? UNION SELECT 1 FROM models WHERE name = ?'
+            if connection.execute(taken, (new, f'chain:{new}')).fetchone() is not None:
+                raise ValueError(f'chain:{new} already exists.')
+            connection.execute('UPDATE model_chains SET name = ? WHERE name = ?', (new, old))
+            connection.execute('UPDATE models SET name = ? WHERE name = ?', (f'chain:{new}', f'chain:{old}'))
+            connection.execute('UPDATE model_settings SET model = ? WHERE model = ?', (f'chain:{new}', f'chain:{old}'))
+            return True
 
     def accounts(self) -> list[StoredAccount]:
         """Saved accounts, grouped by provider in the order the user chose."""

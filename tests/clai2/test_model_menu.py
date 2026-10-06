@@ -244,7 +244,7 @@ async def test_saved_model_picker_and_completion(tmp_path: Path) -> None:
     original = context.settings.model
     assert original is not None
     context.store.add_model(name='test')
-    assert model_completions(context, ['']) == ['add', 'settings', *sorted([original, 'test'])]
+    assert model_completions(context, ['']) == ['add', 'settings', 'chains', *sorted([original, 'test'])]
     assert model_completions(context, ['settings', '']) == sorted([original, 'test'])
     assert 'openai-codex:' in model_completions(context, ['add', ''])
     assert model_completions(context, ['test', 'extra']) == []
@@ -311,7 +311,7 @@ def test_empty_model_picker(tmp_path: Path) -> None:
         clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
-    assert model_completions(context, []) == ['add', 'settings']
+    assert model_completions(context, []) == ['add', 'settings', 'chains']
     widget = build_model_picker(context)
     assert widget.highlighted is not None
     assert not widget.highlighted.disabled
@@ -495,7 +495,7 @@ async def test_delete_confirmation_keeps_model_by_default(
 ) -> None:
     context, applied = make_context(tmp_path)
     context.store.add_model(name='unused:model')
-    pressed = iter(['end', 'up', 'ctrl-d', *keys, 'escape'])
+    pressed = iter([*'unused:', 'ctrl-d', *keys, 'escape'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
     assert await model_command(context, []) == 'No changes.'
     assert 'unused:model' in context.store.models() and applied == []
@@ -603,10 +603,11 @@ async def test_shell_registers_model_subcommands_and_deprecated_aliases(tmp_path
     help_text = await commands.execute_async('/help')
     assert '/add_model: Deprecated: use /model add' in help_text
     assert '/model_settings: Deprecated: use /model settings' in help_text
-    assert completions('/model ') == ['add', 'settings', 'test']
+    assert '/chain: Alias of /model chains' in help_text
+    assert completions('/model ') == ['add', 'settings', 'chains', 'test']
     assert completions('/model settings ') == completions('/model_settings ') == ['test']
     assert 'openai-codex:' in completions('/model add ') and completions('/model add ') == completions('/add_model ')
-    mid_turn = ('/model', '/model add', '/model settings', '/add_model', '/model_settings')
+    mid_turn = ('/model', '/model add', '/model settings', '/model chains', '/add_model', '/model_settings', '/chain')
     assert all(commands.runs_during_turn(text) for text in mid_turn)
     assert not commands.runs_during_turn('/model add test')
     assert await commands.execute_async('/model unsaved:one') == 'Saved model. Applied.'
