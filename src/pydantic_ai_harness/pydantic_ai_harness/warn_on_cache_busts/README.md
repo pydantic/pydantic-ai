@@ -114,7 +114,7 @@ It is the opt-in observe arm of the broader prompt-cache-prefix-stability work.
 
 ## Caching not enabled
 
-Models such as Anthropic's (including on the Bedrock and Vertex AI SDK clients), Bedrock's Claude and Nova, and OpenRouter's Anthropic and Gemini routes only cache what the request asks them to. OpenAI's models, which cache implicitly, are never reported. When a request of at least 4,096 input tokens goes to such a model with no caching configured (neither the unified `cache` setting nor a provider-specific one), no `CachePoint` in its history, and no cache usage reported, the monitor emits a `CacheNotEnabledWarning` pointing to `cache=True` and the `Caching()` capability, once per conversation and model. Setting `cache=False` says caching was left off on purpose, so it doesn't warn. Silence or escalate it with the `warnings` filters, like `CacheBustWarning`.
+Models such as Anthropic's (including on the Bedrock and Vertex AI SDK clients), Bedrock's Claude and Nova, and OpenRouter's Anthropic routes only cache what the request asks them to. OpenAI's models and OpenRouter's Gemini routes, which cache implicitly, are never reported. When a request of at least 4,096 input tokens goes to such a model with no caching configured (neither the unified `cache` setting nor a provider-specific one), no `CachePoint` in its history, and no cache usage reported, the monitor emits a `CacheNotEnabledWarning` pointing to `cache=True` and the `Caching()` capability, once per conversation and model. Setting `cache=False` says caching was left off on purpose, so it doesn't warn. Silence or escalate it with the `warnings` filters, like `CacheBustWarning`.
 
 ## Minimal usage
 

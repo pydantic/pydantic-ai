@@ -6,7 +6,7 @@ description: "Prompt caching in Pydantic AI: enable it across Anthropic, Bedrock
 
 Prompt caching lets a provider reuse the work it did on a prompt prefix it has seen recently (tool definitions, instructions, and the conversation so far) instead of processing it again, which makes long and multi-turn requests cheaper and faster.
 
-Some providers cache prompts implicitly, without any configuration: OpenAI, Gemini, DeepSeek and xAI, for example. Others cache nothing unless the request opts in: Anthropic (including on Amazon Bedrock, Google Vertex AI and Microsoft Foundry), Amazon Bedrock's Claude and Nova models, and OpenRouter's Anthropic and Gemini models. OpenAI's GPT-5.6 and later sit in between: they cache implicitly, and also take a cache TTL and explicit breakpoints, such as one at the end of the instructions so separate conversations share them. On these models, enable caching with the [`Caching`][pydantic_ai.capabilities.Caching] capability:
+Some providers cache prompts implicitly, without any configuration: OpenAI, Gemini, DeepSeek and xAI, for example. Others cache nothing unless the request opts in: Anthropic (including on Amazon Bedrock, Google Vertex AI and Microsoft Foundry), Amazon Bedrock's Claude and Nova models, and OpenRouter's Anthropic models. OpenAI's GPT-5.6 and later, and Gemini 2.5 and later on OpenRouter, sit in between: they cache implicitly, and also take explicit breakpoints (and on GPT-5.6, a cache TTL), such as one at the end of the instructions so separate conversations share them. On these models, enable caching with the [`Caching`][pydantic_ai.capabilities.Caching] capability:
 
 ```python {title="caching_capability.py"}
 from pydantic_ai import Agent
@@ -30,7 +30,7 @@ Caching changes what a request costs. Writing a prefix to the cache costs more t
 | Anthropic (incl. Bedrock, Vertex AI and Foundry) | 1.25x the input price for the 5-minute cache, 2x for the 1-hour cache | 0.1x |
 | OpenAI GPT-5.6 and later | 1.25x | 0.1x |
 
-So caching pays for itself as soon as a cached prefix is read back once, as it is on every request after the first in an agent run with tool calls, and on every turn of a conversation that continues through [`message_history`](../message-history.md). A single request that's never repeated only pays the write premium.
+So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour cache (2x) after two. A prefix is read back on every request after the first in an agent run with tool calls, and on every turn of a conversation that continues through [`message_history`](../message-history.md). A single request that's never repeated only pays the write premium.
 
 ## Configuring caching
 

@@ -503,7 +503,7 @@ class ModelSettings(TypedDict, total=False):
     Prompt caching lets the provider serve a long or multi-turn prompt's stable prefix from its cache
     instead of re-processing it. Cache writes cost more than uncached input (1.25x for Anthropic's
     5-minute and OpenAI's GPT-5.6 caches, 2x for Anthropic's 1-hour cache) while cache reads cost about
-    0.1x, so caching pays off as soon as a prefix is read back once.
+    0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
 
     - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
       and the growing conversation, with the provider's default retention. Uses the provider's

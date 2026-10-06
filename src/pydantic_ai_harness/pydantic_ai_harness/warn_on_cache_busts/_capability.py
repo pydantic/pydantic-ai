@@ -146,10 +146,11 @@ class CacheNotEnabledWarning(UserWarning):
     """Warned when a request long enough to cache went to a model whose prompt caching wasn't configured.
 
     Emitted by `WarnOnCacheBusts` once per conversation and model, when the model caches nothing unless the
-    request configures it (Anthropic, Bedrock Claude and Nova, and OpenRouter's Anthropic and Gemini routes;
-    OpenAI caches implicitly, so it's never reported), but neither the unified `cache` setting nor a provider-specific cache
-    setting was set, the history has no `CachePoint`, and the provider reported no cache usage. Setting
-    `cache=False` (or a provider-specific cache setting) says caching was considered, so it doesn't warn.
+    request configures it (Anthropic, Bedrock Claude and Nova, and OpenRouter's Anthropic routes; OpenAI and
+    OpenRouter's Gemini routes cache implicitly, so they're never reported), but neither the unified `cache`
+    setting nor a provider-specific cache setting was set, the history has no `CachePoint`, and the provider
+    reported no cache usage. Setting `cache=False` (or a provider-specific cache setting) says caching was
+    considered, so it doesn't warn.
 
     Silence or escalate it with the stdlib `warnings` filters, like `CacheBustWarning`.
     """

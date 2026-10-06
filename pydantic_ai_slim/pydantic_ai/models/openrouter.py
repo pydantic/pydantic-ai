@@ -726,6 +726,14 @@ class OpenRouterModel(OpenAIChatModel):
         return super().resolve_cache_retention(model_settings)
 
     @override
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # OpenRouter's Gemini routes cache implicitly, like OpenAI, so unconfigured isn't uncached there.
+        # https://openrouter.ai/docs/guides/best-practices/prompt-caching#google-gemini
+        if self.model_name.removeprefix('~').startswith('google/'):
+            return False
+        return super()._caching_not_enabled(model_settings)
+
+    @override
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
 

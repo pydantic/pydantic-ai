@@ -37,6 +37,10 @@ from pydantic_ai.usage import RequestUsage
 
 from .conftest import try_import
 
+with try_import() as openai_imports:
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
 with try_import() as otel_sdk_imports_successful:
     from opentelemetry.context import Context
     from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
@@ -1043,3 +1047,25 @@ def test_fallback_model_never_reports_caching_not_enabled() -> None:
     """A fallback model can't know which model serves the request, so it claims nothing about its caching."""
     model = FallbackModel(ProviderCacheFunctionModel(lambda messages, info: ModelResponse(parts=[])))
     assert not model._caching_not_enabled(None)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'reported'), [('google/gemini-2.5-pro', False), ('anthropic/claude-sonnet-4.5', True)]
+)
+def test_openrouter_gemini_routes_are_not_reported(model_name: str, reported: bool) -> None:
+    """OpenRouter's Gemini routes cache implicitly, so a long request with no cache usage isn't reported there,
+    while its Anthropic routes, which cache nothing unconfigured, are."""
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(api_key='test'))
+    detector = CacheHealthDetector(ConversationCacheMarkStore(), 'conversation', 'run', alert_on=frozenset())
+    context = ModelRequestContext(
+        model=model,
+        messages=[ModelRequest.user_text_prompt('prompt')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    response = ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=5000), model_name=model_name)
+
+    health = detector.observe(context, response)
+
+    assert (health is not None and health.not_enabled) is reported
