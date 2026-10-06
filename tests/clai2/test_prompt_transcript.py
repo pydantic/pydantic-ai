@@ -483,14 +483,45 @@ def test_rebind_assumes_the_current_theme_for_lines_retained_without_one() -> No
     block = _block(transcript)
     block.write(_printed([Style(color=theme.color(theme.MUTED))]))
     block.freeze()
+    unfinished = _printed([Style(color=theme.color(theme.MUTED))]).removesuffix('\n')
+    block.write(unfinished)
+    transcript.write(unfinished)
     stream = cast(object, vars(block)['_stream'])
     lines = [*cast(deque[object], vars(transcript)['_items']), *cast(list[object], vars(stream)['lines'])]
     for line in lines:
         vars(line).pop('theme_name', None)
+    vars(transcript).pop('_pending_theme')
+    vars(stream).pop('pending_theme')
     with theme.use(lambda: 'tokyo_night'):
         TranscriptBuffer.rebind(transcript)
-        assert _colours(transcript.frame(width=80, height=24).rows) == [(theme.GREY.lower(), None)] * 2
-    assert _colours(transcript.frame(width=80, height=24).rows) == [(theme.GREY.lower(), None)] * 2
+        assert _colours(transcript.frame(width=80, height=24).rows) == [(theme.GREY.lower(), None)] * 4
+    assert _colours(transcript.frame(width=80, height=24).rows) == [(theme.GREY.lower(), None)] * 4
+
+
+def test_an_unfinished_line_keeps_the_theme_it_started_in() -> None:
+    tokyo = PALETTES['tokyo_night']
+    selected = ['default']
+    with theme.use(lambda: selected[0]):
+        buffer = _painted(_printed([Style(color=theme.color(theme.MUTED))]).removesuffix('\n'))
+        selected[0] = 'tokyo_night'
+        assert _colours(buffer.frame(width=80, height=24).rows) == [(tokyo.ansi[8], None)]
+        buffer.write(' done\n' + _printed([Style(color=theme.color(theme.MUTED))]))
+        assert _colours(buffer.frame(width=80, height=24).rows) == [(tokyo.ansi[8], None)] * 2
+        selected[0] = 'default'
+        assert _colours(buffer.frame(width=80, height=24).rows) == [(theme.GREY.lower(), None)] * 2
+    assert plain(buffer) == ['line 0 done', 'line 0', '']
+
+
+def test_an_unfinished_markdown_line_keeps_the_theme_it_started_in() -> None:
+    tokyo = PALETTES['tokyo_night']
+    buffer = TranscriptBuffer()
+    block = _block(buffer)
+    block.write(_printed([Style(color=theme.color(theme.MUTED))]).removesuffix('\n'))
+    block.freeze()
+    with theme.use(lambda: 'tokyo_night'):
+        assert _colours(buffer.rows(0, width=80)) == [(tokyo.ansi[8], None)]
+        block.write(' more\nnext')
+        assert _colours(buffer.rows(0, width=80)) == [(tokyo.ansi[8], None), (None, None)]
 
 
 def test_branding_keeps_its_colours_when_the_theme_changes() -> None:
