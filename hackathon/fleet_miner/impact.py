@@ -58,7 +58,9 @@ async def compute_impacts(
                 extra: dict[str, object] = {'decisions': decisions, 'decision_users': decision_users}
             else:
                 times = [by_span[s].timestamp for s in pattern_spans.get(proposal.id, set()) if s in by_span]
-                extra = {'users_with_item': await _users_with_item(client, proposal.name, accepted_at)}
+                extra = {
+                    'users_with_item': await _users_with_item(client, f'{proposal.kind}:{proposal.name}', accepted_at)
+                }
             before = sum(t < accepted_at for t in times)
             after = len(times) - before
             before_rate, after_rate = _per_day(before, days_before), _per_day(after, days_after)
@@ -78,11 +80,16 @@ async def compute_impacts(
     return impacts
 
 
-async def _users_with_item(client: _Telemetry | _Null, name: str, since: datetime) -> int | None:
+async def _users_with_item(client: _Telemetry | _Null, key: str, since: datetime) -> int | None:
+    """Developers whose spans list `key` (e.g. `skill:pr-shepherd`) in the comma-joined `clai2.fleet.active`.
+
+    Matched as a whole list item, with literal `strpos` on comma-padded text: `LIKE '%name%'` would also count
+    `skill:pr-shepherd-v2`, and `_` in a name would be a wildcard.
+    """
     sql = f"""
 SELECT count(DISTINCT coalesce(r.attributes->>'user.email', r.otel_resource_attributes->>'host.name')) AS users
 FROM records r
-WHERE r.attributes->>'clai2.fleet.active' LIKE {_quoted(f'%{name}%')}
+WHERE strpos(',' || replace(r.attributes->>'clai2.fleet.active', ' ', '') || ',', {_quoted(f',{key},')}) > 0
   AND {NOT_TEST}
 """
     rows = await client.rows(sql, since)
