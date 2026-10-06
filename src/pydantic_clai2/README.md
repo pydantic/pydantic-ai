@@ -8,9 +8,9 @@ see [Questions from the model](#questions-from-the-model). The built-in
 `repo_context` plugin reads `AGENTS.md` or `CLAUDE.md` from the launch directory
 into the agent's instructions; `/plugins disable repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-`coder` clears old tool results as the context fills. The built-in `compaction`
-plugin, [described below](#compacting-the-conversation), is on by default beside it:
-it summarises older messages before the context runs out and adds `/compact`.
+The built-in `compaction` plugin, [described below](#compacting-the-conversation),
+is on by default beside `coder`: it summarises older messages before the context
+runs out and adds `/compact`. It takes the place of harness `Coder`'s own compaction.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a

@@ -134,7 +134,10 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 
 Then the plumbing, which the agent never calls directly:
 
-6. [`ClearToolResults`](compaction.md)`(max_fraction=0.7)` and [`WarnNearLimits`](compaction.md)`(max_context_fraction=0.9)`.
+6. [`FallbackCompaction`](compaction.md) over `SummarizingCompaction` then `SlidingWindowCompaction`: above 85% of the
+   model's context window, the run's model summarizes older messages, keeping the most recent 50,000 tokens;
+   when summarizing fails with a model API error or a usage limit, those messages are dropped instead.
+   Pass `compaction=False` to leave it out when the agent binds its own compaction.
 7. A private [`ToolOutputLimits`](tool-output-limits.md) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
@@ -232,6 +235,16 @@ capabilities emit.
 `Coder` works under Temporal, DBOS, and Prefect. [Durable execution](durable-execution.md) shows an example for each engine and what works on each.
 
 ## Upgrading
+
+### Automatic compaction
+
+`Coder` now compacts the history itself, as described in [Composition](#composition), instead of binding
+[`ClearToolResults`](compaction.md)`(max_fraction=0.7)` and [`WarnNearLimits`](compaction.md)`(max_context_fraction=0.9)`.
+A summary is a request to the run's model, so it counts toward the run's usage and cost. To keep the previous
+behaviour, pass `Coder(compaction=False)` and add `ClearToolResults(max_fraction=0.7)` and
+`WarnNearLimits(max_context_fraction=0.9)` yourself.
+
+### The workspace
 
 This release makes the workspace the single place that decides where an agent works. Removed arguments are still accepted, emit a `HarnessDeprecationWarning` naming the fix, and are ignored.
 

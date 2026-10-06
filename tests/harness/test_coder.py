@@ -10,10 +10,11 @@ import pydantic_ai.capabilities.local_workspace
 import pydantic_ai_harness.coder
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability, LocalWorkspace
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceRef
 from pydantic_ai_harness.coder import FILE_TOOL_NAMES, Coder, coder_agent
+from pydantic_ai_harness.compaction import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.subagents import SubAgents
@@ -108,8 +109,7 @@ def test_coder_members_and_parameters() -> None:
         'Shell',
         'RepoContext',
         'SubAgents',
-        'ClearToolResults',
-        'WarnNearLimits',
+        'FallbackCompaction',
         '_BoundToolOutputs',
         'RepairToolArguments',
     ]
@@ -127,6 +127,19 @@ def test_coder_members_and_parameters() -> None:
     limits = next(item for item in coder.capabilities if type(item).__name__ == '_BoundToolOutputs')
     assert limits.id == 'coder_tool_output_limits'
     assert isinstance(coder.for_agent(Agent(TestModel())), Coder)
+
+
+def test_coder_compaction_summarizes_with_the_run_model_then_truncates() -> None:
+    compaction = next(item for item in Coder().capabilities if isinstance(item, FallbackCompaction))
+    assert (compaction.max_fraction, compaction.fallback_on) == (
+        0.85,
+        (ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded),
+    )
+    summarizer, sliding = compaction.fallback_chain
+    assert isinstance(summarizer, SummarizingCompaction) and isinstance(sliding, SlidingWindowCompaction)
+    assert (summarizer.model, summarizer.keep_tokens, summarizer.id) == (None, 50_000, 'coder_summarizing_compaction')
+    assert sliding.keep_tokens == 50_000
+    assert not any(isinstance(item, FallbackCompaction) for item in Coder(compaction=False).capabilities)
 
 
 async def test_no_workspace_fails_the_run_naming_coder() -> None:

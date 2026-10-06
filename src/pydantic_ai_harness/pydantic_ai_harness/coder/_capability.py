@@ -7,11 +7,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS, project_instructions
-from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
+from pydantic_ai_harness.compaction import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
@@ -46,6 +47,29 @@ and discards its work.
 """
 
 
+COMPACTION_THRESHOLD = 0.85
+"""Fraction of the model's context window above which the history is compacted."""
+
+COMPACTION_KEEP_TOKENS = 50_000
+"""Tokens of the most recent messages that compaction always keeps."""
+
+
+def _compaction() -> FallbackCompaction[AgentDepsT]:
+    """Summarize older messages with the run's model, and drop them when summarizing fails."""
+    return FallbackCompaction[AgentDepsT](
+        fallback_chain=[
+            # The chain triggers, so the strategies' own `max_messages` only has to be valid.
+            # Its own id keeps a separately bound `SummarizingCompaction`'s durable operation apart.
+            SummarizingCompaction[AgentDepsT](
+                max_messages=1, keep_tokens=COMPACTION_KEEP_TOKENS, id='coder_summarizing_compaction'
+            ),
+            SlidingWindowCompaction[AgentDepsT](max_messages=1, keep_tokens=COMPACTION_KEEP_TOKENS),
+        ],
+        fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded),
+        max_fraction=COMPACTION_THRESHOLD,
+    )
+
+
 def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
     file_system = FileSystem[AgentDepsT](
         content_hashes=False,
@@ -72,6 +96,11 @@ class Coder(CombinedCapability[AgentDepsT]):
     `repo_context=False` leaves out the bundled `RepoContext`, for hosts that
     bind their own and would otherwise load the instruction files twice.
 
+    Above 85% of the model's context window, older messages are summarized by
+    the run's model, keeping the most recent 50,000 tokens; when summarizing
+    fails, they are dropped instead. `compaction=False` leaves this out, for
+    hosts that bind their own compaction.
+
     `sub_agents=True` adds `delegate_task`, which hands a self-contained sub-task
     to a fresh run of the same agent `Coder` is bound to, so the delegate has
     everything the agent has, including capabilities bound next to `Coder`.
@@ -88,6 +117,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         instructions: str | None = None,
         unrestricted_filesystem: bool = False,
         repo_context: bool = True,
+        compaction: bool = True,
         sub_agents: bool = True,
         agent_folders: str | Sequence[str | Path] | None = None,
     ) -> None:
@@ -124,9 +154,9 @@ class Coder(CombinedCapability[AgentDepsT]):
             capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
         if sub_agents:
             capabilities.append(SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders))
+        if compaction:
+            capabilities.append(_compaction())
         capabilities += [
-            ClearToolResults[AgentDepsT](max_fraction=0.7),
-            WarnNearLimits[AgentDepsT](max_context_fraction=0.9),
             _BoundToolOutputs[AgentDepsT](
                 id='coder_tool_output_limits',
                 bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))],

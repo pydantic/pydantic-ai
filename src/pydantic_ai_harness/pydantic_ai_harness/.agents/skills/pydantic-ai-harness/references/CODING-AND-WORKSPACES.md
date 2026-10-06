@@ -51,7 +51,8 @@ except UserError as e:
 ## Coder
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
-`ClearToolResults(max_fraction=0.7)`, `WarnNearLimits(max_context_fraction=0.9)`, a `ToolOutputLimits`
+`FallbackCompaction` (above 85% of the window the run's model summarizes all but the newest 50,000 tokens;
+on a model error or usage limit they are dropped instead; `compaction=False` leaves it out), a `ToolOutputLimits`
 that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`.
 
 ```bash
@@ -97,8 +98,9 @@ Keyword-only options: `instructions=None` (appended to the default guidance),
 - File tools stay in the working directory with `.git`, `.env*`, keys, and `secrets*` read-only; `shell`
   bypasses all of that. To change a bundled setting (hashes, allowlist, `list_directory`), compose
   `FileSystem`/`Shell`/`RepoContext`/`SubAgents` yourself.
-- Your own `ClearToolResults` / `TieredCompaction` / `WarnNearLimits` next to `Coder` run as well (no id
-  clash), each at its own trigger. List your `ToolOutputLimits` **after** `Coder` so it sees raw returns;
+- Your own `ClearToolResults` / `WarnNearLimits` next to `Coder` run as well (no id clash), each at its own
+  trigger. For your own history compaction (`TieredCompaction`, a different summarizer), pass
+  `Coder(compaction=False)` so two chains don't both rewrite history. List your `ToolOutputLimits` **after** `Coder` so it sees raw returns;
   listed before, it sees Coder's 64,000-char result. For `shell`, bands must sit under ~16,000 chars.
 
 `pydantic_ai_harness.coder:coder_agent` is a model-less `Agent(name='coder')` with
