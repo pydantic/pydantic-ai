@@ -146,7 +146,7 @@ async def run_setup(
         name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
         variables_name: str | None = None
         if variables is not None:
-            key = variables
+            key = variables.access_token
             variables_name = await to_thread.run_sync(
                 lambda: _save(project.variables_key_name, key, owned=owned_variables)
             )
@@ -154,6 +154,8 @@ async def run_setup(
         span.set('fleet_control', variables is not None)
     if variables is None:
         setup.announce('Logfire did not issue a read-variables key, so company config from Logfire stays off.')
+    else:
+        setup.announce(f'Saved a read-variables key for company config from Logfire ({variables.describe()}).')
     chosen_team = await run_worker(lambda: pick_team(setup.runners, current=team))
     return Chosen(
         token=KeyReference(name=name),
@@ -305,9 +307,18 @@ VARIABLES_SCOPE = 'project:read_variables'
 
 class _ExchangedKey(BaseModel):
     access_token: str
+    scope: str | None = None
+    expires_in: int | None = None
+
+    def describe(self) -> str:
+        """What was granted, for the setup message: scope and lifetime, never the key."""
+        days = f', expires in {round(self.expires_in / 86400)} days' if self.expires_in else ''
+        return f'{self.scope or VARIABLES_SCOPE}{days}'
 
 
-async def _variables_key(http: httpx.AsyncClient, base_url: str, user_token: str, project: Project) -> str | None:
+async def _variables_key(
+    http: httpx.AsyncClient, base_url: str, user_token: str, project: Project
+) -> _ExchangedKey | None:
     """Exchange the sign-in (RFC 8693) for a personal, expiring API key that can only read managed variables.
 
     Logfire mints it for the signed-in user and the chosen project, bounded by their role; it expires in 90 days.
@@ -330,7 +341,7 @@ async def _variables_key(http: httpx.AsyncClient, base_url: str, user_token: str
     if response.is_error:
         return None
     try:
-        return _ExchangedKey.model_validate_json(response.content).access_token
+        return _ExchangedKey.model_validate_json(response.content)
     except ValidationError:
         return None
 
