@@ -257,6 +257,8 @@ async def _run_menu(
             continue
         elif isinstance(value, _SignOut):
             leaving = value.account
+            # A usage fetch may refresh this account's tokens; let it end before they are deleted.
+            await menu.usage.stop(leaving.login)
             menu.notice = await run_worker(lambda: _sign_out(store, leaving, runners))
             if menu.notice is not None:
                 forget(leaving.login)

@@ -78,8 +78,13 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
 
 
 def forget_connection(*, account: str) -> None:
-    """Drop a saved connection, and with it any key reference it held; the keys themselves stay."""
-    with key_transaction():
+    """Drop a saved connection, and with it any key reference it held; the keys themselves stay.
+
+    The account's own lock is held too, so a refresh in flight cannot save the login back afterwards;
+    see `replace_credentials`.
+    """
+    busy = f'Another CLAI is updating the {account} login. Try again.'
+    with key_transaction(), credential_lock(account=account, busy=busy):
         delete_credentials(account=account)
 
 

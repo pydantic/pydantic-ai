@@ -191,6 +191,21 @@ def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Pat
     plaintext.unlink(missing_ok=True)
 
 
+def replace_credentials(*, value: str, account: str) -> bool:
+    """Replace a saved login with refreshed tokens; `False`, writing nothing, once there is none.
+
+    Holds the account's lock, which signing out holds while it deletes, so a refresh that finishes
+    after a sign-out cannot sign the account back in: it either saves first and is then deleted, or
+    finds nothing to replace.
+    """
+    with credential_lock(account=account, busy=f'Another CLAI is updating the {account} login. Try again.'):
+        encrypted, plaintext = _files(account=account, fallback=None)
+        if not (encrypted.is_file() or plaintext.is_file()):
+            return False
+        save_codex_credentials(value=value, account=account)
+        return True
+
+
 def delete_credentials(*, account: str = _ACCOUNT, fallback: Path | None = None) -> None:
     """Forget a login everywhere it may be: encrypted file, older keyring entries, and the plaintext file."""
     encrypted, plaintext = _files(account=account, fallback=fallback)

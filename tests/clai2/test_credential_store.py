@@ -106,7 +106,7 @@ async def test_large_codex_credentials(vault: Vault) -> None:
     credentials = OpenAICodexCredentials(
         access_token='fake-access' * 500, refresh_token='fake-refresh' * 300, account_id='fake-account'
     )
-    await source.save(credentials)
+    await source.save_login(credentials)
     assert await source.load() == credentials
     refreshed = OpenAICodexCredentials(
         access_token='refreshed' * 500, refresh_token='new-refresh' * 300, account_id='fake-account'

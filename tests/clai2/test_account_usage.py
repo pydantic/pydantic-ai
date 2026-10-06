@@ -1,5 +1,6 @@
 """Account usage in `/accounts`: Codex and Copilot fetchers, plugin usage, and the background redraw."""
 
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -15,7 +16,7 @@ from termflow.tui.menu import MenuResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
-from pydantic_clai2.config.credential_store import save_codex_credentials
+from pydantic_clai2.config.credential_store import has_credentials, save_codex_credentials
 from pydantic_clai2.models import github_copilot
 from pydantic_clai2.models.accounts import Account, accounts, remember
 from pydantic_clai2.models.usage import (
@@ -31,6 +32,7 @@ from pydantic_clai2.plugins import AccountUsage, PluginLogin, UsageWindow
 from pydantic_clai2.ui.menus import account_usage, accounts_menu
 from pydantic_clai2.ui.menus.account_usage import UsageBoard
 from pydantic_clai2.ui.menus.accounts_menu import AccountsMenu, open_accounts_menu
+from tests.clai2.menu_script import pick
 from tests.clai2.test_accounts import CODEX, menu_script, plugin_login, signed, store_at
 
 NOW = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
@@ -310,3 +312,89 @@ async def test_open_accounts_menu_loads_usage_and_stops_when_it_closes(tmp_path:
     assert message == 'Signed in as openai-codex.'
     # Each account loads once; signing in again fetches that account afresh.
     assert sorted(started) == ['claude@work', 'openai-codex', 'openai-codex']
+
+
+async def test_stopping_a_fetch_returns_only_once_a_save_it_started_has_finished() -> None:
+    board = UsageBoard(now=lambda: NOW)
+    events: list[str] = []
+    saving = threading.Event()
+    release = threading.Event()
+
+    def save() -> None:
+        saving.set()
+        release.wait()
+        events.append('saved refreshed tokens')
+
+    async def refreshing() -> AccountUsage:
+        await anyio.to_thread.run_sync(save)
+        events.append('fetch ended')
+        return AccountUsage(windows=(UsageWindow(label='5h', used_percent=1),))
+
+    async def stop() -> None:
+        await board.stop('openai-codex')
+        events.append('stopped')
+
+    async with anyio.create_task_group() as tasks:
+        board.load(tasks, [account('openai-codex')], lambda item: refreshing)
+        await anyio.to_thread.run_sync(saving.wait)
+        tasks.start_soon(stop)
+        await anyio.sleep(0)  # let `stop` cancel and start waiting
+        release.set()
+    # A thread cannot be interrupted, so the fetch finishes; but all of it happens before `stop` returns.
+    assert events == ['saved refreshed tokens', 'fetch ended', 'stopped']
+    assert board.summary('openai-codex') == '' and not board.changed.is_set()
+
+
+async def test_a_fetch_stopped_before_it_starts_never_runs() -> None:
+    board = UsageBoard(now=lambda: NOW)
+    ran: list[str] = []
+
+    async def fetch() -> AccountUsage:  # pragma: no cover -- cancelled before it starts
+        ran.append('fetched')
+        return AccountUsage(windows=())
+
+    async with anyio.create_task_group() as tasks:
+        board.load(tasks, [account('github-copilot')], lambda item: fetch)
+        await board.stop('github-copilot')
+        await board.stop('never-loaded')
+    assert ran == [] and board.summary('github-copilot') == ''
+
+    async def done() -> AccountUsage:
+        return AccountUsage(windows=())
+
+    async with anyio.create_task_group() as tasks:
+        board.load(tasks, [account('github-copilot')], lambda item: done)
+    await board.stop('github-copilot')  # already finished: nothing to wait for
+    assert board.summary('github-copilot') == ''
+
+
+async def test_signing_out_stops_that_accounts_fetch_before_deleting_its_login(tmp_path: Path) -> None:
+    store = store_at(tmp_path)
+    save_codex_credentials(account='openai-codex@work', value=CODEX)
+    signed_in_when_stopped: list[bool] = []
+
+    async def holds() -> AccountUsage:
+        try:
+            await anyio.Event().wait()
+        finally:
+            signed_in_when_stopped.append(has_credentials(account='openai-codex@work'))
+        raise AssertionError  # pragma: no cover -- the wait only ends by cancellation
+
+    async def login(args: list[str]) -> str:  # pragma: no cover -- no sign-in in this script
+        return ''
+
+    work = next(item for item in accounts(store) if item.login == 'openai-codex@work')
+    sign_out = MenuResult(item=MenuItem('sign out', value=accounts_menu._SignOut(work)))  # pyright: ignore[reportPrivateUsage]
+    script = menu_script([sign_out, MenuResult(cancelled=True)], choices=[pick(True)])
+    with anyio.fail_after(5):
+        message = await open_accounts_menu(
+            store,
+            login=login,
+            plugins=lambda: {},
+            forget=lambda _: None,
+            usage=lambda item: holds,
+            runners=script.runners,
+        )
+    assert message == 'Signed out of openai-codex@work.'
+    assert signed_in_when_stopped == [True], 'the fetch ended while the login still existed'
+    assert not has_credentials(account='openai-codex@work')

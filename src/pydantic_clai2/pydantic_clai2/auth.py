@@ -26,6 +26,7 @@ from pydantic_clai2.config.credential_store import (
     credentials_path,
     has_credentials,
     load_codex_credentials,
+    replace_credentials,
     save_codex_credentials,
 )
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -177,7 +178,21 @@ class CodexCredentials(OpenAICodexCredentialSource):
             raise UserError(f'Stored Codex credentials are invalid. Run /login {self.account}.') from None
 
     async def save(self, credentials: OpenAICodexCredentials) -> None:
-        """Persist login or refresh results using the configured OS credential backend."""
+        """Persist core's refreshed tokens, but only over a login that still exists.
+
+        Core calls this after a refresh. Signing out deletes the login under the same lock, so a
+        refresh that finishes afterwards raises here instead of signing the account back in, and core
+        fails that request.
+        """
+        value = _CREDENTIALS.dump_json(credentials).decode()
+        replaced = await anyio.to_thread.run_sync(
+            partial(replace_credentials, value=value, account=self.account), abandon_on_cancel=True
+        )
+        if not replaced:
+            raise UserError(f'{self.account} was signed out. Run /login {self.account} to use it again.')
+
+    async def save_login(self, credentials: OpenAICodexCredentials) -> None:
+        """Save a new sign-in, creating the login."""
         value = _CREDENTIALS.dump_json(credentials).decode()
         await anyio.to_thread.run_sync(
             partial(save_codex_credentials, value=value, account=self.account), abandon_on_cancel=True
@@ -229,7 +244,7 @@ class CodexAuth:
         try:
             with fail_after(self.login_timeout):
                 credentials = await self._receive(flow)
-            await source.save(credentials)
+            await source.save_login(credentials)
             self._providers.pop(name, None)
         except TimeoutError:
             raise UserError(f'Codex login timed out. Run /login {name} to try again.') from None

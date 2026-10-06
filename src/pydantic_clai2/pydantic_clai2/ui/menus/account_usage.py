@@ -8,7 +8,9 @@ from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from threading import Event
 
-from anyio import fail_after
+import anyio
+import anyio.lowlevel
+from anyio import CancelScope, fail_after
 from anyio.abc import TaskGroup
 
 from pydantic_clai2.errors import error_message
@@ -28,6 +30,8 @@ class UsageBoard:
     def __init__(self, *, now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) -> None:
         """`now` dates reset times; tests pass a fixed clock."""
         self._states: dict[str, UsageState] = {}
+        self._running: dict[str, tuple[CancelScope, anyio.Event]] = {}
+        """Each fetch still in flight: the scope that cancels it and the event set once it has ended."""
         self._now = now
         self.changed = Event()
         """Set when a result arrives; the menu clears it and redraws."""
@@ -40,23 +44,49 @@ class UsageBoard:
             fetch = fetcher(item)
             if fetch is not None:
                 self._states[item.login] = None
-                tasks.start_soon(self._fetch, item.login, fetch)
+                # Registered before the task starts, so `stop` can cancel a fetch that has not begun.
+                running = self._running[item.login] = (CancelScope(), anyio.Event())
+                tasks.start_soon(self._fetch, item.login, fetch, running)
 
     def forget(self, login: str) -> None:
         """Drop an account's usage, after it signs in again, so the next `load` fetches it afresh."""
         self._states.pop(login, None)
 
-    async def _fetch(self, login: str, fetch: UsageFetch) -> None:
-        state: UsageState
+    async def stop(self, login: str) -> None:
+        """Cancel the account's fetch and wait until it has ended, then drop its usage.
+
+        Call before signing the account out, so its usage is not fetched, or shown, for an account that
+        is gone. A refresh the fetch started cannot sign it back in either way: the credential store only
+        replaces a login that still exists (`replace_credentials`).
+        """
+        self.forget(login)
+        running = self._running.pop(login, None)
+        if running is not None:
+            scope, ended = running
+            scope.cancel()
+            await ended.wait()
+
+    async def _fetch(self, login: str, fetch: UsageFetch, running: tuple[CancelScope, anyio.Event]) -> None:
+        scope, ended = running
         try:
-            with fail_after(TIMEOUT + 5):
-                state = await fetch()
-        except TimeoutError:
-            state = 'timed out'
-        except Exception as exc:  # noqa: BLE001 -- a plugin's failing fetch must not close the menu.
-            state = ' '.join(error_message(exc).split()) or type(exc).__name__
-        self._states[login] = state
-        self.changed.set()
+            with scope:
+                await anyio.lowlevel.checkpoint()  # a fetch stopped before it began never starts
+                state: UsageState
+                try:
+                    with fail_after(TIMEOUT + 5):
+                        state = await fetch()
+                except TimeoutError:
+                    state = 'timed out'
+                except Exception as exc:  # noqa: BLE001 -- a plugin's failing fetch must not close the menu.
+                    state = ' '.join(error_message(exc).split()) or type(exc).__name__
+                if scope.cancel_called:
+                    return  # stopped while a thread finished: its account is no longer shown
+                self._states[login] = state
+                self.changed.set()
+        finally:
+            if self._running.get(login) is running:
+                del self._running[login]
+            ended.set()
 
     def summary(self, login: str) -> str:
         """The row's usage, such as `5h 92% · 7d 43%`: `…` while loading, `?` when unavailable."""
