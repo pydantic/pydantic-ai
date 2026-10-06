@@ -9,14 +9,16 @@ from dataclasses import dataclass, field
 from functools import partial
 
 import anyio
+from pydantic import BaseModel, ValidationError
 from rich.console import Console, RenderableType
 from rich.text import Text
 from termflow.tui.layout import truncate
 from termflow.tui.terminal import raw_mode
 
-from pydantic_ai import AgentStreamEvent
+from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.ask_user import (
+    TOOL_NAME,
     AskUser,
     AskUserAnswer,
     AskUserAnsweredEvent,
@@ -31,6 +33,7 @@ from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, Scroll, question_input
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.tool_output import tool_header
 
 
 @dataclass(kw_only=True)
@@ -209,6 +212,25 @@ class TerminalAnswerer:
         return AskUserResponse(answers=tuple(answers))
 
 
+class _Header(BaseModel):
+    header: str
+
+
+class _Headers(BaseModel):
+    """Only the display fields of the call; the harness validates the rest."""
+
+    questions: list[_Header]
+
+
+def render_call(event: FunctionToolCallEvent) -> RenderableType:
+    """Name the questions, not their raw JSON: the picker shows each one in full right after."""
+    try:
+        headers = _Headers.model_validate_json(event.part.args_as_json_str()).questions
+    except ValidationError:
+        headers = []
+    return tool_header(name=TOOL_NAME, argument=', '.join(question.header for question in headers))
+
+
 def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     """Leave a record of what was picked in the transcript, since the menu itself is gone."""
     text = Text()
@@ -226,10 +248,12 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
 
 
 class AskUserPlugin(Plugin):
-    """`AskUser` with the terminal answerer, and a transcript line per answer."""
+    """`AskUser` with the terminal answerer, a readable call header, and a transcript line per answer."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
+        if isinstance(event, FunctionToolCallEvent) and event.part.tool_name == TOOL_NAME:
+            return render_call(event)
         return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
-from rich.console import Console
+from rich.console import Console, Group
 from rich.text import Text
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
@@ -21,12 +21,13 @@ def terminal_text(text: str, *, keep: str = '\n\t') -> str:
     return ''.join(char if char.isprintable() or char in keep else f'\\x{ord(char):02x}' for char in text)
 
 
-def print_tool_header(console: Console, *, name: str, argument: str | Text = '') -> None:
-    """Highlight the tool name, leaving its marker and a plain-string argument muted.
+def tool_header(*, name: str, argument: str | Text = '') -> Group:
+    """Highlight the tool name, leaving its marker and a plain-string argument muted, on one row.
 
-    A `Text` argument is appended as-is, so it must already be styled and terminal-safe.
+    A `Text` argument is appended as-is, so it must already be styled and terminal-safe. The
+    `Group` keeps the row unwrapped: `Console.print` copies a bare `Text` without its `no_wrap`.
     """
-    text = Text('● ', style=theme.color(theme.MUTED))
+    text = Text('● ', style=theme.color(theme.MUTED), overflow='ellipsis', no_wrap=True)
     text.append(terminal_text(name), style=theme.color(theme.ACCENT))
     if isinstance(argument, Text):
         if argument:
@@ -34,7 +35,12 @@ def print_tool_header(console: Console, *, name: str, argument: str | Text = '')
             text.append_text(argument)
     elif argument:
         text.append(f' {terminal_text(argument)}', style=theme.color(theme.MUTED))
-    console.print(text, overflow='ellipsis', no_wrap=True)
+    return Group(text)
+
+
+def print_tool_header(console: Console, *, name: str, argument: str | Text = '') -> None:
+    """Print `tool_header` and the blank line that separates it from what follows."""
+    console.print(tool_header(name=name, argument=argument))
     console.print()
 
 
