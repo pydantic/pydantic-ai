@@ -48,6 +48,9 @@ class FakeLogfire:
     )
     projects: Answer = field(default_factory=lambda: httpx.Response(200, json=PROJECTS))
     write_token: Answer = field(default_factory=lambda: httpx.Response(200, json={'token': 'pylf_v1_us_write'}))
+    variables_key: Answer = field(
+        default_factory=lambda: httpx.Response(200, json={'access_token': 'pylf_v2_us_variables', 'token_type': 'N_A'})
+    )
     requests: list[httpx.Request] = field(default_factory=list[httpx.Request])
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -61,6 +64,8 @@ class FakeLogfire:
             answer = self.account
         elif path == '/v1/writable-projects/':
             answer = self.projects
+        elif path == '/api/oauth/token':
+            answer = self.variables_key
         else:
             assert path == '/v1/organizations/pydantic/projects/clai2/write-tokens/'
             answer = self.write_token
@@ -85,7 +90,8 @@ def scripted(choices: list[object], typed: list[str | None] | None = None) -> Ru
         return MenuResult(item=MenuItem(str(wanted), value=wanted))
 
     def run_text(widget: TextInput) -> TextInputResult:
-        text = texts.pop(0)
+        # The optional team question at the end of setup is skipped (Esc) unless a test scripts it.
+        text = texts.pop(0) if texts else None
         return TextInputResult(cancelled=True) if text is None else TextInputResult(value=text)
 
     def run_list(menu: Menu) -> MenuResult:
@@ -187,8 +193,16 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
         'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123'
     ]
     assert harness.opened == ['https://logfire-us.pydantic.dev/auth/dev-123']
-    new, *_, me, listed, minted = harness.server.requests
+    new, *_, me, listed, minted, exchanged = harness.server.requests
     assert new.url.params['machine_name']
+    # Hackathon fleet control: the same sign-in is exchanged (RFC 8693) for a read-variables API key.
+    assert exchanged.url.path == '/api/oauth/token'
+    form = dict(httpx.QueryParams(exchanged.content.decode()))
+    assert form['subject_token'] == 'user-token'
+    assert form['audience'] == f'{US}/pydantic/clai2'
+    assert form['scope'] == 'project:read_variables'
+    assert saved.api_key == KeyReference(name='LOGFIRE_VARIABLES_PYDANTIC_CLAI2')
+    assert load_keys()['LOGFIRE_VARIABLES_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v2_us_variables'
     assert me.url.path == '/v1/account/me'
     assert me.headers['Authorization'] == listed.headers['Authorization'] == minted.headers['Authorization']
     assert minted.headers['Authorization'] == 'user-token'

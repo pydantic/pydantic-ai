@@ -387,6 +387,13 @@ _ROWS = (
         allow_custom=False,
     ),
     FieldRow(
+        key='team',
+        label='Team',
+        description='Your team, sent with every span and used to target team config from Logfire. Unset, '
+        'CLAI2_TEAM is used.',
+        default='none',
+    ),
+    FieldRow(
         key='ui_events',
         label='UI events',
         description=LogfireSettings.model_fields['ui_events'].description or '',
@@ -425,6 +432,8 @@ class LogfireSource:
                 return row.default
             return settings.token.name + (f' at {settings.base_url}' if settings.base_url else '')
         value: object = getattr(settings, row.key)
+        if value is None:
+            return row.default
         return str(value).lower() if isinstance(value, bool) else str(value)
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -450,6 +459,8 @@ class LogfireSource:
 
     def _updated(self, row: FieldRow, raw: str) -> LogfireSettings:
         value: JsonValue = raw == 'true' if row.choices and raw in _BOOLEAN else raw
+        if row.key == 'team' and raw.strip().lower() in ('', 'none'):
+            value = None
         return LogfireSettings.model_validate({**self.settings.model_dump(mode='json'), row.key: value})
 
 
@@ -468,7 +479,9 @@ SETUP: Callable[[PluginHost[None]], Setup] = _announce
 async def _configure(host: PluginHost[None], setup: Setup) -> str:
     """The setup menu; saving new settings makes the loader load the plugin again, now sending to the project."""
     config = host.settings(LogfireSettings)
-    chosen = await run_setup(setup, current=config.base_url, owned=config.token)
+    chosen = await run_setup(
+        setup, current=config.base_url, owned=config.token, owned_variables=config.api_key, team=config.team
+    )
     if chosen is None:
         return 'Logfire setup cancelled; settings unchanged.'
     # Setting up a project means sending to it, even if sending had been turned off.
@@ -478,6 +491,8 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
         'base_url': chosen.base_url,
         'account': LogfireAccount(email=email, token=chosen.token) if email else None,
         'send_to_logfire': 'if-token-present',
+        'api_key': chosen.variables_key or config.api_key,
+        'team': chosen.team,
     }
     host.save_settings(config.model_copy(update=update))
     kept = (

@@ -63,6 +63,7 @@ class Recorder:
         token: str | None,
         scrubbing: logfire.ScrubbingOptions | None,
         advanced: logfire.AdvancedOptions | None,
+        **variables: object,
     ) -> logfire.Logfire:
         self.tokens.append(token)
         self.options.append(

@@ -77,6 +77,11 @@ class Project(BaseModel):
         return terminal_text(f'{self.organization_name}/{self.project_name}', keep='')
 
     @property
+    def variables_key_name(self) -> str:
+        """The `/keys` entry for this project's read-variables API key, like `LOGFIRE_VARIABLES_PYDANTIC_CLAI2`."""
+        return re.sub(r'[^A-Z0-9]+', '_', f'LOGFIRE_VARIABLES_{self.organization_name}_{self.project_name}'.upper())
+
+    @property
     def key_name(self) -> str:
         """The `/keys` entry for this project's write token, such as `LOGFIRE_TOKEN_PYDANTIC_CLAI2`."""
         return re.sub(r'[^A-Z0-9]+', '_', f'LOGFIRE_TOKEN_{self.organization_name}_{self.project_name}'.upper())
@@ -104,9 +109,19 @@ class Chosen:
     base_url: str
     project: Project
     account_email: str | None
+    variables_key: KeyReference | None = None
+    """A read-variables API key exchanged from the same sign-in, for fleet control; `None` if Logfire refused."""
+    team: str | None = None
 
 
-async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | None) -> Chosen | None:
+async def run_setup(
+    setup: Setup,
+    *,
+    current: str | None,
+    owned: KeyReference | None,
+    owned_variables: KeyReference | None = None,
+    team: str | None = None,
+) -> Chosen | None:
     """Pick a destination, sign in, pick a project, and save its write token; `None` when cancelled.
 
     `owned` is the key the plugin already uses: setting up the same project again replaces it, but any other
@@ -127,9 +142,42 @@ async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | 
                 span.set('outcome', 'cancelled')
                 return None
             value = await _write_token(http, base_url, user_token, project)
+            variables = await _variables_key(http, base_url, user_token, project)
         name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
+        variables_name: str | None = None
+        if variables is not None:
+            key = variables
+            variables_name = await to_thread.run_sync(
+                lambda: _save(project.variables_key_name, key, owned=owned_variables)
+            )
         span.set('outcome', 'saved')
-    return Chosen(token=KeyReference(name=name), base_url=base_url, project=project, account_email=account_email)
+        span.set('fleet_control', variables is not None)
+    if variables is None:
+        setup.announce('Logfire did not issue a read-variables key, so company config from Logfire stays off.')
+    chosen_team = await run_worker(lambda: pick_team(setup.runners, current=team))
+    return Chosen(
+        token=KeyReference(name=name),
+        base_url=base_url,
+        project=project,
+        account_email=account_email,
+        variables_key=KeyReference(name=variables_name) if variables_name else None,
+        team=team if chosen_team is None else chosen_team or None,
+    )
+
+
+def pick_team(runners: Runners, *, current: str | None) -> str | None:
+    """Optionally name your team, for team-targeted config; `None` keeps the current one, `''` clears it."""
+    typed = runners.run_text(
+        TextInputBuilder('Your team (optional, for team-targeted config from Logfire)')
+        .style(markdown_style())
+        .prompt(current or '')
+        .footer_hint('Enter save (empty clears) - Esc skip')
+        .key_source(menu_key)
+        .build()
+    )
+    if typed.cancelled or not isinstance(typed.value, str):
+        return None
+    return typed.value.strip()
 
 
 def pick_destination(runners: Runners, *, current: str | None) -> str | None:
@@ -248,6 +296,43 @@ async def _write_token(http: httpx.AsyncClient, base_url: str, user_token: str, 
     path = f'/v1/organizations/{project.organization_name}/projects/{project.project_name}/write-tokens/'
     response = await _call(http.post(f'{base_url}{path}', headers={'Authorization': user_token}))
     return _parse(_UserToken, response).token
+
+
+TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange'
+API_KEY_TOKEN_TYPE = 'urn:pydantic:logfire:token-type:api-key'
+VARIABLES_SCOPE = 'project:read_variables'
+
+
+class _ExchangedKey(BaseModel):
+    access_token: str
+
+
+async def _variables_key(http: httpx.AsyncClient, base_url: str, user_token: str, project: Project) -> str | None:
+    """Exchange the sign-in (RFC 8693) for a personal, expiring API key that can only read managed variables.
+
+    Logfire mints it for the signed-in user and the chosen project, bounded by their role; it expires in 90 days.
+    `None` when the server refuses, such as an older self-hosted Logfire: fleet control is optional.
+    """
+    try:
+        response = await http.post(
+            f'{base_url}/api/oauth/token',
+            data={
+                'grant_type': TOKEN_EXCHANGE,
+                'subject_token': user_token,
+                'subject_token_type': 'urn:ietf:params:oauth:token-type:access_token',
+                'requested_token_type': API_KEY_TOKEN_TYPE,
+                'audience': f'{base_url}/{project.organization_name}/{project.project_name}',
+                'scope': VARIABLES_SCOPE,
+            },
+        )
+    except httpx.HTTPError:
+        return None
+    if response.is_error:
+        return None
+    try:
+        return _ExchangedKey.model_validate_json(response.content).access_token
+    except ValidationError:
+        return None
 
 
 async def _call(request: Awaitable[httpx.Response]) -> httpx.Response:
