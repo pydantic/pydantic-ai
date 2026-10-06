@@ -26,6 +26,7 @@ from pydantic_clai2.config.plugin_requirements import (
     withheld,
 )
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
+from pydantic_clai2.models.profiles import provider_of
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
@@ -378,9 +379,9 @@ class PluginLoader(Generic[DepsT]):
         return [name for provider in self.model_providers().values() for name in provider.names]
 
     def settings_model(self, model: str) -> str:
-        """The model whose `/model settings` controls `model` takes: `PREFIX:NAME` as `settings_from:NAME`."""
-        prefix, separator, name = model.partition(':')
-        provider = self.model_providers().get(prefix) if separator else None
+        """The model whose `/model settings` controls `model` takes: `PREFIX[@PROFILE]:NAME` as `settings_from:NAME`."""
+        _, separator, name = model.partition(':')
+        provider = self.model_providers().get(provider_of(model)) if separator else None
         if provider is None or provider.settings_from is None:
             return model
         return f'{provider.settings_from}:{name}'

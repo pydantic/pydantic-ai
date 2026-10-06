@@ -619,6 +619,86 @@ It does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another application's token file
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
 `/login` without a name asks which sign-in to run.
 
+### Several accounts and fallback chains
+
+`/accounts` lists every account you are signed in to, grouped by provider.
+Logins you already had show up on their own.
+
+- **a** adds an account: pick a provider and CLAI fills in a free name, such as
+  `account-2`. Press Enter to keep it, then sign in as usual (browser, device code,
+  connection, or API key).
+- **Enter** on an account signs in to it again, for example after it expired.
+- **r** gives an account a name to show, such as your email.
+- **d** signs out, after asking. For a plugin's account, it only leaves the list;
+  the plugin keeps its own sign-in.
+- **[** and **]** reorder accounts. The order is the order `@*`, and a model
+  without an account, try them in.
+
+Each account shows its current usage as it loads, without holding up the menu:
+`5h 92% · 7d 43%` on the row, and a bar with the reset time for each limit on the
+right. CLAI reads it for ChatGPT/Codex (the five-hour and weekly windows) and
+GitHub Copilot (premium requests); plugins can report their own, as the Claude
+Code plugin does. `…` means it is still loading and `?` that the service did not
+answer; the right-hand panel says why.
+
+When you pick a model in `/model add` and its provider has more than one account,
+CLAI asks which account runs it, or **all accounts**. All accounts saves the model
+as `PROVIDER@*:MODEL`: it runs on the first signed-in account and moves to the next
+when a request fails with a model API error, such as a rate or usage limit. Signing
+in to another account adds it to the rotation, with nothing else to change. If
+every account fails, CLAI lists why each one did.
+
+A model that names no account, such as `claude-code:claude-opus-5-5`, works the
+same way: once its provider has two or more signed-in accounts, it runs on all of
+them in `/accounts` order, as `@*` does. With one, it runs on that one. To run the
+default account alone, write `PROVIDER@default:MODEL`; picking an account in
+`/model add` saves it that way. `/set accounts.pool false` turns this off, so a
+model without an account runs on the default one only, as it did before.
+
+Under the menus, an account other than the default is a profile, written
+`PROVIDER@PROFILE`. You can type it instead:
+
+```text
+/login openai-codex@work         # a second ChatGPT/Codex account
+/login github-copilot@work       # a second GitHub login
+/login openrouter@team           # an OpenRouter browser sign-in or key
+/login vllm@lab                  # another vLLM server
+/login openai@work               # any provider that takes an API key: a /keys entry or a typed key
+/model openai-codex@work:gpt-6-astra
+/model openai-codex@*:gpt-6-astra  # every signed-in Codex account, in /accounts order
+/model openai-codex@default:gpt-6-astra  # the default account alone
+```
+
+The default account is the one without `@PROFILE`. For Codex, Copilot,
+OpenRouter, and vLLM that is the existing login. Providers such as
+`openai` and `anthropic` still read their usual environment variables by default;
+a profile uses the key saved at `/login`. Anything else a provider needs, such as an
+Azure endpoint or an Ollama URL, still comes from the environment, and `/login`
+refuses to save the key until it is set. Plugins can support profiles too, such
+as `/login claude@work` for a plugin's `claude-code` models. A profile name is 1
+to 32 lowercase letters, digits, hyphens, or underscores; `default` names the
+account without a profile, and `/login NAME@default` signs in to it. Each profile's
+credentials are stored separately, the same way as the default login.
+
+A fallback chain does the same across different models or providers, such as Codex
+first and Claude after it. It tries its models in order:
+
+```text
+/chain best openai-codex@*:gpt-6-astra anthropic:claude-sonnet-4-5
+/model chain:best
+/chain                    # list chains
+/chain best               # show one
+/chain remove best
+```
+
+Saving a chain adds `chain:NAME` to `/model`. A chain uses its first model's
+`/model settings` controls and defaults, and saves overrides under
+`chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
+`openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
+instead of falling back, so a missing login is not hidden. Older CLAI builds keep
+the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
+model, and run a model without an account on the default account only.
+
 ## Settings and commands
 
 Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
@@ -640,6 +720,7 @@ values for known settings and unsupported database schema versions still cause a
 /set display.thinking false
 /set run.request_limit 10000
 /set run.tool_retries 3
+/set accounts.pool false
 ```
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
@@ -652,13 +733,14 @@ edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
 While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
-`/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
+`/accounts`, `/theme`, `/spinner`, `/tasks`, `/keys`, `/login`, `/resume`, and the
 `/google_workspace`, `/grain`, and `/pylon` settings menus typed without further
 arguments open right away instead of queueing.
 The turn keeps running: its output is held while the menu is open
 and printed in order when the menu closes. A question from the agent waits for
 the menu to close. Model and run settings saved in the menu apply once the
-running turn ends. `/model settings` edits to the running model apply to its
+running turn ends, and so do account changes: the running turn keeps the
+accounts it started with. `/model settings` edits to the running model apply to its
 next model request in the same turn. `/resume` can browse, rename, and delete
 sessions mid-turn, but a running conversation cannot be swapped out: picking one
 tells you to enter `/resume ID`, which restores it once the turn ends. With
@@ -699,7 +781,7 @@ The currently configured model is kept in the list when upgrading.
 | `/model settings` | Choose a saved model to configure |
 | `/model settings NAME` | Configure `NAME` |
 
-`/add_model` and `/model_settings` still work as deprecated spellings of
+`/model add` and `/model settings` still work as deprecated spellings of
 `/model add` and `/model settings`.
 
 To remove a model you no longer use, highlight it and press **Ctrl+D** or

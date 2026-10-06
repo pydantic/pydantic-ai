@@ -2391,6 +2391,68 @@ Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
 `names`) are added to the saved model list, so `/model` and `/model settings`
 offer them without adding them first. A failed sign-in adds nothing.
 
+### Several accounts: `resolve_profile` and `profile_handler`
+
+Users can sign in to more than one account per provider. An account other than
+the default is a profile: `/login NAME@PROFILE` signs in to it, and
+`PREFIX@PROFILE:MODEL` runs on it. A fallback chain (`/chain`) can then pool
+accounts, moving to the next one when a request fails. To support profiles, set
+both optional fields:
+
+```python
+PROVIDER = ModelProvider(
+    prefix='my-service', resolve=resolve, resolve_profile=resolve_profile, models=('fast', 'smart')
+)
+PluginLogin(name='my-service', handler=sign_in, profile_handler=sign_in_profile, models=PROVIDER.names)
+```
+
+`resolve_profile(NAME, PROFILE)` builds the model for that account, in a worker
+thread like `resolve`. `profile_handler(PROFILE)` signs in to it; on success the
+`models` are saved with the profile, as `PREFIX@PROFILE:NAME`. Keep each profile's
+tokens apart, for example one keyring entry per profile, and keep the default
+profile where it was so existing sign-ins still work. A profile name is 1 to 32
+lowercase letters, digits, hyphens, or underscores, and never `default`, so you can
+keep the default account under that name. CLAI checks it before calling you. Without these fields, a model or sign-in naming a profile fails with a
+message saying the plugin has one account.
+
+Each successful `/login NAME` or `/login NAME@PROFILE` puts the account in
+`/accounts`, under your first model's prefix (`claude-code`, not `claude`), so
+users can add, order, and pick your accounts without typing a profile, and
+`PREFIX@*:MODEL` tries them in that order. So does `PREFIX:MODEL` once two or more
+are listed, unless the user turns `accounts.pool` off; `PREFIX@default:MODEL`
+reaches your `resolve`, never `resolve_profile`. CLAI cannot see your tokens, so it
+lists an account from the time it signed in until the user removes it there;
+removing one does not sign it out of your plugin, and the menu says so. Offer your
+own logout for that.
+
+### Account usage: `usage`
+
+Set `usage` on your `PluginLogin` to show each account's current usage in
+`/accounts`, as CLAI does for ChatGPT/Codex and Copilot. CLAI calls
+`usage(PROFILE)` (`None` for the default account) in the background while the
+menu is open, every account at once, and stops waiting after a few seconds.
+Return an `AccountUsage`: its `windows` (each a `UsageWindow` with a short
+`label`, `used_percent` from 0 to 100, and an optional timezone-aware
+`resets_at`), most pressing first, and its `plan` when you know it. Raise
+`UserError` with a short reason when usage is unavailable; the menu shows it.
+
+```python
+from pydantic_clai2.plugins import AccountUsage, PluginLogin, UsageWindow
+
+
+async def usage(profile: str | None) -> AccountUsage:
+    limits = await my_service.limits(profile)  # your own client, with your tokens
+    return AccountUsage(
+        windows=(UsageWindow(label='5h', used_percent=limits.session, resets_at=limits.session_resets),),
+    )
+
+
+PluginLogin(name='my-service', handler=sign_in, models=PROVIDER.names, usage=usage)
+```
+
+The row shows the first two windows, such as `5h 92% · 7d 43%`; the details
+panel shows a bar and reset time for each.
+
 ## Rules that keep plugins predictable
 
 - Handlers are `async`. There is no sync variant of anything.
@@ -2521,8 +2583,8 @@ checking that the provider serves it, so a wrong name fails on the next prompt.
 `/model add PROVIDER:NAME` does the same. Adding a model also selects it for the
 next prompt. `/model settings [NAME]` edits a model's settings. Tab suggests the
 `add` and `settings` subcommands and added models; model names normally start
-with a provider, so no real model is called `add` or `settings`. `/add_model`
-and `/model_settings` remain as deprecated spellings.
+with a provider, so no real model is called `add` or `settings`. `/model add`
+and `/model settings` remain as deprecated spellings.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
 
