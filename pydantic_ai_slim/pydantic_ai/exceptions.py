@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -16,12 +15,6 @@ from ._warnings import (
     PydanticAIDeprecationWarning as PydanticAIDeprecationWarning,
     UsageExtractionFailedWarning as UsageExtractionFailedWarning,
 )
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
 
 if TYPE_CHECKING:
     from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
@@ -276,9 +269,7 @@ class RunCancelled(AgentRunError):
     asked it to. External cancellation of the task running the agent (`asyncio.Task.cancel()`,
     a timeout scope, workflow cancellation under durable execution) is infrastructure-level and
     keeps propagating as `asyncio.CancelledError` instead — it is never translated into this
-    exception, and when both race, the external cancellation wins. (On Python 3.10, which lacks
-    `Task.uncancel()`, the race cannot be disambiguated and a requested first-party cancellation
-    wins instead.)
+    exception, and when both race, the external cancellation wins.
 
     Everything the run completed before the cancellation took effect — including the partial
     response of an interrupted stream and the results of tool calls that finished — is preserved
@@ -338,11 +329,8 @@ class RunCancelled(AgentRunError):
         Passing a `RunCancelled` directly returns the same instance, providing uniform handling for
         first-party and external cancellation paths.
 
-        Python 3.11+ preserves the exception instance across an `await task` boundary. Python 3.10
-        recreates the `CancelledError` there, but chains the original exception — and the attached
-        run state — via `__context__`, which this method traverses; the chain is attached only to
-        the first `await` of the cancelled task, so later awaits of the same task see an unchained
-        exception. Use `capture_run_messages()` as the fallback when only message history is needed.
+        This method traverses `__context__` to find attached run state. Use
+        `capture_run_messages()` as the fallback when only message history is needed.
         """
         pending = [exc]
         visited: set[int] = set()
@@ -613,7 +601,7 @@ class ModelHTTPError(ModelAPIError):
             return None
 
 
-class FallbackExceptionGroup(ExceptionGroup[Any]):
+class FallbackExceptionGroup(ExceptionGroup[Any]):  # noqa: F821
     """A group of exceptions that can be raised when all fallback models fail."""
 
 

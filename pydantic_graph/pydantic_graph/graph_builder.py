@@ -11,7 +11,6 @@ re-exported from `pydantic_graph` directly.
 from __future__ import annotations as _annotations
 
 import inspect
-import sys
 from collections import Counter, defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
@@ -68,12 +67,6 @@ from pydantic_graph.paths import (
 )
 from pydantic_graph.step import NodeStep, Step, StepContext, StepFunction, StepNode, StreamFunction
 from pydantic_graph.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
-
 
 # -- TypeVars ----------------------------------------------------------------
 
@@ -1125,15 +1118,13 @@ def _is_any_async_iterable(x: Any) -> TypeGuard[AsyncIterable[Any]]:
 
 @contextmanager
 def _unwrap_exception_groups():
-    # I need to use a helper function for this because I can't figure out a way to get pyright
-    # to type-check the ExceptionGroup catching in both 3.13 and 3.10 without emitting type errors in one;
-    # if I try to ignore them in one, I get unnecessary-type-ignore errors in the other
+    # Pyright must see the ungrouped exception, while runtime catches an exception group.
     if TYPE_CHECKING:
         yield
     else:
         try:
             yield
-        except BaseExceptionGroup as e:
+        except BaseExceptionGroup as e:  # noqa: F821
             exception = e.exceptions[0]
             if exception.__cause__ is None:
                 # bizarrely, this prevents recursion errors when formatting the exception for logfire

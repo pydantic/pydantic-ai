@@ -10,7 +10,6 @@ a task function to produce an evaluation report.
 from __future__ import annotations as _annotations
 
 import functools
-import sys
 import time
 import traceback
 import warnings
@@ -52,11 +51,6 @@ from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, Report
 
 if TYPE_CHECKING:
     from pydantic_ai.retries import RetryConfig
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 __all__ = (
     'Case',
@@ -737,7 +731,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             row.evaluators = evaluators
             cases.append(row)
         if errors:
-            raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
+            # Ruff still targets Python 3.10 across the repository.
+            raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])  # noqa: F821
         name = dataset_model.name if dataset_model.name is not None else default_name
         if name is None:
             raise ValueError('Dataset name is required: provide one in the serialized data or via `default_name`.')
