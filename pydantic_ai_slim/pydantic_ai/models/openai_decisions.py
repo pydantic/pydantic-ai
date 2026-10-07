@@ -94,13 +94,13 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
     max_choice_options: ClassVar[int | None] = 255
     """The API takes at most this many options in one pick-one; a 256th is a 400.
 
-    https://developers.openai.com/api/reference/resources/decisions
+    `QuestionParamChoice` in https://github.com/openai/openai-openapi/blob/main/openapi.yaml
     """
 
     max_score_levels: ClassVar[int | None] = 10
     """The API takes at most this many levels in one rubric; an 11th is a 400.
 
-    https://developers.openai.com/api/reference/resources/decisions
+    `QuestionParamScore` in https://github.com/openai/openai-openapi/blob/main/openapi.yaml
     """
 
     _model_name: OpenAIDecisionsModelName = field(repr=False)

@@ -472,6 +472,29 @@ async def test_rubric_over_the_limit(
 
 
 @pytest.mark.vcr
+@pytest.mark.parametrize(
+    ('questions', 'limit'),
+    [
+        pytest.param({'q': ChoiceQuestion(criteria={str(option): None for option in range(256)})}, 255, id='options'),
+        pytest.param({'q': ScoreQuestion(criteria=[None] * 11)}, 10, id='levels'),
+        pytest.param(
+            {f'q{index}': NoulQuestion(instructions='Is this urgent?') for index in range(201)}, 200, id='questions'
+        ),
+    ],
+)
+async def test_api_limits(
+    questions: dict[str, DecisionQuestion], limit: int, allow_model_requests: None, capture_model: OpenAIDecisionsModel
+):
+    """The limits `max_choice_options` and `max_score_levels` keep to, and the question count, which the API checks.
+
+    `decide` is called directly, since an agent run refuses the first two before sending.
+    """
+    with pytest.raises(ModelHTTPError, match=f'maximum length {limit},') as exc_info:
+        await capture_model.decide(DecisionRequest(state='Charged twice.', questions=questions), {})
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.vcr
 async def test_http_error(allow_model_requests: None, openai_api_key: str):
     """A model the API does not serve is an error response, raised for a `FallbackModel` to take over."""
     model = OpenAIDecisionsModel('gpt-5', provider=OpenAIDecisionsProvider(api_key=openai_api_key))

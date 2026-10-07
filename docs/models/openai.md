@@ -566,11 +566,13 @@ agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 ...
 ```
 
-All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only the input tokens. Like every decision model, it [reads no files](decision.md#what-decision-models-cannot-do).
+All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only input tokens on this API, with no cache-read or cache-write charges. The `cost` Pydantic AI reports comes from [genai-prices](https://github.com/pydantic/genai-prices)' prices for `gpt-6-luna`, which price cached input apart, so it can differ from the bill when the API reports cached tokens.
+
+The API also takes inline images, which `OpenAIDecisionsModel` doesn't send yet: like every decision model, it [reads no files](decision.md#what-decision-models-cannot-do).
 
 `timeout`, `extra_headers` and `extra_body` are forwarded to the request, and the other generic settings, such as `temperature`, are ignored. [`OpenAIDecisionsModelSettings`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModelSettings] takes the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
 
-A request has three [limits](https://developers.openai.com/api/reference/resources/decisions), and `OpenAIDecisionsModel` checks the first two before sending it:
+A request has three [limits](https://github.com/openai/openai-openapi/blob/main/openapi.yaml), and `OpenAIDecisionsModel` checks the first two before sending it:
 
 - **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type. A question over the limit raises a [`UserError`][pydantic_ai.exceptions.UserError].
 - **10 levels in one rubric.** A field of eleven or more whole numbers from 0 becomes a [pick-one](decision.md#what-each-field-type-does) instead.
