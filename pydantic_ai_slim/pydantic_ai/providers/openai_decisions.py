@@ -18,10 +18,13 @@ class OpenAIDecisionsProvider(OpenAIProvider):
     Takes the same arguments as [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] and reads the same
     `OPENAI_API_KEY`, but profiles a model ID such as `gpt-6-luna` as a decision model for
     [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel], rather than as the Responses
-    API model `OpenAIProvider` takes it for.
+    API model `OpenAIProvider` takes it for. Its own name keeps the decision model's responses apart from the
+    Responses API's in a message history, and makes `openai-decisions:<model>` the model ID.
     """
 
-    _model_id_namespace = 'openai-decisions'
+    @property
+    def name(self) -> str:
+        return 'openai-decisions'
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:

@@ -1,5 +1,5 @@
 ---
-description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, with native tools, background mode, conversations and compaction."
+description: "Use OpenAI GPT models with Pydantic AI via the Responses, Chat Completions or Decisions API, with native tools, background mode, conversations and compaction."
 ---
 
 # OpenAI
@@ -539,7 +539,7 @@ agent = Agent(model)
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
 
-## Decisions API
+## Decisions API {#decisions-api}
 
 OpenAI's Decisions API runs a GPT model as a [decision model](decision.md): it answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text. [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page.
 
@@ -568,15 +568,15 @@ agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 
 All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only the input tokens. Like every decision model, it [reads no files](decision.md#what-decision-models-cannot-do).
 
-`timeout`, `extra_headers` and `extra_body` are forwarded to the request, and the other generic settings, such as `temperature`, are ignored. [`OpenAIDecisionsModelSettings`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModelSettings] adds the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
+`timeout`, `extra_headers` and `extra_body` are forwarded to the request, and the other generic settings, such as `temperature`, are ignored. [`OpenAIDecisionsModelSettings`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModelSettings] takes the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
 
-A request has three limits, and `OpenAIDecisionsModel` checks the first two before sending it:
+A request has three [limits](https://developers.openai.com/api/reference/resources/decisions), and `OpenAIDecisionsModel` checks the first two before sending it:
 
 - **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type. A question over the limit raises a [`UserError`][pydantic_ai.exceptions.UserError].
 - **10 levels in one rubric.** A field of eleven or more whole numbers from 0 becomes a [pick-one](decision.md#what-each-field-type-does) instead.
 - **200 questions in one request.** The API rejects a request over the limit with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over.
 
-The model can decline a question, such as one asking it to infer a customer's disability or religion. A declined question fails the whole request with a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. That holds even when the model answered the other questions, or when the question belongs to a route the model did not pick.
+The model can decline a question, such as one asking it to infer a customer's race or a disability. A declined question fails the run with a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], even when the model answered the other questions, or when the question belongs to a route the model did not pick. A question declined while filling a route the model already picked fails the run with an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] that names the route.
 
 !!! note "Measure on your own data"
     A threshold tuned on another decision model does not carry over to this one. Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.

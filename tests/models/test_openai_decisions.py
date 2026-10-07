@@ -1,7 +1,8 @@
 """Tests for `OpenAIDecisionsModel`.
 
 Tests marked `vcr` run against recordings of the live API, and assert what the code sends with `request_capture`,
-which sees the request on replay too. The rest mock the transport, each saying why it can't be a recording.
+which sees the request on replay too. The rest send no request, or mock the transport and say why it can't be a
+recording.
 """
 
 from __future__ import annotations as _annotations
@@ -10,11 +11,11 @@ import json
 from collections.abc import Mapping
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx2
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import (
     Agent,
@@ -25,13 +26,16 @@ from pydantic_ai import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
-from pydantic_ai.models import ModelRequestParameters, infer_model
+from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model
 from pydantic_ai.models.decision import (
     ChoiceQuestion,
     DecisionQuestion,
     DecisionRequest,
+    DecisionResponse,
+    NoulAnswer,
     NoulCriteria,
     NoulQuestion,
     ScoreQuestion,
@@ -40,7 +44,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import IsDatetime, IsStr, RequestCapture, TestEnv, try_import
 from .test_system_one import Captured, Frustration, Handler, Ticket
 
 with try_import() as imports_successful:
@@ -72,7 +76,7 @@ def decisions(*answers: Mapping[str, object]) -> httpx2.Response:
     """
     usage = {
         'input_tokens': 396,
-        'input_tokens_details': {'cached_tokens': 0, 'cache_write_tokens': 0},
+        'input_tokens_details': {'cached_tokens': 128, 'cache_write_tokens': 0},
         'output_tokens': 0,
         'output_tokens_details': {'reasoning_tokens': 0},
         'total_tokens': 396,
@@ -114,7 +118,7 @@ def test_init(env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     model = OpenAIDecisionsModel('gpt-6-luna')
     assert model.model_name == 'gpt-6-luna'
-    assert model.system == 'openai'
+    assert model.system == 'openai-decisions'
     assert model.base_url == 'https://api.openai.com/v1/'
     assert isinstance(model.client, AsyncOpenAI)
     # The ID round-trips, where `openai:gpt-6-luna` would be a Responses API model.
@@ -136,20 +140,32 @@ async def test_output_type(
     result = await agent.run('My invoice was charged twice and nobody answers the phone!')
 
     assert result.output == Ticket(urgent=True, area='billing')
-    assert result.response.parts == [ToolCallPart('final_result', result.output.model_dump(), tool_call_id=IsStr())]
-    assert result.response.model_name == 'gpt-6-luna'
-    assert result.response.provider_name == 'openai'
-    assert result.response.usage == snapshot(
-        RequestUsage(input_tokens=312, output_reasoning_tokens=0, cost=Decimal('0.0000312'))
-    )
-    assert result.response.provider_details == snapshot(
-        {
-            'confidence': {'urgent': 0.06, 'area': 1.0},
-            'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}},
-            'scores': {},
-        }
+    assert result.response == snapshot(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'urgent': True, 'area': 'billing'},
+                    tool_call_id=IsStr(),
+                )
+            ],
+            usage=RequestUsage(input_tokens=312, output_reasoning_tokens=0, cost=Decimal('0.0000312')),
+            model_name='gpt-6-luna',
+            timestamp=IsDatetime(),
+            provider_name='openai-decisions',
+            provider_url='https://api.openai.com/v1/',
+            provider_details={
+                'confidence': {'urgent': 0.06, 'area': 1.0},
+                'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}},
+                'scores': {},
+            },
+            finish_reason='tool_call',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
     )
     assert request_capture.paths == ['/v1/decisions']
+    assert request_capture.headers[0]['user-agent'] == get_user_agent()
     assert request_capture.body('/decisions') == snapshot(
         {
             'model': 'gpt-6-luna',
@@ -341,6 +357,121 @@ async def test_refusal(allow_model_requests: None, capture_model: OpenAIDecision
 
 
 @pytest.mark.vcr
+async def test_refusal_on_a_route_not_taken(allow_model_requests: None, capture_model: OpenAIDecisionsModel):
+    """Every route's fields are asked beside the route question, so a refusal fails the step whichever route is picked."""
+
+    def record_profile(disabled: bool) -> None:
+        """Record the customer's profile.
+
+        Args:
+            disabled: Does the customer have a disability?
+        """
+
+    agent = Agent(capture_model, output_type=Ticket, tools=[record_profile])
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        await agent.run('My invoice was charged twice and nobody answers the phone!')
+    assert exc_info.value.message == snapshot(
+        "Content filter triggered. The OpenAI Decisions API declined to answer: 'record_profile.disabled'"
+    )
+    assert json.loads(exc_info.value.body or '')['answers'] == snapshot(
+        [
+            {'type': 'predicate', 'name': 'Ticket.urgent', 'probability': 0.76},
+            {
+                'type': 'choice',
+                'name': 'Ticket.area',
+                'choice': 'billing',
+                'probabilities': [{'value': 'billing', 'probability': 1.0}, {'value': 'bug', 'probability': 0.0}],
+                'confidence': 1.0,
+            },
+            {'type': 'refusal', 'name': 'record_profile.disabled'},
+            {
+                'type': 'choice',
+                'name': 'route',
+                'choice': 'Ticket',
+                'probabilities': [
+                    {'value': 'Ticket', 'probability': 1.0},
+                    {'value': 'record_profile', 'probability': 0.0},
+                ],
+                'confidence': 1.0,
+            },
+        ]
+    )
+
+
+@pytest.mark.vcr
+async def test_refusal_while_filling_a_picked_route(allow_model_requests: None, capture_model: OpenAIDecisionsModel):
+    """The one route left is filled in a request of its own, and a refusal there fails naming the route."""
+    record_profile = ToolDefinition(
+        name='record_profile',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'white': {'type': 'boolean', 'description': "Is the customer's race white?"}},
+            'required': ['white'],
+        },
+    )
+    escalate = ToolDefinition(name='escalate', parameters_json_schema={'type': 'object'})
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('My invoice was charged twice and nobody answers the phone!'),
+        ModelResponse(parts=[ToolCallPart('escalate', {}, tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart('escalate', 'Escalated.', tool_call_id='call_1')]),
+    ]
+    parameters = ModelRequestParameters(function_tools=[record_profile, escalate], allow_text_output=False)
+
+    with pytest.raises(
+        UnexpectedModelBehavior, match="selected 'record_profile', but failed while filling its fields"
+    ) as exc_info:
+        await capture_model.request(messages, None, parameters)
+    assert isinstance(exc_info.value.__cause__, ContentFilterError)
+
+
+Severity = Annotated[
+    Literal[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    WithJsonSchema(
+        {'type': 'integer', 'anyOf': [{'const': level, 'description': f'{level} of 10'} for level in range(11)]}
+    ),
+]
+
+
+class Rating(BaseModel):
+    """Rate a support ticket."""
+
+    severity: Severity = Field(description='How severe is the problem?')
+
+
+@pytest.mark.vcr
+async def test_rubric_over_the_limit(
+    allow_model_requests: None, capture_model: OpenAIDecisionsModel, request_capture: RequestCapture
+):
+    """Eleven levels are one more than a rubric takes, so they are asked as a pick-one."""
+    result = await Agent(capture_model, output_type=Rating).run('Checkout is down for every customer.')
+
+    assert result.output == snapshot(Rating(severity=10))
+    assert request_capture.body('/decisions')['questions'] == snapshot(
+        [
+            {
+                'type': 'choice',
+                'name': 'severity',
+                'instructions': '{"field": "severity", "question": "How severe is the problem?", "goal": "Rate a support ticket."}',
+                'choices': [
+                    {'value': '0', 'description': '0 of 10'},
+                    {'value': '1', 'description': '1 of 10'},
+                    {'value': '2', 'description': '2 of 10'},
+                    {'value': '3', 'description': '3 of 10'},
+                    {'value': '4', 'description': '4 of 10'},
+                    {'value': '5', 'description': '5 of 10'},
+                    {'value': '6', 'description': '6 of 10'},
+                    {'value': '7', 'description': '7 of 10'},
+                    {'value': '8', 'description': '8 of 10'},
+                    {'value': '9', 'description': '9 of 10'},
+                    {'value': '10', 'description': '10 of 10'},
+                ],
+            }
+        ]
+    )
+
+
+@pytest.mark.vcr
 async def test_http_error(allow_model_requests: None, openai_api_key: str):
     """A model the API does not serve is an error response, raised for a `FallbackModel` to take over."""
     model = OpenAIDecisionsModel('gpt-5', provider=OpenAIDecisionsProvider(api_key=openai_api_key))
@@ -360,7 +491,7 @@ async def test_http_error(allow_model_requests: None, openai_api_key: str):
 
 
 async def test_limits(allow_model_requests: None):
-    """More routes than the API's 255 options is refused before a request is sent, so there is nothing to record."""
+    """More routes than the API's 255 options are refused before a request is sent, so there is nothing to record."""
     captured = Captured(ticket_answers)
     tools = [ToolDefinition(name=f'tool_{index}', parameters_json_schema={'type': 'object'}) for index in range(256)]
 
@@ -427,17 +558,23 @@ async def test_question_shapes(question: DecisionQuestion, sent: dict[str, objec
     assert captured.body['questions'] == [sent]
 
 
-async def test_request_id(allow_model_requests: None):
+async def test_request_id_and_cached_tokens(allow_model_requests: None):
     """`decide` is the only place the request ID reaches: the run's response is built from the answers.
 
-    Not recorded: the cassettes strip the `x-request-id` header it comes from.
+    Not recorded: the cassettes strip the `x-request-id` header it comes from, and none read cached tokens.
     """
     response = await mock_model(lambda request: decisions(URGENT)).decide(
         DecisionRequest(state='Down since 9am.', questions={'urgent': NoulQuestion(instructions='Is this urgent?')}), {}
     )
 
-    assert response.provider_response_id == 'req_123'
-    assert response.model_name == 'gpt-6-luna'
+    assert response == snapshot(
+        DecisionResponse(
+            answers={'urgent': NoulAnswer(noul=0.91)},
+            model_name='gpt-6-luna',
+            usage=RequestUsage(input_tokens=396, cache_read_tokens=128, output_reasoning_tokens=0),
+            provider_response_id='req_123',
+        )
+    )
 
 
 async def test_settings_are_forwarded(allow_model_requests: None):
@@ -459,6 +596,7 @@ async def test_settings_are_forwarded(allow_model_requests: None):
 
 
 async def test_extra_body_must_be_a_mapping(allow_model_requests: None):
+    """Not recorded: refused before a request is sent."""
     captured = Captured(ticket_answers)
     agent = Agent(mock_model(captured), output_type=Ticket)
     with pytest.raises(UserError, match='`extra_body` must be a mapping'):

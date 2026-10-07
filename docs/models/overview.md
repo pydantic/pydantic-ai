@@ -13,7 +13,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | Provider and setup | Service | Model selection |
 | --- | --- | --- |
 | [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
-| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:`, `openai-decisions:` |
+| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
 | [Anthropic](anthropic.md) | Model developer | `anthropic:` |
 | [Google / Gemini API](google.md) | Model developer | `google:` |
 | [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
@@ -35,6 +35,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
 | [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
+| [OpenAI Decisions API](openai.md#decisions-api) | [Decision model](decision.md) | `openai-decisions:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |

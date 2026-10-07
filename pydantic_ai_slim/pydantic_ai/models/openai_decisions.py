@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Annotated, Literal, NotRequired, TypeAlias, assert_never
+from typing import Annotated, ClassVar, Literal, NotRequired, TypeAlias, assert_never
 
 import httpx2
 from pydantic import Field, JsonValue, TypeAdapter
@@ -91,11 +91,17 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    max_choice_options = 255
-    """The API takes at most this many options in one pick-one; a 256th is a 400."""
+    max_choice_options: ClassVar[int | None] = 255
+    """The API takes at most this many options in one pick-one; a 256th is a 400.
 
-    max_score_levels = 10
-    """The API takes at most this many levels in one rubric; an 11th is a 400."""
+    https://developers.openai.com/api/reference/resources/decisions
+    """
+
+    max_score_levels: ClassVar[int | None] = 10
+    """The API takes at most this many levels in one rubric; an 11th is a 400.
+
+    https://developers.openai.com/api/reference/resources/decisions
+    """
 
     _model_name: OpenAIDecisionsModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -140,11 +146,6 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         """The system / model provider."""
         return self._provider.name
 
-    @property
-    def model_id(self) -> str:
-        """The fully qualified model name, under `openai-decisions:`, as `openai:` takes the ID for the Responses API."""
-        return f'{self._provider.model_id_namespace}:{self._model_name}'
-
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
         body = _DecisionsRequest(
@@ -154,7 +155,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         )
         options = _request_options(model_settings)
         with _map_api_errors(self._model_name, self._provider.model_id_namespace):
-            # TODO: call `client.decisions.create`, added in `openai` 3.26.0, once the lock's 7-day cooldown allows it.
+            # Not `client.decisions.create`, which needs `openai>=3.26.0`, above this package's floor.
             response = await self.client.post('/decisions', cast_to=httpx2.Response, body=body, options=options)
 
         try:
@@ -167,12 +168,12 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             raise UnexpectedModelBehavior(
                 'Invalid response from the OpenAI Decisions API: answer names do not match the questions', response.text
             )
-        if refused := [answer.name for answer in parsed.answers if isinstance(answer, _Refusal)]:
+        answers = {answer.name: answer.answer() for answer in parsed.answers if not isinstance(answer, _Refusal)}
+        if refused := [name for name in request.questions if name not in answers]:
             raise ContentFilterError(
                 f'Content filter triggered. The OpenAI Decisions API declined to answer: {", ".join(map(repr, refused))}',
                 response.text,
             )
-        answers = {answer.name: answer.answer() for answer in parsed.answers if not isinstance(answer, _Refusal)}
         for name, answer in answers.items():
             if not _allows(request.questions[name], answer):
                 raise UnexpectedModelBehavior(
