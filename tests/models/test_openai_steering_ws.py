@@ -15,6 +15,7 @@ from pydantic_ai import (
     RunContext,
     SessionStateTypeAdapter,
     ToolOutput,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
@@ -379,8 +380,8 @@ async def test_native_parent_hooks_preserve_recoverable_history(peer: Peer, stre
 
         with anyio.fail_after(10), pytest.raises(ValueError if mutation == 'error' else UserError):
             if stream:
-                async with session.run_stream('Start', event_stream_handler=handle) as result:
-                    await result.get_output()
+                async with session.run_stream('Start', event_stream_handler=handle):
+                    assert False, 'invalid native continuation must not yield a result'
             else:
                 await session.run('Start', event_stream_handler=handle)
         state = session.state
@@ -429,8 +430,8 @@ async def test_native_tool_continuation_rejects_model_switch_before_request(peer
 
         with anyio.fail_after(10), pytest.raises(UserError, match=r'native|steering'):
             if stream:
-                async with session.run_stream('Start', event_stream_handler=handle) as result:
-                    await result.get_output()
+                async with session.run_stream('Start', event_stream_handler=handle):
+                    assert False, 'invalid native continuation must not yield a result'
             else:
                 await session.run('Start', event_stream_handler=handle)
         assert replacement.last_model_request_parameters is None
@@ -439,7 +440,7 @@ async def test_native_tool_continuation_rejects_model_switch_before_request(peer
 
 
 @pytest.mark.parametrize('stream', [False, True])
-@pytest.mark.parametrize('policy', ['cache', 'skip', 'wrapper'])
+@pytest.mark.parametrize('policy', ['cache', 'skip', 'wrapper', 'history'])
 async def test_native_tool_continuation_middleware(peer: Peer, stream: bool, policy: str):
     class Middleware(AbstractCapability[None]):
         async def wrap_model_request(
@@ -453,7 +454,10 @@ async def test_native_tool_continuation_middleware(peer: Peer, stream: bool, pol
             if ctx.run_step == 2:
                 if policy == 'skip':
                     raise SkipModelRequest(ModelResponse(parts=[TextPart('cached')]))
-                if policy == 'wrapper':
+                if policy == 'history':
+                    request_context.messages = [request_context.messages[-1]]
+                else:
+                    assert policy == 'wrapper'
                     request_context.model = WrapperModel(request_context.model)
             return request_context
 
@@ -490,7 +494,7 @@ async def test_native_tool_continuation_middleware(peer: Peer, stream: bool, pol
             if policy == 'wrapper':
                 assert await run() == 'Updated'
             else:
-                with pytest.raises(UserError, match='native steering'):
+                with pytest.raises(UserError, match='native'):
                     await run()
         assert len(peer.requests) == (3 if policy == 'wrapper' else 2)
         assert session.state.steering[0].status == ('committed' if policy == 'wrapper' else 'uncertain')
@@ -550,17 +554,13 @@ async def test_native_failed_exchange_retains_input(peer: Peer, failure: str):
         ],
     ]
     agent = Agent(peer.model(), deps_type=type(None), model_settings=OpenAIResponsesModelSettings(openai_steering=True))
-    submitted = False
     async with agent.session() as session:
 
         async def handle(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
-            nonlocal submitted
-            async for event in events:
-                if isinstance(event, PartStartEvent) and not submitted:
-                    submitted = True
-                    await ctx.steer('Keep this')
-                    if failure == 'cancelled':
-                        raise ValueError('Consumer stopped')
+            assert isinstance(await anext(aiter(events)), PartStartEvent)
+            await ctx.steer('Keep this')
+            if failure == 'cancelled':
+                raise ValueError('Consumer stopped')
 
         with pytest.raises(ValueError if failure == 'cancelled' else ModelAPIError):
             await session.run('Start', event_stream_handler=handle)
@@ -629,3 +629,79 @@ async def test_native_invalid_content_does_not_create_delivery(peer: Peer):
         assert (await session.run('Start', event_stream_handler=handle)).output == 'Hello'
         assert session.state.steering == []
         assert len(peer.requests) == 1
+
+
+@pytest.mark.parametrize('failure', [None, 'consumer', 'disconnect'])
+async def test_native_successor_can_be_driven_by_graph_iteration(peer: Peer, failure: str | None):
+    """After streaming the parent, callers can drive the successor with ordinary graph steps."""
+    initial = text_frames('resp_a', 'Original')
+    successor = text_frames('resp_b', 'Updated')
+    peer.scripts = [
+        initial[:2],
+        [acceptance(), initial[-1], *successor[:2], None]
+        if failure == 'disconnect'
+        else [acceptance(), initial[-1], *successor],
+    ]
+    agent = Agent(peer.model(), model_settings=OpenAIResponsesModelSettings(openai_steering=True))
+    async with agent.session() as session:
+        async with session.iter('Start') as run:
+            first_node = run.next_node
+            assert Agent.is_user_prompt_node(first_node)
+            node = await run.next(first_node)
+            assert Agent.is_model_request_node(node)
+            async with node.stream(run.ctx) as events:
+                async for event in events:
+                    if isinstance(event, PartStartEvent):
+                        await session.steer('New requirement')
+            node = await run.next(node)
+            assert Agent.is_call_tools_node(node)
+            node = await run.next(node)
+            assert Agent.is_model_request_node(node)
+            if failure == 'consumer':
+                with pytest.raises(ValueError, match='consumer stopped'):
+                    async with node.stream(run.ctx) as events:
+                        assert isinstance(await anext(aiter(events)), PartStartEvent)
+                        raise ValueError('consumer stopped')
+            elif failure == 'disconnect':
+                with pytest.raises(ModelAPIError):
+                    await run.next(node)
+            else:
+                node = await run.next(node)
+                assert Agent.is_call_tools_node(node)
+                await run.next(node)
+                assert run.result is not None
+                assert run.result.output == 'Updated'
+        state = session.state
+        assert state.steering[0].status == 'committed'
+        assert state.conversation.usage.requests == 2
+        assert state.conversation.messages[-1].parts == [TextPart('Updated', id='msg_resp_b', provider_name='openai')]
+        assert [body['type'] for _, body in peer.requests] == ['response.create', 'response.steer']
+
+
+@pytest.mark.parametrize('failure', ['unsolicited', 'wrong_parent', 'rejected_with_id'])
+async def test_native_protocol_errors_do_not_lose_delivery_state(peer: Peer, failure: str):
+    event = acceptance()
+    if failure == 'wrong_parent':
+        event['steer']['previous_response_id'] = 'unrelated'
+    elif failure == 'rejected_with_id':
+        event['type'] = 'response.steer.failed'
+        event['error'] = {'code': 'invalid_input', 'message': 'Rejected input', 'type': 'invalid_request_error'}
+    initial = text_frames('resp_a', 'Original')
+    peer.scripts = [[event]] if failure == 'unsolicited' else [initial[:2], [event]]
+    agent = Agent(peer.model(), deps_type=type(None), model_settings=OpenAIResponsesModelSettings(openai_steering=True))
+
+    async def handle(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            assert isinstance(event, PartStartEvent)
+            await ctx.steer('Keep this input')
+
+    async with agent.session() as session:
+        with pytest.raises(ModelAPIError if failure == 'rejected_with_id' else UnexpectedModelBehavior):
+            await session.run('Start', event_stream_handler=handle)
+        if failure == 'unsolicited':
+            assert session.state.steering == []
+        else:
+            (delivery,) = session.state.steering
+            assert delivery.status == ('failed' if failure == 'rejected_with_id' else 'uncertain')
+            assert delivery.provider_id == ('steer_1' if failure == 'rejected_with_id' else None)
+            assert session.state.recover(steering={delivery.delivery_id: 'replay'}).pending

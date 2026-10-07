@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import nullcontext
 from copy import deepcopy
 from typing import Literal
@@ -129,8 +129,8 @@ async def test_failed_model_delivery_does_not_erase_tool_completion(stream: bool
     async with agent.session() as session:
         with pytest.raises(RuntimeError, match='delivery lost'):
             if stream:
-                async with session.run_stream('call') as result:
-                    await result.get_output()
+                async with session.run_stream('call'):
+                    assert False, 'failed delivery must not yield a stream'
             else:
                 await session.run('call')
         (operation,) = session.state.operations
@@ -149,11 +149,10 @@ async def test_realtime_preserves_completed_result_while_delivery_fails(failure:
 
     class Connection(BlockingRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ToolResult):
-                sending.set()
-                await release.wait()
-                raise RuntimeError('socket write failed')
-            await super().send(content)
+            assert isinstance(content, ToolResult)
+            sending.set()
+            await release.wait()
+            raise RuntimeError('socket write failed')
 
     connection = Connection([ToolCall(tool_name='value', tool_call_id='call', args='{}'), ResponseDone()])
     agent = Agent()
@@ -233,7 +232,7 @@ async def test_unconsumed_stream_does_not_confirm_result_delivery():
             yield {0: DeltaToolCall(name='value', json_args='{}', tool_call_id='call')}
         else:
             yield 'first'
-            yield 'second'
+            assert False, 'an abandoned stream must not consume more output'
 
     agent = Agent(FunctionModel(stream_function=streamed))
 
@@ -309,10 +308,9 @@ async def test_provider_cancellation_during_delivery_emits_actual_completion(ord
 
     class Connection(FakeRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ToolResult):
-                sending.set()
-                await asyncio.Event().wait()
-            await super().send(content)
+            assert isinstance(content, ToolResult)
+            sending.set()
+            await asyncio.Event().wait()
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_name='value', tool_call_id='call', args='{}')
@@ -458,15 +456,17 @@ async def test_partial_output_processing_is_unresolved_until_final_validation(ab
 
 @pytest.mark.parametrize('strategy', ['early', 'graceful', 'exhaustive'])
 @pytest.mark.parametrize('retry', [False, True])
+@pytest.mark.parametrize('duplicate_id', [False, True])
+@pytest.mark.parametrize('stream', [False, True])
 async def test_output_operation_status_matches_selected_history(
-    strategy: Literal['early', 'graceful', 'exhaustive'], retry: bool
+    strategy: Literal['early', 'graceful', 'exhaustive'], retry: bool, duplicate_id: bool, stream: bool
 ):
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
                     ToolCallPart('final_result', {'value': 1}, tool_call_id='first'),
-                    ToolCallPart('final_result', {'value': 2}, tool_call_id='second'),
+                    ToolCallPart('final_result', {'value': 2}, tool_call_id='first' if duplicate_id else 'second'),
                     ToolCallPart('work', {}, tool_call_id='work'),
                 ]
             )
@@ -478,7 +478,16 @@ async def test_output_operation_status_matches_selected_history(
         calls.append(value)
         return value
 
-    agent = Agent(FunctionModel(respond), output_type=[str, finish], end_strategy=strategy)
+    async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        yield {
+            0: DeltaToolCall(name='final_result', json_args='{"value":1}', tool_call_id='first'),
+            1: DeltaToolCall(
+                name='final_result', json_args='{"value":2}', tool_call_id='first' if duplicate_id else 'second'
+            ),
+            2: DeltaToolCall(name='work', json_args='{}', tool_call_id='work'),
+        }
+
+    agent = Agent(FunctionModel(respond, stream_function=streamed), output_type=[str, finish], end_strategy=strategy)
 
     @agent.tool_plain
     async def work() -> str:
@@ -487,7 +496,11 @@ async def test_output_operation_status_matches_selected_history(
         return 'done'
 
     async with agent.session() as session:
-        await session.run('finish')
+        if stream:
+            async with session.run_stream('finish') as result:
+                assert await result.get_output() == 1
+        else:
+            assert (await session.run('finish')).output == ('retried' if retry and strategy != 'early' else 1)
         state = session.state
     assert sorted(calls) == ([1, 2] if strategy == 'exhaustive' else [1])
     returns = [p for m in state.conversation.messages for p in m.parts if isinstance(p, ToolReturnPart)]
@@ -495,9 +508,19 @@ async def test_output_operation_status_matches_selected_history(
     assert len(output_operations) == len(calls)
     for op in output_operations:
         assert op.execution == 'completed'
+        if op.call_index == 0:
+            expected = (
+                'Output not used as the final result - addressing tool retries from this round first.'
+                if retry and strategy != 'early' and not stream
+                else 'Final result processed.'
+            )
+        else:
+            expected = 'Output tool processed, but its value will not be the final result of the agent run.'
+        assert isinstance(op.result[0].parts[0], ToolReturnPart)
+        assert op.result[0].parts[0].content == expected
         part = op.result[0].parts[0]
         assert part in returns
-        assert op.delivery == ('committed' if retry and strategy != 'early' else 'ready')
+        assert op.delivery == ('committed' if retry and strategy != 'early' and not stream else 'ready')
     assert state.recover().operations == state.operations
 
 
@@ -512,8 +535,7 @@ async def test_output_cancellation_requires_explicit_reconciliation(stream: bool
         calls += 1
         checkpoint = session.state
         started.set()
-        await anyio.sleep_forever()
-        return value
+        return await asyncio.Future[int]()
 
     agent = Agent(TestModel(), output_type=finish)
     async with agent.session() as session:
@@ -622,8 +644,12 @@ async def test_iter_final_output_execution_records_full_arguments_after_partial_
                 async for node in run:
                     if Agent.is_model_request_node(node):
                         async with node.stream(run.ctx) as stream:
-                            async for _ in stream.stream_output(debounce_by=None):
-                                break
+                            output = stream.stream_output(debounce_by=None)
+                            try:
+                                await anext(output)
+                            finally:
+                                assert isinstance(output, AsyncGenerator)
+                                await output.aclose()
                             await stream.drain()
         (operation,) = session.state.operations
         assert operation.execution == 'interrupted'

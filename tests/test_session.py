@@ -15,7 +15,7 @@ from pydantic import TypeAdapter
 from pydantic_ai import Agent, Conversation, RunCancelled, SessionStateTypeAdapter, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -211,10 +211,9 @@ async def test_session_close_cancels_and_drains_running_child():
     async def blocked(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         started.set()
         try:
-            await anyio.sleep_forever()
+            return await asyncio.Future[ModelResponse]()
         finally:
             finished.set()
-        return ModelResponse([TextPart('unreachable')])
 
     async def run() -> None:
         try:
@@ -343,13 +342,12 @@ async def test_session_external_cancellation_finishes_request_cleanup_before_mod
     async def blocked(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         started.set()
         try:
-            await anyio.sleep_forever()
+            return await asyncio.Future[ModelResponse]()
         finally:
             with anyio.CancelScope(shield=True):
                 cleanup_started.set()
                 await allow_cleanup.wait()
                 order.append('request cleaned up')
-        return ModelResponse([TextPart('unreachable')])
 
     class ResourceModel(FunctionModel):
         async def __aexit__(self, *args: Any):

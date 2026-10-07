@@ -545,7 +545,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             request = _messages.ModelRequest(parts=[part], run_id=state.run_id, conversation_id=state.conversation_id)
             if operation.execution == 'running':
                 _operations.apply(state.tool_operations, operation_id, _operations.CompleteTool([request]))
-            elif operation.execution == 'completed':
+            else:
+                assert operation.execution == 'completed'
                 _operations.apply(state.tool_operations, operation_id, _operations.SetOutputResult([request]))
         yield from _emit_output_tool_events(call, part, args_valid=args_valid)
 
@@ -630,7 +631,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _run_output(self, call: _messages.ToolCallPart) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Run a single output tool call (or stub it if a final result was already chosen)."""
-        if self.final_result is not None and self.final_result.tool_call_id == call.tool_call_id:
+        if (
+            self.final_result is not None
+            and self.winning_output_part is None
+            and self.final_result.tool_call_id == call.tool_call_id
+        ):
+            # A streamed-in result is emitted once; a sibling may reuse its provider call ID.
             for event in self._emit_winning_output(call):
                 yield event
         elif self.final_result is not None:
@@ -1078,13 +1084,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # The emitted event keeps its original status; persisted execution facts must instead
         # match the final request that will actually be delivered. Identity also handles
         # providers that reuse a call ID within one response.
-        for operation in self.ctx.state.tool_operations.values():
-            if operation.result and operation.result[0].parts[0] is self.winning_output_part:
-                request = dataclasses.replace(operation.result[0], parts=[replacement])
-                _operations.apply(
-                    self.ctx.state.tool_operations, operation.operation_id, _operations.SetOutputResult([request])
-                )
-                break
+        operation = next(
+            operation
+            for operation in self.ctx.state.tool_operations.values()
+            if operation.result and operation.result[0].parts[0] is self.winning_output_part
+        )
+        request = dataclasses.replace(operation.result[0], parts=[replacement])
+        _operations.apply(
+            self.ctx.state.tool_operations, operation.operation_id, _operations.SetOutputResult([request])
+        )
         self.final_result = None
 
     async def _finalize_deferred(self) -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -1330,6 +1338,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                 output_results[i] = _OutputCallResult(
                     call=self.tool_calls[i], args_valid=True, final_result=self.final_result
                 )
+                break
 
         # Segment by barriers: a `sequential=True` tool (or run-scoped 'sequential' mode) runs alone.
         # Pre-committed streamed outputs have no task to launch, so they're excluded from segmentation.
@@ -1436,7 +1445,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     # Every output index is populated above.
                     if r is None:
                         continue  # pragma: no cover
-                    is_winner = self.final_result is not None and r.call.tool_call_id == self.final_result.tool_call_id
+                    is_winner = self.final_result is not None and r.final_result is self.final_result
                     if is_winner and self.final_result_was_set_externally:
                         # Streamed-in winner: record "processed" without claiming it was selected here.
                         for event in self._emit_winning_output(r.call):

@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack
 from dataclasses import replace
 from typing import Literal
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, Conversation, RunContext, UserError
@@ -233,9 +234,23 @@ async def test_session_steering_uses_the_active_callback_context():
 
     async with agent.session() as session:
         await session.run('call')
-        async with session.iter('next') as run:
+        active, attempted = anyio.Event(), anyio.Event()
+
+        async def steer_from_outside_run() -> None:
+            await active.wait()
             with pytest.raises(UserError, match='active, steering-enabled'):
-                await run.steer('not enabled')
+                await session.steer('not enabled')
+            attempted.set()
+
+        async with anyio.create_task_group() as tasks:
+            # A UI producer created before run entry does not inherit that run's context.
+            tasks.start_soon(steer_from_outside_run)
+            async with session.iter('next') as run:
+                active.set()
+                with pytest.raises(UserError, match='active, steering-enabled'):
+                    await run.steer('not enabled')
+                with anyio.fail_after(10):
+                    await attempted.wait()
 
 
 async def test_session_enqueue_cannot_bypass_a_context_queue_guard():

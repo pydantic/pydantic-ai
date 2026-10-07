@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -13,11 +14,13 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, ModelAPIError, ModelHTTPError, ModelRequest, ModelResponse, UserError, UserPromptPart
+from pydantic_ai._steering import SteeringController
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage
 
 from ..conftest import try_import
 
@@ -30,6 +33,7 @@ with try_import() as imports_successful:
     from websockets.exceptions import ConnectionClosed
     from websockets.http11 import Request, Response
 
+    from pydantic_ai.models._openai_responses_ws import ResponsesWebSocket
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -374,3 +378,63 @@ async def test_missing_previous_response_is_not_replayed(peer: Peer):
     assert [connection_id for connection_id, _ in peer.requests] == [0, 0, 1]
     assert peer.requests[1][1]['previous_response_id'] == 'resp_1'
     assert 'previous_response_id' not in peer.requests[2][1]
+
+
+async def test_steering_enabled_request_without_event_handler(peer: Peer):
+    result = await Agent(peer.model(), model_settings=OpenAIResponsesModelSettings(openai_steering=True)).run('one')
+    assert result.output == 'Hello'
+    assert len(peer.requests) == 1
+
+
+async def test_direct_steering_requires_agent_context(peer: Peer):
+    with pytest.raises(UserError, match='inside an agent run'):
+        await peer.model().request(
+            [ModelRequest([UserPromptPart('one')])],
+            OpenAIResponsesModelSettings(openai_steering=True),
+            ModelRequestParameters(),
+        )
+    assert peer.connections == []
+
+
+async def test_durable_context_cannot_enable_native_transport(peer: Peer):
+    # Model adapters are also called directly by durable activities, outside Agent's entry guard.
+    async with peer.model().open_session() as bound:
+        ctx = RunContext(deps=None, model=bound, usage=RunUsage())
+        controller = SteeringController({}, 'run', list)
+        controller.blocked = True
+        ctx._steering = controller  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(UserError, match='durable execution units'):
+            async with bound.request_stream(
+                [ModelRequest([UserPromptPart('one')])],
+                OpenAIResponsesModelSettings(openai_steering=True),
+                ModelRequestParameters(),
+                ctx,
+            ):
+                assert False, 'durable native transport was accepted'
+    assert peer.connections == []
+
+
+async def test_background_mode_is_rejected_before_websocket_connect(peer: Peer):
+    with pytest.raises(UserError, match='openai_background=True'):
+        await Agent(peer.model(), model_settings=OpenAIResponsesModelSettings(openai_background=True)).run('one')
+    assert peer.connections == []
+
+
+async def test_missing_websocket_dependency_has_install_guidance(peer: Peer, monkeypatch: pytest.MonkeyPatch):
+    with monkeypatch.context() as patch:
+        patch.setitem(sys.modules, 'websockets.exceptions', None)
+        with pytest.raises(ImportError, match=r'Install `openai\[realtime\]`'):
+            await Agent(peer.model()).run('one')
+    assert peer.connections == []
+
+
+async def test_native_transport_rejects_unbound_handles(peer: Peer):
+    # Transport admission is independent of the controller guard; no provider exchange is needed.
+    model = peer.model()
+    transport = ResponsesWebSocket(model.client, model.model_name)
+    with pytest.raises(UserError, match='original idle WebSocket'):
+        transport.receive(None)
+    with pytest.raises(UserError, match='active WebSocket response'):
+        await transport.steer('input', 'parent')
+    await transport.close()
+    assert peer.connections == []

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterable, Iterator
+from collections.abc import AsyncIterable, Generator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from ..realtime.ws_cassettes import (
     ReplayWebSocket,
     realtime_cassette_plan,
 )
+from .test_openai_responses_ws import Peer, peer as peer
 
 with try_import() as imports_successful:
     from openai.lib import _websocket
@@ -48,7 +50,15 @@ def responses_ws_recording(
     # Pytest does not type FixtureRequest.node; this is a function-scoped fixture.
     name = request.node.name  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     path = Path(__file__).parent / 'cassettes' / 'test_openai_responses_live_ws' / f'{name}.yaml'
-    plan = realtime_cassette_plan(cassette_exists=path.exists(), record_mode=request.config.getoption('record_mode'))
+    with responses_ws_cassette(path, request.config.getoption('record_mode'), monkeypatch) as recording:
+        yield recording
+
+
+@contextmanager
+def responses_ws_cassette(
+    path: Path, record_mode: str | None, monkeypatch: pytest.MonkeyPatch
+) -> Generator[RecordedConnection]:
+    plan = realtime_cassette_plan(cassette_exists=path.exists(), record_mode=record_mode)
     if plan == 'error_missing':
         raise RuntimeError(f'Missing Responses WebSocket cassette: {path}')
     recording = RecordedConnection(RealtimeCassette.load(path) if plan == 'replay' else RealtimeCassette())
@@ -108,6 +118,7 @@ def test_recording_scrubs_private_gateway_metadata():
                 },
             ),
             CassetteMessage(direction='sent', data={'type': 'response.create', 'previous_response_id': 'resp_1'}),
+            CassetteMessage(direction='received', data={'type': 'response.created', 'response': {'id': 'resp_1'}}),
         ]
     )
     _scrub_account_metadata(cassette)
@@ -122,6 +133,7 @@ def test_recording_scrubs_private_gateway_metadata():
             },
         ),
         CassetteMessage(direction='sent', data={'type': 'response.create', 'previous_response_id': 'resp_1'}),
+        CassetteMessage(direction='received', data={'type': 'response.created', 'response': {'id': 'resp_1'}}),
     ]
 
 
@@ -202,8 +214,8 @@ async def test_responses_ws_gateway_rejects_steering_live(
                 async with session.run_stream(
                     'List the integers from 1 to 200, spelling each out in English on its own line.',
                     event_stream_handler=handle,
-                ) as result:
-                    await result.get_output()
+                ):
+                    assert False, 'a rejected native exchange must not yield a result'
             state = session.state
             assert len(deliveries) == 1
             delivery = state.steering[0]
@@ -227,3 +239,29 @@ async def test_responses_ws_gateway_rejects_steering_live(
     assert requests[1]['input'] == [
         {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': correction}]}
     ]
+
+
+async def test_recording_fixture_roundtrips_a_local_peer(peer: Peer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Exercise record mode without paid calls or writing the checked-in provider cassettes."""
+    path = tmp_path / 'recording.yaml'
+    monkeypatch.setenv('RESPONSES_WS_BASE_URL', peer.url)
+    with monkeypatch.context() as patch:
+        with responses_ws_cassette(path, 'rewrite', patch) as recording:
+            assert (await Agent(peer.model()).run('record locally')).output == 'Hello'
+        assert recording.closed == 1
+        assert len(recording.sockets) == 1
+        assert isinstance(recording.sockets[0], RecordingWebSocket)
+    stored = RealtimeCassette.load(path)
+    assert len(stored.interactions) >= 4
+    with monkeypatch.context() as patch:
+        with responses_ws_cassette(path, 'none', patch) as replay:
+            assert (await Agent(peer.model()).run('record locally')).output == 'Hello'
+        assert replay.closed == 1
+        assert isinstance(replay.sockets[0], ReplayWebSocket)
+    assert len(peer.requests) == 1
+
+
+def test_recording_fixture_requires_an_existing_offline_cassette(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    with pytest.raises(RuntimeError, match='Missing Responses WebSocket cassette'):
+        with responses_ws_cassette(tmp_path / 'missing.yaml', 'none', monkeypatch):
+            assert False, 'missing offline recording was accepted'
