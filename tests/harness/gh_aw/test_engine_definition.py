@@ -534,8 +534,8 @@ agent = Agent(name='custom', instructions='Answer briefly.')
     assert 'unrecognized arguments: --gh-aw-invalid' in completed.stderr
     child_environment = json.loads(child_env_path.read_text(encoding='utf-8'))
     assert child_environment['key'] is None
-    if child_environment['parent_has_key'] is not None:
-        assert child_environment['parent_has_key'] is False
+    parent_has_key = child_environment['parent_has_key']
+    assert parent_has_key is None or parent_has_key is False
 
 
 def test_the_checkout_is_off_the_import_path_without_pai_agent(tmp_path: Path) -> None:
