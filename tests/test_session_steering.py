@@ -206,7 +206,6 @@ async def test_native_close_drains_external_sender():
     """Teardown must finish the submission before its socket can serve another run."""
     entered = anyio.Event()
     finished = anyio.Event()
-    wrote: list[str] = []
     controller = SteeringController({}, 'run-1', lambda: [])
     controller.parent_response_id = 'response-A'
 
@@ -214,7 +213,6 @@ async def test_native_close_drains_external_sender():
         entered.set()
         try:
             await anyio.sleep_forever()
-            wrote.append(parent)
         finally:
             finished.set()
 
@@ -235,5 +233,69 @@ async def test_native_close_drains_external_sender():
             await entered.wait()
             await controller.close()
             assert finished.is_set()
-    assert not wrote
+    assert next(iter(controller.deliveries.values())).status == 'uncertain'
+
+
+def test_steering_observation_requires_a_submission():
+    controller = SteeringController({}, 'run', lambda: [])
+    with pytest.raises(UserError, match='without an active submission'):
+        controller.observe(AcceptSteering('ack'))
+
+
+@pytest.mark.parametrize('guard', ['empty', 'pending', 'preflight', 'changed', 'blocked', 'closed'])
+async def test_steering_admission_does_not_write_or_create_uncertain_input(
+    guard: Literal['empty', 'pending', 'preflight', 'changed', 'blocked', 'closed'],
+):
+    """Local admission failures are not provider-delivery attempts."""
+    controller = SteeringController({}, 'run', lambda: [])
+    controller.parent_response_id = 'A'
+
+    async def send(parent: str) -> None:
+        assert False, 'Admission failure must not send input'
+
+    async def prepare(part: UserPromptPart) -> Callable[[str], Awaitable[None]]:
+        controller.parent_response_id = 'B'
+        return send
+
+    controller.prepare_send = prepare
+    controller.blocked = guard == 'blocked'
+    controller.closed = guard == 'closed'
+    if guard == 'pending':
+        controller.delivery_id = 'input-1'
+        controller.deliveries['input-1'] = replace(delivery(), status='sent')
+    elif guard == 'preflight':
+        controller.limits.count_tokens_before_request = True
+    expected = {
+        'empty': 'nonempty user content',
+        'pending': 'Wait for the current steering',
+        'preflight': 'cannot preflight',
+        'changed': 'changed while preparing',
+        'blocked': 'not supported inside durable',
+        'closed': 'active, steering-enabled',
+    }[guard]
+    before = deepcopy(controller.deliveries)
+    with pytest.raises(UserError, match=expected):
+        await controller.steer([] if guard == 'empty' else ['new input'])
+    assert controller.deliveries == before
+
+
+async def test_steering_write_failure_disconnects_before_returning():
+    closed: list[str] = []
+    controller = SteeringController({}, 'run', lambda: [])
+    controller.parent_response_id = 'A'
+
+    async def send(parent: str) -> None:
+        raise OSError('write lost')
+
+    async def prepare(part: UserPromptPart) -> Callable[[str], Awaitable[None]]:
+        return send
+
+    async def disconnect() -> None:
+        closed.append('closed')
+
+    controller.prepare_send = prepare
+    controller.disconnect = disconnect
+    with pytest.raises(OSError, match='write lost'):
+        await controller.steer(['new input'])
+    assert closed == ['closed']
     assert next(iter(controller.deliveries.values())).status == 'uncertain'

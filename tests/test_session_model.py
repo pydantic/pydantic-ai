@@ -18,8 +18,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 
 
-@pytest.mark.parametrize('wrapper', ['none', 'wrapper', 'fallback'])
-async def test_model_interaction_is_isolated_and_shared_across_runs(wrapper: Literal['none', 'wrapper', 'fallback']):
+@pytest.mark.parametrize('wrapper', ['none', 'wrapper', 'custom-wrapper', 'fallback'])
+async def test_model_interaction_is_isolated_and_shared_across_runs(
+    wrapper: Literal['none', 'wrapper', 'custom-wrapper', 'fallback'],
+):
     opened: list[int] = []
     closed: list[int] = []
     entries: list[str] = []
@@ -58,6 +60,15 @@ async def test_model_interaction_is_isolated_and_shared_across_runs(wrapper: Lit
     model: Model = original
     if wrapper == 'wrapper':
         model = WrapperModel(original)
+    elif wrapper == 'custom-wrapper':
+
+        class CustomWrapper(WrapperModel):
+            @asynccontextmanager
+            async def open_session(self) -> AsyncGenerator[Model]:
+                async with super().open_session() as bound:
+                    yield bound
+
+        model = CustomWrapper(original)
     elif wrapper == 'fallback':
         model = FallbackModel(original, TestModel())
     agent = Agent(model)
