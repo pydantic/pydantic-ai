@@ -27,9 +27,9 @@ pydantic-settings = false
 pydantic-monty-client = false
 genai-prices = false
 pydantic-monty = false
-termflow-md = "2026-09-30T15:58:29Z"
+termflow-md = "2026-10-02T15:05:25Z"
 anthropic = "2026-09-28T18:04:04Z"
-openai = "2026-09-23T00:08:49Z"
+openai = "2026-10-06T21:31:20Z"
 google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
@@ -1235,15 +1235,15 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
-    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.26.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.26.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
