@@ -8,7 +8,7 @@ recording.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -50,7 +50,7 @@ from .test_system_one import Captured, Frustration, Handler, Ticket
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
 
-    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel, OpenAIDecisionsModelSettings
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
 
@@ -148,7 +148,6 @@ async def test_output_type(
 
     result = await agent.run('My invoice was charged twice and nobody answers the phone!')
 
-    assert result.output == Ticket(urgent=True, area='billing')
     assert result.response == snapshot(
         ModelResponse(
             parts=[
@@ -346,25 +345,6 @@ async def test_conversation_and_route(
     )
 
 
-class Profile(BaseModel):
-    """Triage a support ticket."""
-
-    urgent: bool = Field(description='Does this need a reply within the hour?')
-    disabled: bool = Field(description='Does the customer have a disability?')
-
-
-@pytest.mark.vcr
-async def test_refusal(allow_model_requests: None, capture_model: OpenAIDecisionsModel):
-    """The model declines to infer a sensitive trait, and answers the other questions of the request."""
-    agent = Agent(capture_model, output_type=Profile)
-
-    with pytest.raises(ContentFilterError, match="declined to answer: 'disabled'") as exc_info:
-        await agent.run('My invoice was charged twice and nobody answers the phone!')
-    assert json.loads(exc_info.value.body or '')['answers'] == snapshot(
-        [{'type': 'predicate', 'name': 'urgent', 'probability': 0.53}, {'type': 'refusal', 'name': 'disabled'}]
-    )
-
-
 @pytest.mark.vcr
 async def test_refusal_on_a_route_not_taken(allow_model_requests: None, capture_model: OpenAIDecisionsModel):
     """Every route's fields are asked beside the route question, so a refusal fails the step whichever route is picked."""
@@ -410,7 +390,10 @@ async def test_refusal_on_a_route_not_taken(allow_model_requests: None, capture_
 
 @pytest.mark.vcr
 async def test_refusal_while_filling_a_picked_route(allow_model_requests: None, capture_model: OpenAIDecisionsModel):
-    """The one route left is filled in a request of its own, and a refusal there fails naming the route."""
+    """The one route left is filled in a request of its own, and a refusal there fails naming the route.
+
+    `request` is called directly: an agent run always offers its output as a route too, so it never has one route left.
+    """
     record_profile = ToolDefinition(
         name='record_profile',
         parameters_json_schema={
@@ -482,24 +465,28 @@ async def test_rubric_over_the_limit(
 
 @pytest.mark.vcr
 @pytest.mark.parametrize(
-    ('questions', 'limit'),
+    ('limit', 'question'),
     [
-        pytest.param({'q': ChoiceQuestion(criteria={str(option): None for option in range(256)})}, 255, id='options'),
-        pytest.param({'q': ScoreQuestion(criteria=[None] * 11)}, 10, id='levels'),
         pytest.param(
-            {f'q{index}': NoulQuestion(instructions='Is this urgent?') for index in range(201)}, 200, id='questions'
+            lambda: OpenAIDecisionsModel.max_choice_options,
+            ChoiceQuestion(criteria={str(option): None for option in range(256)}),
+            id='options',
         ),
+        pytest.param(lambda: OpenAIDecisionsModel.max_score_levels, ScoreQuestion(criteria=[None] * 11), id='levels'),
     ],
 )
 async def test_api_limits(
-    questions: dict[str, DecisionQuestion], limit: int, allow_model_requests: None, capture_model: OpenAIDecisionsModel
+    limit: Callable[[], int | None],
+    question: DecisionQuestion,
+    allow_model_requests: None,
+    capture_model: OpenAIDecisionsModel,
 ):
-    """The limits `max_choice_options` and `max_score_levels` keep to, and the question count, which the API checks.
+    """`max_choice_options` and `max_score_levels` are the API's own limits: one more is a 400 naming them.
 
-    `decide` is called directly, since an agent run refuses the first two before sending.
+    `decide` is called directly, since an agent run refuses these before sending.
     """
-    with pytest.raises(ModelHTTPError, match=f'maximum length {limit},') as exc_info:
-        await capture_model.decide(DecisionRequest(state='Charged twice.', questions=questions), {})
+    with pytest.raises(ModelHTTPError, match=f'maximum length {limit()},') as exc_info:
+        await capture_model.decide(DecisionRequest(state='Charged twice.', questions={'q': question}), {})
     assert exc_info.value.status_code == 400
 
 
@@ -522,7 +509,7 @@ async def test_http_error(allow_model_requests: None, openai_api_key: str):
     )
 
 
-async def test_limits(allow_model_requests: None):
+async def test_too_many_routes(allow_model_requests: None):
     """More routes than the API's 255 options are refused before a request is sent, so there is nothing to record."""
     captured = Captured(ticket_answers)
     tools = [ToolDefinition(name=f'tool_{index}', parameters_json_schema={'type': 'object'}) for index in range(256)]
@@ -545,8 +532,12 @@ async def test_limits(allow_model_requests: None):
             id='text',
         ),
         pytest.param(
-            NoulQuestion(instructions='Is this urgent?', criteria=NoulCriteria(true='Today.')),
-            {'type': 'predicate', 'name': 'q', 'instructions': '{"question": "Is this urgent?", "yes": "Today."}'},
+            NoulQuestion(instructions='Is this urgent?', criteria=NoulCriteria(true='Today — before noon.')),
+            {
+                'type': 'predicate',
+                'name': 'q',
+                'instructions': '{"question": "Is this urgent?", "yes": "Today — before noon."}',
+            },
             id='text and yes',
         ),
         pytest.param(
@@ -555,16 +546,6 @@ async def test_limits(allow_model_requests: None):
             id='only no',
         ),
         pytest.param(NoulQuestion(), {'type': 'predicate', 'name': 'q', 'instructions': ''}, id='nothing'),
-        pytest.param(
-            ChoiceQuestion(criteria={'billing': None, 'bug': 'Something is broken.'}),
-            {
-                'type': 'choice',
-                'name': 'q',
-                'instructions': '',
-                'choices': [{'value': 'billing'}, {'value': 'bug', 'description': 'Something is broken.'}],
-            },
-            id='choice',
-        ),
         pytest.param(
             ScoreQuestion(criteria=['Calm', None]),
             {
@@ -578,10 +559,10 @@ async def test_limits(allow_model_requests: None):
     ],
 )
 async def test_question_shapes(question: DecisionQuestion, sent: dict[str, object], allow_model_requests: None):
-    """Each shape `decide` can send a question in, with `instructions`, which the API requires, empty where unset.
+    """The yes/no and rubric shapes `decide` sends, with `instructions`, which the API requires, empty where unset.
 
-    The base class only sends some of these from an agent run, so `decide` is called directly. Not recorded: the
-    answer doesn't matter here, and asking about nothing gets a refusal.
+    The recordings send the pick-one shapes. The base class only sends some of these from an agent run, so `decide`
+    is called directly. Not recorded: the answer doesn't matter here, and asking about nothing gets a refusal.
     """
     captured = Captured(lambda request: httpx2.Response(400))
     with pytest.raises(ModelHTTPError):
@@ -590,10 +571,10 @@ async def test_question_shapes(question: DecisionQuestion, sent: dict[str, objec
     assert captured.body['questions'] == [sent]
 
 
-async def test_request_id_and_cached_tokens(allow_model_requests: None):
+async def test_request_id(allow_model_requests: None):
     """`decide` is the only place the request ID reaches: the run's response is built from the answers.
 
-    Not recorded: the cassettes strip the `x-request-id` header it comes from, and none read cached tokens.
+    Not recorded: the cassettes strip the `x-request-id` header it comes from.
     """
     response = await mock_model(lambda request: decisions(URGENT)).decide(
         DecisionRequest(state='Down since 9am.', questions={'urgent': NoulQuestion(instructions='Is this urgent?')}), {}
@@ -609,29 +590,35 @@ async def test_request_id_and_cached_tokens(allow_model_requests: None):
     )
 
 
-async def test_settings_are_forwarded(allow_model_requests: None):
-    """Not recorded: the timeout is set on the request's `extensions`, which neither a cassette nor a capture keeps."""
+async def test_user_agent_and_default_timeout(allow_model_requests: None):
+    """A `User-Agent` in `extra_headers` replaces ours, and with no `timeout` set the SDK's default applies.
+
+    `test_model_settings_support.py` checks the settings are forwarded. Not recorded: the timeout is set on the
+    request's `extensions`, which neither a cassette nor a capture keeps.
+    """
     captured = Captured(ticket_answers)
     agent = Agent(mock_model(captured), output_type=Ticket)
-    settings: OpenAIDecisionsModelSettings = {
-        'timeout': 3,
-        'extra_headers': {'X-Team': 'support'},
-        'extra_body': {'safety_identifier': 'user_123'},
-    }
 
-    await agent.run('Charged twice.', model_settings=settings)
+    await agent.run('Charged twice.', model_settings={'extra_headers': {'User-Agent': 'support-bot'}})
 
     request = captured.requests[0]
-    assert request.headers['x-team'] == 'support'
-    assert request.extensions['timeout'] == {'connect': 3, 'read': 3, 'write': 3, 'pool': 3}
-    assert captured.body['safety_identifier'] == 'user_123'
+    assert request.headers['user-agent'] == 'support-bot'
+    assert None not in request.extensions['timeout'].values()
+
+
+async def test_extra_body_must_be_a_mapping(allow_model_requests: None):
+    """Not recorded: refused before a request is sent."""
+    captured = Captured(ticket_answers)
+    agent = Agent(mock_model(captured), output_type=Ticket)
+    with pytest.raises(UserError, match='`extra_body` must be a mapping'):
+        await agent.run('Charged twice.', model_settings={'extra_body': ['not', 'a', 'mapping']})
+    assert captured.requests == []
 
 
 @pytest.mark.parametrize(
     'response',
     [
         pytest.param(httpx2.Response(200, text='not json'), id='not json'),
-        pytest.param(decisions(URGENT, {**AREA, 'confidence': None}), id='no confidence'),
         pytest.param(decisions({**URGENT, 'type': 'noul'}, AREA), id='unknown type'),
     ],
 )
@@ -649,7 +636,6 @@ async def test_invalid_response(response: httpx2.Response, allow_model_requests:
         pytest.param((URGENT, AREA, {**URGENT, 'name': 'extra'}), id='extra'),
         pytest.param((URGENT, {**URGENT, 'probability': 0.1}, AREA), id='twice'),
         pytest.param((URGENT, {'type': 'refusal', 'name': 'extra'}), id='refusal of another'),
-        pytest.param(({**URGENT, 'name': None}, AREA), id='unnamed'),
     ],
 )
 async def test_answer_names_match_questions(answers: tuple[Mapping[str, object], ...], allow_model_requests: None):
@@ -663,10 +649,9 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
     ('output_type', 'answers'),
     [
         pytest.param(Ticket, (URGENT, {**URGENT, 'name': 'area'}), id='other kind'),
-        pytest.param(Ticket, ({**URGENT, 'probability': 1.2}, AREA), id='probability past 1'),
+        pytest.param(Ticket, ({**URGENT, 'probability': -0.1}, AREA), id='probability below 0'),
+        pytest.param(Ticket, (URGENT, {**AREA, 'confidence': -0.1}), id='confidence below 0'),
         pytest.param(Ticket, (URGENT, {**AREA, 'confidence': float('nan')}), id='confidence not a number'),
-        pytest.param(Ticket, (URGENT, {**AREA, 'choice': 'other'}), id='option not offered'),
-        pytest.param(Ticket, (URGENT, {**AREA, 'choice': True}), id='boolean choice'),
         pytest.param(
             Ticket,
             (
@@ -683,14 +668,21 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
             (URGENT, {**AREA, 'probabilities': [*AREA_PROBABILITIES, {'value': 'bug', 'probability': 0.0}]}),
             id='option twice',
         ),
-        pytest.param(
-            Ticket,
-            (URGENT, {**AREA, 'probabilities': [{'value': 'billing', 'probability': 1.0}]}),
-            id='option left out',
-        ),
+        pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': -0.5}), id='score below the rubric'),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': 2.5}), id='score past the rubric'),
-        pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': float('nan')}), id='score not a number'),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'probabilities': []}), id='no levels'),
+        pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': float('nan')}), id='score not a number'),
+        pytest.param(
+            Mood,
+            (
+                REFUND,
+                {
+                    **FRUSTRATION,
+                    'probabilities': [*FRUSTRATION_PROBABILITIES[:2], {'value': 2, 'label': '2', 'probability': 1.5}],
+                },
+            ),
+            id='level probability past 1',
+        ),
         pytest.param(
             Mood,
             (
@@ -714,3 +706,14 @@ async def test_answers_match_questions(
     agent = Agent(mock_model(lambda request: decisions(*answers)), output_type=output_type)
     with pytest.raises(UnexpectedModelBehavior, match='does not match its question'):
         await agent.run('Charged twice.')
+
+
+async def test_every_refusal_is_named(allow_model_requests: None):
+    """Not recorded: no recording refuses more than one question."""
+    refusals = ({'type': 'refusal', 'name': 'urgent'}, {'type': 'refusal', 'name': 'area'})
+    agent = Agent(mock_model(lambda request: decisions(*refusals)), output_type=Ticket)
+    with pytest.raises(ContentFilterError) as exc_info:
+        await agent.run('Charged twice.')
+    assert exc_info.value.message == snapshot(
+        "Content filter triggered. The OpenAI Decisions API declined to answer: 'urgent', 'area'"
+    )

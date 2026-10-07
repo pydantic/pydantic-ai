@@ -121,9 +121,8 @@ class _DirectImageGenerationTool:
             result = await self.generator.generate(prompt, settings=self.settings)
         except ContentFilterError as e:
             # Same conversion as the `fallback_subagent_model` subagent path, so the capability fails the
-            # same way on both fallbacks: the outer model gets to rephrase, and no exception escapes
-            # the tool call for a durable engine to retry against an error class its non-retryable
-            # list doesn't name. `ImageGenerator.generate` itself still raises `ContentFilterError`.
+            # same way on both fallbacks: the outer model gets to rephrase. `ImageGenerator.generate`
+            # itself still raises `ContentFilterError`.
             raise ModelRetry(str(e)) from e
         if len(result.images) != 1:
             raise UnexpectedModelBehavior(

@@ -1,13 +1,14 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal, assert_never
 
 from pydantic import JsonValue
 
 from .._http import to_httpx2_timeout
-from ..exceptions import ContentFilterError, UnexpectedModelBehavior
+from ..exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -163,6 +164,10 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         """Send one request to the `/v1/decisions` endpoint."""
         extra_headers = dict(model_settings.get('extra_headers', {}))
         extra_headers.setdefault('User-Agent', get_user_agent())
+        if (extra_body := model_settings.get('extra_body')) is not None and not isinstance(extra_body, Mapping):
+            raise UserError(
+                f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.'
+            )
         with _map_api_errors(self._model_name, self._provider.model_id_namespace):
             response = await self.client.decisions.with_raw_response.create(
                 model=self._model_name,
