@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import anyio
 import pytest
+from typing_extensions import Unpack
 
 from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, SpeechPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.realtime import RealtimeError, RealtimeRun, TranscriptUpdate
+from pydantic_ai.realtime import RealtimeError, RealtimeModel, RealtimeRun, RealtimeSession, TranscriptUpdate
 from pydantic_ai.realtime._lifecycle import TaggedEvent
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -24,9 +27,106 @@ from pydantic_ai.realtime.codec import (
     TextContext,
     ToolCall,
 )
+from pydantic_ai.session import _RealtimeSessionOptions  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage
 
 from .test_persistent_session import READINESS_WAIT_TIMEOUT, CountedModel, DuplexConnection, IdentifiedConnection
+
+
+async def test_wrapper_cannot_switch_an_attached_realtime_model():
+    """A policy wrapper must not redirect a later run onto an already-open different model."""
+    before = asyncio.all_tasks()
+    original, replacement = CountedModel(DuplexConnection()), CountedModel(DuplexConnection())
+
+    class RedirectingAgent(WrapperAgent[None, str]):
+        selected: RealtimeModel = original
+
+        @asynccontextmanager
+        async def _open_realtime_session(
+            self, model: RealtimeModel | str, *, deps: None = None, **options: Unpack[_RealtimeSessionOptions[None]]
+        ) -> AsyncGenerator[RealtimeSession]:
+            async with super()._open_realtime_session(self.selected, deps=deps, **options) as session:
+                yield session
+
+    agent = RedirectingAgent(Agent(TestModel(), deps_type=type(None)))
+    async with agent.session() as owner:
+        async with owner.realtime(original).connect() as live:
+            async with live.run() as first:
+                await first.send('first')
+            agent.selected = replacement
+            with pytest.raises(UserError, match='cannot switch models'):
+                async with live.run():
+                    assert False, 'Model switch was accepted'
+            assert original.opens == 1
+            assert replacement.opens == 0
+            # Rejected admission does not damage the original attachment or consume its history.
+            agent.selected = original
+            async with live.run() as second:
+                await second.send('second')
+            assert first.result is not None and second.result is not None
+            assert first.result.output == 'reply to first'
+            assert second.result.output == 'reply to second'
+    assert original.closes == 1
+    assert replacement.closes == 0
+    assert asyncio.all_tasks() == before
+
+
+async def test_owner_first_close_preserves_suppressed_cancellation_group():
+    """Task-group suppression must not hide a transport's cancellation-only shutdown failure.
+
+    A real cancel scope produces the failure; recordings cannot inject this teardown ordering.
+    """
+    before = asyncio.all_tasks()
+    model_closed = asyncio.Event()
+    shutdown_error: BaseExceptionGroup[asyncio.CancelledError] | None = None
+
+    class ResourceModel(TestModel):
+        @asynccontextmanager
+        async def open_session(self):
+            try:
+                yield self
+            finally:
+                await anyio.lowlevel.checkpoint()
+                model_closed.set()
+
+    class CancelledConnection(DuplexConnection):
+        async def _end_session(self) -> AsyncIterator[SessionUsage]:
+            nonlocal shutdown_error
+            yield SessionUsage(RequestUsage(input_tokens=3), response_scoped=False)
+            with anyio.CancelScope() as scope:
+                scope.cancel()
+                try:
+                    await anyio.lowlevel.checkpoint()
+                except asyncio.CancelledError as exc:
+                    shutdown_error = BaseExceptionGroup('connection shutdown', [exc])
+            assert shutdown_error is not None
+            raise shutdown_error
+
+    model = CountedModel(CancelledConnection())
+    owner = Agent(ResourceModel()).session()
+    run: RealtimeRun | None = None
+    attachments = AsyncExitStack()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        try:
+            with pytest.raises(BaseExceptionGroup) as caught:
+                async with owner:
+                    await owner.run('ordinary first')
+                    live = await attachments.enter_async_context(owner.realtime(model).connect())
+                    async with live.run() as run:
+                        await run.send('hello')
+            assert caught.value is shutdown_error
+            assert model.closes == 1
+            assert model_closed.is_set()
+            assert owner.state.active_run_id is None
+            assert run is not None and run.result is not None
+            assert owner.conversation.usage.input_tokens == run.result.usage.input_tokens + 3
+            assert asyncio.all_tasks() == before
+        finally:
+            # Check owner failure separately: the attachment must not disguise a swallowed error.
+            with pytest.raises(BaseExceptionGroup) as repeated:
+                await attachments.aclose()
+            assert repeated.value is shutdown_error
+    assert asyncio.all_tasks() == before
 
 
 @pytest.mark.parametrize('delta', [False, True])

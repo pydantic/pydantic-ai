@@ -4242,8 +4242,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if attachment is not None:
                     handle = session._run.handle = RealtimeRun(session)  # pyright: ignore[reportPrivateUsage]
                     resolved.run_context.realtime_run = handle
-                    if resolved.tool_manager.ctx is not None:
-                        resolved.tool_manager.ctx.realtime_run = handle
+                    assert resolved.tool_manager.ctx is not None
+                    resolved.tool_manager.ctx.realtime_run = handle
                 else:
                     resolved.run_context.realtime_session = session
                 async with attachment.run(session) if attachment is not None else session:
@@ -4540,8 +4540,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # Nothing drains the queue once the graph stops, so reject later enqueues instead of
             # stranding them. A normal finish already closed it inside `drain_at_end`.
             stack.callback(pending_message_queue.close)
-            if graph_deps.steering is not None:
-                stack.push_async_callback(graph_deps.steering.close)
+            stack.push_async_callback(graph_deps.steering.close)
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 

@@ -22,7 +22,7 @@ try:
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
-except ImportError:
+except ImportError as _import_error:
     pytest.skip('temporal not installed', allow_module_level=True)
 
 if sys.version_info >= (3, 14):
@@ -49,12 +49,10 @@ resource_events: list[str] = []
 
 class ActivitySessionModel(TestModel):
     async def __aenter__(self):
-        assert not workflow.in_workflow()
-        resource_events.append('client enter')
-        return self
+        assert False, 'Registered clients retain their external owner'
 
     async def __aexit__(self, *args: Any):
-        resource_events.append('client exit')
+        assert False, 'Registered clients must not be closed by the workflow'
 
     @asynccontextmanager
     async def open_session(self) -> AsyncGenerator[Model]:
@@ -119,15 +117,15 @@ with pytest.warns(PydanticAIDeprecationWarning, match='`TemporalAgent` is deprec
 class UnreachableRealtimeModel(RealtimeModel):
     @property
     def model_name(self) -> str:
-        return 'unreachable'
+        assert False, 'Realtime model must not be resolved inside a workflow'
 
     @property
     def system(self) -> str:
-        return 'test'
+        assert False, 'Realtime model must not be resolved inside a workflow'
 
     @property
     def profile(self) -> RealtimeModelProfile:
-        return RealtimeModelProfile()
+        assert False, 'Realtime model must not be resolved inside a workflow'
 
     @asynccontextmanager
     async def connect(
@@ -137,8 +135,7 @@ class UnreachableRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
-        resource_events.append('unexpected realtime connection')
-        raise UserError('Unexpected realtime connection inside workflow')
+        assert False, 'Realtime model must not connect inside a workflow'
         yield  # pragma: no cover
 
 
@@ -163,7 +160,7 @@ class RealtimeGuardWorkflow:
                                 pass
         except UserError as exc:
             return str(exc)
-        return 'Unexpected successful realtime entry'
+        assert False, 'Realtime workflow entry was not rejected'
 
 
 @pytest.mark.parametrize('mode', ['direct', 'legacy'])

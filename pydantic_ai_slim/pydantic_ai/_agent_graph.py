@@ -553,9 +553,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     display_banner: _display.BannerDisplay
     """Shows the first-run banner, once this run has resolved the model and tools it will use."""
 
-    agent: Agent[DepsT, Any] | None = None
+    steering: SteeringController = field(repr=False)
+    """Every ordinary run owns a controller, even when native steering is disabled."""
 
-    steering: SteeringController | None = field(default=None, repr=False)
+    agent: Agent[DepsT, Any] | None = None
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
@@ -1684,7 +1685,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
         controller = ctx.deps.steering
-        assert controller is not None and controller.receive is not None
+        assert controller.receive is not None
         req_ctx = controller.inherited_request
         assert req_ctx is not None
         # This response was admitted before `steer` wrote. Request hooks/selectors/cache cannot
@@ -1814,7 +1815,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         streaming: bool,
     ) -> tuple[ModelRequestContext, RunContext[DepsT]]:
-        self._native_continuation = ctx.deps.steering is not None and ctx.deps.steering.pending
+        self._native_continuation = ctx.deps.steering.pending
         if self._resume_suspended is not None:
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
@@ -1971,9 +1972,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context = original_request_context
 
         model = request_context.model
-        if ctx.deps.steering is not None:
-            ctx.deps.steering.check_model(model)
-            ctx.deps.steering.inherited_request = request_context
+        ctx.deps.steering.check_model(model)
+        ctx.deps.steering.inherited_request = request_context
         messages = request_context.messages
         model_settings = request_context.model_settings or None
         request_context.model_settings = model_settings
@@ -2177,7 +2177,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         record_usage: bool,
     ) -> None:
         controller = ctx.deps.steering
-        if controller is None or controller.delivery_id is None:
+        if controller.delivery_id is None:
             return
         delivery = controller.deliveries[controller.delivery_id]
         if response.provider_response_id not in (delivery.parent_response_id, delivery.successor_response_id):
@@ -2259,7 +2259,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         Increments the retry counter and creates a new request with a RetryPromptPart.
         """
-        if self._native_response is not None or (ctx.deps.steering is not None and ctx.deps.steering.pending):
+        if self._native_response is not None or ctx.deps.steering.pending:
             raise exceptions.UserError('Cannot retry a model response participating in native steering.') from error
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
         m = _messages.RetryPromptPart(content=error.message)
@@ -2360,10 +2360,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_schema = ctx.deps.output_schema
 
         async def _run_stream() -> AsyncIterator[_messages.AgentStreamEvent]:  # noqa: C901
-            if (
-                ctx.deps.steering is not None
-                and ctx.deps.steering.pending
-                and not any(isinstance(part, _messages.ToolCallPart) for part in self.model_response.parts)
+            if ctx.deps.steering.pending and not any(
+                isinstance(part, _messages.ToolCallPart) for part in self.model_response.parts
             ):
                 self._next_node = ModelRequestNode(_messages.ModelRequest(parts=[]), _native_successor=True)
                 return
@@ -2772,11 +2770,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        if (
-            ctx.deps.steering is not None
-            and ctx.deps.steering.pending
-            and not isinstance(final_result.output, DeferredToolRequests)
-        ):
+        if ctx.deps.steering.pending and not isinstance(final_result.output, DeferredToolRequests):
             return ModelRequestNode(_messages.ModelRequest(parts=tool_responses))
         messages = ctx.state.message_history
 
