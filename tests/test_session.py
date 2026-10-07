@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal, assert_type
 
 import anyio
 import pytest
 
 from pydantic_ai import Agent, Conversation, RunCancelled, SessionStateTypeAdapter, UserError
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models import ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.run import AgentRunResult
+from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, RunContext
+
+READINESS_WAIT_TIMEOUT = 10
 
 
 async def test_session_continues_history_and_usage_without_mutating_snapshots():
@@ -314,3 +318,173 @@ async def test_session_reuses_inferred_model_but_rechecks_dependency_based_resol
         assert (await session.run('third', deps='override')).output == 'override'
     assert inferred == ['test']
     assert resolutions == ['default', 'default', 'override']
+
+
+async def test_session_external_cancellation_finishes_request_cleanup_before_model_close():
+    tasks_before = asyncio.all_tasks()
+    started = anyio.Event()
+    cleanup_started = anyio.Event()
+    allow_cleanup = anyio.Event()
+    order: list[str] = []
+
+    async def blocked(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        started.set()
+        try:
+            await anyio.sleep_forever()
+        finally:
+            with anyio.CancelScope(shield=True):
+                cleanup_started.set()
+                await allow_cleanup.wait()
+                order.append('request cleaned up')
+        return ModelResponse([TextPart('unreachable')])
+
+    class ResourceModel(FunctionModel):
+        async def __aexit__(self, *args: Any):
+            order.append('model closed')
+
+    async def cancel() -> None:
+        await started.wait()
+        outer.cancel()
+        with anyio.CancelScope(shield=True):
+            try:
+                await cleanup_started.wait()
+                assert order == []
+            finally:
+                allow_cleanup.set()
+
+    session = Agent(ResourceModel(blocked)).session()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        with anyio.CancelScope() as outer:
+            async with anyio.create_task_group() as group:
+                group.start_soon(cancel)
+                async with session:
+                    await session.run('wait')
+    assert order == ['request cleaned up', 'model closed']
+    assert session.state.active_run_id is None
+    assert asyncio.all_tasks() == tasks_before
+
+
+async def test_session_wrapper_helper_cannot_consume_the_outer_session_binding():
+    helper = Agent(TestModel())
+    helper_results: list[AgentRunResult[str]] = []
+
+    class HelpfulWrapper(WrapperAgent[None, str]):
+        @asynccontextmanager
+        async def iter(self, *args: Any, **kwargs: Any) -> AsyncGenerator[AgentRun[None, str]]:
+            helper_results.append(await helper.run('helper'))
+            async with self.wrapped.iter(*args, **kwargs) as run:
+                yield run
+
+    agent = HelpfulWrapper(Agent(TestModel()))
+    async with agent.session() as session:
+        session.enqueue('only for outer')
+        async with session.iter('outer') as run:
+            # Checking the live checkpoint proves the core bound, not just the final history copy.
+            assert session.state.active_run_id == run.ctx.state.run_id
+            async for _ in run:
+                pass
+        assert session.state.pending == []
+        assert session.conversation.usage.requests == 1
+        prompts = [
+            part.content
+            for message in session.conversation.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
+        assert prompts == ['outer', 'only for outer']
+        assert helper_results[0].conversation_id != session.conversation.conversation_id
+        helper_request = helper_results[0].new_messages()[0]
+        assert isinstance(helper_request, ModelRequest)
+        assert len(helper_request.parts) == 1
+        assert isinstance(helper_request.parts[0], UserPromptPart)
+        assert helper_request.parts[0].content == 'helper'
+
+
+async def test_session_failed_entry_preserves_deferred_approval_for_checkpoint_resume():
+    calls: list[str] = []
+
+    class BrokenModel(TestModel):
+        async def __aenter__(self):
+            raise ValueError('entry failed')
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def privileged() -> str:
+        calls.append('executed')
+        return 'approved'
+
+    async with agent.session() as session:
+        first = await session.run('request approval')
+        assert isinstance(first.output, DeferredToolRequests)
+        with pytest.raises(ValueError, match='entry failed'):
+            await session.run(deferred_tool_results=first.output.build_results(approve_all=True), model=BrokenModel())
+        state = SessionStateTypeAdapter.validate_json(SessionStateTypeAdapter.dump_json(session.state))
+        assert state.conversation.deferred_tool_requests == first.output
+        assert calls == []
+    async with agent.session(state=state) as restored:
+        assert restored.conversation.deferred_tool_requests is not None
+        await restored.run(
+            deferred_tool_results=restored.conversation.deferred_tool_requests.build_results(approve_all=True)
+        )
+        assert calls == ['executed']
+        assert restored.conversation.deferred_tool_requests is None
+
+
+@pytest.mark.parametrize('entry', ['run', 'iter', 'stream', 'events'])
+async def test_session_bound_dependencies_and_explicit_none_override(entry: Literal['run', 'iter', 'stream', 'events']):
+    seen: list[str | None] = []
+    agent = Agent(TestModel(), deps_type=str | None)
+
+    @agent.instructions
+    def record_deps(ctx: RunContext[str | None]) -> str:
+        seen.append(ctx.deps)
+        return 'Be brief.'
+
+    async with agent.session(deps='bound') as session:
+        if entry == 'run':
+            assert_type((await session.run('bound')).output, str)
+            assert_type((await session.run('override', deps=None, output_type=int)).output, int)
+        elif entry == 'iter':
+            async with session.iter('bound') as run:
+                assert_type(run, AgentRun[str | None, str])
+                async for _ in run:
+                    pass
+            async with session.iter('override', deps=None, output_type=int) as run_int:
+                assert_type(run_int, AgentRun[str | None, int])
+                async for _ in run_int:
+                    pass
+        elif entry == 'stream':
+            async with session.run_stream('bound') as stream:
+                assert_type(await stream.get_output(), str)
+            async with session.run_stream('override', deps=None, output_type=int) as stream_int:
+                assert_type(await stream_int.get_output(), int)
+        else:
+            async with session.run_stream_events('bound') as events:
+                async for _ in events:
+                    pass
+                assert events.result is not None
+                assert_type(events.result.output, str)
+            async with session.run_stream_events('override', deps=None, output_type=int) as events_int:
+                async for _ in events_int:
+                    pass
+                assert events_int.result is not None
+                assert_type(events_int.result.output, int)
+    assert seen == ['bound', None]
+
+
+async def test_session_rejects_wrapper_that_discards_session_conversation():
+    class DetachedWrapper(WrapperAgent[None, str]):
+        @asynccontextmanager
+        async def iter(self, *args: Any, **kwargs: Any) -> AsyncGenerator[AgentRun[None, str]]:
+            async with self.wrapped.iter('detached') as run:
+                yield run
+
+    async with DetachedWrapper(Agent(TestModel())).session() as session:
+        session.enqueue('not lost')
+        with pytest.raises(UserError, match='did not delegate'):
+            await session.run('outer')
+        assert session.state.active_run_id is None
+        assert len(session.state.pending) == 1
+        assert session.conversation.messages == []

@@ -68,13 +68,8 @@ class ModelResources:
                 # Acquisition remains cancellable, but an entered model must outlive run cleanup.
                 # Session.__aexit__ signals closure only after its active run has unwound.
                 cleanup_scope.shield = True
-                try:
-                    task_status.started()
-                    await self._closed.wait()
-                finally:
-                    # This scope encloses model entry, so shielding does not violate a custom
-                    # model's LIFO cancel-scope stack during its exit.
-                    cleanup_scope.shield = True
+                task_status.started()
+                await self._closed.wait()
 
 
 class SessionRuntime:
@@ -135,6 +130,10 @@ class SessionRuntime:
             state.pending_messages = self._inbox
             self._inbox = PendingMessageQueue()
             self._active = state
+
+    def require_attached(self) -> None:
+        if self._active is None:
+            raise UserError('The agent wrapper did not delegate to its wrapped agent with the session conversation.')
 
     def enqueue(self, pending: PendingMessage) -> None:
         with self._lock:

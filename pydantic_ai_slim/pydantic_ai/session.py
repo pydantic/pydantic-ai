@@ -5,22 +5,31 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Self, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, overload
 
 import anyio
 from pydantic import ConfigDict, TypeAdapter
+from typing_extensions import TypedDict, Unpack
 
-from . import _instructions, messages, models, usage as _usage
+from . import _instructions, _utils, messages, models, result, usage as _usage
 from ._cancel import CancellationToken
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._session import SessionRuntime, bind_session
-from .agent.abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
+from .agent.abstract import (
+    AbstractAgent,
+    AgentMetadata,
+    AgentModelSettings,
+    AgentRetries,
+    AgentRunEvents,
+    EventStreamHandler,
+    RunOutputDataT,
+)
 from .agent.wrapper import WrapperAgent
 from .capabilities import AgentCapability
 from .conversation import Conversation
 from .exceptions import UserError
 from .output import OutputDataT, OutputSpec
-from .run import AgentRun
+from .run import AgentRun, AgentRunResult
 from .tools import AgentDepsT, DeferredToolResults
 from .toolsets import AbstractToolset
 from .workspaces import WorkspaceBackend, WorkspaceRef
@@ -51,6 +60,32 @@ class SessionState:
 
 SessionStateTypeAdapter = TypeAdapter(SessionState)
 """Adapter for serializing and validating a session checkpoint."""
+
+
+class _RunOptions(TypedDict, Generic[AgentDepsT], total=False):
+    """Shared forwarding options; dependency defaults are resolved by the session, not the agent."""
+
+    conversation: Conversation | None
+    message_history: Sequence[messages.ModelMessage] | None
+    deferred_tool_results: DeferredToolResults | None
+    conversation_id: str | None
+    run_id: str | None
+    model: models.Model | models.KnownModelName | str | None
+    model_settings: AgentModelSettings[AgentDepsT] | None
+    usage_limits: _usage.UsageLimits | None
+    cancellation_token: CancellationToken | None
+    usage: _usage.RunUsage | None
+    metadata: AgentMetadata[AgentDepsT] | None
+    retries: int | AgentRetries | None
+    infer_name: bool
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None
+    capabilities: Sequence[AgentCapability[AgentDepsT]] | None
+    workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None
+    spec: dict[str, Any] | AgentSpec | None
+
+
+class _InstructedRunOptions(_RunOptions[AgentDepsT], total=False):
+    instructions: _instructions.AgentInstructions[AgentDepsT]
 
 
 class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
@@ -146,6 +181,202 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         self._runtime.cancel()
 
     @overload
+    async def run(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AgentRunResult[OutputDataT]: ...
+
+    @overload
+    async def run(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AgentRunResult[RunOutputDataT]: ...
+
+    async def run(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AgentRunResult[Any]:
+        """Use the session dependencies unless this run explicitly overrides them."""
+        return await super().run(
+            user_prompt,
+            output_type=output_type,
+            deps=deps if _utils.is_set(deps) else self._deps,
+            event_stream_handler=event_stream_handler,
+            **kwargs,
+        )
+
+    @overload
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AgentRunResult[OutputDataT]: ...
+
+    @overload
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AgentRunResult[RunOutputDataT]: ...
+
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AgentRunResult[Any]:
+        """Use the session dependencies unless this run explicitly overrides them."""
+        return super().run_sync(
+            user_prompt,
+            output_type=output_type,
+            deps=deps if _utils.is_set(deps) else self._deps,
+            event_stream_handler=event_stream_handler,
+            **kwargs,
+        )
+
+    @overload
+    def run_stream(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
+
+    @overload
+    def run_stream(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
+
+    def run_stream(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, Any]]:
+        """Use the session dependencies unless this run explicitly overrides them."""
+        return super().run_stream(
+            user_prompt,
+            output_type=output_type,
+            deps=deps if _utils.is_set(deps) else self._deps,
+            event_stream_handler=event_stream_handler,
+            **kwargs,
+        )
+
+    @overload
+    def run_stream_sync(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_RunOptions[AgentDepsT]],
+    ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
+
+    @overload
+    def run_stream_sync(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_RunOptions[AgentDepsT]],
+    ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
+
+    def run_stream_sync(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **kwargs: Unpack[_RunOptions[AgentDepsT]],
+    ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
+        """Use the session dependencies unless this run explicitly overrides them."""
+        return super().run_stream_sync(
+            user_prompt,
+            output_type=output_type,
+            deps=deps if _utils.is_set(deps) else self._deps,
+            event_stream_handler=event_stream_handler,
+            **kwargs,
+        )
+
+    @overload
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
+
+    @overload
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
+
+    def run_stream_events(
+        self,
+        user_prompt: str | Sequence[messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
+    ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
+        """Use the session dependencies unless this run explicitly overrides them."""
+        return super().run_stream_events(
+            user_prompt,
+            output_type=output_type,
+            deps=deps if _utils.is_set(deps) else self._deps,
+            **kwargs,
+        )
+
+    @overload
     def iter(
         self,
         user_prompt: str | Sequence[messages.UserContent] | None = None,
@@ -158,7 +389,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
@@ -185,7 +416,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
@@ -212,7 +443,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.AgentInstructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
@@ -254,7 +485,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
                             run_id=run_id,
                             model=model if model is not None else self._model,
                             instructions=instructions,
-                            deps=deps if deps is not None else self._deps,
+                            deps=deps if _utils.is_set(deps) else self._deps,
                             model_settings=model_settings,
                             usage_limits=usage_limits,
                             cancellation_token=cancellation_token,
@@ -266,6 +497,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
                             workspace=workspace,
                             spec=spec,
                         ) as run:
+                            self._runtime.require_attached()
                             yield run
                         if run.result is not None:
                             final_conversation = run.result.conversation
