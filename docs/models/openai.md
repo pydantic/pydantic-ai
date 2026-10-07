@@ -291,6 +291,8 @@ Set handshake headers through the model's default `extra_headers`, `connect(extr
 
 Background responses, multiplexing, native mid-turn steering, and persistence of a socket across durable execution steps are outside this connection API. Token counting and standalone compaction continue to use their HTTP endpoints. The source model remains available for HTTP requests.
 
+The connection context manages only the WebSocket. To close the HTTP client used by token counting or standalone compaction, manage the source model or provider in its own async context.
+
 #### Ultrafast
 
 Select [`openai_responses_service_tier='ultrafast'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_responses_service_tier] on supported models when the lower latency justifies its price premium:

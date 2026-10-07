@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, Never, Self, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
@@ -2258,6 +2259,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     _provider: Provider[AsyncOpenAI] = field(repr=False)
     _websocket: ResponsesWebSocket | None = field(default=None, repr=False)
 
+    async def __aenter__(self) -> Self:
+        """Manage the HTTP client only when this model is not borrowing a WebSocket."""
+        if self._websocket is None:
+            await super().__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Leave borrowed connection and provider lifetimes with their owning contexts."""
+        if self._websocket is None:
+            return await super().__aexit__(exc_type, exc_val, exc_tb)
+
     @asynccontextmanager
     async def connect(
         self,
@@ -2302,17 +2319,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         headers.setdefault('user-agent', get_user_agent())
         settings: ModelSettings = {**(self.settings or {}), 'extra_headers': headers}
         timeout = HTTPX2Timeout(to_httpx2_timeout(settings.get('timeout', self.client.timeout)))
-        async with self:
-            with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-                websocket = await ResponsesWebSocket.connect(
-                    self.client, self.model_name, headers, timeout, websocket_connection_options or {}
-                )
-            try:
-                connected = _utils.replace_no_init(self, _websocket=websocket)
-                connected._settings = settings
-                yield connected
-            finally:
-                await websocket.close()
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            websocket = await ResponsesWebSocket.connect(
+                self.client, self.model_name, headers, timeout, websocket_connection_options or {}
+            )
+        try:
+            connected = _utils.replace_no_init(self, _websocket=websocket)
+            connected._settings = settings
+            yield connected
+        finally:
+            await websocket.close()
 
     def __init__(
         self,

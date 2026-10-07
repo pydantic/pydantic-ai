@@ -285,7 +285,10 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
     return harness
 
 
-async def test_independent_lifetimes(allow_model_requests: None, sockets: SocketHarness):
+@pytest.mark.parametrize('owned_http_client', [False, True])
+async def test_independent_lifetimes(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch, owned_http_client: bool
+):
     """The connection context owns the socket; model and wrapper contexts borrow it."""
     requests: list[httpx2.Request] = []
 
@@ -297,9 +300,16 @@ async def test_independent_lifetimes(allow_model_requests: None, sockets: Socket
     sockets.pending[0].responses.extend([text_events(response_id='resp_next')])
     sockets.pending.append(ScriptedSocket())
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
+        if owned_http_client:
+            monkeypatch.setattr(
+                'pydantic_ai.providers._openai_compatible.create_async_httpx2_client', lambda: http_client
+            )
+            provider = OpenAIProvider(api_key='test')
+        else:
+            provider = OpenAIProvider(api_key='test', http_client=http_client)
         source = OpenAIResponsesModel(
             'gpt-4o',
-            provider=OpenAIProvider(api_key='test', http_client=http_client),
+            provider=provider,
             settings=OpenAIResponsesModelSettings(openai_responses_service_tier='ultrafast'),
         )
         async with source.connect() as connected, source.connect() as independent:
@@ -311,12 +321,18 @@ async def test_independent_lifetimes(allow_model_requests: None, sockets: Socket
             async with Agent(WrapperModel(connected)) as agent:
                 assert (await agent.run('hello')).output == 'ready'
             assert sockets.opened[0].close_count == 0
+            assert not http_client.is_closed
             assert (await Agent(connected).run('again')).output == 'ready'
             assert (await Agent(independent).run('hello')).output == 'ready'
         assert [socket.close_count for socket in sockets.opened] == [1, 1]
         with pytest.raises(UserError, match='closed'):
             await Agent(connected).run('after close')
         assert len(sockets.opened[0].sent) == 2
+        await source.request([ModelRequest(parts=[UserPromptPart('after close')])], None, ModelRequestParameters())
+        assert not http_client.is_closed
+        async with source:
+            await source.request([ModelRequest(parts=[UserPromptPart('HTTP context')])], None, ModelRequestParameters())
+        assert http_client.is_closed is owned_http_client
 
 
 async def test_overlap(allow_model_requests: None, sockets: SocketHarness):
@@ -465,9 +481,13 @@ async def test_handshake_errors(sockets: SocketHarness, failure: str):
     else:
         sockets.connect_error = OSError('unreachable')
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
-    with pytest.raises(ModelHTTPError if failure == 'status' else ModelAPIError):
-        async with source.connect():
-            pytest.fail('The handshake should fail')
+    try:
+        with pytest.raises(ModelHTTPError if failure == 'status' else ModelAPIError):
+            async with source.connect():
+                pytest.fail('The handshake should fail')
+        assert not source.client.is_closed()
+    finally:
+        await source.client.close()
 
 
 async def test_missing_websocket_dependency(monkeypatch: pytest.MonkeyPatch):
