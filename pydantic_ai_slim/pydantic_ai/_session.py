@@ -320,13 +320,22 @@ def bind_session(agent: object, session: SessionRuntime) -> Generator[None]:
         _SESSION_BINDING.reset(token)
 
 
-def take_session(
+def peek_session(
     agent: object, conversation: Conversation | None | _utils.Unset = _utils.UNSET
 ) -> SessionRuntime | None:
+    """Inspect ownership without consuming the binding before the graph attaches."""
     binding = _SESSION_BINDING.get()
     if binding is None or binding[0] is not agent:
         return None
     if _utils.is_set(conversation) and binding[1].conversation is not conversation:
         return None
-    _SESSION_BINDING.set(None)
     return binding[1]
+
+
+def take_session(
+    agent: object, conversation: Conversation | None | _utils.Unset = _utils.UNSET
+) -> SessionRuntime | None:
+    session = peek_session(agent, conversation)
+    if session is not None:
+        _SESSION_BINDING.set(None)
+    return session

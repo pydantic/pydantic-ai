@@ -834,6 +834,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
         )
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        # Realtime opens a live connection rather than a sequence of recorded model operations.
+        # Reject during resolution, before toolset entry, hooks or a provider connection can run.
+        if self.in_durable_context and not isinstance(ctx.model, Model):
+            raise UserError(
+                f'Realtime sessions cannot be used inside a {self.engine_name} {self.durable_container_noun}, '
+                'as they run a long-lived, non-deterministic connection. Use them outside the '
+                f'{self.durable_container_noun} instead.'
+            )
+        return self
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band

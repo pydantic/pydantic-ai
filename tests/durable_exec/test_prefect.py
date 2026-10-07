@@ -13,7 +13,7 @@ from collections.abc import (
     Iterator,
     Sequence,
 )
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -101,7 +101,13 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelResolutionContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    ModelSelectionContext,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -485,11 +491,15 @@ async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
     assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
-@pytest.mark.parametrize(('legacy', 'blockbuster_enabled'), [(False, True), (True, False)])
-async def test_session_model_interactions_are_task_owned(legacy: bool, blockbuster_enabled: bool) -> None:
-    # The legacy wrapper constructs a Prefect flow in `run`, which synchronously inspects source files.
-    assert blockbuster_enabled is not legacy
+@pytest.mark.parametrize('mode', ['direct', 'selector', 'hook', 'legacy'])
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_session_model_interactions_are_task_owned(mode: str, blockbuster_enabled: bool) -> None:
+    """A flow retry rebuilds session history and tool operations from persisted task results."""
+    # Prefect's local result store uses synchronous mkdir during task commit. BlockBuster rejects
+    # it, and Prefect logs the failure but returns Completed, silently disabling retry caching.
+    assert blockbuster_enabled is False
     events: list[str] = []
+    attempts: list[int] = []
 
     class SessionModel(TestModel):
         @asynccontextmanager
@@ -501,23 +511,69 @@ async def test_session_model_interactions_are_task_owned(legacy: bool, blockbust
             finally:
                 events.append('close')
 
-    agent = (
-        PrefectAgent(Agent(SessionModel(), name=f'session_model_{legacy}'))  # pyright: ignore[reportDeprecated]
-        if legacy
-        else Agent(SessionModel(), name=f'session_model_{legacy}', capabilities=[PrefectDurability()])
-    )
+    registered_model = SessionModel()
 
-    @flow(name=f'session_model_flow_{legacy}')
+    class SelectModel(AbstractCapability[None]):
+        def get_model(self):
+            def select(ctx: ModelSelectionContext[None]) -> Model:
+                return registered_model
+
+            return select
+
+    class ReplaceModel(AbstractCapability[None]):
+        async def before_model_request(self, ctx: RunContext[None], request_context: ModelRequestContext):
+            request_context.model = registered_model
+            return request_context
+
+    async def record_tool() -> str:
+        assert TaskRunContext.get() is not None
+        events.append('tool')
+        return 'recorded'
+
+    capabilities: list[AbstractCapability[None]] = []
+    if mode == 'selector':
+        capabilities.append(SelectModel())
+    elif mode == 'hook':
+        capabilities.append(ReplaceModel())
+    if mode != 'legacy':
+        capabilities.append(PrefectDurability(models={'registered': registered_model}))
+    base_agent = Agent(
+        SessionModel(),
+        deps_type=type(None),
+        name=f'session_model_{mode}',
+        tools=[record_tool],
+        capabilities=capabilities,
+    )
+    agent = PrefectAgent(base_agent) if mode == 'legacy' else base_agent  # pyright: ignore[reportDeprecated]
+
+    @flow(name=f'session_model_flow_{mode}', retries=1, retry_delay_seconds=0)
     async def run_session() -> list[str]:
+        attempts.append(len(attempts))
         async with agent.session() as session:
             first = await session.run('first')
-            second = await session.run('second')
+            if mode == 'legacy':
+                second = await session.run('second')
+            else:
+                async with session.run_stream_events('second') as stream:
+                    async for _ in stream:
+                        pass
+                    second = stream.result
+            assert second is not None
             assert first.run_id != second.run_id
-            assert len(session.conversation.messages) == 4
+            assert len(session.conversation.messages) == 6
+            (operation,) = session.state.operations
+            assert operation.run_id == first.run_id
+            assert (operation.execution, operation.delivery) == ('completed', 'committed')
+            returned = operation.result[0].parts[0]
+            assert isinstance(returned, ToolReturnPart)
+            assert returned.content == 'recorded'
+            if len(attempts) == 1:
+                raise RuntimeError('restart after committed agent tasks')
             return [first.output, second.output]
 
     assert await run_session() == ['bound', 'bound']
-    assert events == ['open', 'close'] * 2
+    assert len(attempts) == 2
+    assert events == ['open', 'close', 'tool', 'open', 'close', 'open', 'close']
 
 
 async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> None:
@@ -1380,6 +1436,39 @@ async def test_realtime_session_in_flow() -> None:
         with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
             async with simple_prefect_agent.realtime(cast('Any', object())).session():
                 pass  # pragma: no cover
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('entry', ['session', 'owned-session', 'connection'])
+@pytest.mark.parametrize('inside_flow', [False, True])
+async def test_session_realtime_durable_boundary(legacy: bool, entry: str, inside_flow: bool) -> None:
+    base = Agent(
+        TestModel(), name=f'realtime_guard_{legacy}_{entry}', capabilities=[] if legacy else [PrefectDurability()]
+    )
+    agent = PrefectAgent(base) if legacy else base  # pyright: ignore[reportDeprecated]
+    model = _FakeRealtimeModel()
+
+    async def run_realtime() -> None:
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow') if inside_flow else nullcontext():
+            if entry == 'session':
+                async with agent.realtime(model).session():
+                    assert not inside_flow
+            else:
+                async with agent.session() as owner:
+                    if entry == 'owned-session':
+                        async with owner.realtime(model).session():
+                            assert not inside_flow
+                    else:
+                        async with owner.realtime(model).connect() as connection:
+                            async with connection.run():
+                                assert not inside_flow
+
+    with patch.object(model, 'connect', wraps=model.connect) as connect:
+        if inside_flow:
+            await flow(name=f'realtime_guard_flow_{legacy}_{entry}')(run_realtime)()
+        else:
+            await run_realtime()
+    assert connect.call_count == (0 if inside_flow else 1)
 
 
 async def test_realtime_signaling_in_flow() -> None:

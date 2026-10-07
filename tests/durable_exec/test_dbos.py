@@ -7,7 +7,7 @@ import time
 import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -48,6 +48,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, Hooks
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -68,6 +69,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    ModelSelectionContext,
     StreamedResponse,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -226,9 +228,11 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
     assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
-@pytest.mark.parametrize('legacy', [False, True])
-async def test_session_model_interactions_are_step_owned(dbos: DBOS, legacy: bool) -> None:
+@pytest.mark.parametrize('mode', ['direct', 'selector', 'hook', 'legacy', 'legacy-wrapped'])
+async def test_session_model_interactions_are_step_owned(dbos: DBOS, mode: str) -> None:
+    """Replaying a failed workflow's committed prefix reconstructs the ledger without repeating effects."""
     events: list[str] = []
+    attempts: list[int] = []
 
     class SessionModel(TestModel):
         @asynccontextmanager
@@ -240,28 +244,79 @@ async def test_session_model_interactions_are_step_owned(dbos: DBOS, legacy: boo
             finally:
                 events.append('close')
 
-    agent = (
-        DBOSAgent(Agent(SessionModel(), name=f'session_model_{legacy}'))  # pyright: ignore[reportDeprecated]
-        if legacy
-        else Agent(SessionModel(), name=f'session_model_{legacy}', capabilities=[DBOSDurability()])
-    )
+    registered_model = SessionModel()
 
-    @DBOS.workflow(name=f'session_model_workflow_{legacy}')
+    class SelectModel(AbstractCapability[None]):
+        def get_model(self):
+            def select(ctx: ModelSelectionContext[None]) -> Model:
+                return registered_model
+
+            return select
+
+    class ReplaceModel(AbstractCapability[None]):
+        async def before_model_request(self, ctx: RunContext[None], request_context: ModelRequestContext):
+            request_context.model = registered_model
+            return request_context
+
+    @DBOS.step(name=f'session_record_tool_{mode}')
+    async def record_tool() -> str:
+        assert DBOS.step_id is not None
+        events.append('tool')
+        return 'recorded'
+
+    legacy = mode in {'legacy', 'legacy-wrapped'}
+    capabilities: list[AbstractCapability[None]] = []
+    if mode == 'selector':
+        capabilities.append(SelectModel())
+    elif mode == 'hook':
+        capabilities.append(ReplaceModel())
+    if not legacy:
+        capabilities.append(DBOSDurability(models={'registered': registered_model}))
+    base_agent = Agent(
+        SessionModel(),
+        deps_type=type(None),
+        name=f'session_model_{mode}',
+        tools=[record_tool],
+        capabilities=capabilities,
+    )
+    agent = DBOSAgent(WrapperAgent(base_agent) if mode == 'legacy-wrapped' else base_agent) if legacy else base_agent  # pyright: ignore[reportDeprecated]
+
+    @DBOS.workflow(name=f'session_model_workflow_{mode}')
     async def run_session() -> list[str]:
+        attempts.append(len(attempts))
         async with agent.session() as session:
             first = await session.run('first')
-            second = await session.run('second')
+            if legacy:
+                second = await session.run('second')
+            else:
+                async with session.run_stream_events('second') as stream:
+                    async for _ in stream:
+                        pass
+                    second = stream.result
+            assert second is not None
             assert first.run_id != second.run_id
-            assert len(session.conversation.messages) == 4
+            assert len(session.conversation.messages) == 6
+            (operation,) = session.state.operations
+            assert operation.run_id == first.run_id
+            assert (operation.execution, operation.delivery) == ('completed', 'committed')
+            returned = operation.result[0].parts[0]
+            assert isinstance(returned, ToolReturnPart)
+            assert returned.content == 'recorded'
+            # Inject a container failure after its steps have committed, not a failed/cached step.
+            if len(attempts) == 1:
+                raise RuntimeError('restart after committed agent steps')
             return [first.output, second.output]
 
     workflow_id = str(uuid.uuid4())
-    with SetWorkflowID(workflow_id):
-        assert await run_session() == ['bound', 'bound']
-    assert events == ['open', 'close'] * 2
-    with SetWorkflowID(workflow_id):
-        assert await run_session() == ['bound', 'bound']
-    assert events == ['open', 'close'] * 2
+    with SetWorkflowID(workflow_id), pytest.raises(RuntimeError, match='restart after committed agent steps'):
+        await run_session()
+    expected_events = ['open', 'close', 'tool', 'open', 'close', 'open', 'close']
+    assert events == expected_events
+    steps = await DBOS.list_workflow_steps_async(workflow_id)
+    handle = await DBOS.fork_workflow_async(workflow_id, max(step['function_id'] for step in steps) + 1)
+    assert await handle.get_result() == ['bound', 'bound']
+    assert len(attempts) == 2  # The workflow body, not merely its final result, was replayed.
+    assert events == expected_events
 
 
 async def round_trip_workspace(ctx: RunContext[None]) -> str:
@@ -1235,6 +1290,45 @@ async def test_dbos_agent_realtime_session_in_workflow():
         with pytest.raises(UserError, match='cannot be used inside a DBOS workflow'):
             async with simple_dbos_agent.realtime(cast('Any', object())).session():
                 pass  # pragma: no cover
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('entry', ['session', 'owned-session', 'connection'])
+@pytest.mark.parametrize('inside_workflow', [False, True])
+async def test_session_realtime_durable_boundary(dbos: DBOS, legacy: bool, entry: str, inside_workflow: bool) -> None:
+    base = Agent(
+        TestModel(),
+        name=f'realtime_guard_{legacy}_{entry}_{inside_workflow}',
+        capabilities=[] if legacy else [DBOSDurability()],
+    )
+    agent = DBOSAgent(base) if legacy else base  # pyright: ignore[reportDeprecated]
+    model = _FakeRealtimeModel()
+
+    async def run_realtime() -> None:
+        with (
+            pytest.raises(UserError, match='cannot be used inside a DBOS workflow')
+            if inside_workflow
+            else nullcontext()
+        ):
+            if entry == 'session':
+                async with agent.realtime(model).session():
+                    assert not inside_workflow
+            else:
+                async with agent.session() as owner:
+                    if entry == 'owned-session':
+                        async with owner.realtime(model).session():
+                            assert not inside_workflow
+                    else:
+                        async with owner.realtime(model).connect() as connection:
+                            async with connection.run():
+                                assert not inside_workflow
+
+    with patch.object(model, 'connect', wraps=model.connect) as connect:
+        if inside_workflow:
+            await DBOS.workflow(name=f'realtime_guard_workflow_{legacy}_{entry}')(run_realtime)()
+        else:
+            await run_realtime()
+    assert connect.call_count == (0 if inside_workflow else 1)
 
 
 async def test_dbos_agent_realtime_signaling_in_workflow():

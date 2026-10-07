@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -32,9 +32,12 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai import Agent, RunContext
     from pydantic_ai._warnings import PydanticAIDeprecationWarning
     from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
-    from pydantic_ai.messages import ToolReturnPart
-    from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.messages import ModelMessage, ToolReturnPart
+    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
     from pydantic_ai.models.test import TestModel
+    from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
+    from pydantic_ai.realtime.codec import RealtimeConnection
 
     from ._shared import BASE_ACTIVITY_CONFIG
 
@@ -111,6 +114,78 @@ with pytest.warns(PydanticAIDeprecationWarning, match='`TemporalAgent` is deprec
         Agent(ActivitySessionModel(), name='legacy_session_activity_owner', tools=[record_tool]),
         activity_config=BASE_ACTIVITY_CONFIG,
     )
+
+
+class UnreachableRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'unreachable'
+
+    @property
+    def system(self) -> str:
+        return 'test'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile()
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        resource_events.append('unexpected realtime connection')
+        raise UserError('Unexpected realtime connection inside workflow')
+        yield  # pragma: no cover
+
+
+@workflow.defn
+class RealtimeGuardWorkflow:
+    @workflow.run
+    async def run(self, mode: str, entry: str) -> str:
+        agent = legacy_session_agent if mode == 'legacy' else session_agents['direct']
+        model = UnreachableRealtimeModel()
+        try:
+            if entry == 'session':
+                async with agent.realtime(model).session():
+                    pass
+            else:
+                async with agent.session() as owner:
+                    if entry == 'owned-session':
+                        async with owner.realtime(model).session():
+                            pass
+                    else:
+                        async with owner.realtime(model).connect() as connection:
+                            async with connection.run():
+                                pass
+        except UserError as exc:
+            return str(exc)
+        return 'Unexpected successful realtime entry'
+
+
+@pytest.mark.parametrize('mode', ['direct', 'legacy'])
+@pytest.mark.parametrize('entry', ['session', 'owned-session', 'connection'])
+async def test_session_realtime_rejected_before_connection(client: Client, mode: str, entry: str):
+    resource_events.clear()
+    task_queue = f'realtime-guard-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[RealtimeGuardWorkflow],
+        plugins=[AgentPlugin(legacy_session_agent if mode == 'legacy' else session_agents['direct'])],
+    ):
+        error = await client.execute_workflow(
+            RealtimeGuardWorkflow.run,
+            args=[mode, entry],
+            id=f'realtime-guard-{uuid.uuid4()}',
+            task_queue=task_queue,
+            execution_timeout=timedelta(seconds=60),
+        )
+    assert 'cannot be used inside a Temporal workflow' in error
+    assert resource_events == []
 
 
 @workflow.defn
