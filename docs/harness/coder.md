@@ -135,9 +135,10 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 Then the plumbing, which the agent never calls directly:
 
 6. [`FallbackCompaction`](compaction.md) over `SummarizingCompaction` then `SlidingWindowCompaction`: above 85% of the
-   model's context window, the run's model summarizes older messages, keeping the most recent 50,000 tokens
-   (at most 40% of the window, so a small window still gets room back). When summarizing fails with a model API
-   error or a usage limit, or the model cannot write text, those messages are dropped instead.
+   model's context window, the run's model summarizes older messages, keeping the most recent 50,000 tokens or
+   40% of the window, whichever is less (`keep_tokens=50_000, keep_fraction=0.4` on both strategies). When
+   summarizing fails with a model API error or a usage limit, or raises `CannotSummarizeError` because the model
+   is realtime or cannot write text, those messages are dropped instead.
    Pass `compaction=False` to leave it out when the agent binds its own compaction.
 7. A private [`ToolOutputLimits`](tool-output-limits.md) specialization that truncates any tool result over 64,000 characters
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability

@@ -473,6 +473,32 @@ def resolve_token_trigger(
     return max(1, int((context_window if context_window is not None else fallback_context_window) * max_fraction))
 
 
+def validate_keep_fraction(keep_fraction: float | None) -> None:
+    """Validate a strategy's `keep_fraction`."""
+    if keep_fraction is not None and not 0 < keep_fraction <= 1:
+        raise ValueError('keep_fraction must be greater than 0 and at most 1.')
+
+
+def resolve_keep_tokens(
+    keep_tokens: int | None,
+    keep_fraction: float | None,
+    model: AbstractModel | str,
+    fallback_context_window: int = DEFAULT_CONTEXT_WINDOW,
+    context_window: int | None = None,
+) -> int | None:
+    """Token budget for the tail a strategy keeps: `keep_tokens`, capped at `keep_fraction` of the window.
+
+    The window resolves as for `resolve_token_trigger`. `None` when neither is set, so the
+    strategy keeps its `keep_messages` instead.
+    """
+    if keep_fraction is None:
+        return keep_tokens
+    if context_window is None:
+        context_window = resolve_context_window(model)
+    by_window = int((context_window if context_window is not None else fallback_context_window) * keep_fraction)
+    return by_window if keep_tokens is None else min(keep_tokens, by_window)
+
+
 # ---------------------------------------------------------------------------
 # Tracing
 # ---------------------------------------------------------------------------

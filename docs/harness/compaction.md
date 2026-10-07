@@ -110,6 +110,22 @@ agent = Agent(
 )
 ```
 
+### `keep_fraction`: a kept tail that fits the window
+
+`keep_tokens` is as model-specific as `max_tokens`. With `keep_tokens=50_000` on a 32K model, the whole history fits in the tail, so compaction runs at the trigger and changes nothing, and the next request still overflows. `SummarizingCompaction` and `SlidingWindowCompaction` take `keep_fraction` too, resolved against the same window as `max_fraction`. Next to `keep_tokens` the smaller budget applies, so the tail stays at 50,000 tokens on large models and shrinks on small ones:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import SummarizingCompaction
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[SummarizingCompaction(max_fraction=0.85, keep_tokens=50_000, keep_fraction=0.4)],
+)
+```
+
+On its own, `keep_fraction` replaces `keep_messages` the way `keep_tokens` does.
+
 ### What counts toward the fraction
 
 With a usage anchor, the provider-reported usage covers everything billed for the anchored request,
@@ -216,6 +232,8 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 ## `FallbackCompaction`: recover when a strategy fails
 
 `TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction` advances only when a strategy raises an exception selected by `fallback_on`, which defaults to Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model in a `FallbackModel` fails. Each attempt receives a fresh list containing the original message objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must still honor the `CompactionStrategy` contract and avoid mutating message objects. If every strategy fails, the last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` rejects types that do not derive from `Exception`.
+
+A `SummarizingCompaction` without `model=` summarizes with the run's model. When that is a realtime model or one that cannot write text, it raises `CannotSummarizeError`, a `UserError`. Add it to `fallback_on` to truncate on such models instead of failing the run; other usage errors still propagate.
 
 Register it directly when summarization should fall back to deterministic truncation:
 
@@ -521,6 +539,8 @@ The recommended default is `TieredCompaction`; the other strategies below can be
 ::: pydantic_ai_harness.compaction.SlidingWindowCompaction
 
 ::: pydantic_ai_harness.compaction.SummarizingCompaction
+
+::: pydantic_ai_harness.compaction.CannotSummarizeError
 
 ::: pydantic_ai_harness.compaction.WarnNearLimits
 

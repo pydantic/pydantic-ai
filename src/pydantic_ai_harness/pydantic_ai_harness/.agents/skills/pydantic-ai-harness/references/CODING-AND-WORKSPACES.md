@@ -51,8 +51,8 @@ except UserError as e:
 ## Coder
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
-`FallbackCompaction` (above 85% of the window the run's model summarizes all but the newest 50,000 tokens,
-at most 40% of the window; when it can't summarize they are dropped; `compaction=False` leaves it out), a `ToolOutputLimits`
+`FallbackCompaction` (above 85% of the window the run's model summarizes all but the newest 50,000 tokens or
+40% of the window, whichever is less; a model that can't summarize drops them; `compaction=False` leaves it out), a `ToolOutputLimits`
 that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`.
 
 ```bash
@@ -87,7 +87,7 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
-`repo_context=True`, `sub_agents=True`.
+`repo_context=True`, `compaction=True`, `sub_agents=True`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring

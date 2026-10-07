@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
-from typing import Generic, Self
 
 from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
-from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
+from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS, project_instructions
 from pydantic_ai_harness.compaction import (
-    DEFAULT_CONTEXT_WINDOW,
+    CannotSummarizeError,
     FallbackCompaction,
     SlidingWindowCompaction,
     SummarizingCompaction,
-    SupportsFocus,
-    resolve_context_window,
 )
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -66,35 +62,23 @@ COMPACTION_KEEP_FRACTION = 0.4
 """The most of the model's context window compaction keeps, so a small window still gets room back."""
 
 
-@dataclass
-class _WindowBoundedTail(Generic[AgentDepsT]):
-    """Run `strategy` keeping at most `COMPACTION_KEEP_FRACTION` of the request model's window."""
-
-    strategy: SummarizingCompaction[AgentDepsT] | SlidingWindowCompaction[AgentDepsT]
-
-    async def compact(self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]) -> list[ModelMessage]:
-        window = resolve_context_window(ctx.model) or DEFAULT_CONTEXT_WINDOW
-        keep = min(COMPACTION_KEEP_TOKENS, int(window * COMPACTION_KEEP_FRACTION))
-        return await replace(self.strategy, keep_tokens=keep).compact(messages, ctx)
-
-    def with_focus(self, focus: str) -> Self:
-        strategy = self.strategy
-        return replace(self, strategy=strategy.with_focus(focus) if isinstance(strategy, SupportsFocus) else strategy)
-
-
 def _compaction() -> FallbackCompaction[AgentDepsT]:
-    """Summarize older messages with the run's model, and drop them when summarizing fails."""
+    """Summarize older messages with the run's model, and drop them when it cannot summarize."""
     return FallbackCompaction[AgentDepsT](
         fallback_chain=[
             # The chain triggers, so the strategies' own `max_messages` only has to be valid.
             # Its own id keeps a separately bound `SummarizingCompaction`'s durable operation apart.
-            _WindowBoundedTail(
-                SummarizingCompaction[AgentDepsT](max_messages=1, id='coder_summarizing_compaction'),
+            SummarizingCompaction[AgentDepsT](
+                max_messages=1,
+                keep_tokens=COMPACTION_KEEP_TOKENS,
+                keep_fraction=COMPACTION_KEEP_FRACTION,
+                id='coder_summarizing_compaction',
             ),
-            _WindowBoundedTail(SlidingWindowCompaction[AgentDepsT](max_messages=1)),
+            SlidingWindowCompaction[AgentDepsT](
+                max_messages=1, keep_tokens=COMPACTION_KEEP_TOKENS, keep_fraction=COMPACTION_KEEP_FRACTION
+            ),
         ],
-        # `UserError`: a realtime model, or one that cannot write text, cannot summarize, so truncate instead.
-        fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded, UserError),
+        fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded, CannotSummarizeError),
         max_fraction=COMPACTION_THRESHOLD,
     )
 
@@ -125,10 +109,10 @@ class Coder(CombinedCapability[AgentDepsT]):
     `repo_context=False` leaves out the bundled `RepoContext`, for hosts that
     bind their own and would otherwise load the instruction files twice.
 
-    Above 85% of the model's context window, older messages are summarized by
-    the run's model, keeping the most recent 50,000 tokens (at most 40% of
-    the window); when the model cannot summarize them, they are dropped instead. `compaction=False` leaves this out, for
-    hosts that bind their own compaction.
+    Above 85% of the model's context window, the run's model summarizes older
+    messages, keeping the most recent 50,000 tokens or 40% of the window,
+    whichever is less; a model that cannot summarize drops them instead.
+    `compaction=False` leaves this out, for hosts that bind their own.
 
     `sub_agents=True` adds `delegate_task`, which hands a self-contained sub-task
     to a fresh run of the same agent `Coder` is bound to, so the delegate has

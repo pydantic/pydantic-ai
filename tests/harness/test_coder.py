@@ -181,19 +181,6 @@ async def test_coder_compaction_truncates_when_the_model_cannot_summarize() -> N
     )
 
 
-async def test_coder_compaction_passes_a_focus_to_the_summary() -> None:
-    compaction = next(item for item in Coder().capabilities if isinstance(item, FallbackCompaction))
-    prompts: list[str] = []
-
-    def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        prompts.extend(str(getattr(part, 'content', '')) for message in messages for part in message.parts)
-        return ModelResponse(parts=[TextPart('summary')])
-
-    await compact_now(compaction, _history(180_000), model=FunctionModel(summarize), focus='the failing test')
-
-    assert any('the failing test' in prompt for prompt in prompts)
-
-
 def test_coder_compaction_can_be_left_out() -> None:
     assert any(isinstance(item, FallbackCompaction) for item in Coder().capabilities)
     assert not any(isinstance(item, FallbackCompaction) for item in Coder(compaction=False).capabilities)

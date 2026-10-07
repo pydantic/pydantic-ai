@@ -25,11 +25,16 @@ from pydantic_ai_harness.compaction._shared import (
     estimate_token_count,
 )
 from pydantic_ai_harness.compaction._sliding_window_compaction import SlidingWindowCompaction
-from pydantic_ai_harness.compaction._summarizing_compaction import SummarizingCompaction, drain_summary_events
+from pydantic_ai_harness.compaction._summarizing_compaction import (
+    CannotSummarizeError,
+    SummarizingCompaction,
+    drain_summary_events,
+)
 from pydantic_ai_harness.compaction._tiered_compaction import TieredCompaction
 from pydantic_ai_harness.compaction._warn_near_limits import WarningKind, WarnNearLimits
 
 __all__ = [
+    'CannotSummarizeError',
     'DEFAULT_CONTEXT_WINDOW',
     'ClampOversizedMessages',
     'ClearToolResults',

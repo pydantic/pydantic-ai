@@ -15,7 +15,6 @@ import pydantic_ai.messages as messages_module
 import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -38,6 +37,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness.compaction import (
     DEFAULT_CONTEXT_WINDOW,
+    CannotSummarizeError,
     ClampOversizedMessages,
     ClearToolResults,
     ContextUsage,
@@ -54,7 +54,7 @@ from pydantic_ai_harness.compaction import (
     estimate_token_count,
     resolve_context_window,
 )
-from pydantic_ai_harness.compaction._shared import resolve_token_trigger
+from pydantic_ai_harness.compaction._shared import resolve_keep_tokens, resolve_token_trigger
 
 try:
     from logfire.testing import CaptureLogfire
@@ -1678,11 +1678,11 @@ class TestRealtimeModelSkipsTokenTriggers:
 
     async def test_summarizing_compaction_requires_a_model_for_a_realtime_run(self):
         """With no summarizer `model=` configured, a realtime run cannot summarize -- say so."""
-        capability: SummarizingCompaction[None] = SummarizingCompaction(max_messages=1)
+        capability: SummarizingCompaction[None] = SummarizingCompaction(max_messages=1, keep_messages=1)
         ctx = _ctx(model=_FakeRealtimeModel())
 
-        with pytest.raises(UserError, match='needs a request-response model'):
-            await capability._summarize(_history(2), ctx)  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(CannotSummarizeError, match='needs a request-response model'):
+            await capability.compact(_history(2), ctx)
 
 
 def _textless_model() -> FunctionModel:
@@ -1718,7 +1718,7 @@ class TestSummarizerMustWriteText:
             capabilities=[SummarizingCompaction(max_messages=3, keep_messages=1)],
         )
 
-        with pytest.raises(UserError, match=r'cannot produce text\. Set `model=` on SummarizingCompaction'):
+        with pytest.raises(CannotSummarizeError, match=r'cannot produce text\. Set `model=` on SummarizingCompaction'):
             await agent.run('go', message_history=_history(2))
 
     async def test_a_summarizer_model_lets_a_textless_run_compact(self):
@@ -1741,6 +1741,53 @@ class TestSummarizerMustWriteText:
         first = result.all_messages()[0]
         assert isinstance(first, ModelRequest)
         assert any(isinstance(part, SystemPromptPart) and 'Summary.' in part.content for part in first.parts)
+
+
+def _summary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Summary.')])
+
+
+def _keeping(
+    summarize: bool, *, keep_fraction: float | None
+) -> SlidingWindowCompaction[None] | SummarizingCompaction[None]:
+    """A strategy keeping 50,000 tokens, capped at `keep_fraction` of the window."""
+    if summarize:
+        return SummarizingCompaction(
+            max_messages=1, keep_tokens=50_000, keep_fraction=keep_fraction, preserve_first_user_message=False
+        )
+    return SlidingWindowCompaction(
+        max_messages=1, keep_tokens=50_000, keep_fraction=keep_fraction, preserve_first_user_message=False
+    )
+
+
+class TestKeepFraction:
+    """`keep_fraction` caps the kept tail by the window, so a large `keep_tokens` still reclaims on a small model."""
+
+    @pytest.mark.parametrize('summarize', [False, True], ids=['sliding', 'summarizing'])
+    async def test_the_smaller_of_keep_tokens_and_keep_fraction_applies(self, summarize: bool):
+        model = FunctionModel(_summary, profile={'context_window': 32_000})
+        history = _history(80, filler='x' * 1_600)  # about 64,000 tokens
+
+        uncapped = await compact_now(_keeping(summarize, keep_fraction=None), history, model=model)
+        capped = await compact_now(_keeping(summarize, keep_fraction=0.4), history, model=model)
+
+        assert estimate_token_count(uncapped) > 45_000, 'a 50,000-token tail keeps more than the 32,000 window'
+        assert estimate_token_count(capped) <= 12_800 + 10, 'the tail fits 40% of the window, plus the summary'
+
+    def test_the_window_resolves_as_for_max_fraction(self):
+        # `TestModel`'s window does not resolve, so the fraction is of `fallback_context_window`.
+        assert resolve_keep_tokens(None, 0.4, TestModel()) == 80_000
+        assert resolve_keep_tokens(None, 0.4, TestModel(), fallback_context_window=10_000) == 4_000
+        assert resolve_keep_tokens(50_000, 0.4, TestModel(), context_window=1_000_000) == 50_000
+        assert resolve_keep_tokens(50_000, None, TestModel()) == 50_000
+        assert resolve_keep_tokens(None, None, TestModel()) is None
+
+    @pytest.mark.parametrize('keep_fraction', [0, 1.5])
+    def test_a_fraction_outside_zero_to_one_is_rejected(self, keep_fraction: float):
+        with pytest.raises(ValueError, match='keep_fraction must be greater than 0 and at most 1'):
+            SlidingWindowCompaction(max_messages=1, keep_fraction=keep_fraction)
+        with pytest.raises(ValueError, match='keep_fraction must be greater than 0 and at most 1'):
+            SummarizingCompaction(max_messages=1, keep_fraction=keep_fraction)
 
 
 pytestmark = [pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')]
