@@ -751,7 +751,7 @@ async def test_image_only_prompt_streams(
 ):
     """An image-only prompt can produce a typed answer through the streaming API."""
     agent = Agent(
-        capture_model, output_type=bool, instructions='Does the pictured fruit have a green center with black seeds?'
+        capture_model, output_type=bool, instructions='Does the pictured fruit have green flesh and black seeds?'
     )
 
     async with agent.run_stream([image_content]) as result:
@@ -788,8 +788,8 @@ async def test_image_in_history_and_text_in_current_prompt(
     result = await Agent(
         capture_model,
         output_type=bool,
-        instructions='Does the pictured fruit have a green center with black seeds?',
-    ).run('Does the pictured fruit have a green center with black seeds?', message_history=history)
+        instructions='Does the pictured fruit have green flesh and black seeds?',
+    ).run('Does the pictured fruit have green flesh and black seeds?', message_history=history)
 
     assert result.output is True
     request_body = json.loads(request_capture.raw_bodies[0])
@@ -799,7 +799,7 @@ async def test_image_in_history_and_text_in_current_prompt(
     state = json.loads(content[0]['text'])
     assert state == {
         'history': [{'user': '<image 1>'}, {'assistant': 'This image was attached earlier.'}],
-        'text': 'Does the pictured fruit have a green center with black seeds?',
+        'text': 'Does the pictured fruit have green flesh and black seeds?',
     }
     assert content[1] == {'type': 'input_text', 'text': '<image 1>:'}
     assert content[2]['type'] == 'input_image'
