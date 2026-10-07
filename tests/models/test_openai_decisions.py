@@ -706,6 +706,22 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
         ),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': -0.5}), id='score below the rubric'),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': 2.5}), id='score past the rubric'),
+        pytest.param(
+            Mood,
+            (
+                REFUND,
+                {
+                    **FRUSTRATION,
+                    'score': 1.0,
+                    'probabilities': [
+                        {'value': 0, 'label': '0', 'probability': 0.9},
+                        {'value': 1, 'label': '1', 'probability': 0.1},
+                        {'value': 2, 'label': '2', 'probability': 0.0},
+                    ],
+                },
+            ),
+            id='score disagrees with probabilities',
+        ),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'probabilities': []}), id='no levels'),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': float('nan')}), id='score not a number'),
         pytest.param(
@@ -757,6 +773,25 @@ async def test_answers_match_questions(
     agent = Agent(mock_model(lambda request: decisions(*answers)), output_type=output_type)
     with pytest.raises(UnexpectedModelBehavior, match='does not match its question'):
         await agent.run('Charged twice.')
+
+
+async def test_rounded_score_can_match_rounded_probabilities(allow_model_requests: None):
+    """The score and probabilities may be rounded separately while still admitting a consistent distribution.
+
+    Not recorded: a fixed transport response pins the rounding boundary.
+    """
+    answer = {
+        **FRUSTRATION,
+        'score': 1.0,
+        'probabilities': [
+            {'value': 0, 'label': '0', 'probability': 0.33},
+            {'value': 1, 'label': '1', 'probability': 0.33},
+            {'value': 2, 'label': '2', 'probability': 0.34},
+        ],
+    }
+    result = await Agent(mock_model(lambda _: decisions(REFUND, answer)), output_type=Mood).run('How frustrated?')
+
+    assert result.output == Mood(refund=False, frustration=1)
 
 
 async def test_every_refusal_is_named(allow_model_requests: None):

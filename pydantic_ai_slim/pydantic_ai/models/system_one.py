@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from decimal import Decimal
 from typing import Annotated, Literal, cast
 
 import httpx2
@@ -25,6 +24,7 @@ from .decision import (
     ScoreAnswer,
     ScoreQuestion,
     _answer_fits,  # pyright: ignore[reportPrivateUsage]
+    _score_matches_probabilities,  # pyright: ignore[reportPrivateUsage]
     _wire,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -121,7 +121,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         """The system / model provider."""
         return self._provider.name
 
-    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:  # noqa: C901
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/systemone` endpoint."""
         body: dict[str, object] = {
             'state': request.state,
@@ -185,36 +185,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
                 or answer.legend.keys() == answer.probabilities.keys()
             )
             if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
-                # A displayed score and its probabilities may each be rounded. Check whether any distribution
-                # within their rounding intervals could produce that score, using at least Jev's two decimals.
-                values: list[Decimal] = [
-                    Decimal(str(answer.probabilities[level])) for level in range(len(question.criteria))
-                ]
-                half_units: list[Decimal] = [
-                    Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values
-                ]
-                lower: list[Decimal] = [
-                    max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)
-                ]
-                upper: list[Decimal] = [
-                    min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)
-                ]
-                remaining = Decimal(1) - sum(lower, Decimal(0))
-                valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
-                if valid:
-                    bounds: list[Decimal] = []
-                    for levels in (range(len(values)), reversed(range(len(values)))):
-                        rest = remaining
-                        mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
-                        for level in levels:
-                            taken = min(rest, upper[level] - lower[level])
-                            mean += level * taken
-                            rest -= taken
-                        bounds.append(mean)
-                    score = Decimal(str(answer.score))
-                    score_decimals = max(2, -int(score.as_tuple().exponent))
-                    score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
-                    valid = score + score_half_unit >= bounds[0] and score - score_half_unit <= bounds[1]
+                valid = _score_matches_probabilities(question, answer)
             if not valid:
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',

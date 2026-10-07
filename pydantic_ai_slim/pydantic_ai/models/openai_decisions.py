@@ -46,6 +46,7 @@ from .decision import (
     ScoreAnswer,
     ScoreQuestion,
     _answer_fits,  # pyright: ignore[reportPrivateUsage]
+    _score_matches_probabilities,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
@@ -326,7 +327,15 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             answer = by_name[name]
             if isinstance(answer, AnswerAnswerResourceRefusal):
                 refused.append(name)
-            elif (converted := _answer(answer)) is not None and _answer_fits(question, converted):
+            elif (
+                (converted := _answer(answer)) is not None
+                and _answer_fits(question, converted)
+                and (
+                    not isinstance(question, ScoreQuestion)
+                    or not isinstance(converted, ScoreAnswer)
+                    or _score_matches_probabilities(question, converted)
+                )
+            ):
                 answers[name] = converted
             else:
                 raise UnexpectedModelBehavior(

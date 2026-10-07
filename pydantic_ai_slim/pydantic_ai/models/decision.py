@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Collection, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
@@ -258,6 +259,33 @@ def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  #
 def _sums_to_one(probabilities: Collection[float]) -> bool:
     # The decision APIs round each probability to two decimal places, so each may be off by half a unit.
     return abs(sum(probabilities) - 1) <= 1e-6 + len(probabilities) * 0.005
+
+
+def _score_matches_probabilities(question: ScoreQuestion, answer: ScoreAnswer) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether rounded probabilities for ordered levels can produce the displayed score."""
+    # A displayed score and its probabilities may each be rounded. Check whether any distribution
+    # within their rounding intervals could produce that score, using at least two decimals.
+    values: list[Decimal] = [Decimal(str(answer.probabilities[level])) for level in range(len(question.criteria))]
+    half_units: list[Decimal] = [Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values]
+    lower: list[Decimal] = [max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)]
+    upper: list[Decimal] = [min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)]
+    remaining = Decimal(1) - sum(lower, Decimal(0))
+    valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
+    if valid:
+        bounds: list[Decimal] = []
+        for levels in (range(len(values)), reversed(range(len(values)))):
+            rest = remaining
+            mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
+            for level in levels:
+                taken = min(rest, upper[level] - lower[level])
+                mean += level * taken
+                rest -= taken
+            bounds.append(mean)
+        score = Decimal(str(answer.score))
+        score_decimals = max(2, -int(score.as_tuple().exponent))
+        score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
+        valid = score + score_half_unit >= bounds[0] and score - score_half_unit <= bounds[1]
+    return valid
 
 
 _UNSUPPORTED_FIELD_HINT = (
