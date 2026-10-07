@@ -124,23 +124,6 @@ class _DecisionImagePreparer:
         self.images.append(DecisionInputImageParam(type='input_image', image_url=image_url))
         return label
 
-    async def _prepare_user_prompt(self, part: UserPromptPart) -> UserPromptPart:
-        if isinstance(part.content, str):
-            return part
-        content: list[UserContent] = []
-        for item in part.content:
-            if isinstance(item, BinaryContent):
-                if not item.is_image:
-                    raise self._unsupported_file('A user prompt')
-                content.append(await self._add_image(item))
-            elif isinstance(item, ImageUrl):
-                content.append(await self._add_image(item))
-            elif is_multi_modal_content(item):
-                raise self._unsupported_file('A user prompt')
-            else:
-                content.append(item)
-        return replace(part, content=content)
-
     async def _prepare_tool_return(self, part: _ToolReturnPartT) -> _ToolReturnPartT:
         if not part.files:
             return part
@@ -164,8 +147,18 @@ class _DecisionImagePreparer:
             if isinstance(message, ModelRequest):
                 request_parts: list[ModelRequestPart] = []
                 for part in message.parts:
-                    if isinstance(part, UserPromptPart):
-                        request_parts.append(await self._prepare_user_prompt(part))
+                    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                        content: list[UserContent] = []
+                        for item in part.content:
+                            if isinstance(item, (BinaryContent, ImageUrl)):
+                                if isinstance(item, BinaryContent) and not item.is_image:
+                                    raise self._unsupported_file('A user prompt')
+                                content.append(await self._add_image(item))
+                            elif is_multi_modal_content(item):
+                                raise self._unsupported_file('A user prompt')
+                            else:
+                                content.append(item)
+                        request_parts.append(replace(part, content=content))
                     elif isinstance(part, ToolReturnPart):
                         request_parts.append(await self._prepare_tool_return(part))
                     else:
