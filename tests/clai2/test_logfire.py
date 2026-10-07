@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import warnings
 from collections.abc import Generator
 from pathlib import Path
 from typing import Literal
@@ -60,6 +61,7 @@ class Recorder:
         send_to_logfire: Literal[False, 'if-token-present'],
         service_name: str,
         console: Literal[False],
+        inspect_arguments: bool,
         config_dir: Path,
         data_dir: Path,
         token: str | None,
@@ -73,6 +75,7 @@ class Recorder:
                 'send_to_logfire': send_to_logfire,
                 'service_name': service_name,
                 'console': console,
+                'inspect_arguments': inspect_arguments,
                 'config_dir': config_dir,
                 'data_dir': data_dir,
                 'base_url': advanced.base_url if advanced else None,
@@ -84,6 +87,7 @@ class Recorder:
             send_to_logfire=False,
             service_name=service_name,
             console=console,
+            inspect_arguments=inspect_arguments,
             config_dir=config_dir,
             data_dir=data_dir,
             token=token,
@@ -166,6 +170,7 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
             'send_to_logfire': 'if-token-present',
             'service_name': 'pydantic-clai2',
             'console': False,
+            'inspect_arguments': False,
             'config_dir': tmp_path / 'config/pydantic-clai2/logfire',
             'data_dir': tmp_path / 'config/pydantic-clai2/logfire',
             'base_url': None,
@@ -369,6 +374,21 @@ async def test_no_credentials_needs_no_setup_or_console_output(capsys: pytest.Ca
         await close(plugin)
     captured = capsys.readouterr()
     assert captured.out == captured.err == ''
+
+
+async def test_logging_never_inspects_caller_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Source edited on disk mid-session made Logfire warn on stderr, through the live display."""
+    monkeypatch.setattr('executing.Source.executing', pytest.fail)
+    plugin = load_logfire(make_host(ui_events=True))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        try:
+            await plugin.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+            await plugin.dispatch(TurnEnd(text='hello', outcome='completed'))
+            telemetry.record('setting {setting} changed', setting='display.theme')
+        finally:
+            await close(plugin)
+    assert [str(warning.message) for warning in caught] == []
 
 
 @pytest.mark.parametrize('cancelled', [False, True])
