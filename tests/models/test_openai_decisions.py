@@ -61,7 +61,7 @@ from .test_system_one import Captured, Frustration, Handler, Ticket
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
 
-    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel, OpenAIDecisionsModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
 
@@ -613,7 +613,8 @@ async def test_request_id(allow_model_requests: None):
     )
 
 
-async def test_user_agent_and_default_timeout(allow_model_requests: None):
+@pytest.mark.parametrize('user_agent_header', ['User-Agent', 'user-agent', 'USER-AGENT'])
+async def test_user_agent_and_default_timeout(allow_model_requests: None, user_agent_header: str):
     """A `User-Agent` in `extra_headers` replaces ours, and with no `timeout` set the SDK's default applies.
 
     `test_model_settings_support.py` checks the settings are forwarded. Not recorded: the timeout is set on the
@@ -622,7 +623,8 @@ async def test_user_agent_and_default_timeout(allow_model_requests: None):
     captured = Captured(ticket_answers)
     agent = Agent(mock_model(captured), output_type=Ticket)
 
-    await agent.run('Charged twice.', model_settings={'extra_headers': {'User-Agent': 'support-bot'}})
+    settings: OpenAIDecisionsModelSettings = {'extra_headers': {user_agent_header: 'support-bot'}}
+    await agent.run('Charged twice.', model_settings=settings)
 
     request = captured.requests[0]
     assert request.headers['user-agent'] == 'support-bot'

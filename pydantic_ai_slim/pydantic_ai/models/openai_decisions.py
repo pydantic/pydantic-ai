@@ -206,8 +206,8 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
     ...
     ```
 
-    See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for how an agent's output type and tools
-    become questions, and [OpenAI](https://pydantic.dev/docs/ai/models/openai/#decisions-api) for setup.
+    See [Decision models](../../models/decision.md) for how an agent's output type and tools
+    become questions, and [OpenAI](../../models/openai.md#decisions-api) for setup.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
@@ -292,8 +292,9 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
-        extra_headers = dict(model_settings.get('extra_headers', {}))
-        extra_headers.setdefault('User-Agent', get_user_agent())
+        extra_headers: dict[str, str] = dict(model_settings.get('extra_headers', {}))
+        if all(name.lower() != 'user-agent' for name in extra_headers):
+            extra_headers['User-Agent'] = get_user_agent()
         if (extra_body := model_settings.get('extra_body')) is not None and not isinstance(extra_body, Mapping):
             raise UserError(
                 f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.'
