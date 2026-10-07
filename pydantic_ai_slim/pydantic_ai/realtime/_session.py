@@ -1191,7 +1191,6 @@ class RealtimeSession:
 
     async def _finish_run(self) -> None:
         """Wait for history and effects, not just `response.done`, then revoke this run's input."""
-        self._start_pump()
         while True:
             self._exchange_progress.clear()
             if (error := self._first_undelivered_error()) is not None:
@@ -1201,6 +1200,8 @@ class RealtimeSession:
                 # interrupted-history settlement and error delivery; wait for that same teardown.
                 await self.close()
                 return
+            # An explicitly closed, unused run must not start a receive task after teardown.
+            self._start_pump()
             if self._pump_finished:
                 raise UserError('The realtime connection ended before the run could settle.')
             pending = (

@@ -146,8 +146,7 @@ async def test_audio_producer_is_drained_before_next_run():
     async def microphone() -> AsyncIterator[bytes]:
         try:
             started.set()
-            await asyncio.Event().wait()
-            yield b'never sent'
+            yield await asyncio.Future[bytes]()
         finally:
             finalized.set()
 
@@ -164,8 +163,8 @@ async def test_audio_producer_is_drained_before_next_run():
     assert asyncio.all_tasks() == before
 
 
-@pytest.mark.parametrize('waiting', [False, True])
-async def test_run_owns_event_wrapper_cleanup_and_hook_handle(waiting: bool):
+@pytest.mark.parametrize('mode', ['abandon', 'waiting', 'exhausted'])
+async def test_run_owns_event_wrapper_cleanup_and_hook_handle(mode: str):
     before = asyncio.all_tasks()
     marker: ContextVar[str] = ContextVar('run-wrapper-marker', default='outside')
     calls: list[tuple[str, str]] = []
@@ -191,11 +190,10 @@ async def test_run_owns_event_wrapper_cleanup_and_hook_handle(waiting: bool):
             with anyio.CancelScope():
                 try:
                     calls.append(('stream', ctx.deps))
-                    async for event in stream:
-                        yield event
-                        if waiting:
-                            wrapper_waiting.set()
-                            await asyncio.Event().wait()
+                    yield await anext(aiter(stream))
+                    if mode == 'waiting':
+                        wrapper_waiting.set()
+                        await asyncio.Event().wait()
                 finally:
                     assert asyncio.current_task() is task
                     assert marker.get() == ctx.deps
@@ -222,10 +220,12 @@ async def test_run_owns_event_wrapper_cleanup_and_hook_handle(waiting: bool):
                                 await stale.send('stale hook handle')
                         await run.send(deps)
                         iterator = aiter(run)
-                        async for _ in iterator:
-                            break
+                        await anext(iterator)
                         assert handles[-1] is run
-                        if waiting:
+                        if mode == 'exhausted':
+                            with pytest.raises(StopAsyncIteration):
+                                await anext(iterator)
+                        if mode == 'waiting':
                             wrapper_waiting.clear()
                             reader = asyncio.ensure_future(anext(iterator))
                             await wrapper_waiting.wait()
@@ -359,7 +359,8 @@ async def test_tools_use_fresh_run_dependencies_metadata_and_context():
             if isinstance(content, str):
                 self.events.put_nowait(ToolCall(tool_name='identify', tool_call_id=content, args='{}'))
                 self.events.put_nowait(ResponseDone())
-            elif isinstance(content, ToolResult):
+            else:
+                assert isinstance(content, ToolResult)
                 self.events.put_nowait(OutputTranscript(content.output, output_text=True, is_final=True))
                 self.events.put_nowait(ResponseDone())
 
@@ -413,8 +414,7 @@ async def test_cancellation_drains_streams_and_closes_connection(first_party: bo
         with anyio.CancelScope():
             try:
                 started.set()
-                await asyncio.Event().wait()
-                yield b'never sent'
+                yield await asyncio.Future[bytes]()
             finally:
                 cleaned.set()
 
@@ -441,7 +441,7 @@ async def test_cancellation_drains_streams_and_closes_connection(first_party: bo
             assert model.closes == 1
             with pytest.raises(UserError, match='must not be closed'):
                 async with live.run():
-                    pytest.fail('A cancelled connection cannot be reused')
+                    pass
         await owner.run('ordinary afterward')
     assert asyncio.all_tasks() == before
 
@@ -456,9 +456,9 @@ async def test_cancelled_pull_keeps_its_unconsumed_event():
         ) -> AsyncIterator[AgentStreamEvent]:
             entered.set()
             await release.wait()
-            async for event in stream:
-                produced.append(event)
-                yield event
+            event = await anext(aiter(stream))
+            produced.append(event)
+            yield event
 
     agent = Agent(TestModel(), deps_type=type(None), capabilities=[PausedWrapper()])
     async with agent.session() as owner:
@@ -468,6 +468,8 @@ async def test_cancelled_pull_keeps_its_unconsumed_event():
                 first = asyncio.ensure_future(anext(iterator))
                 with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                     await entered.wait()
+                with pytest.raises(UserError, match='already being read'):
+                    await anext(iterator)
                 first.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await first
@@ -498,7 +500,6 @@ async def test_cancelled_run_aborts_blocked_audio_send_before_draining_producer(
         with anyio.CancelScope():
             try:
                 yield b'\x00\x00' * 100
-                await asyncio.Event().wait()
             finally:
                 source_closed.set()
 
@@ -630,7 +631,7 @@ async def test_explicit_run_close_settles_without_spurious_boundary_error():
             assert run.result.output == 'reply to hello'
             with pytest.raises(UserError, match='closed'):
                 async with live.run():
-                    pytest.fail('Explicit close must revoke the attachment')
+                    pass
         assert model.closes == 1
 
 
@@ -687,9 +688,9 @@ async def test_explicit_close_while_run_exit_is_waiting(from_tool: bool):
     class ToolConnection(DuplexConnection):
         async def send(self, content: RealtimeInput) -> None:
             self.sent.append(content)
-            if isinstance(content, str):
-                self.events.put_nowait(ToolCall(tool_name='end_call', tool_call_id='end-call', args='{}'))
-                self.events.put_nowait(ResponseDone())
+            assert isinstance(content, str)
+            self.events.put_nowait(ToolCall(tool_name='end_call', tool_call_id='end-call', args='{}'))
+            self.events.put_nowait(ResponseDone())
 
     agent = Agent(TestModel(), deps_type=type(None))
 
@@ -949,7 +950,6 @@ async def test_idle_billing_during_after_run_survives_replacement_result():
 @pytest.mark.parametrize('tool_call', [False, True])
 async def test_idle_failure_surfaces_without_starting_another_run(tool_call: bool):
     received = asyncio.Event()
-    calls: list[str] = []
 
     class IdleConnection(DuplexConnection):
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
@@ -965,8 +965,7 @@ async def test_idle_failure_surfaces_without_starting_another_run(tool_call: boo
 
     @agent.tool_plain
     def surprise() -> str:
-        calls.append('called')
-        return 'should not run'
+        assert False, 'Idle tool calls must not execute'
 
     async with agent.session() as owner:
         with pytest.raises(RealtimeError, match='outside an active realtime run' if tool_call else 'provider ended'):
@@ -980,7 +979,6 @@ async def test_idle_failure_surfaces_without_starting_another_run(tool_call: boo
                 )
                 with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                     await received.wait()
-        assert not calls
         assert model.closes == 1
 
 
