@@ -163,7 +163,7 @@ def _check_curve(
 _NAN = float('nan')
 
 
-@pytest.mark.parametrize('evaluator_type', [PrecisionRecallEvaluator, ROCAUCEvaluator])
+@pytest.mark.parametrize('evaluator_type', [PrecisionRecallEvaluator, ROCAUCEvaluator] if imports_successful() else [])
 @pytest.mark.parametrize('n_thresholds', [-5, 0, 1, 2, 3, 4, 7, 1000])
 @pytest.mark.parametrize(
     'rows',
@@ -216,7 +216,7 @@ def test_curve_counts_edge_cases(
     )
 
 
-@pytest.mark.parametrize('evaluator_type', [PrecisionRecallEvaluator, ROCAUCEvaluator])
+@pytest.mark.parametrize('evaluator_type', [PrecisionRecallEvaluator, ROCAUCEvaluator] if imports_successful() else [])
 @pytest.mark.parametrize('score_from', ['scores', 'metrics'])
 @pytest.mark.parametrize('positive_from', ['expected_output', 'assertions', 'labels'])
 def test_curve_counts_seeded_differential(
