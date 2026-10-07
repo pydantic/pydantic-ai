@@ -10,6 +10,7 @@ from typing import Any, Literal, assert_type
 
 import anyio
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, Conversation, RunCancelled, SessionStateTypeAdapter, UserError
 from pydantic_ai.agent import WrapperAgent
@@ -19,7 +20,7 @@ from pydantic_ai.models import ModelRequestContext, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.run import AgentRun, AgentRunResult
+from pydantic_ai.run import AgentRun, AgentRunResult, PendingMessage
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 
 READINESS_WAIT_TIMEOUT = 10
@@ -280,6 +281,17 @@ async def test_session_submission_after_final_drain_belongs_to_next_run():
         second = await session.run('second')
         assert second.usage.requests == 2
         assert session.state.pending == []
+
+
+def test_pending_message_standalone_serialization_is_unchanged():
+    adapter = TypeAdapter(PendingMessage)
+    pending = PendingMessage(messages=[ModelRequest(parts=[ToolReturnPart('tool', b'hello')])])
+    encoded = json.loads(adapter.dump_json(pending))
+    assert encoded['messages'][0]['parts'][0]['content'] == 'hello'
+    schema = adapter.json_schema(mode='serialization')
+    field = schema['properties']['messages']
+    assert field['type'] == 'array'
+    assert field['items']['discriminator']['propertyName'] == 'kind'
 
 
 def test_session_pending_messages_use_normal_history_serialization():

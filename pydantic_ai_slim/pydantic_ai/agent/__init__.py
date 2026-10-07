@@ -4241,9 +4241,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 lifecycle.session = session
                 if attachment is not None:
                     handle = session._run.handle = RealtimeRun(session)  # pyright: ignore[reportPrivateUsage]
-                    resolved.run_context.realtime_session = handle
+                    resolved.run_context.realtime_run = handle
                     if resolved.tool_manager.ctx is not None:
-                        resolved.tool_manager.ctx.realtime_session = handle
+                        resolved.tool_manager.ctx.realtime_run = handle
                 else:
                     resolved.run_context.realtime_session = session
                 async with attachment.run(session) if attachment is not None else session:

@@ -6,6 +6,22 @@ description: "Pydantic AI upgrade guide and changelog: the breaking changes in e
 
 In September 2025, Pydantic AI reached V1 and committed to API stability: no changes that break your code until V2. V2 is now available, collecting the breaking and behavior changes that stability guarantee didn't allow. This guide is the canonical place to learn what's in V2, how to install it, and how to upgrade; for the guarantees behind these version numbers, see the [Version Policy](version-policy.md).
 
+## Session-first prototype (unreleased)
+
+!!! warning "Compatibility impact: corrected tool-result history"
+    This discussion prototype for [#9945](https://github.com/pydantic/pydantic-ai/issues/9945)
+    preserves existing entry points and defaults, but corrects two observable history inconsistencies:
+
+    - Realtime history retains a successful tool result if its later delivery or continuation fails.
+      `ToolReturnPart.outcome` describes tool execution, not whether the provider received its result.
+      Inspect the raised run/transport error separately; do not use a tool's outcome as a delivery receipt.
+    - `Agent.run_stream()` completion hooks now see the same output-tool returns as the streamed result.
+      Update hook assertions or snapshots that relied on those returns being absent.
+
+    These are bug fixes under the version policy's undocumented-assumption exception, not removals
+    of supported APIs. [Session migration](sessions.md#compatibility-and-migration) documents the
+    additive APIs and the constraints that apply only when opting into them.
+
 ## Breaking Changes
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.

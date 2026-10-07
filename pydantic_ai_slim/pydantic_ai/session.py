@@ -6,15 +6,16 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import copy, deepcopy
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, cast, overload
 
 import anyio
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict, PlainSerializer, SerializationInfo, TypeAdapter
 from typing_extensions import TypedDict, Unpack
 
 from . import _instructions, _operations, _steering, _utils, messages, models, result, usage as _usage
 from ._cancel import CancellationToken
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._messages_serialization import MessageHistory
 from ._operations import ToolOperation as ToolOperation
 from ._session import SessionRuntime, bind_session
 from ._steering import SteeringDelivery as SteeringDelivery
@@ -55,6 +56,34 @@ __all__ = (
 )
 
 
+@dataclass
+class _PendingMessageCheckpoint(PendingMessage):
+    # Keep checkpoint byte encoding local: PendingMessage's existing standalone JSON contract
+    # uses its ordinary message field, while portable checkpoints use ModelMessagesTypeAdapter.
+    __pydantic_config__ = ConfigDict(defer_build=True)
+    messages: MessageHistory
+
+
+_pending_checkpoint_adapter = TypeAdapter(_PendingMessageCheckpoint)
+
+
+def _pending_checkpoint(pending: PendingMessage, info: SerializationInfo) -> Any:
+    return _pending_checkpoint_adapter.dump_python(
+        _PendingMessageCheckpoint(pending.messages, pending.priority, pending.enqueue_id),
+        mode='json',
+        include=cast(Any, info.include),
+        exclude=cast(Any, info.exclude),
+        by_alias=info.by_alias,
+        exclude_unset=info.exclude_unset,
+        exclude_defaults=info.exclude_defaults,
+        exclude_none=info.exclude_none,
+        exclude_computed_fields=info.exclude_computed_fields,
+        round_trip=info.round_trip,
+        serialize_as_any=info.serialize_as_any,
+        context=info.context,
+    )
+
+
 @dataclass(kw_only=True)
 class SessionState:
     """Portable session checkpoint; it never contains connections, tasks, or dependencies.
@@ -67,7 +96,9 @@ class SessionState:
 
     conversation: Conversation = field(default_factory=Conversation)
     """Messages, accumulated usage, conversation identity, and deferred tool requests."""
-    pending: list[PendingMessage] = field(default_factory=list[PendingMessage])
+    pending: list[Annotated[PendingMessage, PlainSerializer(_pending_checkpoint, when_used='json')]] = field(
+        default_factory=list[PendingMessage]
+    )
     """Input not yet delivered into a run's history, preserving enqueue identity and priority."""
     operations: list[ToolOperation] = field(default_factory=list[ToolOperation])
     """Tool execution and result-delivery facts; never an instruction to repeat an effect."""

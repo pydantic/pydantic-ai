@@ -845,6 +845,7 @@ async def test_run_context_exposes_realtime_session_and_merged_settings() -> Non
 
     @agent.tool
     def check_session(ctx: RunContext[None]) -> str:
+        assert ctx.realtime_run is None
         observed.append(ctx.realtime_session)
         return 'done'
 

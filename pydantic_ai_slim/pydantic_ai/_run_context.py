@@ -357,7 +357,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
-    realtime_session: RealtimeSession | RealtimeRun | None = field(default=None, repr=False)
+    realtime_session: RealtimeSession | None = field(default=None, repr=False)
     """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
 
     `None` in classic runs, during setup (`before_run` and instruction resolution), and throughout
@@ -367,6 +367,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
     [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content, or call
     [`close()`][pydantic_ai.realtime.RealtimeSession.close] to hang up.
+
+    Explicit runs on a persistent connection expose [`realtime_run`][pydantic_ai.tools.RunContext.realtime_run]
+    instead; this field stays `None` so a retained context cannot control a later run.
+    """
+
+    realtime_run: RealtimeRun | None = field(default=None, repr=False, kw_only=True)
+    """The revocable handle for an explicit run on a persistent realtime connection.
+
+    Set during tools and event hooks in `AgentSession.realtime(...).connect().run()`, and retained
+    as a closed handle in `after_run`. `None` during setup, in ordinary runs, and with the existing
+    `AgentRealtime.session()` API. Use `ctx.realtime_run or ctx.realtime_session` for code supporting
+    both entry points. Keeping a run handle cannot submit work into a later run.
     """
 
     root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
@@ -533,6 +545,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Inside a [realtime session](https://pydantic.dev/docs/ai/realtime/history#context-window), this is
         the session's [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
         """
+        if self.realtime_run is not None:
+            return self.realtime_run.context_window_used
         if self.realtime_session is not None:
             return self.realtime_session.context_window_used
         try:

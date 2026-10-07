@@ -11,7 +11,6 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, SupportsIndex, TypeAlias
 
-from ._messages_serialization import MessageHistory
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
@@ -129,7 +128,7 @@ class PendingMessage:
     at the appropriate time during the agent run by the internal `PendingMessageDrainCapability`.
     """
 
-    messages: MessageHistory
+    messages: list[ModelMessage]
     """The message(s) to inject, in order. Always ends in a
     [`ModelRequest`][pydantic_ai.messages.ModelRequest]."""
 

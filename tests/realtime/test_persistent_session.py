@@ -176,12 +176,16 @@ async def test_run_owns_event_wrapper_cleanup_and_hook_handle(waiting: bool):
         async def before_run(self, ctx: RunContext[str]) -> None:
             calls.append(('before', ctx.deps))
             assert ctx.metadata == {'label': ctx.deps}
+            assert ctx.realtime_run is None
+            assert ctx.realtime_session is None
 
         async def wrap_run_event_stream(
             self, ctx: RunContext[str], *, stream: AsyncIterable[AgentStreamEvent]
         ) -> AsyncIterator[AgentStreamEvent]:
-            assert isinstance(ctx.realtime_session, RealtimeRun)
-            handles.append(ctx.realtime_session)
+            assert isinstance(ctx.realtime_run, RealtimeRun)
+            assert ctx.realtime_session is None
+            assert ctx.context_window_used == ctx.realtime_run.context_window_used
+            handles.append(ctx.realtime_run)
             task = asyncio.current_task()
             token = marker.set(ctx.deps)
             with anyio.CancelScope():
@@ -200,9 +204,9 @@ async def test_run_owns_event_wrapper_cleanup_and_hook_handle(waiting: bool):
 
         async def after_run(self, ctx: RunContext[str], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
             assert ('stream-close', ctx.deps) in calls
-            assert isinstance(ctx.realtime_session, RealtimeRun)
-            assert ctx.realtime_session is handles[-1]
-            assert ctx.realtime_session.closed
+            assert isinstance(ctx.realtime_run, RealtimeRun)
+            assert ctx.realtime_run is handles[-1]
+            assert ctx.realtime_run.closed
             calls.append(('after', ctx.deps))
             return result
 
@@ -391,7 +395,7 @@ async def test_tools_use_fresh_run_dependencies_metadata_and_context():
                     run = await task
                     assert run.result is not None
                     assert run.result.output == label
-                    assert contexts[-1].realtime_session is run
+                    assert contexts[-1].realtime_run is run
             assert len(instances) == 2
             assert instances[0] is not instances[1]
             assert contexts[0].run_id != contexts[1].run_id
@@ -692,8 +696,8 @@ async def test_explicit_close_while_run_exit_is_waiting(from_tool: bool):
     @agent.tool
     async def end_call(ctx: RunContext[None]) -> None:
         await release_tool.wait()
-        assert isinstance(ctx.realtime_session, RealtimeRun)
-        await ctx.realtime_session.close()
+        assert isinstance(ctx.realtime_run, RealtimeRun)
+        await ctx.realtime_run.close()
 
     model = CountedModel(ToolConnection() if from_tool else DuplexConnection())
     async with agent.session() as owner:

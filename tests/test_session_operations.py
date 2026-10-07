@@ -553,7 +553,8 @@ async def test_output_cancellation_requires_explicit_reconciliation(stream: bool
     assert calls == 1
 
 
-async def test_streamed_output_history_is_visible_to_after_run():
+@pytest.mark.parametrize('owned', [False, True])
+async def test_streamed_output_history_is_visible_to_after_run(owned: bool):
     seen: list[ModelMessage] = []
 
     class Observe(AbstractCapability[None]):
@@ -564,11 +565,16 @@ async def test_streamed_output_history_is_visible_to_after_run():
             return result
 
     agent = Agent(TestModel(), output_type=int, deps_type=type(None), capabilities=[Observe()])
-    async with agent.session() as session:
-        async with session.run_stream('finish') as result:
+    if owned:
+        async with agent.session() as session:
+            async with session.run_stream('finish') as result:
+                await result.get_output()
+            assert seen == result.all_messages() == session.conversation.messages
+            assert session.conversation.usage.requests == 1
+    else:
+        async with agent.run_stream('finish') as result:
             await result.get_output()
-        assert seen == result.all_messages() == session.conversation.messages
-        assert session.conversation.usage.requests == 1
+        assert seen == result.all_messages()
 
 
 def test_output_status_transitions_cannot_rewrite_a_delivered_result():

@@ -82,6 +82,8 @@ Nor does a history reach past its own conversation. Replaying yesterday's thread
 
 ## Session checkpoints
 
+See [Sessions](sessions.md) for ownership, sequential ordinary and realtime runs, and migration.
+
 Use [`Agent.session`][pydantic_ai.agent.Agent.session] when one live owner should carry a conversation, undelivered input, and model interaction resources across sequential runs. Each run still has its own ID, hooks, tool preparation, cancellation, and result. Existing `Agent.run` and `conversation=` usage remains available.
 
 ```python {title="session_checkpoint.py"}

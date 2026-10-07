@@ -77,7 +77,12 @@ async def test_native_successor_is_a_separate_response(peer: Peer, stream: bool,
                     delivered.append(await ctx.steer('New requirement'))
                     checkpoint = session.state
                     assert checkpoint.steering[0].status == 'sent'
-                    assert len(checkpoint.conversation.messages) == 1
+                    # The active response is checkpointed, but native input is not history until committed.
+                    assert len(checkpoint.conversation.messages) == 2
+                    response = checkpoint.conversation.messages[-1]
+                    assert isinstance(response, ModelResponse)
+                    assert response.provider_response_id == 'resp_a'
+                    assert response.state == 'incomplete'
 
         with anyio.fail_after(10):
             if stream:
