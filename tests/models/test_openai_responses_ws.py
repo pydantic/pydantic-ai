@@ -332,8 +332,10 @@ async def test_agent_connection_headers(
     agent = Agent('openai-responses:gpt-4o', model_settings=settings)
     async with agent.connect():
         assert 'x-tenant' not in sockets.headers[0]
-        with pytest.raises(UserError, match='headers passed through agent or run `model_settings`'):
+        with pytest.raises(UserError, match='headers passed through agent or run `model_settings`') as raised:
             await agent.run('hello')
+        assert 'Differing headers: `x-tenant`.' in str(raised.value)
+        assert 'tenant-test' not in str(raised.value)
         assert sockets.opened[0].sent == []
 
 
@@ -705,7 +707,12 @@ async def test_send_timeout(allow_model_requests: None, sockets: SocketHarness):
 async def test_handshake_errors(sockets: SocketHarness, status_code: int | None):
     if status_code is not None:
         sockets.connect_error = InvalidStatus(
-            HandshakeResponse(status_code, 'Rejected', Headers(), b'handshake rejected')
+            HandshakeResponse(
+                status_code,
+                'Rejected',
+                Headers([('X-Request-Id', 'first'), ('x-request-id', 'second')]),
+                b'handshake rejected',
+            )
         )
     else:
         sockets.connect_error = OSError('unreachable')
@@ -716,6 +723,10 @@ async def test_handshake_errors(sockets: SocketHarness, status_code: int | None)
             async with source.connect():
                 pytest.fail('The handshake should fail')  # pragma: no cover
         assert type(raised.value) is expected_error
+        if isinstance(raised.value, ModelHTTPError):
+            assert raised.value.status_code == status_code
+            assert raised.value.body == 'handshake rejected'
+            assert raised.value.headers == {'x-request-id': 'first, second'}
         assert not source.client.is_closed()
     finally:
         await source.client.close()
@@ -764,17 +775,22 @@ async def test_incompatible_options(allow_model_requests: None, sockets: SocketH
 
 
 @pytest.mark.parametrize(
-    'request_headers,accepted',
+    'request_headers,differing_headers',
     [
-        pytest.param({}, False, id='omitted-all'),
-        pytest.param({'x-tenant': 'tenant-test'}, False, id='omitted-organization'),
+        pytest.param({}, '`openai-organization`, `x-tenant`', id='omitted-all'),
+        pytest.param({'x-tenant': 'tenant-test'}, '`openai-organization`', id='omitted-organization'),
         pytest.param(
-            {'OPENAI-ORGANIZATION': 'org-test', 'x-TENANT': 'tenant-test'}, True, id='case-insensitive-equivalent'
+            {'openai-organization': 'other-org', 'x-tenant': 'other-tenant'},
+            '`openai-organization`, `x-tenant`',
+            id='changed-values',
+        ),
+        pytest.param(
+            {'OPENAI-ORGANIZATION': 'org-test', 'x-TENANT': 'tenant-test'}, None, id='case-insensitive-equivalent'
         ),
     ],
 )
 async def test_request_header_overrides(
-    allow_model_requests: None, sockets: SocketHarness, request_headers: dict[str, str], accepted: bool
+    allow_model_requests: None, sockets: SocketHarness, request_headers: dict[str, str], differing_headers: str | None
 ):
     settings: OpenAIResponsesModelSettings = {
         'extra_headers': {'OpenAI-Organization': 'org-test', 'X-Tenant': 'tenant-test'}
@@ -785,12 +801,15 @@ async def test_request_header_overrides(
     async with agent.connect():
         assert sockets.headers[0]['openai-organization'] == 'org-test'
         assert sockets.headers[0]['x-tenant'] == 'tenant-test'
-        if accepted:
+        if differing_headers is None:
             assert (await agent.run('hello')).output == 'ready'
             assert len(sockets.opened[0].sent) == 1
         else:
-            with pytest.raises(UserError, match='Request `extra_headers` must match'):
+            with pytest.raises(UserError, match='Request `extra_headers` must match') as raised:
                 await agent.run('hello')
+            assert f'Differing headers: {differing_headers}.' in str(raised.value)
+            for value in ('org-test', 'tenant-test', *request_headers.values()):
+                assert value not in str(raised.value)
             assert sockets.opened[0].sent == []
 
 

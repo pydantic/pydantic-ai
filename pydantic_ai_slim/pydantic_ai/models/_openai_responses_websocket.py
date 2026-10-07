@@ -62,7 +62,7 @@ class ResponsesWebSocket:
                 status_code=exc.response.status_code,
                 model_name=model_name,
                 body=bytes(exc.response.body).decode(errors='replace'),
-                headers=dict(exc.response.headers),
+                headers={name: ', '.join(exc.response.headers.get_all(name)) for name in exc.response.headers},
             ) from exc
         except (OSError, WebSocketException, TimeoutError) as exc:
             raise ModelAPIError(model_name=model_name, message=f'WebSocket connection failed: {exc}') from exc

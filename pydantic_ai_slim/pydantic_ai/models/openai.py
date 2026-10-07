@@ -3247,9 +3247,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 key.lower(): value for key, value in model_settings.get('extra_headers', {}).items()
             }
             request_headers.setdefault('user-agent', get_user_agent())
-            if self._websocket.effective_headers(self.client, request_headers) != self._websocket.headers:
+            effective_headers = self._websocket.effective_headers(self.client, request_headers)
+            if effective_headers != self._websocket.headers:
+                differing_headers = ', '.join(
+                    f'`{name}`'
+                    for name in sorted(effective_headers.keys() | self._websocket.headers.keys())
+                    if effective_headers.get(name) != self._websocket.headers.get(name)
+                )
                 raise UserError(
                     'Request `extra_headers` must match the handshake headers of the open WebSocket connection. '
+                    f'Differing headers: {differing_headers}. '
                     'Configure headers in the model defaults or `model.connect(extra_headers=...)`; '
                     'headers passed through agent or run `model_settings` do not configure the handshake.'
                 )
