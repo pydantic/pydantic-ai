@@ -16,7 +16,7 @@ from termflow.tui.menu import Menu
 from termflow.tui.pager import Pager
 from termflow.tui.terminal import terminal_size
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE_DETAILS,
@@ -60,15 +60,28 @@ Viewer = Callable[[Pager], object]
 
 
 def sent_instructions(messages: Sequence[ModelMessage]) -> str | None:
-    """What the model received with the latest request in `messages`, or `None` before any.
+    """What the model received with the latest request in `messages` it answered; `None` before any.
 
-    That is the conversation's system prompt parts, which an agent's `system_prompt` adds to its
-    first request and history repeats, then the latest request's instructions.
+    That is the conversation's system prompt parts, which an agent's `system_prompt` adds to its first
+    request and history repeats, then the instructions of the request the latest response answers. A
+    request after that response, such as a final tool return, was never sent.
     """
-    requests = [message for message in messages if isinstance(message, ModelRequest)]
-    parts = [part.content for request in requests for part in request.parts if isinstance(part, SystemPromptPart)]
-    latest = next((request.instructions for request in reversed(requests) if request.instructions), None)
-    return '\n\n'.join([*parts, *([latest] if latest else [])]) or None
+    parts = [
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+    ]
+    answered = [
+        request.instructions
+        for request, response in zip(messages, messages[1:])
+        if isinstance(request, ModelRequest) and isinstance(response, ModelResponse)
+    ]
+    if not answered:
+        return None
+    latest = answered[-1]
+    return '\n\n'.join([*parts, *([latest] if latest else [])])
 
 
 def _wrap(text: str, width: int) -> list[str]:
@@ -104,7 +117,7 @@ class SystemPromptMenu:
                 "Nothing was sent in this conversation yet. Your next prompt sends CLAI's built-in "
                 'instructions, AGENTS.md, and plugin instructions, followed by yours.'
             )
-        return sent
+        return sent or 'The latest request had no system prompt.'
 
     def items(self) -> list[MenuItem]:
         """The actions, then Save & close. Reset is greyed out while you have no instructions."""

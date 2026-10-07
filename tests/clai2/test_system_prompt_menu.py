@@ -155,19 +155,24 @@ def test_menu_shows_yours_as_editable_and_the_full_prompt_as_read_only(
     assert menu.details(items[4]) == SAVE_AND_CLOSE_DETAILS
     assert menu.build(1) is not None
 
+    done = ModelResponse(parts=[TextPart('done')])
     history += [
         ModelRequest(parts=[UserPromptPart('hello')], instructions='Built-in guidance.\n\nYours.'),
-        ModelResponse(parts=[TextPart('done')]),
-        ModelRequest(parts=[UserPromptPart('summary')]),
+        done,
+        # A final tool return after the latest response was never sent.
+        ModelRequest(parts=[UserPromptPart('never sent')], instructions='Unsent.'),
     ]
     assert menu.full_prompt() == 'Built-in guidance.\n\nYours.'
     history.insert(0, ModelRequest(parts=[SystemPromptPart('Agent system prompt.'), UserPromptPart('first')]))
     assert menu.full_prompt() == 'Agent system prompt.\n\nBuilt-in guidance.\n\nYours.'
-    assert SystemPromptMenu(context, history=lambda: history[:1]).full_prompt() == 'Agent system prompt.'
+    assert SystemPromptMenu(context, history=lambda: [history[0], done]).full_prompt() == 'Agent system prompt.'
     view = menu.details(items[3])
     assert view.startswith('Full system prompt (read-only)\n')
     assert view.endswith('Built-in guidance.\n\nYours.')
-    history.append(ModelRequest(parts=[], instructions='\n'.join(f'Rule {n}.' for n in range(100))))
+    # Instructions removed since an earlier request are not shown as sent.
+    reset = [*history[1:3], ModelRequest(parts=[UserPromptPart('again')]), done]
+    assert SystemPromptMenu(context, history=lambda: reset).full_prompt() == 'The latest request had no system prompt.'
+    history += [ModelRequest(parts=[], instructions='\n'.join(f'Rule {n}.' for n in range(100))), done]
     view = menu.details(items[3]).splitlines()
     assert len(view) < 30, 'the panel fits the screen'
     assert view[-2:] == ['Rule 14.', '…'], 'Enter opens the rest'
