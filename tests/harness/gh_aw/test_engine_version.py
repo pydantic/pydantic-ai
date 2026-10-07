@@ -5,6 +5,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from email.message import Message
+from io import BytesIO
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -60,11 +61,12 @@ def test_unpublished_reason_reports_missing_clai2_release(
     engine_version_module: _EngineVersionModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     urls: list[str] = []
+    error_response = BytesIO()
 
     def urlopen(url: str, *, timeout: float) -> _Response:
         urls.append(url)
         if 'pydantic-clai2' in url:
-            raise urllib.error.HTTPError(url, 404, 'not found', Message(), None)
+            raise urllib.error.HTTPError(url, 404, 'not found', Message(), error_response)
         return _Response(200)
 
     monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
@@ -75,6 +77,7 @@ def test_unpublished_reason_reports_missing_clai2_release(
     assert 'pydantic-clai2' in reason
     assert 'engine.version: 0.21.0' in reason
     assert 'HTTP 404' in reason
+    assert error_response.closed
     assert urls == [
         'https://pypi.org/pypi/pydantic-ai-harness/0.21.0/json',
         'https://pypi.org/pypi/pydantic-clai2/0.21.0/json',
@@ -85,10 +88,11 @@ def test_unpublished_reason_stops_when_harness_release_is_missing(
     engine_version_module: _EngineVersionModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     urls: list[str] = []
+    error_response = BytesIO()
 
     def urlopen(url: str, *, timeout: float) -> _Response:
         urls.append(url)
-        raise urllib.error.HTTPError(url, 404, 'not found', Message(), None)
+        raise urllib.error.HTTPError(url, 404, 'not found', Message(), error_response)
 
     monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
 
@@ -98,6 +102,7 @@ def test_unpublished_reason_stops_when_harness_release_is_missing(
     assert 'pydantic-ai-harness' in reason
     assert 'engine.version: 0.21.0' in reason
     assert 'HTTP 404' in reason
+    assert error_response.closed
     assert urls == ['https://pypi.org/pypi/pydantic-ai-harness/0.21.0/json']
 
 

@@ -46,16 +46,15 @@ class _Engine(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     engine_id: Literal['pydantic-ai'] = Field(alias='id')
-    # Not `str | float`: an unquoted `0.21.0` is a YAML float and `0.21` loses a
-    # component on the way back to text, so the quoting is part of the contract.
+    # YAML reads an unquoted `0.21` as a float; require version text so the pin is preserved verbatim.
     version: str
 
     @field_validator('version')
     @classmethod
     def _pep_440(cls, value: str) -> str:
-        # gh-aw interpolates this into `pydantic-ai-harness[cli]==<version>`, and the
-        # publication check below interpolates it into a PyPI URL. Anything that is not a
-        # version is a broken install for consumers, and a value carrying `/` or `?`
+        # gh-aw installs `pydantic-ai-harness==<version>` and `pydantic-clai2==<version>`,
+        # and the publication check below interpolates it into a PyPI URL. Anything that is
+        # not a version is a broken install for consumers, and a value carrying `/` or `?`
         # reaches a different PyPI endpoint than the one the check means to ask about.
         #
         # Rejected rather than normalized, both here and for the surrounding
@@ -102,6 +101,7 @@ def unpublished_reason(version: str) -> str | None:
                 status: int = response.status
         except urllib.error.HTTPError as exc:
             status = exc.code
+            exc.close()
         except OSError as exc:
             # A failed request is not evidence that the version is missing, so it is reported
             # as the network error it is rather than as an unpublished pin.
