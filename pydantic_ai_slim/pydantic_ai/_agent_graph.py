@@ -1875,7 +1875,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
         # object, retaining read-only dispatch fields such as `streaming`.
-        original_request_context.model = processed_context.model
+        # Hooks can select a definition that was never entered during run preparation. Resolve
+        # it through the same owner as dynamic selectors before counting tokens or sending.
+        original_request_context.model = (
+            processed_context.model
+            if processed_context.model is ctx.deps.model
+            else await ctx.deps.enter_model(processed_context.model)
+        )
         original_request_context.messages = list(processed_context.messages)
         original_request_context.model_settings = processed_context.model_settings
         original_request_context.model_request_parameters = processed_context.model_request_parameters

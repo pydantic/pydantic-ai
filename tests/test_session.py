@@ -15,9 +15,10 @@ from pydantic_ai import Agent, Conversation, RunCancelled, SessionStateTypeAdapt
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
-from pydantic_ai.models import ModelResolutionContext
+from pydantic_ai.models import ModelRequestContext, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 
@@ -505,3 +506,63 @@ async def test_completed_session_result_cannot_mutate_history_or_operation_ledge
                 if isinstance(part, ToolReturnPart):
                     part.tool_call_id = 'changed after completion'
         assert session.state == checkpoint
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('wrap', [False, True])
+async def test_session_owns_model_selected_by_request_hook(stream: bool, wrap: bool):
+    """A hook replacement must borrow one session-bound handle, not use its definition directly."""
+    events: list[tuple[str, int]] = []
+
+    class SelectedModel(TestModel):
+        @asynccontextmanager
+        async def open_session(self):
+            events.append(('enter', anyio.get_current_task().id))
+            try:
+                yield TestModel(custom_output_text='bound replacement')
+            finally:
+                events.append(('exit', anyio.get_current_task().id))
+
+    selected = SelectedModel(custom_output_text='unbound definition')
+
+    class SelectModel(AbstractCapability[None]):
+        async def before_model_request(self, ctx: RunContext[None], request_context: ModelRequestContext):
+            request_context.model = WrapperModel(selected) if wrap else selected
+            return request_context
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[SelectModel()])
+    async with agent.session() as session:
+        for _ in range(2):
+            if stream:
+                async with session.run_stream('hello') as result:
+                    assert await result.get_output() == 'bound replacement'
+            else:
+                assert (await session.run('hello')).output == 'bound replacement'
+        assert [event for event, _ in events] == ['enter']
+    assert [event for event, _ in events] == ['enter', 'exit']
+    assert events[0][1] == events[1][1]
+
+
+async def test_request_hook_decoration_keeps_legacy_model_client_ownership():
+    events: list[str] = []
+
+    class BorrowedModel(TestModel):
+        async def __aenter__(self):
+            events.append('enter')
+            return self
+
+        async def __aexit__(self, *args: Any):
+            events.append('exit')
+
+    class DecorateModel(AbstractCapability[None]):
+        async def before_model_request(self, ctx: RunContext[None], request_context: ModelRequestContext):
+            request_context.model = WrapperModel(request_context.model)
+            return request_context
+
+    agent = Agent(BorrowedModel(), deps_type=type(None), capabilities=[DecorateModel()])
+    await agent.run('borrowed')
+    assert events == []
+    async with agent:
+        await agent.run('already entered')
+        assert events == ['enter']
+    assert events == ['enter', 'exit']

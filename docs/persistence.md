@@ -101,7 +101,7 @@ async def main():
         await session.run('Follow-up question')
 ```
 
-[`SessionState`][pydantic_ai.session.SessionState] contains a detached `Conversation`, pending input, tool-operation facts, and the active run ID if captured during a run. It does not contain connections, dependencies, tasks, or the durable engine's execution journal. Store it in trusted application storage; it is not a client-supplied request format.
+[`SessionState`][pydantic_ai.session.SessionState] contains a detached `Conversation`, pending input, tool-operation and native-input delivery facts, and the active run ID if captured during a run. It does not contain connections, dependencies, tasks, or the durable engine's execution journal. Store it in trusted application storage; it is not a client-supplied request format.
 
 ### Ordinary and realtime runs on one owner
 
@@ -127,6 +127,8 @@ An active checkpoint additionally requires `abandon_run=True`. First stop the ol
     A tool effect can happen after the last checkpoint and before its result is saved. Verify the outcome in the external system, use an application idempotency key, or let your durable engine recover its recorded operation. Replaying a workflow is different from importing a checkpoint and abandoning its run. Usage and provider responses produced after the checkpoint are not recovered by `recover()`.
 
 Recovery returns a new checkpoint and leaves the original unchanged, even on failure. It does not automatically reconnect a native live session or start a new run.
+
+Native-input delivery is recorded separately in `state.steering`. `accepted` means input was queued by the provider; only `committed`, with a successor response ID, means a response consumed it. A disconnected or rejected submission retains its original user content outside committed history. After reconciling remote history and stopping the old owner, use `steering={delivery_id: 'replay'}` to move that content into the ordinary boundary inbox, or `'discard'` to settle it without resending. Replay preserves the delivery ID as the enqueue ID and does not issue another native steering request. A settled record cannot be replayed twice.
 
 ## Not writing that code yourself
 

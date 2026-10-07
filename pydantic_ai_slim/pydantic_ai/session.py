@@ -12,11 +12,12 @@ import anyio
 from pydantic import ConfigDict, TypeAdapter
 from typing_extensions import TypedDict, Unpack
 
-from . import _instructions, _operations, _utils, messages, models, result, usage as _usage
+from . import _instructions, _operations, _steering, _utils, messages, models, result, usage as _usage
 from ._cancel import CancellationToken
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._operations import ToolOperation as ToolOperation
 from ._session import SessionRuntime, bind_session
+from ._steering import SteeringDelivery as SteeringDelivery
 from .agent.abstract import (
     AbstractAgent,
     AgentMetadata,
@@ -44,7 +45,14 @@ if TYPE_CHECKING:
     from .realtime._run import RealtimeRun
     from .realtime.model import RealtimeProviderSession
 
-__all__ = ('AgentSession', 'RealtimeAgentSession', 'SessionState', 'SessionStateTypeAdapter', 'ToolOperation')
+__all__ = (
+    'AgentSession',
+    'RealtimeAgentSession',
+    'SessionState',
+    'SessionStateTypeAdapter',
+    'SteeringDelivery',
+    'ToolOperation',
+)
 
 
 @dataclass(kw_only=True)
@@ -63,6 +71,8 @@ class SessionState:
     """Input not yet delivered into a run's history, preserving enqueue identity and priority."""
     operations: list[ToolOperation] = field(default_factory=list[ToolOperation])
     """Tool execution and result-delivery facts; never an instruction to repeat an effect."""
+    steering: list[SteeringDelivery] = field(default_factory=list[SteeringDelivery])
+    """Native input delivery facts, separate from committed history and boundary-queued input."""
     active_run_id: str | None = None
     """Unfinished work at capture time. This is not an instruction to retry that work."""
 
@@ -71,6 +81,7 @@ class SessionState:
         *,
         tool_results: Mapping[str, messages.ModelRequest] | None = None,
         deliveries: Mapping[str, Literal['ready', 'committed']] | None = None,
+        steering: Mapping[str, Literal['replay', 'discard']] | None = None,
         abandon_run: bool = False,
     ) -> SessionState:
         """Reconcile a detached checkpoint before opening a new session.
@@ -80,6 +91,11 @@ class SessionState:
         Each request must contain one matching return/retry and optional user content.
         `deliveries` explicitly authorizes resending an existing result (`ready`), or records
         external confirmation (`committed`). A lost send is never silently made ready.
+
+        `steering` keys are `SteeringDelivery.delivery_id`. Decide whether unresolved native input
+        should be `replay`ed through the boundary inbox or `discard`ed after reconciling the remote
+        history. This does not resend a native steer or infer that accepted input was committed.
+        Even a definitive provider rejection retains its input until this decision is made.
 
         An active checkpoint additionally requires `abandon_run=True`: the application must first
         stop its old driver and fence any other writers. This abandons unfinished model generation
@@ -121,6 +137,22 @@ class SessionState:
             _operations.apply(operations, operation_id, _operations.ReconcileDelivery(status))
         recovered.operations = list(operations.values())
         _require_settled_operations(recovered.operations)
+        native_deliveries = {delivery.delivery_id: delivery for delivery in recovered.steering}
+        if len(native_deliveries) != len(recovered.steering):
+            raise UserError('The checkpoint contains duplicate steering delivery IDs.')
+        for delivery_id, decision in (steering or {}).items():
+            if delivery_id not in native_deliveries:
+                raise UserError(f'Unknown steering delivery {delivery_id!r}.')
+            delivery, actions = _steering.transition(
+                native_deliveries[delivery_id], _steering.ReconcileSteering(decision)
+            )
+            native_deliveries[delivery_id] = delivery
+            if 'enqueue' in actions:
+                if any(pending.enqueue_id == delivery_id for pending in recovered.pending):
+                    raise UserError(f'Steering delivery {delivery_id!r} is already in the boundary inbox.')
+                recovered.pending.append(PendingMessage(messages=deepcopy(delivery.messages), enqueue_id=delivery_id))
+        recovered.steering = list(native_deliveries.values())
+        _steering.require_settled(recovered.steering)
         for operation in recovered.operations:
             if operation.execution == 'completed' and (
                 operation.operation_id in (tool_results or {})
@@ -293,7 +325,9 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         )
         if state is not None:
             _require_settled_operations(state.operations)
+            _steering.require_settled(state.steering)
             self._runtime.operations.update((op.operation_id, deepcopy(op)) for op in state.operations)
+            self._runtime.steering.update((delivery.delivery_id, deepcopy(delivery)) for delivery in state.steering)
         self._deps = deps
         self._model = model
         self._stack = AsyncExitStack()
@@ -360,6 +394,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
             pending=pending,
             active_run_id=active_run_id,
             operations=deepcopy(list(self._runtime.operations.values())),
+            steering=deepcopy(list(self._runtime.steering.values())),
         )
 
     def enqueue(self, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> str | None:

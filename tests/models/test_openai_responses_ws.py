@@ -13,8 +13,11 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, ModelAPIError, ModelHTTPError, ModelRequest, ModelResponse, UserError, UserPromptPart
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.tools import RunContext
 
 from ..conftest import try_import
 
@@ -110,8 +113,14 @@ async def peer(allow_model_requests: None) -> AsyncIterator[Peer]:
         yield peer
 
 
-async def test_session_reuses_websocket_across_runs(peer: Peer):
-    agent = Agent(peer.model())
+@pytest.mark.parametrize('wrap_in_hook', [False, True])
+async def test_session_reuses_websocket_across_runs(peer: Peer, wrap_in_hook: bool):
+    class WrapModel(AbstractCapability[None]):
+        async def before_model_request(self, ctx: RunContext[None], request_context: ModelRequestContext):
+            request_context.model = WrapperModel(request_context.model)
+            return request_context
+
+    agent = Agent(peer.model(), deps_type=type(None), capabilities=[WrapModel()] if wrap_in_hook else [])
     async with agent.session() as session:
         first = await session.run('one')
         async with session.run_stream('two') as stream:

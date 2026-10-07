@@ -11,7 +11,7 @@ import threading
 from collections.abc import Callable, Generator
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar
-from copy import deepcopy
+from copy import copy, deepcopy
 from typing import TYPE_CHECKING
 
 import anyio
@@ -22,9 +22,11 @@ from ._cancel import RunCancellation
 from ._enqueue import PendingMessage, PendingMessageQueue
 from ._operations import ToolOperation
 from ._run_context import get_current_run_context
+from ._steering import SteeringDelivery
 from .conversation import Conversation
 from .exceptions import UserError
 from .models import Model
+from .models.wrapper import WrapperModel
 from .usage import RequestUsage, RunUsage
 
 if TYPE_CHECKING:
@@ -81,7 +83,25 @@ class ModelResources:
                 await self._stack.enter_async_context(original)
                 self.entered_model_ids.add(id(original))
             return bound
-        if self._group is not None:
+        if (
+            isinstance(selected_model, WrapperModel)
+            and type(selected_model).open_session is WrapperModel.open_session
+            and type(selected_model).__aenter__ is WrapperModel.__aenter__
+            and type(selected_model).__aexit__ is WrapperModel.__aexit__
+        ):
+            # A transparent request wrapper does not own another interaction. Hooks can create
+            # one around an already bound model on every step; re-entering its forwarded scope
+            # would create another socket and lose the session's connection-local state.
+            if id(selected_model) in self.entered_model_ids:
+                self.entered_model_ids.add(id(selected_model.wrapped))
+            wrapped = await self.get_model(
+                selected_model.wrapped,
+                enter_model=enter_model and id(selected_model.wrapped) not in self._models,
+            )
+            bound = copy(selected_model)
+            bound.wrapped = wrapped
+            self.entered_model_ids.add(id(selected_model))
+        elif self._group is not None:
             # A custom model may own task groups or cancel scopes. Its entry and exit must stay
             # in one persistent task, even when different tasks drive successive session runs.
             bound = await self._group.start(self._hold_model, selected_model)
@@ -123,6 +143,7 @@ class SessionRuntime:
         self.realtime: RealtimeAttachment | None = None
         self.inferred_models: dict[str, Model] = {}
         self.operations: dict[str, ToolOperation] = {}
+        self.steering: dict[str, SteeringDelivery] = {}
         self._inbox = PendingMessageQueue(deepcopy(pending) if pending else ())
         self._active: ActiveRun | None = None
         self._result_conversation: Conversation | None = None
@@ -247,7 +268,9 @@ class SessionRuntime:
                 if self.persistent:
                     # Completed run handles remain user-owned. Detach both history and effect facts
                     # together, preserving their internal associations without exposing next-run state.
-                    self.conversation, self.operations = deepcopy((self.conversation, self.operations))
+                    self.conversation, self.operations, self.steering = deepcopy(
+                        (self.conversation, self.operations, self.steering)
+                    )
                     # Close and transfer atomically; a worker thread can still hold this run's context.
                     self._inbox = PendingMessageQueue([*queue.close_and_take(), *self._inbox.snapshot()])
                 else:
