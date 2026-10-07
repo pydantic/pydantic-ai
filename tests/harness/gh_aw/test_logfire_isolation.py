@@ -100,7 +100,16 @@ def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: 
         extra_python_path=CLAI2_SOURCE,
     )
     completed = subprocess.run(
-        [sys.executable, '-P', '-c', PROBE, invocation.program, invocation.target],
+        [
+            sys.executable,
+            '-P',
+            '-c',
+            PROBE,
+            invocation.program,
+            invocation.target,
+            str(invocation.prompt_file),
+            *invocation.cli_args,
+        ],
         cwd=workspace,
         env={
             **invocation.env,
@@ -110,6 +119,7 @@ def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: 
         },
         capture_output=True,
         text=True,
+        input=invocation.stdin,
         timeout=30,
         check=False,
     )

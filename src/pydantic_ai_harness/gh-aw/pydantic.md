@@ -62,7 +62,7 @@ engine:
     harness-script: |
       const { spawnSync } = require("child_process");
       const { randomBytes } = require("crypto");
-      const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } = require("fs");
+      const { chmodSync, existsSync, mkdtempSync, writeFileSync } = require("fs");
       const { homedir, tmpdir } = require("os");
       const { join } = require("path");
       const { fetchAWFReflect, resolveProviderEndpointFromReflect, deriveBaseUrlFromModelsURL } = require("./awf_reflect.cjs");
@@ -124,7 +124,8 @@ engine:
       from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
       _stdout = sys.__stdout__
-      _frame_key = os.environ['GH_AW_SESSION_FRAME_KEY']
+      # Remove the transient key before agent code can start child processes.
+      _frame_key = os.environ.pop('GH_AW_SESSION_FRAME_KEY')
       _run_id: str | None = None
       _sequence = 0
       _usage: RunUsage | None = None
@@ -323,8 +324,10 @@ engine:
       import runpy
       import sys
       from datetime import datetime, timezone
+      from pathlib import Path
 
-      target, *cli_args = sys.argv[1:]
+      target, prompt_file, *cli_args = sys.argv[1:]
+      frame_key = sys.stdin.readline().rstrip('\\n')
       module, separator, attribute = target.rpartition(':')
       original_stdout = sys.stdout
       stdout_sink = open(os.devnull, 'w')
@@ -359,13 +362,15 @@ engine:
 
           if not separator:
               raise ValueError(f'Expected MODULE:ATTRIBUTE, got {target!r}')
+          os.environ['GH_AW_SESSION_FRAME_KEY'] = frame_key
           agent_module = importlib.import_module(module)
           loaded = getattr(agent_module, attribute)
           from pydantic_ai import Agent
 
           if not isinstance(loaded, Agent):
               raise TypeError(f'{target} is {type(loaded).__name__}, not pydantic_ai.Agent')
-          sys.argv = ['clai2', *cli_args]
+          # Read in-process: workflow context can exceed the OS argv limit.
+          sys.argv = ['clai2', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
           runpy.run_module('pydantic_clai2', run_name='__main__', alter_sys=True)
       except SystemExit as exc:
           if isinstance(exc.code, int):
@@ -379,20 +384,28 @@ engine:
       finally:
           sys.stdout = original_stdout
           try:
-              recorder = getattr(agent_module, '_recorder', None)
-              if recorder is not None:
-                  recorder.finish(exit_code)
-              else:
+              result_emitted = False
+              try:
+                  recorder = getattr(agent_module, '_recorder', None)
+                  if recorder is not None:
+                      recorder.finish(exit_code)
+                      result_emitted = True
+              except Exception as exc:
+                  print(f'[pydantic-ai] Unable to finish session recording: {exc}', file=sys.stderr)
+              if not result_emitted:
                   event = {
                       'type': 'session.result',
                       'data': {'status': 'success' if exit_code == 0 else 'failure', 'sourceType': 'pydantic-ai'},
                       'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                   }
-                  print(
-                      '\\x1eGH-AW-SESSION/' + os.environ['GH_AW_SESSION_FRAME_KEY'] + ' ' + json.dumps(event),
-                      file=original_stdout,
-                      flush=True,
-                  )
+                  try:
+                      print(
+                          '\\x1eGH-AW-SESSION/' + frame_key + ' ' + json.dumps(event),
+                          file=original_stdout,
+                          flush=True,
+                      )
+                  except Exception as exc:
+                      print(f'[pydantic-ai] Unable to emit the session result: {exc}', file=sys.stderr)
           finally:
               stdout_sink.close()
       `;
@@ -424,7 +437,9 @@ engine:
 
         const env = { ...process.env };
         const frameKey = randomBytes(16).toString("hex");
-        env.GH_AW_SESSION_FRAME_KEY = frameKey;
+        // Linux retains exec environment bytes in /proc even after unsetenv.
+        // Deliver the key through stdin so tool subprocesses cannot recover it there.
+        delete env.GH_AW_SESSION_FRAME_KEY;
         // `pip install --user` puts `clai2` here. The runner tool cache that holds
         // `uv` and the interpreter's own bin directory is under /opt, which the
         // sandbox exposes read-only, but the home directory is where the CLI and
@@ -571,7 +586,6 @@ engine:
           ...commandArgs,
           "-a", agentTarget,
           "-m", `${useMessagesAPI ? "anthropic" : "openai-chat"}:${model}`,
-          "-p", readFileSync(promptFile, "utf8"),
         ];
         // The config adapter writes this file only for a workflow that configures
         // MCP tools, so its
@@ -601,7 +615,9 @@ engine:
         // and hands the CLI a module already in sys.modules, and once as the `-a`
         // the CLI parses for itself.
         process.stdout.write(`\x1eGH-AW-SESSION-KEY:${frameKey}\x1e\n`);
-        const result = spawnSync(python, ["-P", "-c", LAUNCHER, agentTarget, ...cliArgs], { cwd: workspace, env, stdio: "inherit" });
+        const result = spawnSync(python, ["-P", "-c", LAUNCHER, agentTarget, promptFile, ...cliArgs], {
+          cwd: workspace, env, input: `${frameKey}\n`, stdio: ["pipe", "inherit", "inherit"],
+        });
         if (result.error) throw result.error;
         if (result.status !== 0) {
           const error = new Error(`Pydantic AI execution failed with exit code ${result.status ?? "unknown"}`);

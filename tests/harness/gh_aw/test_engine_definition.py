@@ -41,11 +41,9 @@ if shutil.which('node') is None:  # pragma: no cover
 DEFINITION = Path(__file__).parents[3] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
 CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_clai2'
 
-_CLI_PACKAGES = ('argcomplete', 'prompt_toolkit', 'pyperclip', 'rich')
-
-requires_cli = pytest.mark.skipif(
-    any(importlib.util.find_spec(package) is None for package in _CLI_PACKAGES),
-    reason='running the CLI needs the pydantic-ai `cli` extra',
+requires_clai2 = pytest.mark.skipif(
+    importlib.util.find_spec('pydantic_clai2') is None,
+    reason='running the launcher requires pydantic-clai2',
 )
 
 # Stands in for gh-aw's own helper module, which the harness script requires next to
@@ -74,7 +72,7 @@ import os
 import sys
 from pathlib import Path
 
-record = {'argv': sys.argv[1:], 'env': dict(os.environ), 'cwd': os.getcwd()}
+record = {'argv': sys.argv[1:], 'env': dict(os.environ), 'cwd': os.getcwd(), 'stdin': sys.stdin.read()}
 Path(os.environ['GH_AW_TEST_RECORD']).write_text(json.dumps(record))
 """
 
@@ -172,6 +170,7 @@ class _Invocation(BaseModel):
     env: dict[str, str]
     cwd: str
     stdout: str
+    stdin: str = ''
 
     @property
     def target(self) -> str:
@@ -179,7 +178,7 @@ class _Invocation(BaseModel):
 
     @property
     def cli_args(self) -> list[str]:
-        return self.argv[4:]
+        return self.argv[5:] if self.prompt_file.exists() else self.argv[4:]
 
     @property
     def program(self) -> str:
@@ -188,6 +187,16 @@ class _Invocation(BaseModel):
     @property
     def python_path(self) -> list[Path]:
         return [Path(entry) for entry in self.env['PYTHONPATH'].split(':')]
+
+    @property
+    def frame_key(self) -> str:
+        match = re.search(r'\x1eGH-AW-SESSION-KEY:([0-9a-f]{32})\x1e', self.stdout)
+        assert match is not None, self.stdout
+        return match.group(1)
+
+    @property
+    def prompt_file(self) -> Path:
+        return Path(self.argv[4])
 
 
 class _CanonicalEvent(BaseModel):
@@ -250,7 +259,13 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0'
 
 
-def launch(tmp_path: Path, env: dict[str, str], *, extra_python_path: Path | None = None) -> _Invocation:
+def launch(
+    tmp_path: Path,
+    env: dict[str, str],
+    *,
+    extra_python_path: Path | None = None,
+    prompt_text: str = PROMPT,
+) -> _Invocation:
     """Run the harness script against an interpreter that records instead of running."""
     actions = tmp_path / 'actions'
     actions.mkdir(parents=True, exist_ok=True)
@@ -279,7 +294,7 @@ def launch(tmp_path: Path, env: dict[str, str], *, extra_python_path: Path | Non
     sandbox_tmp = tmp_path / 'sandbox-tmp'
     sandbox_tmp.mkdir(parents=True, exist_ok=True)
     prompt = tmp_path / 'prompt.md'
-    prompt.write_text(PROMPT, encoding='utf-8')
+    prompt.write_text(prompt_text, encoding='utf-8')
     record = tmp_path / 'record.json'
 
     pythonpath_env: dict[str, str] = {'PYTHONPATH': str(extra_python_path)} if extra_python_path is not None else {}
@@ -299,6 +314,7 @@ def launch(tmp_path: Path, env: dict[str, str], *, extra_python_path: Path | Non
         },
         capture_output=True,
         text=True,
+        input='',
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
@@ -331,6 +347,18 @@ def parse_log(tmp_path: Path, log: str) -> _ParsedLog:
     return _ParsedLog.model_validate_json(completed.stdout)
 
 
+def run_invocation(invocation: _Invocation, *extra_cli_args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, *invocation.argv, *extra_cli_args],
+        cwd=invocation.cwd,
+        env=invocation.env,
+        input=invocation.stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 FRAME_KEY = '0123456789abcdef0123456789abcdef'
 FRAME_HEADER = f'\x1eGH-AW-SESSION-KEY:{FRAME_KEY}\x1e'
 
@@ -355,7 +383,7 @@ def import_generated_agent(invocation: _Invocation, monkeypatch: pytest.MonkeyPa
     """Import the exact generated wrapper with the environment the launcher prepared."""
     monkeypatch.chdir(invocation.cwd)
     monkeypatch.setattr(sys, 'path', [str(entry) for entry in invocation.python_path] + sys.path)
-    monkeypatch.setenv('GH_AW_SESSION_FRAME_KEY', invocation.env['GH_AW_SESSION_FRAME_KEY'])
+    monkeypatch.setenv('GH_AW_SESSION_FRAME_KEY', invocation.frame_key)
     if configured_agent := invocation.env.get('PAI_AGENT'):
         monkeypatch.setenv('PAI_AGENT', configured_agent)
     else:
@@ -438,20 +466,76 @@ def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
 
     assert invocation.argv[:2] == ['-P', '-c']
     assert invocation.target == 'gh_aw_agent:agent'
-    assert invocation.cli_args == ['-a', 'gh_aw_agent:agent', '-m', 'openai-chat:claude-sonnet-4.5', '-p', PROMPT]
-    frame_key = invocation.env['GH_AW_SESSION_FRAME_KEY']
+    assert invocation.cli_args == ['-a', 'gh_aw_agent:agent', '-m', 'openai-chat:claude-sonnet-4.5']
+    assert invocation.prompt_file.read_text(encoding='utf-8') == PROMPT
+    frame_key = invocation.frame_key
     assert re.fullmatch(r'[0-9a-f]{32}', frame_key)
     assert invocation.stdout == f'\x1eGH-AW-SESSION-KEY:{frame_key}\x1e\n'
     # The module is written to a private directory under `os.tmpdir()`, never into the
     # checkout: a package committed under a directory the engine puts on PYTHONPATH
     # would shadow an installed one for the whole run.
-    (module_dir,) = invocation.python_path
+    module_dir = invocation.python_path[0]
     assert module_dir.parent == tmp_path / 'sandbox-tmp'
     assert 'agent = Agent(' in (module_dir / 'gh_aw_agent.py').read_text()
     assert not (tmp_path / 'workspace' / '.pydantic-ai').exists()
     # gh-aw sets this for the copilot backend; the proxy holds the real credential,
     # so the agent has no use for it.
     assert 'COPILOT_GITHUB_TOKEN' not in invocation.env
+
+
+def test_a_large_prompt_is_not_passed_as_an_oversized_process_argument(tmp_path: Path) -> None:
+    prompt = 'x' * (1024 * 1024)
+    invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'), prompt_text=prompt)
+
+    assert max(map(len, invocation.argv)) < 128 * 1024
+    assert invocation.prompt_file.read_text(encoding='utf-8') == prompt
+
+
+def test_the_frame_key_is_sent_out_of_band_and_removed_from_the_child_environment(tmp_path: Path) -> None:
+    invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
+
+    assert invocation.env.get('GH_AW_SESSION_FRAME_KEY') is None
+    assert invocation.stdin == f'{invocation.frame_key}\n'
+
+
+@requires_clai2
+def test_an_imported_agent_does_not_pass_the_frame_key_to_its_children(tmp_path: Path) -> None:
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'custom_agent:agent'},
+        extra_python_path=CLAI2_SOURCE,
+    )
+    child_env_path = Path(invocation.cwd) / 'child-environment.json'
+    custom_agent = Path(invocation.cwd) / 'custom_agent.py'
+    custom_agent.write_text(
+        """import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from pydantic_ai import Agent
+
+child = subprocess.run(
+    [sys.executable, '-c', "import json, os; from pathlib import Path; p = Path(f'/proc/{os.getppid()}/environ'); print(json.dumps({'key': os.environ.get('GH_AW_SESSION_FRAME_KEY'), 'parent_has_key': b'GH_AW_SESSION_FRAME_KEY=' in p.read_bytes() if p.exists() else None}))"],
+    capture_output=True,
+    text=True,
+    check=True,
+)
+Path(__file__).with_name('child-environment.json').write_text(child.stdout, encoding='utf-8')
+agent = Agent(name='custom', instructions='Answer briefly.')
+""",
+        encoding='utf-8',
+    )
+
+    completed = run_invocation(invocation, '--gh-aw-invalid')
+
+    assert completed.returncode == 2
+    assert 'unrecognized arguments: --gh-aw-invalid' in completed.stderr
+    child_environment = json.loads(child_env_path.read_text(encoding='utf-8'))
+    assert child_environment['key'] is None
+    if child_environment['parent_has_key'] is not None:
+        assert child_environment['parent_has_key'] is False
 
 
 def test_the_checkout_is_off_the_import_path_without_pai_agent(tmp_path: Path) -> None:
@@ -599,7 +683,7 @@ async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_env
     lines = shell_return.splitlines()
     assert lines[:3] == [os.path.realpath(workspace), 'marker=from-the-step', 'key=withheld']
 
-    frame_key = invocation.env['GH_AW_SESSION_FRAME_KEY']
+    frame_key = invocation.frame_key
     prefix = f'\x1eGH-AW-SESSION/{frame_key} '
     emitted = event_output.getvalue()
     (session_log_path := tmp_path / 'session.log').write_text(f'{invocation.stdout}{emitted}', encoding='utf-8')
@@ -670,7 +754,7 @@ def test_cached_usage_marks_input_tokens_as_including_cache(tmp_path: Path, monk
     assert run_usage.cache_read_tokens == 50
     assert run_usage.cache_write_tokens == 20
 
-    frame_key = invocation.env['GH_AW_SESSION_FRAME_KEY']
+    frame_key = invocation.frame_key
     prefix = f'\x1eGH-AW-SESSION/{frame_key} '
     emitted = event_output.getvalue()
     session_log_path = tmp_path / 'session.log'
@@ -788,7 +872,7 @@ async def test_imported_tools_and_gateway_mcp_tools_both_execute(
     module._recorder.finish(exit_code=0)
 
     assert result.output == 'done'
-    frame_key = invocation.env['GH_AW_SESSION_FRAME_KEY']
+    frame_key = invocation.frame_key
     prefix = f'\x1eGH-AW-SESSION/{frame_key} '
     events = [
         _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
@@ -843,7 +927,7 @@ async def test_output_tool_arguments_and_results_are_tool_events(
     agent_module._recorder.finish(exit_code=0)
 
     assert result.output == {'answer': 'structured'}
-    frame_key = invocation.env['GH_AW_SESSION_FRAME_KEY']
+    frame_key = invocation.frame_key
     prefix = f'\x1eGH-AW-SESSION/{frame_key} '
     events = [
         _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
@@ -905,7 +989,7 @@ async def test_tool_event_inputs_preserve_json_scalars_arrays_null_and_malformed
     module._recorder.finish(exit_code=0)
 
     assert result.output == 'done'
-    prefix = f'\x1eGH-AW-SESSION/{invocation.env["GH_AW_SESSION_FRAME_KEY"]} '
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
     events = [
         _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
         for line in event_output.getvalue().split('\n')
@@ -938,7 +1022,7 @@ async def test_metadata_only_thinking_delta_does_not_become_the_string_none(
     await agent.run('thinking metadata only', model=FunctionModel(stream_function=stream))
     module._recorder.finish(exit_code=0)
 
-    prefix = f'\x1eGH-AW-SESSION/{invocation.env["GH_AW_SESSION_FRAME_KEY"]} '
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
     events = [
         _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
         for line in event_output.getvalue().split('\n')
@@ -965,7 +1049,7 @@ async def test_interrupted_stream_has_a_failure_terminal_result(
         await agent.run('interrupt', model=FunctionModel(stream_function=interrupted))
     module._recorder.finish(exit_code=130)
 
-    prefix = f'\x1eGH-AW-SESSION/{invocation.env["GH_AW_SESSION_FRAME_KEY"]} '
+    prefix = f'\x1eGH-AW-SESSION/{invocation.frame_key} '
     events = [
         _CanonicalEvent.model_validate_json(line.removeprefix(prefix))
         for line in event_output.getvalue().split('\n')
@@ -975,17 +1059,85 @@ async def test_interrupted_stream_has_a_failure_terminal_result(
     assert events[-1].data['status'] == 'failure'
 
 
+@pytest.mark.parametrize(
+    ('cli_fails', 'expected_exit_code', 'expected_status'),
+    [(False, 0, 'success'), (True, 2, 'failure')],
+    ids=['successful-cli', 'argument-error'],
+)
+@requires_clai2
+def test_a_recorder_finish_write_failure_preserves_the_cli_result(
+    tmp_path: Path, cli_fails: bool, expected_exit_code: int, expected_status: str
+) -> None:
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'finish_test_agent:agent'},
+        extra_python_path=CLAI2_SOURCE,
+    )
+    (Path(invocation.cwd) / 'finish_test_agent.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='simple', instructions='Answer briefly.')\n",
+        encoding='utf-8',
+    )
+    module_dir = invocation.python_path[0]
+    (module_dir / 'sitecustomize.py').write_text(
+        """import sys
+
+class _FailTerminalWrites:
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, value):
+        if 'session.result' in value:
+            raise OSError('injected terminal recorder write failure')
+        return self.stream.write(value)
+
+    def flush(self):
+        return self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+sys.__stdout__ = _FailTerminalWrites(sys.__stdout__)
+""",
+        encoding='utf-8',
+    )
+    arguments = invocation.argv.copy()
+    arguments[arguments.index('-m') + 1] = 'test'
+    extra_cli_args = ('--gh-aw-invalid',) if cli_fails else ()
+
+    completed = subprocess.run(
+        [sys.executable, *arguments, *extra_cli_args],
+        cwd=invocation.cwd,
+        env=invocation.env,
+        input=invocation.stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == expected_exit_code, f'{completed.stdout}\n{completed.stderr}'
+    if cli_fails:
+        assert 'unrecognized arguments: --gh-aw-invalid' in completed.stderr
+    transcript = f'{invocation.stdout}{completed.stdout}{completed.stderr}'
+    (tmp_path / 'launcher.stderr.log').write_text(completed.stderr, encoding='utf-8')
+    (tmp_path / 'session.log').write_text(transcript, encoding='utf-8')
+    parsed = parse_log(tmp_path, transcript)
+    results = [event for event in parsed.log_entries if event.type == 'session.result']
+    assert len(results) == 1
+    assert results[0].data == {'status': expected_status, 'sourceType': 'pydantic-ai'}
+
+
 class TestLauncherProgram:
     """The `-c` program, run by the real interpreter with the bytes the launcher sends."""
 
     @staticmethod
-    def program(tmp_path: Path) -> str:
-        return launch(tmp_path / 'launch', proxy_env('openai', 'openai/gpt-5')).program
+    def program(tmp_path: Path) -> _Invocation:
+        return launch(tmp_path / 'launch', proxy_env('openai', 'openai/gpt-5'))
 
     @staticmethod
     def run(tmp_path: Path, target: str, *cli_args: str) -> subprocess.CompletedProcess[str]:
         """Run the launcher over a module directory that a checkout file shadows."""
-        program = TestLauncherProgram.program(tmp_path)
+        invocation = TestLauncherProgram.program(tmp_path)
+        program = invocation.program
         module_dir = tmp_path / 'module'
         module_dir.mkdir(parents=True, exist_ok=True)
         workspace = tmp_path / 'workspace'
@@ -998,22 +1150,22 @@ class TestLauncherProgram:
         (workspace / 'gh_aw_agent.py').write_text(AGENT_MODULE.replace('NAME', 'checkout'), encoding='utf-8')
 
         return subprocess.run(
-            [sys.executable, '-P', '-c', program, target, *cli_args],
+            [sys.executable, '-P', '-c', program, target, str(invocation.prompt_file), *cli_args],
             cwd=workspace,
             env={
                 'PATH': os.environ['PATH'],
                 'HOME': str(tmp_path / 'home'),
                 'PYTHONPATH': f'{module_dir}:{CLAI2_SOURCE}',
-                'GH_AW_SESSION_FRAME_KEY': FRAME_KEY,
                 'GH_AW_TEST_IMPORTS': str(imports),
                 'PYTHONIOENCODING': 'utf-8',
             },
             capture_output=True,
             text=True,
+            input=f'{FRAME_KEY}\n',
             check=False,
         )
 
-    @requires_cli
+    @requires_clai2
     def test_the_agent_module_is_imported_once_and_not_from_the_checkout(self, tmp_path: Path) -> None:
         completed = self.run(tmp_path, 'gh_aw_agent:agent', '-a', 'gh_aw_agent:agent', '-m', 'test', '-p', 'hello')
 
@@ -1047,7 +1199,7 @@ class TestLauncherProgram:
         # The message `pai` prints instead of a traceback when its own load fails.
         assert 'Could not load agent' not in completed.stderr + completed.stdout
 
-    @requires_cli
+    @requires_clai2
     def test_cli_argument_error_finishes_the_generated_recorder_without_run_events(self, tmp_path: Path) -> None:
         invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'), extra_python_path=CLAI2_SOURCE)
         invalid_argument = '--gh-aw-invalid'
@@ -1058,11 +1210,13 @@ class TestLauncherProgram:
                 '-c',
                 invocation.program,
                 invocation.target,
+                str(invocation.prompt_file),
                 *invocation.cli_args,
                 invalid_argument,
             ],
             cwd=invocation.cwd,
             env=invocation.env,
+            input=invocation.stdin,
             capture_output=True,
             text=True,
             check=False,
@@ -1090,9 +1244,18 @@ class TestLauncherProgram:
         )
 
         completed = subprocess.run(
-            [sys.executable, '-P', '-c', invocation.program, invocation.target, *invocation.cli_args],
+            [
+                sys.executable,
+                '-P',
+                '-c',
+                invocation.program,
+                invocation.target,
+                str(invocation.prompt_file),
+                *invocation.cli_args,
+            ],
             cwd=invocation.cwd,
             env=invocation.env,
+            input=invocation.stdin,
             capture_output=True,
             text=True,
             check=False,
