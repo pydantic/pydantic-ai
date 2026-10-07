@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeAlias, cast, 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict, TypeIs, TypeVar
+from typing_extensions import TypedDict, TypeIs, TypeVar, Unpack
 
 from pydantic_graph import End
 
@@ -78,7 +78,7 @@ if TYPE_CHECKING:
     )
     from pydantic_ai.session import AgentSession, SessionState
 
-    from ..session import RealtimeAgentSession
+    from ..session import RealtimeAgentSession, _RealtimeMediaOptions  # pyright: ignore[reportPrivateUsage]
 
 
 T = TypeVar('T')
@@ -2472,6 +2472,23 @@ class AgentRealtime(Generic[AgentDepsT]):
                 (`send_audio`/`commit_audio`/`clear_audio`) are unavailable and `audio_retention` must be
                 left at `'transcript_only'`. See the realtime docs for the full browser/WebRTC flow.
         """
+        from ..session import AgentSession
+
+        if isinstance(self._agent, AgentSession) and self._agent._runtime.realtime is not None:  # pyright: ignore[reportPrivateUsage]
+            raise exceptions.UserError("Use the persistent connection's `run()` instead of `session()`.")
+        async with self._session(
+            audio_retention=audio_retention,
+            handle_barge_in=handle_barge_in,
+            retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
+            retain_audio_max_seconds=retain_audio_max_seconds,
+            provider_session=provider_session,
+        ) as session:
+            yield session
+
+    @asynccontextmanager
+    async def _session(self, **media: Unpack[_RealtimeMediaOptions]) -> AsyncGenerator[RealtimeSession]:
+        """Open the driver; only the persistent run facade may expose it as a revocable handle."""
         async with self._agent._open_realtime_session(  # pyright: ignore[reportPrivateUsage]
             self._model,
             deps=self._deps,
@@ -2485,11 +2502,6 @@ class AgentRealtime(Generic[AgentDepsT]):
             conversation_id=self._conversation_id,
             run_id=self._run_id,
             message_history=self._message_history,
-            audio_retention=audio_retention,
-            handle_barge_in=handle_barge_in,
-            retain_images_every_n=retain_images_every_n,
-            retain_images_max=retain_images_max,
-            retain_audio_max_seconds=retain_audio_max_seconds,
-            provider_session=provider_session,
+            **media,
         ) as session:
             yield session

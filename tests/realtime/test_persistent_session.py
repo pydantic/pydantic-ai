@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 
 import anyio
@@ -15,7 +15,14 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import AgentStreamEvent, BinaryImage, ModelMessage, ModelResponse, SpeechPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.realtime import RealtimeModelSettings, RealtimeRun
+from pydantic_ai.realtime import (
+    RealtimeError,
+    RealtimeModelSettings,
+    RealtimeRun,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
+)
+from pydantic_ai.realtime._lifecycle import InputAdded, ResponseEnded, ResponseStarted, TaggedEvent
 from pydantic_ai.realtime.codec import (
     InputTranscript,
     OutputTranscript,
@@ -712,3 +719,204 @@ async def test_explicit_close_while_run_exit_is_waiting(from_tool: bool):
                 await task
             assert handles[0].result is not None
             assert model.closes == 1
+
+
+async def test_legacy_session_cannot_expose_persistent_driver():
+    model = CountedModel(DuplexConnection())
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(model).connect() as live:
+            with pytest.raises(UserError, match=r'run.*instead'):
+                async with owner.realtime(model).session():
+                    pass
+            async with live.run() as run:
+                await run.send('hello')
+            assert run.result is not None
+            assert run.result.output == 'reply to hello'
+
+
+async def test_owner_first_close_accounts_final_connection_usage_once():
+    class FinalUsage(DuplexConnection):
+        async def _end_session(self) -> AsyncIterator[SessionUsage]:
+            yield SessionUsage(RequestUsage(input_tokens=11), response_scoped=False)
+
+    async with AsyncExitStack() as attachments:
+        async with Agent(TestModel()).session() as owner:
+            live = await attachments.enter_async_context(owner.realtime(CountedModel(FinalUsage())).connect())
+            async with live.run() as run:
+                await run.send('hello')
+        assert owner.conversation.usage.input_tokens == 11
+        assert run.result is not None
+        assert run.result.usage.input_tokens == 0
+    assert owner.conversation.usage.input_tokens == 11
+
+
+@pytest.mark.parametrize('resume', [False, True])
+async def test_idle_connection_usage_is_not_lost_on_close(resume: bool):
+    read_usage = asyncio.Event()
+
+    class IdleConnection(DuplexConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            while True:
+                event = await self.events.get()
+                if isinstance(event, SessionUsage):
+                    read_usage.set()
+                yield event
+
+    connection = IdleConnection()
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(CountedModel(connection)).connect() as live:
+            async with live.run() as run:
+                await run.send('hello')
+            connection.events.put_nowait(SessionUsage(RequestUsage(input_tokens=7), response_scoped=False))
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await read_usage.wait()
+            assert owner.conversation.usage.input_tokens == 7
+            if resume:
+                async with live.run() as second:
+                    await second.send('second')
+                assert second.result is not None
+                assert second.result.usage.input_tokens == 7
+        assert owner.conversation.usage.input_tokens == 7
+        assert run.result is not None
+        assert run.result.usage.input_tokens == 0
+
+
+async def test_persistent_identified_lifecycle_keeps_each_run_identity():
+    class IdentifiedConnection(DuplexConnection):
+        _lifecycle_version = 2
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.frames: asyncio.Queue[list[TaggedEvent]] = asyncio.Queue()
+
+        async def send(self, content: RealtimeInput) -> None:
+            input_id = len(self.sent)
+            self.sent.append(content)
+            response_id = f'resp-{input_id}'
+            self.frames.put_nowait(
+                [
+                    (InputAdded(input_id=input_id), False),
+                    (ResponseStarted(response_id=response_id, answers=(input_id,)), False),
+                    (
+                        OutputTranscript(
+                            f'reply to {content}', output_text=True, is_final=True, response_id=response_id
+                        ),
+                        False,
+                    ),
+                    (ResponseDone(), False),
+                    (ResponseEnded(response_id=response_id, status='completed', finish_reason='stop'), False),
+                ]
+            )
+
+        async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+            while True:
+                yield await self.frames.get()
+
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(CountedModel(IdentifiedConnection())).connect() as live:
+            async with live.run(run_id='RUN-A') as first:
+                await first.send('first')
+            async with live.run(run_id='RUN-B') as second:
+                await second.send('second')
+        assert [m.run_id for m in owner.conversation.messages if isinstance(m, ModelResponse)] == ['RUN-A', 'RUN-B']
+    # The autouse shadow-core fixture also asserts parity of the identified history.
+
+
+async def test_idle_billing_during_after_run_survives_replacement_result():
+    processed = asyncio.Event()
+
+    class BillingConnection(DuplexConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            while True:
+                event = await self.events.get()
+                yield event
+                if isinstance(event, SessionUsage):
+                    processed.set()
+
+    connection = BillingConnection()
+
+    class BillingHook(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            connection.events.put_nowait(SessionUsage(RequestUsage(input_tokens=7), response_scoped=False))
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await processed.wait()
+            assert result.usage.input_tokens == 0
+            assert owner.state.conversation.usage.input_tokens == 7
+            result.usage.input_tokens = 100
+            return result
+
+    async with Agent(TestModel(), deps_type=type(None), capabilities=[BillingHook()]).session() as owner:
+        async with owner.realtime(CountedModel(connection)).connect() as live:
+            async with live.run() as run:
+                await run.send('hello')
+            assert owner.conversation.usage.input_tokens == 107
+            assert run.result is not None
+            assert run.result.usage.input_tokens == 100
+        assert owner.conversation.usage.input_tokens == 107
+
+
+@pytest.mark.parametrize('tool_call', [False, True])
+async def test_idle_failure_surfaces_without_starting_another_run(tool_call: bool):
+    received = asyncio.Event()
+    calls: list[str] = []
+
+    class IdleConnection(DuplexConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            while True:
+                event = await self.events.get()
+                if isinstance(event, (ToolCall, RealtimeSessionErrorEvent)):
+                    received.set()
+                yield event
+
+    connection = IdleConnection()
+    model = CountedModel(connection)
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def surprise() -> str:
+        calls.append('called')
+        return 'should not run'
+
+    async with agent.session() as owner:
+        with pytest.raises(RealtimeError, match='outside an active realtime run' if tool_call else 'provider ended'):
+            async with owner.realtime(model).connect() as live:
+                async with live.run() as run:
+                    await run.send('hello')
+                connection.events.put_nowait(
+                    ToolCall(tool_name='surprise', tool_call_id='idle-call', args='{}')
+                    if tool_call
+                    else RealtimeSessionErrorEvent(message='provider ended', recoverable=False)
+                )
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await received.wait()
+        assert not calls
+        assert model.closes == 1
+
+
+async def test_idle_reconnect_and_recoverable_error_reach_next_run():
+    processed = asyncio.Event()
+
+    class IdleConnection(DuplexConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            while True:
+                event = await self.events.get()
+                yield event
+                if isinstance(event, RealtimeSessionErrorEvent):
+                    processed.set()
+
+    connection = IdleConnection()
+    reconnect = RealtimeSessionReconnectEvent()
+    error = RealtimeSessionErrorEvent(message='idle warning', recoverable=True)
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(CountedModel(connection)).connect() as live:
+            async with live.run() as first:
+                await first.send('hello')
+            connection.events.put_nowait(reconnect)
+            connection.events.put_nowait(error)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await processed.wait()
+                async with live.run() as second:
+                    iterator = aiter(second)
+                    assert isinstance(await anext(iterator), RealtimeSessionReconnectEvent)
+                    assert await anext(iterator) == error
+                    await second.send('again')

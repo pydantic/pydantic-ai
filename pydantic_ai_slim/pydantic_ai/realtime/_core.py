@@ -153,6 +153,13 @@ class ExchangeAbandoned:
 
 
 @dataclass(frozen=True, kw_only=True)
+class RunStarted:
+    """A new execution owns subsequent entities on the same connection."""
+
+    run_id: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class ReceiveEnded:
     """The session stopped reading the connection: nothing more will be said, so nothing is owed any more."""
 
@@ -172,6 +179,7 @@ Command: TypeAlias = (
     | Interrupted
     | ExchangeAbandoned
     | ReceiveEnded
+    | RunStarted
     | Closed
 )
 CoreInput: TypeAlias = RealtimeCodecEvent | LifecycleEvent | Command
@@ -380,6 +388,8 @@ class SessionCore:
         elif isinstance(command, ExchangeAbandoned):
             self._abandoned.update((token.kind, token.key) for token in self.wait_tokens())
             self._epoch += 1
+        elif isinstance(command, RunStarted):
+            self._run_id = command.run_id
         elif isinstance(command, ReceiveEnded):
             self._receive_ended()
         elif isinstance(command, Closed):

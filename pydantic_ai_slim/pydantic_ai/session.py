@@ -818,16 +818,7 @@ class RealtimeAgentSession(Generic[AgentDepsT]):
         self._attachment.closed = True
         try:
             await self._owner._cancel_active_run()  # pyright: ignore[reportPrivateUsage]
-            session = self._attachment.session
-            before = deepcopy(session.usage) if session is not None else _usage.RunUsage()
-            try:
-                await self._attachment.close()
-            finally:
-                if session is not None:
-                    # Final connection-level billing arrives after the last run result was frozen.
-                    # Add only that delta; replacing the conversation would undo after-run hooks.
-                    runtime = self._owner._runtime  # pyright: ignore[reportPrivateUsage]
-                    runtime.conversation.usage.incr(session.usage - before)
+            await self._attachment.close()
         finally:
             self._owner._runtime.realtime = None  # pyright: ignore[reportPrivateUsage]
 
@@ -859,7 +850,7 @@ class RealtimeAgentSession(Generic[AgentDepsT]):
         definition._run_id = run_id  # pyright: ignore[reportPrivateUsage]
         handle: RealtimeRun | None = None
         try:
-            async with definition.session(**self._media) as session:
+            async with definition._session(**self._media) as session:  # pyright: ignore[reportPrivateUsage]
                 handle = session._run.handle or RealtimeRun(session)  # pyright: ignore[reportPrivateUsage]
                 yield handle
         finally:

@@ -25,6 +25,7 @@ from ._run_context import get_current_run_context
 from .conversation import Conversation
 from .exceptions import UserError
 from .models import Model
+from .usage import RequestUsage, RunUsage
 
 if TYPE_CHECKING:
     from .realtime._persistent import RealtimeAttachment
@@ -125,6 +126,7 @@ class SessionRuntime:
         self._inbox = PendingMessageQueue(deepcopy(pending) if pending else ())
         self._active: ActiveRun | None = None
         self._result_conversation: Conversation | None = None
+        self._connection_usage = RunUsage()
         self._claimed = False
         self._cancellation: RunCancellation | None = None
         self._cancel_requested = False
@@ -212,7 +214,21 @@ class SessionRuntime:
                 pending.extend(queue.snapshot())
                 run_id = state.run_id
             pending.extend(self._inbox.snapshot())
-            return deepcopy(conversation), deepcopy(pending), run_id
+            conversation = deepcopy(conversation)
+            conversation.usage.incr(self._connection_usage)
+            return conversation, deepcopy(pending), run_id
+
+    def record_connection_usage(self, usage: RequestUsage) -> None:
+        """Account for billing outside a run without changing its frozen result.
+
+        Run hooks may still be unwinding. Hold this delta until their result is committed so
+        replacing the conversation cannot erase it or charge it to the finished run.
+        """
+        with self._lock:
+            if self._claimed:
+                self._connection_usage.incr(usage)
+            else:
+                self.conversation.usage.incr(usage)
 
     def record_result(self, conversation: Conversation) -> None:
         with self._lock:
@@ -236,6 +252,8 @@ class SessionRuntime:
                     # Legacy run handles keep their undelivered messages visible after termination.
                     queue.close()
                 self._active = None
+            self.conversation.usage.incr(self._connection_usage)
+            self._connection_usage = RunUsage()
             self._claimed = False
             self._cancellation = None
             self._cancel_requested = False

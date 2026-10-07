@@ -97,6 +97,7 @@ from ._core import (
     InputWithdrawn,
     Interrupted,
     ReceiveEnded,
+    RunStarted,
     SessionCore,
     ToolCallRefused,
     ToolReturned,
@@ -1105,9 +1106,10 @@ class RealtimeSession:
         self._parked_errors: list[BaseException] = []
         self._delivered_errors: list[BaseException] = []
         self._persistent = False
+        self._owner: SessionRuntime | None = None
+        self._idle_usage = RunUsage()
+        self._idle_events: deque[RealtimeEvent] = deque(maxlen=_SESSION_STRUCTURAL_QUEUE_SIZE)
         self._processing_frame = False
-        self._run_ready = asyncio.Event()
-        self._run_ready.set()
         self._entered = False
         self._closed = False
         self._closing_error: BaseException | None = None
@@ -1160,6 +1162,11 @@ class RealtimeSession:
             task_context=copy_context(),
         )
         self.usage = usage
+        self._idle_usage = RunUsage()
+        if self._core is not None:
+            self._core.apply(RunStarted(run_id=run_id))
+        while self._idle_events:
+            self._queue_put(self._idle_events.popleft())
         if tool_manager.ctx is not None:
             tool_manager.ctx.usage = usage
             tool_manager.ctx.pending_messages = self._run.pending_messages
@@ -1181,7 +1188,6 @@ class RealtimeSession:
         )
         self._session_instrumentation.start_session_span()
         self._run.pending_messages.bind(self._notify_pending_messages)
-        self._run_ready.set()
 
     async def _finish_run(self) -> None:
         """Wait for history and effects, not just `response.done`, then revoke this run's input."""
@@ -1217,7 +1223,6 @@ class RealtimeSession:
                 break
             await self._exchange_progress.wait()
         # No await between the boundary check and revocation: the pump cannot start another frame.
-        self._run_ready.clear()
         self._run.pending_messages.close()
         self._run.finished = True
         self._finish_taps(discard_pending=True)
@@ -1463,12 +1468,11 @@ class RealtimeSession:
                 async for report in self._connection._end_session():  # pyright: ignore[reportPrivateUsage]
                     if report.context_window_used is not None:
                         self._reported_context_window_used = report.context_window_used
-                    self.usage.incr(report.usage)  # usage-attribution: the session owns its spans
-                    self._span_usage.incr(report.usage)  # usage-attribution: what the session span reports
+                    self._record_usage(report.usage)
                     recorded = True
         except self._connection.transport_errors:
             pass
-        if recorded:
+        if recorded and not self._run.finished:
             # The session is closed, so an exceeded limit is parked for `close()` to raise.
             self._check_response_boundary_limits()
 
@@ -1907,6 +1911,7 @@ class RealtimeSession:
         )
 
     def _attach_owner(self, owner: SessionRuntime) -> None:
+        self._owner = owner
         assert self._run.run_id is not None
         self._tool_operations = owner.operations
         owner.attach(
@@ -4133,6 +4138,15 @@ class RealtimeSession:
             self._response_finalized_before_terminal = True
         return events
 
+    def _record_usage(self, usage: RequestUsage) -> None:
+        if self._persistent and self._run.finished:
+            assert self._owner is not None
+            self._idle_usage.incr(usage)
+            self._owner.record_connection_usage(usage)
+        else:
+            self.usage.incr(usage)  # usage-attribution: the session owns its spans
+            self._span_usage.incr(usage)  # usage-attribution: what the session span reports
+
     async def _handle_usage_event(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
         if event.context_window_used is not None:
@@ -4143,8 +4157,9 @@ class RealtimeSession:
                 # Each report is a request the model has already made: it is recorded in full, and the
                 # one past the limit ends the session below, once it is.
                 self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
-        self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
-        self._span_usage.incr(event.usage)  # usage-attribution: what the session span reports
+        self._record_usage(event.usage)
+        if self._persistent and self._run.finished:
+            return events
         if event.response_scoped:
             # Measured before accumulating: a tool-call response is finalized by the accumulation
             # itself, which resets the accumulator.
@@ -4504,7 +4519,6 @@ class RealtimeSession:
         # Keep a single iterator and process whole wire frames. A response terminal may precede
         # its final lifecycle acknowledgement in the same frame. v1 codecs supply singleton frames.
         async for frame in self._connection._tagged_frames():  # pyright: ignore[reportPrivateUsage]
-            await self._run_ready.wait()
             self._processing_frame = True
             span_context = self._session_instrumentation.context
             token = otel_context.attach(span_context) if span_context is not None else None
@@ -4513,6 +4527,29 @@ class RealtimeSession:
                     self._pending_response_requests = max(0, self._pending_response_requests - merged)
                 for event, stale in frame:
                     if stale:
+                        continue
+                    if self._run.finished:
+                        # Keep receiving control traffic between runs, but never dispatch provider
+                        # work using a finished run's tools or silently assign it to the next run.
+                        if not (
+                            isinstance(event, SessionUsage)
+                            and not event.response_scoped
+                            or isinstance(
+                                event, (RealtimeSessionReconnectEvent, RealtimeSessionErrorEvent, ConversationCreated)
+                            )
+                            or isinstance(event, ConversationItemCreated)
+                            and event.replayed
+                        ):
+                            raise RealtimeError(
+                                model_name=self._error_model_name,
+                                message='The provider sent response or input events outside an active realtime run.',
+                            )
+                        if self._core is not None:
+                            self._core.apply(event)
+                        if isinstance(event, (SessionUsage, ConversationCreated, ConversationItemCreated)):
+                            await self._handle_non_tool_pump_event(event)
+                        else:
+                            self._idle_events.extend(self._translate_event(event))
                         continue
                     if self._core is not None:
                         self._core.apply(event)
@@ -4551,9 +4588,10 @@ class RealtimeSession:
             )
             self._shadow_divergences.append('history differs:\n' + '\n'.join(diff))
         # Everything but the tool calls, which the session counts as it runs them, not the core.
-        for usage_field in dataclasses.fields(self.usage):
+        total_usage = self.usage + self._idle_usage
+        for usage_field in dataclasses.fields(total_usage):
             name = usage_field.name
-            if name != 'tool_calls' and (theirs := getattr(core.usage, name)) != (ours := getattr(self.usage, name)):
+            if name != 'tool_calls' and (theirs := getattr(core.usage, name)) != (ours := getattr(total_usage, name)):
                 self._shadow_divergences.append(f'usage.{name} differs: legacy {ours}, shadow {theirs}')
 
     def _ensure_streamable(self) -> None:
