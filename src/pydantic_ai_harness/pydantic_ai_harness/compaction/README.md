@@ -283,7 +283,7 @@ subclasses pass through immediately; `fallback_on` rejects types that do not der
 
 A `SummarizingCompaction` without `model=` summarizes with the run's model. When that is a
 realtime model or one that cannot write text, it raises `CannotSummarizeError`, a `UserError`.
-Add it to `fallback_on` to truncate on such models instead of failing the run; other usage errors
+Add it to `fallback_on` to truncate on such models instead of failing the run; other `UserError`s
 still propagate.
 
 ```python

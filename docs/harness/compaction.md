@@ -233,7 +233,7 @@ A tier inside `TieredCompaction` is driven directly by the orchestrator, which r
 
 `TieredCompaction` advances when a successful tier does not reclaim enough. `FallbackCompaction` advances only when a strategy raises an exception selected by `fallback_on`, which defaults to Pydantic AI's `ModelAPIError` and `FallbackExceptionGroup`. The latter is raised when every model in a `FallbackModel` fails. Each attempt receives a fresh list containing the original message objects, so list-level changes by a failed strategy do not affect its fallback. Strategies must still honor the `CompactionStrategy` contract and avoid mutating message objects. If every strategy fails, the last exception is re-raised. Non-matching exceptions, cancellation, and other `BaseException` subclasses pass through immediately; `fallback_on` rejects types that do not derive from `Exception`.
 
-A `SummarizingCompaction` without `model=` summarizes with the run's model. When that is a realtime model or one that cannot write text, it raises `CannotSummarizeError`, a `UserError`. Add it to `fallback_on` to truncate on such models instead of failing the run; other usage errors still propagate.
+A `SummarizingCompaction` without `model=` summarizes with the run's model. When that is a realtime model or one that cannot write text, it raises `CannotSummarizeError`, a `UserError`. Add it to `fallback_on` to truncate on such models instead of failing the run; other `UserError`s still propagate.
 
 Register it directly when summarization should fall back to deterministic truncation:
 
