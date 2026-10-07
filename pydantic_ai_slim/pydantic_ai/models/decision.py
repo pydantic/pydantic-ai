@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from math import isfinite
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
@@ -229,27 +228,33 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
 def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  # pyright: ignore[reportUnusedFunction]
     """Whether an answer is one its question allows: of its kind, picking an offered option, and in range.
 
-    A pick-one or a score gives a probability for exactly the options or levels offered, a yes/no's probability is
-    from 0 to 1, and a score is within the rubric. A backend that checks its API's answers adds the checks its own
-    API calls for.
+    A pick-one or a score gives a probability for exactly the options or levels offered, every probability and
+    confidence is from 0 to 1, and a score is within the rubric. A backend that checks its API's answers adds the
+    checks its own API calls for.
     """
+    # Each range check is a chained comparison, which is false for NaN.
     if isinstance(question, NoulQuestion):
-        return isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
+        return isinstance(answer, NoulAnswer) and 0 <= answer.noul <= 1
     elif isinstance(question, ChoiceQuestion):
         return (
             isinstance(answer, ChoiceAnswer)
             and answer.choice in question.criteria
             and answer.probabilities.keys() == question.criteria.keys()
+            and _probabilities_fit(answer)
         )
     elif isinstance(question, ScoreQuestion):
         return (
             isinstance(answer, ScoreAnswer)
             and answer.probabilities.keys() == set(range(len(question.criteria)))
-            and isfinite(answer.score)
             and 0 <= answer.score <= len(question.criteria) - 1
+            and _probabilities_fit(answer)
         )
     else:
         assert_never(question)
+
+
+def _probabilities_fit(answer: ChoiceAnswer | ScoreAnswer) -> bool:
+    return all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
 
 
 _UNSUPPORTED_FIELD_HINT = (

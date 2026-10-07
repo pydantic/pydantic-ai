@@ -625,28 +625,16 @@ async def test_settings_are_forwarded(allow_model_requests: None):
     assert captured.body['safety_identifier'] == 'user_123'
 
 
-async def test_extra_body_must_be_a_mapping(allow_model_requests: None):
-    """Not recorded: refused before a request is sent."""
-    captured = Captured(ticket_answers)
-    agent = Agent(mock_model(captured), output_type=Ticket)
-    with pytest.raises(UserError, match='`extra_body` must be a mapping'):
-        await agent.run('Charged twice.', model_settings={'extra_body': ['not', 'a', 'mapping']})
-    assert captured.requests == []
-
-
 @pytest.mark.parametrize(
     'response',
     [
         pytest.param(httpx2.Response(200, text='not json'), id='not json'),
-        pytest.param(decisions({**URGENT, 'probability': 1.2}, AREA), id='probability out of range'),
         pytest.param(decisions(URGENT, {**AREA, 'confidence': None}), id='no confidence'),
         pytest.param(decisions({**URGENT, 'type': 'noul'}, AREA), id='unknown type'),
-        pytest.param(decisions({**URGENT, 'name': None}, AREA), id='unnamed'),
-        pytest.param(decisions(URGENT, {**AREA, 'choice': True}), id='boolean choice'),
     ],
 )
 async def test_invalid_response(response: httpx2.Response, allow_model_requests: None):
-    """Not recorded: no live model answers like this."""
+    """The SDK doesn't validate what it parses, so `decide` does. Not recorded: no live model answers like this."""
     agent = Agent(mock_model(lambda request: response), output_type=Ticket)
     with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the OpenAI Decisions API'):
         await agent.run('Charged twice.')
@@ -659,6 +647,7 @@ async def test_invalid_response(response: httpx2.Response, allow_model_requests:
         pytest.param((URGENT, AREA, {**URGENT, 'name': 'extra'}), id='extra'),
         pytest.param((URGENT, {**URGENT, 'probability': 0.1}, AREA), id='twice'),
         pytest.param((URGENT, {'type': 'refusal', 'name': 'extra'}), id='refusal of another'),
+        pytest.param(({**URGENT, 'name': None}, AREA), id='unnamed'),
     ],
 )
 async def test_answer_names_match_questions(answers: tuple[Mapping[str, object], ...], allow_model_requests: None):
@@ -672,7 +661,25 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
     ('output_type', 'answers'),
     [
         pytest.param(Ticket, (URGENT, {**URGENT, 'name': 'area'}), id='other kind'),
+        pytest.param(Ticket, ({**URGENT, 'probability': 1.2}, AREA), id='probability past 1'),
+        pytest.param(Ticket, (URGENT, {**AREA, 'confidence': float('nan')}), id='confidence not a number'),
         pytest.param(Ticket, (URGENT, {**AREA, 'choice': 'other'}), id='option not offered'),
+        pytest.param(Ticket, (URGENT, {**AREA, 'choice': True}), id='boolean choice'),
+        pytest.param(
+            Ticket,
+            (
+                URGENT,
+                {
+                    **AREA,
+                    'probabilities': [
+                        {'value': 'billing', 'probability': 0.94},
+                        {'value': 'bug', 'probability': 0.06},
+                        {'value': True, 'probability': 0.0},
+                    ],
+                },
+            ),
+            id='boolean option',
+        ),
         pytest.param(
             Ticket,
             (URGENT, {**AREA, 'probabilities': [{'value': 'billing', 'probability': 1.0}]}),

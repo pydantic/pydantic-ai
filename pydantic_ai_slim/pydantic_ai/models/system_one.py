@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
-from math import isfinite
 from typing import Annotated, Literal, cast
 
 import httpx2
@@ -189,13 +188,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
                 probabilities = answer.probabilities.values()
                 # Jev displays probabilities to two decimal places, so each may differ by half a unit.
-                valid = (
-                    valid
-                    and isfinite(answer.confidence)
-                    and 0 <= answer.confidence <= 1
-                    and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
-                    and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
-                )
+                valid = valid and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
                 if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
                     # A displayed score and its probabilities may each be rounded. Check whether any distribution
                     # within their rounding intervals could produce that score, using at least Jev's two decimals.

@@ -1,16 +1,13 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, ClassVar, Literal, NotRequired, TypeAlias, assert_never
+from typing import ClassVar, Literal, assert_never
 
-import httpx2
-from pydantic import Field, JsonValue, TypeAdapter
-from typing_extensions import TypedDict
+from pydantic import JsonValue
 
 from .._http import to_httpx2_timeout
-from ..exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
+from ..exceptions import ContentFilterError, UnexpectedModelBehavior
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -19,6 +16,7 @@ from . import get_user_agent
 from .decision import (
     ChoiceAnswer,
     ChoiceQuestion,
+    DecisionAnswer,
     DecisionModel,
     DecisionModelSettings,
     DecisionQuestion,
@@ -33,7 +31,22 @@ from .decision import (
 )
 
 try:
-    from openai import AsyncOpenAI, RequestOptions
+    from openai import NOT_GIVEN, AsyncOpenAI
+    from openai.types import Decision
+    from openai.types.decision import (
+        AnswerAnswerResourceChoice,
+        AnswerAnswerResourcePredicate,
+        AnswerAnswerResourceRefusal,
+        AnswerAnswerResourceScore,
+    )
+    from openai.types.decision_create_params import (
+        Question,
+        QuestionQuestionParamChoice,
+        QuestionQuestionParamChoiceChoice,
+        QuestionQuestionParamPredicate,
+        QuestionQuestionParamScore,
+        QuestionQuestionParamScoreLevel,
+    )
 
     from ..providers.openai_decisions import OpenAIDecisionsProvider
     from .openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
@@ -148,41 +161,50 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
-        body = _DecisionsRequest(
-            model=self._model_name,
-            input=_text(request.state),
-            questions=[_question(name, question) for name, question in request.questions.items()],
-        )
-        options = _request_options(model_settings)
+        extra_headers = dict(model_settings.get('extra_headers', {}))
+        extra_headers.setdefault('User-Agent', get_user_agent())
         with _map_api_errors(self._model_name, self._provider.model_id_namespace):
-            # TODO: use `client.decisions.create` once the `openai` floor reaches 3.26.0: https://github.com/pydantic/pydantic-ai/pull/9634
-            response = await self.client.post('/decisions', cast_to=httpx2.Response, body=body, options=options)
+            response = await self.client.decisions.with_raw_response.create(
+                model=self._model_name,
+                input=_text(request.state),
+                questions=[_question(name, question) for name, question in request.questions.items()],
+                extra_headers=extra_headers,
+                extra_body=model_settings.get('extra_body'),
+                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
+            )
 
+        # The SDK builds its response models without validating them, so the body is validated here.
         try:
-            data = response.json()
-            parsed = _response_adapter.validate_python(data)
+            data = json.loads(response.content)
+            decision = Decision.model_validate(data)
         except ValueError as e:
             raise UnexpectedModelBehavior(f'Invalid response from the OpenAI Decisions API: {e}', response.text) from e
-        names = {answer.name for answer in parsed.answers}
-        if len(names) != len(parsed.answers) or names != request.questions.keys():
+        by_name = {answer.name: answer for answer in decision.answers if answer.name is not None}
+        if len(by_name) != len(decision.answers) or by_name.keys() != request.questions.keys():
             raise UnexpectedModelBehavior(
                 'Invalid response from the OpenAI Decisions API: answer names do not match the questions', response.text
             )
-        answers = {answer.name: answer.answer() for answer in parsed.answers if not isinstance(answer, _Refusal)}
-        if refused := [name for name in request.questions if name not in answers]:
-            raise ContentFilterError(
-                f'Content filter triggered. The OpenAI Decisions API declined to answer: {", ".join(map(repr, refused))}',
-                response.text,
-            )
-        for name, answer in answers.items():
-            if not _answer_fits(request.questions[name], answer):
+        answers: dict[str, DecisionAnswer] = {}
+        refused: list[str] = []
+        for name, question in request.questions.items():
+            answer = by_name[name]
+            if isinstance(answer, AnswerAnswerResourceRefusal):
+                refused.append(name)
+            elif (converted := _answer(answer)) is not None and _answer_fits(question, converted):
+                answers[name] = converted
+            else:
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the OpenAI Decisions API: answer {name!r} does not match its question: {answer!r}',
                     response.text,
                 )
+        if refused:
+            raise ContentFilterError(
+                f'Content filter triggered. The OpenAI Decisions API declined to answer: {", ".join(map(repr, refused))}',
+                response.text,
+            )
         return DecisionResponse(
             answers=answers,
-            model_name=parsed.model,
+            model_name=decision.model,
             usage=RequestUsage.extract(
                 data,
                 provider=self.system,
@@ -191,24 +213,8 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
                 api_flavor='responses',
             ),
             # The body carries no ID of its own.
-            provider_response_id=response.headers.get('x-request-id'),
+            provider_response_id=response.request_id,
         )
-
-
-def _request_options(model_settings: DecisionModelSettings) -> RequestOptions:
-    """The generic settings the API takes, as the SDK's options for one request."""
-    headers = dict(model_settings.get('extra_headers', {}))
-    headers.setdefault('User-Agent', get_user_agent())
-    options: RequestOptions = {'headers': headers}
-    if (timeout := model_settings.get('timeout')) is not None:
-        options['timeout'] = to_httpx2_timeout(timeout)
-    if (extra_body := model_settings.get('extra_body')) is not None:
-        if not isinstance(extra_body, Mapping):
-            raise UserError(
-                f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.'
-            )
-        options['extra_json'] = extra_body
-    return options
 
 
 def _text(value: JsonValue) -> str:
@@ -216,19 +222,21 @@ def _text(value: JsonValue) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
-def _question(name: str, question: DecisionQuestion) -> _Question:
+def _question(name: str, question: DecisionQuestion) -> Question:
     """A protocol question as a Decisions API question, whose `predicate` is the protocol's yes/no."""
     if isinstance(question, NoulQuestion):
         instructions = _instructions(_with_meanings(question.instructions, question.criteria or NoulCriteria()))
-        return _PredicateQuestion(type='predicate', name=name, instructions=instructions)
+        return QuestionQuestionParamPredicate(type='predicate', name=name, instructions=instructions)
     elif isinstance(question, ChoiceQuestion):
         choices = [_option(label, meaning) for label, meaning in question.criteria.items()]
-        return _ChoiceQuestion(
+        return QuestionQuestionParamChoice(
             type='choice', name=name, instructions=_instructions(question.instructions), choices=choices
         )
     elif isinstance(question, ScoreQuestion):
         levels = [_level(str(level), meaning) for level, meaning in enumerate(question.criteria)]
-        return _ScoreQuestion(type='score', name=name, instructions=_instructions(question.instructions), levels=levels)
+        return QuestionQuestionParamScore(
+            type='score', name=name, instructions=_instructions(question.instructions), levels=levels
+        )
     else:
         assert_never(question)
 
@@ -252,118 +260,33 @@ def _with_meanings(instructions: JsonValue, criteria: NoulCriteria) -> JsonValue
     return {'question': instructions, **meanings}
 
 
-def _option(value: str, meaning: JsonValue) -> _Option:
-    return _Option(value=value) if meaning is None else _Option(value=value, description=_text(meaning))
+def _option(value: str, meaning: JsonValue) -> QuestionQuestionParamChoiceChoice:
+    if meaning is None:
+        return QuestionQuestionParamChoiceChoice(value=value)
+    return QuestionQuestionParamChoiceChoice(value=value, description=_text(meaning))
 
 
-def _level(label: str, meaning: JsonValue) -> _Level:
-    return _Level(label=label) if meaning is None else _Level(label=label, description=_text(meaning))
+def _level(label: str, meaning: JsonValue) -> QuestionQuestionParamScoreLevel:
+    if meaning is None:
+        return QuestionQuestionParamScoreLevel(label=label)
+    return QuestionQuestionParamScoreLevel(label=label, description=_text(meaning))
 
 
-class _Option(TypedDict):
-    value: str
-    description: NotRequired[str]
-
-
-class _Level(TypedDict):
-    label: str
-    description: NotRequired[str]
-
-
-class _PredicateQuestion(TypedDict):
-    type: Literal['predicate']
-    name: str
-    instructions: str
-
-
-class _ChoiceQuestion(TypedDict):
-    type: Literal['choice']
-    name: str
-    choices: list[_Option]
-    instructions: str
-
-
-class _ScoreQuestion(TypedDict):
-    type: Literal['score']
-    name: str
-    levels: list[_Level]
-    instructions: str
-
-
-_Question: TypeAlias = _PredicateQuestion | _ChoiceQuestion | _ScoreQuestion
-
-
-class _DecisionsRequest(TypedDict):
-    """The body `/v1/decisions` takes."""
-
-    model: str
-    input: str
-    questions: list[_Question]
-
-
-_Probability = Annotated[float, Field(ge=0, le=1)]
-
-
-@dataclass(kw_only=True)
-class _PredicateAnswer:
-    type: Literal['predicate']
-    name: str
-    probability: _Probability
-
-    def answer(self) -> NoulAnswer:
-        return NoulAnswer(noul=self.probability)
-
-
-@dataclass(kw_only=True)
-class _OptionProbability:
-    value: str
-    probability: _Probability
-
-
-@dataclass(kw_only=True)
-class _ChoiceAnswer:
-    type: Literal['choice']
-    name: str
-    choice: str
-    confidence: _Probability
-    probabilities: list[_OptionProbability]
-
-    def answer(self) -> ChoiceAnswer:
-        probabilities = {option.value: option.probability for option in self.probabilities}
-        return ChoiceAnswer(choice=self.choice, confidence=self.confidence, probabilities=probabilities)
-
-
-@dataclass(kw_only=True)
-class _LevelProbability:
-    value: int
-    probability: _Probability
-
-
-@dataclass(kw_only=True)
-class _ScoreAnswer:
-    type: Literal['score']
-    name: str
-    score: float
-    confidence: _Probability
-    probabilities: list[_LevelProbability]
-
-    def answer(self) -> ScoreAnswer:
-        probabilities = {level.value: level.probability for level in self.probabilities}
-        return ScoreAnswer(score=self.score, confidence=self.confidence, probabilities=probabilities)
-
-
-@dataclass(kw_only=True)
-class _Refusal:
-    type: Literal['refusal']
-    name: str
-
-
-@dataclass(kw_only=True)
-class _DecisionsResponse:
-    """The body the API answers `/v1/decisions` with, apart from the usage, which is read as the Responses API's."""
-
-    model: str
-    answers: list[Annotated[_PredicateAnswer | _ChoiceAnswer | _ScoreAnswer | _Refusal, Field(discriminator='type')]]
-
-
-_response_adapter = TypeAdapter(_DecisionsResponse)
+def _answer(
+    answer: AnswerAnswerResourcePredicate | AnswerAnswerResourceChoice | AnswerAnswerResourceScore,
+) -> DecisionAnswer | None:
+    """A Decisions API answer as the protocol's, or `None` for a boolean option, which no question here offers."""
+    if isinstance(answer, AnswerAnswerResourcePredicate):
+        return NoulAnswer(noul=answer.probability)
+    elif isinstance(answer, AnswerAnswerResourceChoice):
+        probabilities = {
+            option.value: option.probability for option in answer.probabilities if isinstance(option.value, str)
+        }
+        if not isinstance(answer.choice, str) or len(probabilities) != len(answer.probabilities):
+            return None
+        return ChoiceAnswer(choice=answer.choice, confidence=answer.confidence, probabilities=probabilities)
+    elif isinstance(answer, AnswerAnswerResourceScore):
+        probabilities = {level.value: level.probability for level in answer.probabilities}
+        return ScoreAnswer(score=answer.score, confidence=answer.confidence, probabilities=probabilities)
+    else:
+        assert_never(answer)
