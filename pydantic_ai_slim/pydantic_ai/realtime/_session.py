@@ -1910,6 +1910,30 @@ class RealtimeSession:
             conversation_id=self._conversation_id,
         )
 
+    def _snapshot_conversation(self) -> Conversation:
+        if self._run.result is not None:
+            return self._run.result.conversation
+        conversation = self.conversation
+        # A tool can start before the provider closes its response. Checkpoints must retain its
+        # originating call even though the legacy history API only exposes finalized responses.
+        parts = [*self._native_tool_parts, *self._response_parts]
+        if parts:
+            conversation.messages.append(
+                ModelResponse(
+                    parts=deepcopy(parts),
+                    usage=copy(self._pending_response_usage),
+                    model_name=self._connection.model_name or self._model_name,
+                    provider_name=self._provider_name,
+                    provider_url=self._provider_url,
+                    provider_response_id=self._pending_provider_response_id or self._content_response_id,
+                    provider_details=deepcopy(self._pending_provider_details),
+                    run_id=self._run.run_id,
+                    conversation_id=self._conversation_id,
+                    state='incomplete',
+                )
+            )
+        return conversation
+
     def _attach_owner(self, owner: SessionRuntime) -> None:
         self._owner = owner
         assert self._run.run_id is not None
@@ -1918,7 +1942,7 @@ class RealtimeSession:
             ActiveRun(
                 run_id=self._run.run_id,
                 pending_messages=self._run.pending_messages,
-                snapshot=lambda: self._run.result.conversation if self._run.result is not None else self.conversation,
+                snapshot=self._snapshot_conversation,
             ),
             # A short-circuit or recovered setup never runs a driver. Leave all input on the
             # owner, including content this particular driver could not accept.
@@ -2876,6 +2900,10 @@ class RealtimeSession:
             self._close_tool_batch()
             for part in parts:
                 if isinstance(part, ToolCallPart):
+                    operation_id = self._tool_operation_ids[part.tool_call_id]
+                    self._tool_operations[operation_id] = replace(
+                        self._tool_operations[operation_id], response_timestamp=response.timestamp
+                    )
                     self._tool_calls_awaiting_usage.discard(part.tool_call_id)
             if self._pending_tool_returns:
                 pending, self._pending_tool_returns = self._pending_tool_returns, []
@@ -3093,6 +3121,15 @@ class RealtimeSession:
         events.append(PartStartEvent(index=index, part=call_part))
         events.append(PartEndEvent(index=index, part=call_part))
         self._response_parts.append(call_part)
+        # Recovery addresses a call within its originating response, not within the connection's
+        # event ordering. Admit before finalization so that boundary can bind its stable timestamp.
+        self._tool_operation_ids[call_part.tool_call_id] = _operations.admit(
+            self._tool_operations,
+            run_id=self._run.run_id,
+            run_step=self._run.tool_run_step,
+            call=call_part,
+            call_index=sum(isinstance(part, ToolCallPart) for part in self._response_parts) - 1,
+        )
         if response_usage_follows:
             self._tool_calls_awaiting_usage.add(call_part.tool_call_id)
         else:
@@ -4200,10 +4237,7 @@ class RealtimeSession:
         ordered_events: bool,
     ) -> None:
         """Run a tool, record its result, then independently deliver it to the provider."""
-        operation_id = _operations.admit(
-            self._tool_operations, run_id=run.run_id, run_step=run_step, call=call_part, call_index=order_index
-        )
-        self._tool_operation_ids[call_part.tool_call_id] = operation_id
+        operation_id = self._tool_operation_ids[call_part.tool_call_id]
         actions = _operations.apply(self._tool_operations, operation_id, _operations.StartTool())
         assert 'execute_tool' in actions
         events: list[RealtimeEvent] = []

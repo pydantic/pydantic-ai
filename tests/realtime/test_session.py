@@ -8480,10 +8480,12 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
     ) -> tuple[ToolReturnPart, None]:
         del validation_done, execution_prerequisites, response_usage_follows
         del run_step, reserved_budget
-        session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
+        session._finalize_response()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
-    session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
+    session._handle_tool_call_part(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='noop', args={}, tool_call_id='call'), response_usage_follows=True
+    )
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
     completion = asyncio.Event()
     await session._run_tool(  # pyright: ignore[reportPrivateUsage]
@@ -8540,10 +8542,12 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
     ) -> tuple[ToolReturnPart, None]:
         del validation_done, execution_prerequisites, response_usage_follows
         del run_step, reserved_budget
-        session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
+        session._finalize_response()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
-    session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
+    session._handle_tool_call_part(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='noop', args={}, tool_call_id='call'), response_usage_follows=True
+    )
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
 
     task = asyncio.create_task(

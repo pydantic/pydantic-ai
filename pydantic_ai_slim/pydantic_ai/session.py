@@ -184,13 +184,20 @@ class SessionState:
                 recovered.pending.append(PendingMessage(messages=deepcopy(delivery.messages), enqueue_id=delivery_id))
         recovered.steering = list(native_deliveries.values())
         _steering.require_settled(recovered.steering)
+        interrupted_operations = {
+            operation.operation_id for operation in self.operations if operation.execution in ('running', 'interrupted')
+        }
         for operation in recovered.operations:
             if operation.execution == 'completed' and (
                 operation.operation_id in (tool_results or {})
                 or self.active_run_id is not None
                 and any(request.run_id == self.active_run_id for request in operation.result)
             ):
-                _restore_operation_result(recovered.conversation, operation)
+                _restore_operation_result(
+                    recovered.conversation,
+                    operation,
+                    replace_interrupted=operation.operation_id in interrupted_operations,
+                )
         if self.active_run_id is not None:
             recovered.conversation.messages = messages.repair_messages(
                 recovered.conversation.messages,
@@ -221,7 +228,9 @@ def _require_settled_operations(operations: Sequence[ToolOperation]) -> None:
             raise UserError(f'Tool operation {operation.operation_id!r} is unresolved; use `state.recover()` first.')
 
 
-def _restore_operation_result(conversation: Conversation, operation: ToolOperation) -> None:
+def _restore_operation_result(
+    conversation: Conversation, operation: ToolOperation, *, replace_interrupted: bool
+) -> None:
     # Restore beside the originating response, not at the end of unrelated later history.
     history = conversation.messages
     indices = [
@@ -247,11 +256,23 @@ def _restore_operation_result(conversation: Conversation, operation: ToolOperati
     for request in operation.result:
         assert isinstance(request, messages.ModelRequest)
         restored_parts.extend(request.parts)
+    retained: list[messages.ModelRequestPart] = []
     for part in existing:
         if (
             isinstance(part, (messages.ToolReturnPart, messages.RetryPromptPart))
             and part.tool_call_id == operation.call.tool_call_id
         ):
+            if (
+                replace_interrupted
+                and isinstance(part, messages.ToolReturnPart)
+                and part.tool_name == operation.call.tool_name
+                and part.outcome == 'interrupted'
+                and isinstance(part.content, str)
+                and part.content == messages.INTERRUPTED_TOOL_RETURN_CONTENT
+            ):
+                # Teardown repairs history with a placeholder, not evidence of an external outcome.
+                # Only explicit reconciliation of an unresolved effect may replace that placeholder.
+                continue
             if any(
                 isinstance(restored, (messages.ToolReturnPart, messages.RetryPromptPart))
                 and restored.timestamp == part.timestamp
@@ -261,8 +282,9 @@ def _restore_operation_result(conversation: Conversation, operation: ToolOperati
                 # Already assembled completion must not duplicate multimodal user content.
                 return
             raise UserError(f'History already has a different result for operation {operation.operation_id!r}.')
+        retained.append(part)
     if isinstance(following, messages.ModelRequest):
-        history[index + 1] = replace(following, parts=[*existing, *restored_parts])
+        history[index + 1] = replace(following, parts=[*retained, *restored_parts])
     else:
         history[index + 1 : index + 1] = deepcopy(operation.result)
 

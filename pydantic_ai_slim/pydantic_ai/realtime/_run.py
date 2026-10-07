@@ -11,6 +11,7 @@ from typing import Generic, Literal, TypeVar, overload
 
 import anyio
 
+from .._enqueue import EnqueueContent, PendingMessagePriority
 from .._utils import aclose_all, cancel_and_drain
 from ..conversation import Conversation
 from ..exceptions import UserError
@@ -165,6 +166,13 @@ class RealtimeRun:
         # An aborted wire call must not look like a successful send to its caller.
         if scope.cancel_called:
             raise asyncio.CancelledError('Realtime run ended')
+
+    def enqueue(self, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> str | None:
+        """Queue input at the current run's turn boundary; a retained handle cannot queue into a later run.
+
+        Content and priority follow [`RealtimeSession.enqueue`][pydantic_ai.realtime.RealtimeSession.enqueue].
+        """
+        return self._active().enqueue(*content, priority=priority)
 
     async def _stop_calls(self) -> None:
         self._calls_stopping = True
