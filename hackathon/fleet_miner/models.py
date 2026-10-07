@@ -45,6 +45,22 @@ class Facet(BaseModel):
     workflow: bool = Field(
         description='True when the intent is a multi-step procedure rather than a one-line preference.'
     )
+    preferences: list[str] = Field(
+        default=[],
+        description='Standing preferences about how the agent should behave in general that the prompt states, even '
+        'in passing inside a one-off task (language or locale, tone, tooling choices, "always run the tests first"), '
+        'each as one generalized imperative sentence of at most 15 words. Empty when there are none. Do not repeat '
+        'the main intent here when the whole prompt is the preference.',
+    )
+
+
+PREFERENCE_KEY = '#pref'
+"""Intent ids: a prompt's main intent is keyed by its span id, its preferences by `<span_id>#pref<n>`."""
+
+
+def span_of(intent_id: str) -> str:
+    """The prompt span an intent id came from: every intent of a prompt carries that prompt as its evidence."""
+    return intent_id.split(PREFERENCE_KEY, 1)[0]
 
 
 # Tool-call markup a model sometimes leaks into a text field (e.g. a trailing `</parameter> </invoke>`).

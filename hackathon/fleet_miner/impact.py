@@ -8,7 +8,7 @@ from datetime import datetime
 from logfire.query_client import AsyncLogfireQueryClient
 
 from .fetch import NOT_TEST
-from .models import Impact, Proposal, UserPrompt
+from .models import Impact, Proposal, UserPrompt, span_of
 from .policy import ToolCall, matching_segment
 
 
@@ -57,7 +57,8 @@ async def compute_impacts(
                 decisions, decision_users = await _decisions(client, proposal.rule.name, accepted_at)
                 extra: dict[str, object] = {'decisions': decisions, 'decision_users': decision_users}
             else:
-                times = [by_span[s].timestamp for s in pattern_spans.get(proposal.id, set()) if s in by_span]
+                spans = {span_of(s) for s in pattern_spans.get(proposal.id, set())}
+                times = [by_span[s].timestamp for s in spans if s in by_span]
                 extra = {
                     'users_with_item': await _users_with_item(client, f'{proposal.kind}:{proposal.name}', accepted_at)
                 }

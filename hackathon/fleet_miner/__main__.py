@@ -21,6 +21,7 @@ from .variables import CONTROL_VARIABLE, VARIABLE, VariablesClient
 
 HERE = Path(__file__).parent
 RECLUSTER_EVERY = timedelta(hours=24)
+FACETS_VERSION = 2
 VERBOSE = True
 
 
@@ -48,7 +49,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog='fleet_miner', description=__doc__)
     parser.add_argument('--since', type=_since, default='7d', help='window start: 24h, 7d or an ISO timestamp')
     parser.add_argument(
-        '--min-users', type=_min_users, default=3, help='distinct users a pattern needs (at least 2: never suggest from one person)'
+        '--min-users',
+        type=_min_users,
+        default=3,
+        help='distinct users a pattern needs (at least 2: never suggest from one person)',
     )
     parser.add_argument('--fixture', type=Path, help='read prompts from this JSON instead of Logfire')
     parser.add_argument('--save-fixture', type=Path, help='also save the fetched prompts here')
@@ -223,14 +227,18 @@ async def _mine_prompts(
     *,
     window: tuple[datetime, datetime],
 ) -> tuple[list[Proposal], list[patterns_mod.Pattern]]:
-    cache_path = args.cache or CACHE_DIR / f'facets-{re.sub(r"\W+", "_", args.facet_model)}.json'
+    # The version is bumped whenever the facet shape changes, so cached facets are re-extracted (v2: `preferences`).
+    cache_path = args.cache or CACHE_DIR / f'facets-v{FACETS_VERSION}-{re.sub(r"\W+", "_", args.facet_model)}.json'
     facets = (
         {}
         if args.reuse_clusters
         else await facets_mod.extract_facets(prompts, model=args.facet_model, cache=facets_mod.FacetCache(cache_path))
     )
     if facets:
-        say(f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent')
+        say(
+            f'{sum(1 for f in facets.values() if f.intent)} prompts carry a reusable intent, '
+            f'{sum(len(f.preferences) for f in facets.values())} standing preferences stated in passing'
+        )
     clusters_path = CACHE_DIR / 'clusters.json'
     age = datetime.now(UTC).timestamp() - clusters_path.stat().st_mtime if clusters_path.exists() else None
     if args.reuse_clusters:
@@ -239,7 +247,7 @@ async def _mine_prompts(
         # Full re-clustering (first run, on request, or daily): groups can merge and split as the fleet evolves.
         found = await patterns_mod.find_patterns(prompts, facets, model=args.pattern_model, existing=existing)
         patterns_mod.assign_stable_ids(found, existing, prior_spans=patterns_mod.load_prior_spans())
-        patterns_mod.save_clustered_spans({s for s, f in facets.items() if f.intent})
+        patterns_mod.save_clustered_spans(set(patterns_mod.intents_of(prompts, facets)))
         patterns_mod.save_patterns(clusters_path, found)
     else:
         cached = patterns_mod.load_patterns(clusters_path, prompts)

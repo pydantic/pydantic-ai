@@ -24,6 +24,12 @@ Set `intent` to null for prompts that carry no reusable intent: answers to the a
 Pay special attention to prompts that tell the agent HOW to work or WHAT TO DO NEXT that the agent could
 have done unprompted (e.g. "now open a PR and keep fixing CI until it's green", "run the tests before you
 commit", "don't add comments"). Those are what we are looking for.
+
+Separately, list in `preferences` every standing preference about how the agent should behave in general that the
+prompt states, even in passing inside a one-off task: language or locale ("use British English"), tone, tooling
+choices ("use uv, not pip"), habits ("always run the tests first"). Extract them even when the main intent is a
+throwaway task or null; keep the main intent as it is. When the whole prompt is the preference, it is the `intent`
+and `preferences` stays empty.
 """
 
 

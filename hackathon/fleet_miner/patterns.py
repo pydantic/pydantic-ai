@@ -19,7 +19,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from . import __version__
 from .llm_cache import CACHE_DIR, run_cached
 from .scope import measure_scope
-from .models import Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, strip_markup
+from .models import PREFERENCE_KEY, Evidence, Facet, Proposal, ProposalKind, Tier, UserPrompt, span_of, strip_markup
 
 CLUSTER_INSTRUCTIONS = """\
 You are given intents extracted from prompts that many developers typed into their coding agents, plus the
@@ -29,6 +29,8 @@ iterate" are the same pattern). Prefer fewer, broader groups: variants of one wo
 until CI is green", "iterate until the review bot is satisfied", "implement it, open a PR and keep iterating
 until green") belong in ONE group. Leave out intents that match nothing else, and leave out throwaway test tasks
 that ask for a specific artifact (e.g. "write FizzBuzz in Rust") rather than describing how the user wants work done.
+Intents marked `preference` are standing preferences a developer stated in passing (e.g. "use British English" inside
+a FizzBuzz request): group them by the preference alone, with each other and with main intents that ask the same.
 
 For each group: write the shared pattern as one sentence, give a short kebab-case slug, and if it is the same
 pattern as an earlier proposal, set `existing_id` to that proposal's id exactly as given (so it is not proposed twice); otherwise leave it null.
@@ -99,9 +101,17 @@ class Pattern:
     pattern: str
     confidence: float
     prompts: list[UserPrompt]
+    """One per prompt span, even when several intents of one prompt are in the group."""
     existing_id: str | None = None
     users: set[str] = field(default_factory=set[str])
     sessions: set[str] = field(default_factory=set[str])
+    intent_ids: list[str] = field(default_factory=list[str])
+    """The grouped intents: span ids for main intents, `<span_id>#pref<n>` for preferences stated in passing."""
+
+    @property
+    def preference(self) -> bool:
+        """Mostly standing preferences stated inside other requests, which lean towards an instruction."""
+        return 2 * sum(PREFERENCE_KEY in i for i in self.intent_ids) > len(self.intent_ids)
 
     @property
     def score(self) -> float:
@@ -110,15 +120,64 @@ class Pattern:
         return round(self.confidence * spread, 3)
 
 
+@dataclass(frozen=True)
+class Intent:
+    """One thing to cluster: a prompt's main intent, or a standing preference it states in passing."""
+
+    id: str
+    span_id: str
+    text: str
+    standing_request: bool
+    preference: bool
+
+    def item(self) -> dict[str, object]:
+        """What the clustering model sees (`span_id` holds the intent id; `preference` only when set)."""
+        item: dict[str, object] = {'span_id': self.id, 'intent': self.text, 'standing_request': self.standing_request}
+        return item | {'preference': True} if self.preference else item
+
+
+def intents_of(prompts: list[UserPrompt], facets: dict[str, Facet]) -> dict[str, Intent]:
+    """Every intent to cluster: each prompt's main intent plus each standing preference it states in passing."""
+    spans = {p.span_id for p in prompts}
+    intents: dict[str, Intent] = {}
+    for span_id, f in facets.items():
+        if span_id not in spans:
+            continue
+        if f.intent:
+            intents[span_id] = Intent(span_id, span_id, f.intent, f.standing_request, preference=False)
+        for n, text in enumerate(f.preferences):
+            key = f'{span_id}{PREFERENCE_KEY}{n}'
+            intents[key] = Intent(key, span_id, text, standing_request=True, preference=True)
+    return intents
+
+
+def _pattern(
+    id: str,
+    pattern: str,
+    confidence: float,
+    intent_ids: list[str],
+    by_span: dict[str, UserPrompt],
+    existing_id: str | None = None,
+) -> Pattern:
+    intent_ids = [i for i in dict.fromkeys(intent_ids) if span_of(i) in by_span]
+    prompts = [by_span[s] for s in dict.fromkeys(span_of(i) for i in intent_ids)]
+    return Pattern(
+        id=id,
+        pattern=pattern,
+        confidence=confidence,
+        prompts=prompts,
+        existing_id=existing_id,
+        users={p.user or f'unknown:{p.session_id or p.trace_id}' for p in prompts},
+        sessions={p.session_id or p.trace_id for p in prompts},
+        intent_ids=intent_ids,
+    )
+
+
 async def find_patterns(
     prompts: list[UserPrompt], facets: dict[str, Facet], *, model: str, existing: list[Proposal]
 ) -> list[Pattern]:
     by_span = {p.span_id: p for p in prompts}
-    items = [
-        {'span_id': span_id, 'intent': f.intent, 'standing_request': f.standing_request}
-        for span_id, f in facets.items()
-        if f.intent and span_id in by_span
-    ]
+    items = [i.item() for i in intents_of(prompts, facets).values()]
     if not items:
         return []
     earlier = [{'id': p.id, 'pattern': p.pattern, 'status': p.status} for p in existing]
@@ -133,20 +192,11 @@ async def find_patterns(
     for group in output.groups:
         # Only reuse an id the model was actually shown; anything else is a mangled or invented one.
         existing_id = group.existing_id if group.existing_id in known_ids else None
-        group_prompts = [by_span[s] for s in dict.fromkeys(group.span_ids) if s in by_span]
-        if len(group_prompts) < 2:
-            continue
-        pattern = Pattern(
-            id=existing_id or group.slug,
-            pattern=group.pattern,
-            confidence=group.confidence,
-            prompts=group_prompts,
-            existing_id=existing_id,
+        pattern = _pattern(
+            existing_id or group.slug, group.pattern, group.confidence, group.span_ids, by_span, existing_id
         )
-        for p in group_prompts:
-            pattern.users.add(p.user or f'unknown:{p.session_id or p.trace_id}')
-            pattern.sessions.add(p.session_id or p.trace_id)
-        patterns.append(pattern)
+        if len(pattern.prompts) >= 2:
+            patterns.append(pattern)
     return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
 
 
@@ -160,15 +210,17 @@ def assign_stable_ids(
     """Give each cluster the id of the earlier proposal it continues, so a renamed cluster can't resurrect an
     accepted or dismissed pattern under a new id.
 
-    A cluster continues an earlier proposal (of any status) when they share prompts: the proposal's evidence spans,
-    plus the full span list cached from the run that drafted it (`prior_spans`). Failing that, the clustering model's
-    intent match (`existing_id`) decides. Only a cluster that matches nothing gets a new id, never one already taken.
+    A cluster continues an earlier proposal (of any status) when they share intents: the full intent list cached from
+    the runs that grouped it (`prior_spans`), or, for a proposal with none cached, its evidence spans. Intent ids, not
+    spans, so a preference stated inside a task prompt doesn't tie the preference's group to the task's. Failing that,
+    the clustering model's intent match (`existing_id`) decides. Only a cluster that matches nothing gets a new id,
+    never one already taken.
     """
     prior = [p for p in existing if p.kind in ('skill', 'instruction')]
-    spans_of = {p.id: {e.span_id for e in p.evidence} | (prior_spans or {}).get(p.id, set()) for p in prior}
+    spans_of = {p.id: (prior_spans or {}).get(p.id) or {e.span_id for e in p.evidence} for p in prior}
     taken = set(taken or ())
     for pattern in sorted(patterns, key=lambda p: len(p.prompts), reverse=True):
-        spans = {u.span_id for u in pattern.prompts}
+        spans = set(pattern.intent_ids)
         overlaps = {pid: len(spans & s) for pid, s in spans_of.items() if pid not in taken}
         best = max(overlaps, key=lambda pid: overlaps[pid], default=None)
         if best is not None and overlaps[best] > 0:
@@ -184,7 +236,10 @@ def assign_stable_ids(
 
 
 SPANS_PATH = CACHE_DIR / 'pattern_spans.json'
-"""Every prompt span ever assigned to each proposal id, across runs (clusters.json only has the latest run)."""
+"""Every intent id ever assigned to each proposal id, across runs (clusters.json only has the latest run).
+
+Intent ids are prompt span ids, or `<span_id>#pref<n>` for a preference stated in passing (see `span_of`).
+"""
 
 
 def load_prior_spans(path: Path = SPANS_PATH) -> dict[str, set[str]]:
@@ -194,7 +249,7 @@ def load_prior_spans(path: Path = SPANS_PATH) -> dict[str, set[str]]:
 def record_pattern_spans(patterns: list[Pattern], path: Path = SPANS_PATH) -> dict[str, set[str]]:
     spans = load_prior_spans(path)
     for p in patterns:
-        spans.setdefault(p.id, set()).update(u.span_id for u in p.prompts)
+        spans.setdefault(p.id, set()).update(p.intent_ids)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({pid: sorted(s) for pid, s in spans.items()}))
     return spans
@@ -209,6 +264,7 @@ def save_patterns(path: Path, patterns: list[Pattern]) -> None:
             'confidence': p.confidence,
             'existing_id': p.existing_id,
             'span_ids': [u.span_id for u in p.prompts],
+            'intent_ids': p.intent_ids,
         }
         for p in patterns
     ]
@@ -217,10 +273,22 @@ def save_patterns(path: Path, patterns: list[Pattern]) -> None:
 
 ASSIGN_INSTRUCTIONS = """\
 You keep groups of recurring requests that developers type into their coding agents up to date. You get the existing
-groups (id, the shared request, size), intents typed since the groups were made, and earlier intents that are not in
-any group yet. Put each new intent in the existing group that expresses the SAME request (even if worded differently),
-or form new groups from new and earlier ungrouped intents that share a request. Leave out intents that match nothing.
-Never put a throwaway test task (e.g. "write FizzBuzz in Rust") in a group.
+groups (id, the shared request, size) and intents typed since the groups were made. Put each new intent in the
+existing group that expresses the SAME request (even if worded differently). Leave out intents that match no group.
+Never put a throwaway test task (e.g. "write FizzBuzz in Rust") in a group. Intents marked `preference` are standing
+preferences stated in passing inside another request: place them by the preference alone.
+"""
+
+UNPLACED_INSTRUCTIONS = """\
+You are given intents that developers typed into their coding agents and that fit none of the known groups of
+recurring requests. Find the ones that express the SAME underlying request, even when worded very differently, and
+group them. Leave out intents that match nothing else, and throwaway test tasks that ask for a specific artifact
+(e.g. "write FizzBuzz in Rust") rather than describing how the user wants work done. Intents marked `preference` are
+standing preferences a developer stated in passing (e.g. "use British English" inside a FizzBuzz request): group them
+by the preference alone, with each other and with intents that ask the same.
+
+For each group: write the shared pattern as one sentence and give a short kebab-case slug. `confidence` is how sure
+you are that this is one coherent, reusable pattern (0-1).
 """
 
 
@@ -229,13 +297,12 @@ class _ExistingAssignment(BaseModel):
     span_ids: list[str]
 
 
-class _Assignments(BaseModel):
+class _Placements(BaseModel):
     to_existing: list[_ExistingAssignment]
-    new_groups: list[_Group]
 
 
 CLUSTERED_PATH = CACHE_DIR / 'clustered_spans.json'
-"""Every intent span clustering has already seen, grouped or not: the incremental step only sends newer ones."""
+"""Every intent id the incremental step has already offered to the existing groups, placed or not."""
 
 
 def load_clustered_spans() -> set[str]:
@@ -254,54 +321,68 @@ async def update_patterns(
     *,
     model: str,
     existing: list[Proposal],
-    max_loners: int = 150,
+    max_unplaced: int = 150,
 ) -> list[Pattern]:
-    """Incremental clustering: place only intents typed since the last run, against the cached groups.
+    """Incremental clustering, so a run costs what is new rather than what is in the window.
 
-    The cost of a run then scales with what is new, not with everything in the window. With nothing new there is
-    no LLM call at all.
+    1. Intents never offered before are placed into the cached groups (one call, only when there are any).
+    2. Every intent in no group ("unplaced", new or earlier) is clustered among the unplaced only, so a theme that
+       is new since the last full re-cluster still becomes a pattern. They are few, and the call is cached by its
+       exact input, so an unchanged set costs nothing.
     """
     by_span = {p.span_id: p for p in prompts}
     seen = load_clustered_spans()
-    intents = {s: f for s, f in facets.items() if f.intent and s in by_span}
-    new = [s for s in intents if s not in seen]
-    if not new:
-        return cached
-    grouped = {u.span_id for p in cached for u in p.prompts}
-    loners = sorted((s for s in intents if s in seen and s not in grouped), key=lambda s: by_span[s].timestamp)
-    loners = loners[-max_loners:]
-    agent = Agent(model, output_type=_Assignments, instructions=ASSIGN_INSTRUCTIONS, name='fleet_miner_assign')
-    groups = [{'id': p.id, 'pattern': p.pattern, 'size': len(p.prompts)} for p in cached]
-    output = await run_cached(
-        agent,
-        f'Existing groups:\n{json.dumps(groups, indent=2)}\n\n'
-        f'New intents:\n{json.dumps([{"span_id": s, "intent": intents[s].intent} for s in new], indent=2)}\n\n'
-        f'Earlier ungrouped intents:\n{json.dumps([{"span_id": s, "intent": intents[s].intent} for s in loners], indent=2)}',
-        output_type=_Assignments,
-    )
+    intents = intents_of(prompts, facets)
+    grouped = {i for p in cached for i in p.intent_ids}
+    new = [i for i in intents if i not in seen and i not in grouped]
     by_id = {p.id: p for p in cached}
-    allowed = set(new) | set(loners)
-    for assignment in output.to_existing:
-        if (pattern := by_id.get(assignment.group_id)) is None:
-            continue
-        for span_id in assignment.span_ids:
-            if span_id in allowed and span_id not in grouped:
-                pattern.prompts.append(by_span[span_id])
-                grouped.add(span_id)
-    fresh: list[Pattern] = []
-    for group in output.new_groups:
-        group_prompts = [by_span[s] for s in dict.fromkeys(group.span_ids) if s in allowed and s not in grouped]
-        if len(group_prompts) < 2:
-            continue
-        grouped.update(p.span_id for p in group_prompts)
-        fresh.append(Pattern(id=group.slug, pattern=group.pattern, confidence=group.confidence, prompts=group_prompts))
-    assign_stable_ids(fresh, existing, prior_spans=load_prior_spans(), taken={p.id for p in cached})
-    patterns = cached + fresh
-    for pattern in patterns:
-        pattern.users = {p.user or f'unknown:{p.session_id or p.trace_id}' for p in pattern.prompts}
-        pattern.sessions = {p.session_id or p.trace_id for p in pattern.prompts}
+    if new and cached:
+        agent = Agent(model, output_type=_Placements, instructions=ASSIGN_INSTRUCTIONS, name='fleet_miner_assign')
+        groups = [{'id': p.id, 'pattern': p.pattern, 'size': len(p.prompts)} for p in cached]
+        output = await run_cached(
+            agent,
+            f'Existing groups:\n{json.dumps(groups, indent=2)}\n\n'
+            f'New intents:\n{json.dumps([intents[i].item() for i in new], indent=2)}',
+            output_type=_Placements,
+        )
+        allowed = set(new)
+        for assignment in output.to_existing:
+            if (pattern := by_id.get(assignment.group_id)) is None:
+                continue
+            placed = [i for i in assignment.span_ids if i in allowed and i not in grouped]
+            grouped.update(placed)
+            by_id[pattern.id] = _pattern(
+                pattern.id,
+                pattern.pattern,
+                pattern.confidence,
+                pattern.intent_ids + placed,
+                by_span,
+                pattern.existing_id,
+            )
     save_clustered_spans(seen | set(intents))
-    return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
+
+    unplaced = sorted(
+        (i for i in intents if i not in grouped), key=lambda i: (by_span[intents[i].span_id].timestamp, i)
+    )
+    unplaced = unplaced[-max_unplaced:]
+    fresh: list[Pattern] = []
+    if len({intents[i].span_id for i in unplaced}) >= 2:
+        agent = Agent(model, output_type=_Groups, instructions=UNPLACED_INSTRUCTIONS, name='fleet_miner_unplaced')
+        output = await run_cached(
+            agent,
+            f'Intents in no group:\n{json.dumps([intents[i].item() for i in unplaced], indent=2)}',
+            output_type=_Groups,
+        )
+        allowed = set(unplaced)
+        for group in output.groups:
+            members = [i for i in dict.fromkeys(group.span_ids) if i in allowed and i not in grouped]
+            pattern = _pattern(group.slug, group.pattern, group.confidence, members, by_span)
+            if len(pattern.prompts) < 2:
+                continue
+            grouped.update(members)
+            fresh.append(pattern)
+        assign_stable_ids(fresh, existing, prior_spans=load_prior_spans(), taken=set(by_id))
+    return sorted([*by_id.values(), *fresh], key=lambda p: (len(p.users), p.score), reverse=True)
 
 
 def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
@@ -309,18 +390,11 @@ def load_patterns(path: Path, prompts: list[UserPrompt]) -> list[Pattern]:
     by_span = {p.span_id: p for p in prompts}
     patterns: list[Pattern] = []
     for item in json.loads(path.read_text()):
-        group_prompts = [by_span[s] for s in item['span_ids'] if s in by_span]
-        pattern = Pattern(
-            id=item['id'],
-            pattern=item['pattern'],
-            confidence=item['confidence'],
-            prompts=group_prompts,
-            existing_id=item['existing_id'],
+        # Files from before preferences were mined only have `span_ids`, which are main-intent ids.
+        intent_ids = item.get('intent_ids', item['span_ids'])
+        patterns.append(
+            _pattern(item['id'], item['pattern'], item['confidence'], intent_ids, by_span, item['existing_id'])
         )
-        for p in group_prompts:
-            pattern.users.add(p.user or f'unknown:{p.session_id or p.trace_id}')
-            pattern.sessions.add(p.session_id or p.trace_id)
-        patterns.append(pattern)
     return sorted(patterns, key=lambda p: (len(p.users), p.score), reverse=True)
 
 
@@ -495,9 +569,18 @@ async def draft_proposals(
         examples = [{'developer': numbers[p.user], 'prompt': p.text[:2000]} for p in pattern.prompts[:12]]
         identifiers = personal_identifiers(pattern.prompts)
         target = median_prompt_chars(pattern)
+        in_passing = sum(PREFERENCE_KEY in i for i in pattern.intent_ids)
+        hint = (
+            f'{in_passing} of these {len(pattern.intent_ids)} asks were stated in passing inside other requests: '
+            'draft the shared ask itself, not the tasks around it.'
+            + (' They are standing preferences, so this is most likely an `instruction`.' if pattern.preference else '')
+            + '\n'
+            if in_passing
+            else ''
+        )
         draft = await run_cached(
             agent,
-            f'Pattern: {pattern.pattern}\n'
+            f'Pattern: {pattern.pattern}\n{hint}'
             f'Asked by {len(pattern.users)} distinct developers across {len(pattern.sessions)} sessions.\n'
             f'Median prompt length: {target} characters. Target for `text`: about {target}, at most {2 * target}.\n'
             f'What they typed:\n{json.dumps(examples, indent=2)}',
