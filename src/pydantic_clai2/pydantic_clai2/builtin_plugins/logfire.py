@@ -25,6 +25,8 @@ from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor, HTTPXC
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from rich.console import RenderableType
+from rich.style import Style
+from rich.text import Text
 from termflow.tui import MenuItem, MenuResult
 
 from pydantic_ai import AgentStreamEvent, FunctionToolResultEvent
@@ -373,6 +375,25 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         """Who the config is from: its `display_name`, else the Logfire project, else just Logfire."""
         return snapshot.config.display_name or self.settings.project or 'Logfire'
 
+    def _print_header(self) -> None:
+        """Under the launch banner: who manages this clai2, linked to its configuration page in Logfire."""
+        if self.fleet is None:
+            return
+        try:
+            snapshot = self.fleet.latest or self.fleet.snapshot()
+        except Exception:  # noqa: BLE001 -- `_announce_changes` reports an unavailable config right after
+            snapshot = None
+        source = self._source(snapshot) if snapshot is not None else self.settings.project or 'Logfire'
+        project = self.settings.project
+        parts = [
+            f'◆ Managed by {source} through Logfire',
+            *([project] if project and project != source else []),
+            '/catalog',
+        ]
+        link = self._link()
+        style = Style.parse(theme.color(theme.ACCENT)) + Style(link=link)
+        self.host.console.print(Text(' · '.join(parts), style=style))
+
     def _link(self, anchor: str = '') -> str | None:
         """This agent's configuration page in Logfire (Behavior, where policy lives too), when setup recorded the project."""
         if not self.settings.project or self.fleet is None:
@@ -509,6 +530,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                     record=self._record_outside_run,
                 )
             )
+        self._print_header()
         while managed.NOTICES:
             self.host.console.print(f'◆ {managed.NOTICES.pop(0)}', style=theme.color(theme.ACCENT), markup=False)
         self._announce_changes()
@@ -709,6 +731,7 @@ _ROWS = (
         description='Your team, sent with every span and used to target team config from Logfire. Unset, '
         'CLAI2_TEAM is used.',
         default='none',
+        suggested=lambda: os.getenv('CLAI2_TEAM'),
     ),
     FieldRow(
         key='httpx',

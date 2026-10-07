@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 import httpx
 import pytest
+from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
@@ -381,3 +382,48 @@ def test_https_origin_rejects_credentials_without_echoing_them() -> None:
     with pytest.raises(SetupError, match='Leave credentials out of the URL') as error:
         https_origin('https://mike:hunter2@logfire.example.com')
     assert 'hunter2' not in str(error.value)
+
+
+def _typed_by_default(widget: TextInput) -> str:
+    return ''.join(widget._chars)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('current', 'env', 'prefilled'),
+    [(None, None, ''), (None, 'ai', 'ai'), ('logfire', 'ai', 'logfire')],
+)
+def test_the_team_prompt_is_prefilled_from_clai2_team(
+    monkeypatch: pytest.MonkeyPatch, current: str | None, env: str | None, prefilled: str
+) -> None:
+    if env is None:
+        monkeypatch.delenv('CLAI2_TEAM', raising=False)
+    else:
+        monkeypatch.setenv('CLAI2_TEAM', env)
+    shown: list[str] = []
+
+    def run_text(widget: TextInput) -> TextInputResult:
+        shown.append(_typed_by_default(widget))
+        return TextInputResult(value=f' {prefilled} ', cancelled=False)
+
+    runners = Runners(
+        run_list=lambda menu: MenuResult(cancelled=True),
+        run_choice=lambda menu: MenuResult(cancelled=True),
+        run_text=run_text,
+    )
+    assert logfire_setup.pick_team(runners, current=current) == prefilled
+    assert shown == [prefilled]
+
+
+def test_the_team_setting_is_prefilled_from_clai2_team_while_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_clai2.builtin_plugins.logfire import LogfireSource
+    from pydantic_clai2.ui.menus.field_menu import FieldMenu
+
+    monkeypatch.setenv('CLAI2_TEAM', 'ai')
+
+    def editor(**settings: JsonValue) -> str:
+        source = LogfireSource(PluginHost(name='observability', console=Console(file=io.StringIO()), settings=settings))
+        [row] = [row for row in source.rows() if row.key == 'team']
+        return _typed_by_default(FieldMenu(source).build_editor(row))
+
+    assert editor() == 'ai'
+    assert editor(team='platform') == ''

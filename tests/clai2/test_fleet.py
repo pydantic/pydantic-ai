@@ -171,3 +171,35 @@ def test_items_apply_by_team_and_repo(tmp_path: Path) -> None:
     assert [item.name for item in fleet.build().loaded] == ['anyone']
     rows = {row.name: row.elsewhere for row in fleet.rows(fleet.snapshot())}
     assert rows == {'here': True, 'there': True, 'anyone': False}
+
+
+def test_the_launch_header_says_who_manages_clai2_and_links_to_logfire(tmp_path: Path) -> None:
+    import io
+
+    from rich.console import Console
+
+    from pydantic_clai2.builtin_plugins.logfire import LogfirePlugin, LogfireSettings
+    from pydantic_clai2.plugins import PluginHost
+
+    def header(agent: dict[str, Any], settings: dict[str, str] | None = None, *, terminal: bool = False) -> str:
+        output = io.StringIO()
+        console = Console(
+            file=output, width=200, force_terminal=terminal, color_system='standard' if terminal else None
+        )
+        plugin = object.__new__(LogfirePlugin)
+        plugin.host = PluginHost[None](name='observability', console=console, settings={})
+        plugin._settings = LogfireSettings.model_validate(settings or {})  # pyright: ignore[reportPrivateUsage]
+        plugin.fleet = _fleet(tmp_path, agent, {'items': []})
+        plugin._print_header()  # pyright: ignore[reportPrivateUsage]
+        return output.getvalue()
+
+    eu = {'base_url': 'https://logfire-eu.pydantic.info', 'project': 'logfire/clai2'}
+    assert header({'display_name': 'Pydantic'}, eu) == (
+        '◆ Managed by Pydantic through Logfire · logfire/clai2 · /catalog\n'
+    )
+    assert header({}, eu) == '◆ Managed by logfire/clai2 through Logfire · /catalog\n'
+    assert header({}) == '◆ Managed by Logfire through Logfire · /catalog\n'
+    # A terminal that understands links gets the agent's configuration page.
+    linked = header({'display_name': 'Pydantic'}, eu, terminal=True)
+    assert '\x1b]8;' in linked
+    assert 'https://logfire-eu.pydantic.info/logfire/clai2/agents/clai2/configure/edit' in linked

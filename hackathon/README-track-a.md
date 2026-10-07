@@ -13,14 +13,21 @@ CLAI2_MANAGED_URL=https://logfire-eu.pydantic.info/logfire/clai2 uvx --refresh-p
   clai2
 ```
 
+Optionally prefix `CLAI2_TEAM=ai` (or your team) to pre-fill the team question, so Enter accepts it.
+
 What happens:
 
 - **First launch.** clai2 says "Your organization manages clai2 through Logfire (logfire)" and shows a sign-in link.
   After you approve it, one sign-in sets up:
   - traces to logfire/clai2;
   - a personal API key that reads the company config and uses the AI Gateway (90 days);
-  - an optional team.
-- **Model.** The default becomes `gateway/anthropic:claude-sonnet-5-5`; no model keys needed.
+  - an optional team (pre-filled from `CLAI2_TEAM`).
+- **Header.** Every launch shows `◆ Managed by Pydantic through Logfire · logfire/clai2 · /catalog` under the
+  banner, linked to the agent's configuration page in Logfire.
+- **Logfire MCP.** If you use the `logfire_mcp` plugin, its own sign-in (it is a separate OAuth client, often in
+  another region) happens at launch, never in the middle of a prompt.
+- **Model.** The default comes from the company config in Logfire (shown on the status row) and runs through the
+  gateway; no model keys needed. A model you pick with `/model` afterwards sticks.
 - **Later launches.** No prompt. An expired or revoked key brings the sign-in back. Ctrl-C at the sign-in exits.
 - **While managed.** Observability can't be turned off, and the Logfire project can't be switched.
 - **Instead of the env var,** IT can drop `url = "…"` in `/Library/Application Support/clai2/managed.toml`

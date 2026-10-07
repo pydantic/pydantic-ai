@@ -27,6 +27,7 @@ from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_U
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, Announce, DeviceAuth, SignInError, forget, status
+from pydantic_clai2.managed import managed_target
 from pydantic_clai2.mcp import http_client
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
@@ -99,6 +100,30 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
             # Loading anyway keeps the settings menu available; each run fails closed until the key is saved.
             self.host.console.print(
                 f'Logfire MCP has no credential: {missing} is not in /keys. {SETUP}',
+                style=theme.color(theme.WARNING),
+                markup=False,
+            )
+        elif self.capability.client is not None and managed_target() is not None:
+            await self._sign_in_at_launch()
+
+    async def _sign_in_at_launch(self) -> None:
+        """Managed clai2 signs in to Logfire MCP before the first prompt, so the device code never interrupts a turn.
+
+        Logfire MCP is its own OAuth client, issued tokens for the MCP URL alone, so the managed enrolment's
+        sign-in cannot stand in for it; a server in another region (or production vs. staging) is another account.
+        """
+        settings = self.settings
+        signed = await anyio.to_thread.run_sync(
+            partial(status, resource=settings.url, read_only=settings.read_only), abandon_on_cancel=True
+        )
+        if signed == 'signed in':
+            return
+        self._announce(f'Logfire MCP ({urlsplit(settings.url).hostname}) needs its own sign-in; doing it now.')
+        try:
+            await DeviceAuth(resource=settings.url, read_only=settings.read_only, announce=self._announce).sign_in()
+        except SignInError as exc:
+            self.host.console.print(
+                f'{exc} Logfire MCP will ask again on the first prompt that uses it.',
                 style=theme.color(theme.WARNING),
                 markup=False,
             )

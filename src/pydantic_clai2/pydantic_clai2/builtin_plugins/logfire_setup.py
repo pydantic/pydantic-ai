@@ -7,6 +7,7 @@ tokens. The user token lives only for the duration of setup. What is kept is a p
 and traces go to that project, with session roots tagged with that email.
 """
 
+import os
 import platform
 import re
 import time
@@ -24,6 +25,7 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, save_key
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
@@ -97,7 +99,7 @@ class Setup:
     announce: Announce
     runners: Runners = TERMINAL
     http: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=httpx.Timeout(30, read=60))
-    open_browser: OpenBrowser = webbrowser.open
+    open_browser: OpenBrowser = open_browser
     sleep: Callable[[float], Awaitable[None]] = anyio.sleep
 
 
@@ -186,11 +188,15 @@ async def run_setup(
 
 
 def pick_team(runners: Runners, *, current: str | None) -> str | None:
-    """Optionally name your team, for team-targeted config; `None` keeps the current one, `''` clears it."""
+    """Optionally name your team, for team-targeted config; `None` keeps the current one, `''` clears it.
+
+    Pre-filled with the current team, else `CLAI2_TEAM`, so Enter accepts it.
+    """
     typed = runners.run_text(
         TextInputBuilder('Your team (optional, for team-targeted config from Logfire)')
         .style(markdown_style())
-        .prompt(current or '')
+        .prompt('Team: ')
+        .initial(current or os.getenv('CLAI2_TEAM') or '')
         .footer_hint('Enter save (empty clears) - Esc skip')
         .key_source(menu_key)
         .build()

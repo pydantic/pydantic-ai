@@ -78,6 +78,8 @@ class FieldRow:
     """Where the value comes from when not from the user; shown muted after the value."""
     preview: ChoicePreview | None = None
     """Renders a sample of each choice in the choice picker."""
+    suggested: Callable[[], str | None] | None = None
+    """Pre-fills the editor while the field is unset, such as from an environment variable, so Enter accepts it."""
 
     def display(self, value: str) -> str:
         """Label a choice without changing its stored or validated value."""
@@ -242,6 +244,8 @@ class FieldMenu:
         )
         if row.secret:
             builder.mask()
+        elif row.suggested is not None and self._source.current(row) == row.default and (text := row.suggested()):
+            builder.initial(text)
         return builder.build()
 
     def apply(self, row: FieldRow, raw: str) -> str:

@@ -3,7 +3,6 @@
 import inspect
 import io
 import threading
-import webbrowser
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -22,7 +21,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LogfireMCP
-from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2 import DEFAULT_PLUGINS, logfire_oauth
 from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPPlugin, LogfireMCPSource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import api_keys
@@ -101,7 +100,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         links.append(url)
         return True
 
-    monkeypatch.setattr(webbrowser, 'open', open_link)
+    monkeypatch.setattr(logfire_oauth, 'open_browser', open_link)
     return links
 
 
@@ -345,6 +344,52 @@ async def test_browser_sign_in_is_the_default_and_waits_long_enough_for_the_code
     assert client._init_timeout == SIGN_IN_TIMEOUT  # pyright: ignore[reportPrivateUsage]
     assert str(client.transport.url) == LOGFIRE_EU_MCP_URL
     assert isinstance(client.transport.auth, DeviceAuth)
+
+
+async def test_managed_clai2_signs_in_to_logfire_mcp_at_launch_not_mid_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv('CLAI2_MANAGED_URL', 'https://logfire-eu.pydantic.info/acme/clai2')
+    calls: list[str] = []
+
+    async def sign_in(auth: DeviceAuth) -> Tokens:
+        calls.append(auth._resource)  # pyright: ignore[reportPrivateUsage]
+        auth._announce('Enter code: ABCD-EFGH')  # pyright: ignore[reportPrivateUsage]
+        return Tokens(client_id='c', token_endpoint='https://t', access_token='a', expires_at=0)
+
+    monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
+    shell = Shell(tmp_path, {'url': LOGFIRE_EU_MCP_URL})
+    await shell.loader.enable('logfire_mcp')
+    assert calls == [LOGFIRE_EU_MCP_URL]
+    assert shell.output.getvalue() == (
+        'Logfire MCP (logfire-eu.pydantic.dev) needs its own sign-in; doing it now.\nEnter code: ABCD-EFGH\n'
+    )
+
+    # Already signed in: launch stays quiet.
+    def signed_in(**_: object) -> str:
+        return 'signed in'
+
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.status', signed_in)
+    calls.clear()
+    shell = Shell(tmp_path / 'again', {'url': LOGFIRE_EU_MCP_URL})
+    await shell.loader.enable('logfire_mcp')
+    assert calls == []
+    assert shell.output.getvalue() == ''
+
+
+async def test_a_failed_launch_sign_in_still_loads_and_says_it_will_ask_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv('CLAI2_MANAGED_URL', 'https://logfire-eu.pydantic.info/acme/clai2')
+
+    async def sign_in(auth: DeviceAuth) -> Tokens:
+        raise SignInError('Logfire sign-in was denied. Run /logfire_mcp login to retry.')
+
+    monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    assert 'Logfire MCP will ask again on the first prompt that uses it.' in shell.output.getvalue()
+    assert isinstance(shell.capability().client, Client)
 
 
 async def test_with_sign_in_off_and_no_key_the_menu_still_loads_and_runs_fail_closed(tmp_path: Path) -> None:
