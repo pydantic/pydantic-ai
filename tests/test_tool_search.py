@@ -25,7 +25,7 @@ from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 import pydantic_ai.agent as agent_module
-from pydantic_ai import Agent, FunctionToolset, ToolCallPart
+from pydantic_ai import Agent, FunctionToolset, Tool, ToolCallPart
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
@@ -8093,3 +8093,78 @@ def test_tool_availability_delta_synthesis_deconflicts_duplicate_client_ids():
         if isinstance(part, ToolSearchCallPart)
     ]
     assert len(call_ids) == len(set(call_ids)) == 2
+
+
+async def _keyword_search_results(
+    corpora: Sequence[Sequence[tuple[str, str | None]]], queries: Sequence[Sequence[str]], *, max_results: int = 10
+) -> list[ToolSearchReturnContent]:
+    """Run sequential local keyword searches, serving `corpora[i]` to the `i`-th search."""
+
+    async def lookup() -> str:  # pragma: no cover
+        return 'unused'
+
+    shared_schema = Tool(lookup).function_schema
+
+    def completed(messages: Sequence[ModelMessage]) -> list[ToolSearchReturnPart]:
+        return [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolSearchReturnPart)
+        ]
+
+    async def catalog(ctx: RunContext[None]) -> FunctionToolset[None]:
+        corpus = corpora[min(len(completed(ctx.messages)), len(corpora) - 1)]
+        return FunctionToolset(
+            tools=[
+                Tool(lookup, name=name, description=description, defer_loading=True, function_schema=shared_schema)
+                for name, description in corpus
+            ]
+        )
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        done = len(completed(messages))
+        if done < len(queries):
+            return ModelResponse(
+                parts=[ToolCallPart('search_tools', {'queries': queries[done]}, tool_call_id=f's{done}')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond, profile=ModelProfile(supported_native_tools=frozenset())),
+        toolsets=[catalog],
+        capabilities=[ToolSearch(max_results=max_results)],
+    )
+    result = await agent.run('search')
+    return [part.content for part in completed(result.all_messages())]
+
+
+@pytest.mark.parametrize(
+    'second,expected',
+    [
+        pytest.param([('one', 'beta'), ('two', 'alpha')], 'two', id='description'),
+        pytest.param([('alpha_two', None), ('one', 'beta')], 'alpha_two', id='name'),
+        pytest.param([('two', 'alpha')], 'two', id='membership'),
+    ],
+)
+async def test_keyword_search_sees_corpus_changes_within_a_run(
+    second: list[tuple[str, str | None]], expected: str
+) -> None:
+    """A corpus that changes between searches in one run is searched as it is at each call."""
+    first = [('one', 'alpha'), ('two', 'beta')]
+    results = await _keyword_search_results([first, second], [['alpha'], ['alpha']])
+    assert results == [{'discovered_tools': [{'name': 'one'}]}, {'discovered_tools': [{'name': expected}]}]
+
+
+async def test_keyword_search_ties_follow_current_corpus_order() -> None:
+    first = [('a', 'alpha'), ('b', 'alpha'), ('c', 'alpha')]
+    results = await _keyword_search_results([first, first[::-1]], [['alpha'], ['alpha']], max_results=1)
+    assert results == [{'discovered_tools': [{'name': 'a'}]}, {'discovered_tools': [{'name': 'c'}]}]
+
+
+@pytest.mark.parametrize('max_results,expected', [(-1, ['z', 'b']), (0, []), (2, ['z', 'b']), (10, ['z', 'b', 'a'])])
+async def test_keyword_search_max_results_slicing(max_results: int, expected: list[str]) -> None:
+    corpus = [('z', 'alpha beta'), ('a', 'alpha'), ('b', 'alpha beta'), ('k', 'unmatched')]
+    results = await _keyword_search_results([corpus], [['alpha', 'beta']], max_results=max_results)
+    assert results == [{'discovered_tools': [{'name': name} for name in expected]}]
