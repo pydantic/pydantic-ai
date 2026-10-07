@@ -17807,6 +17807,35 @@ async def test_codex_suspended_continuation_is_rejected(allow_model_requests: No
         await model.request([ModelRequest(parts=[UserPromptPart('hi')]), suspended], None, ModelRequestParameters())
 
 
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    'settings',
+    [
+        OpenAIResponsesModelSettings(openai_responses_service_tier='ultrafast'),
+        OpenAIResponsesModelSettings(
+            openai_responses_service_tier='ultrafast', openai_service_tier='priority', service_tier='flex'
+        ),
+    ],
+    ids=['ultrafast', 'overrides-other-tiers'],
+)
+async def test_responses_service_tier_http(allow_model_requests: None, settings: OpenAIResponsesModelSettings):
+    """Pin the serialized HTTP tier because cassette matching does not compare request bodies."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        assert json.loads(request.content)['service_tier'] == 'ultrafast'
+        return httpx2.Response(200, json=_MINIMAL_RESPONSE)
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIResponsesModel('gpt-6-astra', provider=OpenAIProvider(openai_client=openai_client))
+        result = await Agent(model, model_settings=settings).run('Hello')
+
+    assert result.output == 'hi there'
+
+
 async def test_responses_store_passthrough_on_standard_model(allow_model_requests: None):
     """The False arm of the `openai_responses_requires_store_false` gate, pinned on behavior.
 
