@@ -430,6 +430,14 @@ def test_from_data_uri_base64():
     assert bc.media_type == 'image/png'
 
 
+def test_from_data_uri_parameterized_media_type_round_trip():
+    bc = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+    # The media type is stored verbatim, parameters included.
+    assert bc.media_type == 'application/json;charset=utf-8'
+    assert bc.data == b'{"a": 1}'
+    assert bc.data_uri == 'data:application/json;charset=utf-8;base64,eyJhIjogMX0='
+
+
 def test_from_data_uri_non_base64():
     with pytest.raises(ValueError, match='must be base64-encoded'):
         BinaryContent.from_data_uri('data:text/plain,Hello%20World')
