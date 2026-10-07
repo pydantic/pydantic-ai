@@ -11,6 +11,7 @@ import anyio
 import httpx2
 import pytest
 from _pytest.fixtures import SubRequest
+from httpx import Timeout
 from pydantic import BaseModel, JsonValue, TypeAdapter
 from typing_extensions import Unpack
 
@@ -231,12 +232,17 @@ class ScriptedSocket:
     incoming: deque[Frame | Exception] = field(default_factory=lambda: deque[Frame | Exception]())
     receiving: anyio.Event = field(default_factory=anyio.Event)
     available: anyio.Event = field(default_factory=anyio.Event)
+    sending: anyio.Event = field(default_factory=anyio.Event)
+    send_gate: anyio.Event | None = None
     close_count: int = 0
     send_error: Exception | None = None
 
     async def send(self, data: str | bytes) -> None:
+        self.sending.set()
         if self.send_error is not None:
             raise self.send_error
+        if self.send_gate is not None:
+            await self.send_gate.wait()
         self.sent.append(FRAME_ADAPTER.validate_json(data))
         if self.responses:
             self.push(*self.responses.popleft())
@@ -269,6 +275,8 @@ class SocketHarness:
     opened: list[ScriptedSocket] = field(default_factory=list[ScriptedSocket])
     urls: list[str] = field(default_factory=list[str])
     headers: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    connecting: anyio.Event = field(default_factory=anyio.Event)
+    connect_gate: anyio.Event | None = None
     connect_error: Exception | None = None
 
 
@@ -277,8 +285,11 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
     harness = SocketHarness()
 
     async def connect(uri: str, *, additional_headers: Mapping[str, str], **options: object) -> ScriptedSocket:
+        harness.connecting.set()
         if harness.connect_error is not None:
             raise harness.connect_error
+        if harness.connect_gate is not None:
+            await harness.connect_gate.wait()
         harness.urls.append(uri)
         headers = {key.lower(): value for key, value in additional_headers.items()}
         assert headers.pop('authorization').startswith('Bearer ')
@@ -310,6 +321,20 @@ async def test_agent_connection_shorthand(
     assert len(sockets.opened) == 1
     assert len(socket.sent) == 2
     assert socket.close_count == 1
+
+
+async def test_agent_connection_headers(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch
+):
+    """Agent settings cannot silently change the headers of an already-open connection."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    settings: OpenAIResponsesModelSettings = {'extra_headers': {'x-tenant': 'tenant-test'}}
+    agent = Agent('openai-responses:gpt-4o', model_settings=settings)
+    async with agent.connect():
+        assert 'x-tenant' not in sockets.headers[0]
+        with pytest.raises(UserError, match='headers passed through agent or run `model_settings`'):
+            await agent.run('hello')
+        assert sockets.opened[0].sent == []
 
 
 @pytest.mark.parametrize('wrap_model', [False, True])
@@ -637,6 +662,45 @@ async def test_incomplete_response(allow_model_requests: None, sockets: SocketHa
         assert (await Agent(connected).run('next')).output == 'ready'
 
 
+async def test_handshake_timeout(sockets: SocketHarness):
+    """A stalled handshake honors the model's connect timeout without leaking a connection."""
+    before = asyncio.all_tasks()
+    sockets.connect_gate = anyio.Event()
+    settings: OpenAIResponsesModelSettings = {'timeout': Timeout(10, connect=0.01)}
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=settings)
+    async with source:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(ModelAPIError, match='WebSocket connection failed') as raised:
+                async with source.connect():
+                    pytest.fail('The stalled handshake should time out')  # pragma: no cover
+        assert isinstance(raised.value.__cause__, TimeoutError)
+        assert sockets.connecting.is_set()
+        assert sockets.opened == []
+        assert not source.client.is_closed()
+    assert asyncio.all_tasks() == before
+
+
+async def test_send_timeout(allow_model_requests: None, sockets: SocketHarness):
+    """A stalled send honors the request's write timeout and invalidates the socket."""
+    before = asyncio.all_tasks()
+    socket = sockets.pending[0]
+    socket.send_gate = anyio.Event()
+    settings: OpenAIResponsesModelSettings = {'timeout': Timeout(10, write=0.01)}
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    async with source, source.connect() as connected:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(ModelAPIError, match='WebSocket request failed') as raised:
+                await Agent(connected, model_settings=settings).run('hello')
+        assert isinstance(raised.value.__cause__, TimeoutError)
+        assert socket.sending.is_set()
+        assert socket.sent == []
+        assert socket.close_count == 1
+        with pytest.raises(UserError, match='closed'):
+            await Agent(connected).run('cannot reuse')
+    assert socket.close_count == 1
+    assert asyncio.all_tasks() == before
+
+
 @pytest.mark.parametrize('status_code', [200, 302, 401, None])
 async def test_handshake_errors(sockets: SocketHarness, status_code: int | None):
     if status_code is not None:
@@ -717,15 +781,15 @@ async def test_request_header_overrides(
     }
     request_settings: OpenAIResponsesModelSettings = {'extra_headers': request_headers}
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=settings)
-    async with source.connect() as connected:
+    agent = Agent(source, model_settings=request_settings)
+    async with agent.connect():
         assert sockets.headers[0]['openai-organization'] == 'org-test'
         assert sockets.headers[0]['x-tenant'] == 'tenant-test'
-        agent = Agent(connected, model_settings=request_settings)
         if accepted:
             assert (await agent.run('hello')).output == 'ready'
             assert len(sockets.opened[0].sent) == 1
         else:
-            with pytest.raises(UserError, match='Set `extra_headers` when opening'):
+            with pytest.raises(UserError, match='Request `extra_headers` must match'):
                 await agent.run('hello')
             assert sockets.opened[0].sent == []
 
