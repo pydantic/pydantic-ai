@@ -834,6 +834,36 @@ async def test_rounded_score_can_match_rounded_probabilities(allow_model_request
     assert result.output == Mood(refund=False, frustration=1)
 
 
+@pytest.mark.parametrize(
+    ('nonzero_probabilities', 'matches'),
+    [pytest.param(205, False, id='sum cannot round to one'), pytest.param(199, True, id='sum can round to one')],
+)
+async def test_choice_probability_sum_respects_rounding_bounds(
+    nonzero_probabilities: int, matches: bool, allow_model_requests: None
+):
+    """Rounded choice probabilities must admit a normalized distribution."""
+    criteria: dict[str, JsonValue] = {str(option): None for option in range(255)}
+    probabilities: list[dict[str, object]] = [
+        {'value': str(option), 'probability': 0.01 if option < nonzero_probabilities else 0.0} for option in range(255)
+    ]
+    answer: dict[str, object] = {
+        'type': 'choice',
+        'name': 'q',
+        'choice': '0',
+        'confidence': 0.01,
+        'probabilities': probabilities,
+    }
+    model = mock_model(lambda _: decisions(answer))
+    request = DecisionRequest(state='Choose an option.', questions={'q': ChoiceQuestion(criteria=criteria)})
+
+    if matches:
+        response = await model.decide(request, {})
+        assert set(response.answers) == {'q'}
+    else:
+        with pytest.raises(UnexpectedModelBehavior, match='does not match its question'):
+            await model.decide(request, {})
+
+
 async def test_every_refusal_is_named(allow_model_requests: None):
     """Not recorded: no recording refuses more than one question."""
     refusals = ({'type': 'refusal', 'name': 'urgent'}, {'type': 'refusal', 'name': 'area'})

@@ -227,8 +227,16 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
 
 
 def _sums_to_one(probabilities: Collection[float]) -> bool:
-    # The decision APIs round each probability to two decimal places, so each may be off by half a unit.
-    return abs(sum(probabilities) - 1) <= 1e-6 + len(probabilities) * 0.005
+    # A normalized distribution must fit inside the probabilities' bounded rounding intervals.
+    lower = Decimal(0)
+    upper = Decimal(0)
+    for probability in probabilities:
+        value = Decimal(str(probability))
+        half_unit = Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2
+        lower += max(Decimal(0), value - half_unit)
+        upper += min(Decimal(1), value + half_unit)
+    # A small tolerance accommodates floating-point normalization.
+    return lower <= Decimal('1.000001') and upper >= Decimal('0.999999')
 
 
 _UNSUPPORTED_FIELD_HINT = (
