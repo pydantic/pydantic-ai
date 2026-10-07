@@ -42,6 +42,7 @@ from pydantic_ai import (
 )
 from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent, SandboxCallOrder
+from pydantic_clai2.ui.prompt.prompt_selection import trim_url
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_clai2.ui.rendering import theme
@@ -78,20 +79,6 @@ HTML entity decoding Termflow applies turns `&#xFDD0;` into nothing.
 _MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
 
 
-def _trim_url(url: str) -> str:
-    """Leave trailing punctuation and unbalanced closing brackets out of a bare URL, as GFM does."""
-    unopened = {')': url.count(')') - url.count('('), ']': url.count(']') - url.count('[')}
-    end = len(url)
-    while url[end - 1] in '.,;:!?\'"*_~)]':
-        char = url[end - 1]
-        if char in unopened:
-            if unopened[char] <= 0:
-                break
-            unopened[char] -= 1
-        end -= 1
-    return url[:end]
-
-
 class MarkdownRenderer(Renderer):
     """Termflow's renderer, also highlighting bare `https://` and `<https://...>` URLs as links."""
 
@@ -113,7 +100,7 @@ class MarkdownRenderer(Renderer):
         def mark(match: re.Match[str]) -> str:
             if taken[match.start()]:
                 return match[0]
-            url = match[1] or _trim_url(match[0])
+            url = match[1] or trim_url(match[0])
             rest = '' if match[1] else match[0][len(url) :]
             return f'{_URL_START}{url}{_URL_END}{rest}'
 
