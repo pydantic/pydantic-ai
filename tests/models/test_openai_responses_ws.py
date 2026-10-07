@@ -43,6 +43,7 @@ with try_import() as imports_successful:
     from websockets.http11 import Response as HandshakeResponse
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
@@ -727,6 +728,18 @@ async def test_handshake_errors(sockets: SocketHarness, status_code: int | None)
             assert raised.value.status_code == status_code
             assert raised.value.body == 'handshake rejected'
             assert raised.value.headers == {'x-request-id': 'first, second'}
+        assert not source.client.is_closed()
+    finally:
+        await source.client.close()
+
+
+async def test_codex_connection_unsupported(sockets: SocketHarness):
+    source = OpenAICodexModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    try:
+        with pytest.raises(UserError, match='`OpenAICodexModel` does not support explicit connections'):
+            async with Agent(source).connect():
+                pytest.fail('Codex connections require conversation-specific headers')  # pragma: no cover
+        assert not sockets.connecting.is_set()
         assert not source.client.is_closed()
     finally:
         await source.client.close()
