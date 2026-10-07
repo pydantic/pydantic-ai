@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from contextvars import ContextVar
 
 import anyio
@@ -13,6 +13,7 @@ import pytest
 from pydantic_ai import Agent, AgentRunResult, RunCancelled, RunContext, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import AgentStreamEvent, BinaryImage, ModelMessage, ModelResponse, SpeechPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -35,7 +36,7 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     ToolResult,
 )
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .test_session import FakeRealtimeModel
 
@@ -753,6 +754,43 @@ async def test_owner_first_close_accounts_final_connection_usage_once():
     assert owner.conversation.usage.input_tokens == 11
 
 
+async def test_owner_first_fatal_close_drains_all_resources():
+    before = asyncio.all_tasks()
+    received, model_closed = asyncio.Event(), asyncio.Event()
+
+    class ResourceModel(TestModel):
+        @asynccontextmanager
+        async def open_session(self):
+            try:
+                yield self
+            finally:
+                model_closed.set()
+
+    class FailingConnection(DuplexConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            while True:
+                event = await self.events.get()
+                if isinstance(event, RealtimeSessionErrorEvent):
+                    received.set()
+                yield event
+
+    connection = FailingConnection()
+    model = CountedModel(connection)
+    async with AsyncExitStack() as attachments:
+        with pytest.raises(RealtimeError, match='provider ended'):
+            async with Agent(ResourceModel()).session() as owner:
+                await owner.run('ordinary first')
+                live = await attachments.enter_async_context(owner.realtime(model).connect())
+                async with live.run() as run:
+                    await run.send('hello')
+                connection.events.put_nowait(RealtimeSessionErrorEvent(message='provider ended', recoverable=False))
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await received.wait()
+        assert model.closes == 1
+        assert model_closed.is_set()
+    assert asyncio.all_tasks() == before
+
+
 @pytest.mark.parametrize('resume', [False, True])
 async def test_idle_connection_usage_is_not_lost_on_close(resume: bool):
     read_usage = asyncio.Event()
@@ -784,37 +822,36 @@ async def test_idle_connection_usage_is_not_lost_on_close(resume: bool):
         assert run.result.usage.input_tokens == 0
 
 
+class IdentifiedConnection(DuplexConnection):
+    _lifecycle_version = 2
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.frames: asyncio.Queue[list[TaggedEvent]] = asyncio.Queue()
+
+    async def send(self, content: RealtimeInput) -> None:
+        input_id = len(self.sent)
+        self.sent.append(content)
+        response_id = f'resp-{input_id}'
+        self.frames.put_nowait(
+            [
+                (InputAdded(input_id=input_id), False),
+                (ResponseStarted(response_id=response_id, answers=(input_id,)), False),
+                (
+                    OutputTranscript(f'reply to {content}', output_text=True, is_final=True, response_id=response_id),
+                    False,
+                ),
+                (ResponseDone(), False),
+                (ResponseEnded(response_id=response_id, status='completed', finish_reason='stop'), False),
+            ]
+        )
+
+    async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+        while True:
+            yield await self.frames.get()
+
+
 async def test_persistent_identified_lifecycle_keeps_each_run_identity():
-    class IdentifiedConnection(DuplexConnection):
-        _lifecycle_version = 2
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.frames: asyncio.Queue[list[TaggedEvent]] = asyncio.Queue()
-
-        async def send(self, content: RealtimeInput) -> None:
-            input_id = len(self.sent)
-            self.sent.append(content)
-            response_id = f'resp-{input_id}'
-            self.frames.put_nowait(
-                [
-                    (InputAdded(input_id=input_id), False),
-                    (ResponseStarted(response_id=response_id, answers=(input_id,)), False),
-                    (
-                        OutputTranscript(
-                            f'reply to {content}', output_text=True, is_final=True, response_id=response_id
-                        ),
-                        False,
-                    ),
-                    (ResponseDone(), False),
-                    (ResponseEnded(response_id=response_id, status='completed', finish_reason='stop'), False),
-                ]
-            )
-
-        async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
-            while True:
-                yield await self.frames.get()
-
     async with Agent(TestModel()).session() as owner:
         async with owner.realtime(CountedModel(IdentifiedConnection())).connect() as live:
             async with live.run(run_id='RUN-A') as first:
@@ -823,6 +860,53 @@ async def test_persistent_identified_lifecycle_keeps_each_run_identity():
                 await second.send('second')
         assert [m.run_id for m in owner.conversation.messages if isinstance(m, ModelResponse)] == ['RUN-A', 'RUN-B']
     # The autouse shadow-core fixture also asserts parity of the identified history.
+
+
+@pytest.mark.parametrize('limited', [False, True])
+async def test_idle_billing_during_before_run_is_included_in_next_run(limited: bool):
+    processed = asyncio.Event()
+
+    class BillingConnection(IdentifiedConnection):
+        async def _tagged_frames(self) -> AsyncIterator[list[TaggedEvent]]:
+            while True:
+                frame = await self.frames.get()
+                yield frame
+                if any(isinstance(event, SessionUsage) for event, _ in frame):
+                    processed.set()
+
+    connection = BillingConnection()
+
+    class BillingHook(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            if ctx.run_id == 'RUN-B':
+                connection.frames.put_nowait(
+                    [(SessionUsage(RequestUsage(input_tokens=7), response_scoped=False), False)]
+                )
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await processed.wait()
+
+    async with Agent(TestModel(), deps_type=type(None), capabilities=[BillingHook()]).session() as owner:
+        async with owner.realtime(CountedModel(connection)).connect() as live:
+            async with live.run(run_id='RUN-A') as first:
+                await first.send('first')
+            with pytest.raises(UsageLimitExceeded, match='input_tokens_limit') if limited else nullcontext():
+                async with live.run(
+                    run_id='RUN-B', usage_limits=UsageLimits(input_tokens_limit=5) if limited else None
+                ) as second:
+                    assert second.usage.input_tokens == 7
+                    if limited:
+                        # A new billing report must enforce the cumulative budget, including the
+                        # connection-only tokens that arrived while preparing this run.
+                        connection.frames.put_nowait([(SessionUsage(RequestUsage(), response_scoped=False), False)])
+                        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                            async for _ in second:
+                                pass
+                    else:
+                        await second.send('second')
+            assert first.result is not None and first.result.usage.input_tokens == 0
+            if not limited:
+                assert second.result is not None and second.result.usage.input_tokens == 7
+        assert owner.conversation.usage.input_tokens == 7
 
 
 async def test_idle_billing_during_after_run_survives_replacement_result():

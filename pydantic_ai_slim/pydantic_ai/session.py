@@ -314,10 +314,22 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
     async def __aexit__(self, *args: Any) -> bool | None:
         self._entered = False
         self._runtime.close()
-        await self._cancel_active_run()
-        if self._runtime.realtime is not None:
-            await self._runtime.realtime.close()
-        self._runtime.resources.close()
+        try:
+            try:
+                await self._cancel_active_run()
+                if self._runtime.realtime is not None:
+                    await self._runtime.realtime.close()
+            finally:
+                self._runtime.resources.close()
+        except BaseException as exc:
+            args = (type(exc), exc, exc.__traceback__)
+            # Exit the task group even when connection shutdown fails. Passing the failure into
+            # the stack preserves its normal cancellation and multi-error aggregation semantics.
+            await self._exit_stack(*args)
+            raise
+        return await self._exit_stack(*args)
+
+    async def _exit_stack(self, *args: Any) -> bool | None:
         try:
             return await self._stack.__aexit__(*args)
         except BaseExceptionGroup as group:

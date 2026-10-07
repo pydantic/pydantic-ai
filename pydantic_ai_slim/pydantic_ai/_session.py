@@ -222,10 +222,12 @@ class SessionRuntime:
         """Account for billing outside a run without changing its frozen result.
 
         Run hooks may still be unwinding. Hold this delta until their result is committed so
-        replacing the conversation cannot erase it or charge it to the finished run.
+        replacing the conversation cannot erase it or charge it to the finished run. During
+        preparation there is no attached run yet: update the conversation usage shared by the
+        new run context so admission checks include billing received during its hooks.
         """
         with self._lock:
-            if self._claimed:
+            if self._active is not None:
                 self._connection_usage.incr(usage)
             else:
                 self.conversation.usage.incr(usage)
