@@ -281,6 +281,7 @@ class SocketHarness:
     headers: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
     options: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     connecting: anyio.Event = field(default_factory=anyio.Event)
+    connect_count: int = 0
     connect_gate: anyio.Event | None = None
     connect_error: Exception | None = None
 
@@ -290,6 +291,7 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
     harness = SocketHarness()
 
     async def connect(uri: str, *, additional_headers: Mapping[str, str], **options: object) -> ScriptedSocket:
+        harness.connect_count += 1
         harness.connecting.set()
         if harness.connect_error is not None:
             raise harness.connect_error
@@ -759,6 +761,7 @@ async def test_handshake_errors(sockets: SocketHarness, status_code: int | None)
             async with source.connect():
                 pytest.fail('The handshake should fail')  # pragma: no cover
         assert type(raised.value) is expected_error
+        assert sockets.connect_count == 1
         if isinstance(raised.value, ModelHTTPError):
             assert raised.value.status_code == status_code
             assert raised.value.body == 'handshake rejected'
