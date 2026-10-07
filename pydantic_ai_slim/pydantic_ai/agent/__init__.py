@@ -2014,6 +2014,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
 
         model_resources = session.resources
+        resource_policies: list[bool] = []
+        run_capability.apply(
+            lambda leaf: resource_policies.append(leaf._model_resources_in_durable_units)  # pyright: ignore[reportPrivateUsage]
+        )
+        model_resources_in_durable_units = any(resource_policies)
+
+        async def enter_model(selected_model: models.Model) -> models.Model:
+            if model_resources_in_durable_units:
+                return selected_model
+            return await model_resources.get_model(selected_model)
+
         if not session.persistent:
             model_resources.entered_model_ids.update(self._entered_model_ids)
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
@@ -2028,7 +2039,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selector=model_selector,
             model_selected_for_step=model_selected_for_step,
             evaluate_model_selector=evaluate_model_selector,
-            enter_model=model_resources.get_model,
+            enter_model=enter_model,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
@@ -2074,6 +2085,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cancellation_token=cancellation_token,
             model=model_used,
             capability_owns_current_model=capability_owns_current_model,
+            model_resources_in_durable_units=model_resources_in_durable_units,
             model_resources=model_resources,
             session=session,
             run_capability=run_capability,
@@ -4355,6 +4367,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     cancellation_token: CancellationToken | None
     model: models.Model
     capability_owns_current_model: bool
+    model_resources_in_durable_units: bool
     model_resources: ModelResources
     session: SessionRuntime
     run_capability: AbstractCapability[_PreparedDepsT]
@@ -4478,9 +4491,10 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
-            graph_deps.model = await self.model_resources.get_model(
-                self.model, enter_model=self.capability_owns_current_model or self.session.persistent
-            )
+            if not self.model_resources_in_durable_units:
+                graph_deps.model = await self.model_resources.get_model(
+                    self.model, enter_model=self.capability_owns_current_model or self.session.persistent
+                )
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,
@@ -4508,6 +4522,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 if graph_deps.cancellation.cancel_requested:
                     raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
                 agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
+                self.session.record_result(result.conversation)
 
             def _extract_error(error: BaseException) -> BaseException:
                 # Use the original node error if available, since context manager __aexit__ chains

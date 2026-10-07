@@ -54,6 +54,10 @@ class WrapperModel(Model):
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 
+    @property
+    def _model_resources_in_durable_units(self) -> bool:
+        return self.wrapped._model_resources_in_durable_units
+
     @asynccontextmanager
     async def open_session(self) -> AsyncGenerator[Model]:
         async with self.wrapped.open_session() as wrapped:

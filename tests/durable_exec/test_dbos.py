@@ -64,6 +64,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
@@ -223,6 +224,44 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
 
     output = await run_simple_agent()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+async def test_session_model_interactions_are_step_owned(dbos: DBOS, legacy: bool) -> None:
+    events: list[str] = []
+
+    class SessionModel(TestModel):
+        @asynccontextmanager
+        async def open_session(self) -> AsyncGenerator[Model]:
+            assert DBOS.step_id is not None
+            events.append('open')
+            try:
+                yield TestModel(custom_output_text='bound')
+            finally:
+                events.append('close')
+
+    agent = (
+        DBOSAgent(Agent(SessionModel(), name=f'session_model_{legacy}'))  # pyright: ignore[reportDeprecated]
+        if legacy
+        else Agent(SessionModel(), name=f'session_model_{legacy}', capabilities=[DBOSDurability()])
+    )
+
+    @DBOS.workflow(name=f'session_model_workflow_{legacy}')
+    async def run_session() -> list[str]:
+        async with agent.session() as session:
+            first = await session.run('first')
+            second = await session.run('second')
+            assert first.run_id != second.run_id
+            assert len(session.conversation.messages) == 4
+            return [first.output, second.output]
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_session() == ['bound', 'bound']
+    assert events == ['open', 'close'] * 2
+    with SetWorkflowID(workflow_id):
+        assert await run_session() == ['bound', 'bound']
+    assert events == ['open', 'close'] * 2
 
 
 async def round_trip_workspace(ctx: RunContext[None]) -> str:

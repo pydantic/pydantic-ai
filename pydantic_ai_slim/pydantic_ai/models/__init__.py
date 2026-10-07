@@ -527,6 +527,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
+    @property
+    def _model_resources_in_durable_units(self) -> bool:
+        """Internal resource policy for model wrappers that dispatch to an execution backend."""
+        return False
+
     @asynccontextmanager
     async def open_session(self) -> AsyncGenerator[Model]:
         """Open an isolated interaction for a conversation, yielding its request interface.

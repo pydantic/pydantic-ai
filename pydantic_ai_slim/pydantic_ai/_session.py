@@ -55,6 +55,8 @@ class ModelResources:
         self._closed.set()
 
     async def get_model(self, selected_model: Model, *, enter_model: bool = True) -> Model:
+        if selected_model._model_resources_in_durable_units:  # pyright: ignore[reportPrivateUsage]
+            return selected_model
         existing = self._models.get(id(selected_model))
         if existing is not None:
             original, bound = existing
@@ -105,6 +107,7 @@ class SessionRuntime:
         self.inferred_models: dict[str, Model] = {}
         self._inbox = PendingMessageQueue(deepcopy(pending) if pending else ())
         self._active: GraphAgentState | None = None
+        self._result_conversation: Conversation | None = None
         self._claimed = False
         self._cancellation: RunCancellation | None = None
         self._cancel_requested = False
@@ -193,8 +196,14 @@ class SessionRuntime:
             pending.extend(self._inbox.snapshot())
             return deepcopy(conversation), deepcopy(pending), run_id
 
+    def record_result(self, conversation: Conversation) -> None:
+        with self._lock:
+            self._result_conversation = conversation
+
     def release(self, conversation: Conversation | None = None) -> None:
         with self._lock:
+            conversation = conversation or self._result_conversation
+            self._result_conversation = None
             if self._active is not None:
                 state = self._active
                 self.conversation = conversation or Conversation(

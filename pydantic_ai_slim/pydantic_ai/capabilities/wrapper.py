@@ -184,6 +184,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         )
 
     @property
+    def _model_resources_in_durable_units(self) -> bool:
+        return self.wrapped._model_resources_in_durable_units
+
+    @property
     def _emits_app_events(self) -> bool:
         # The `RunContext.emit` gate must see through wrappers: wrapping an app-facing
         # `Hooks`/`ProcessEventStream` must not revoke its user callbacks' permission to emit

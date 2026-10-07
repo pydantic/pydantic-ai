@@ -101,7 +101,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, ModelResolutionContext
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -483,6 +483,41 @@ async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
 
     output = await run_simple_agent()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+@pytest.mark.parametrize(('legacy', 'blockbuster_enabled'), [(False, True), (True, False)])
+async def test_session_model_interactions_are_task_owned(legacy: bool, blockbuster_enabled: bool) -> None:
+    # The legacy wrapper constructs a Prefect flow in `run`, which synchronously inspects source files.
+    assert blockbuster_enabled is not legacy
+    events: list[str] = []
+
+    class SessionModel(TestModel):
+        @asynccontextmanager
+        async def open_session(self) -> AsyncGenerator[Model]:
+            assert TaskRunContext.get() is not None
+            events.append('open')
+            try:
+                yield TestModel(custom_output_text='bound')
+            finally:
+                events.append('close')
+
+    agent = (
+        PrefectAgent(Agent(SessionModel(), name=f'session_model_{legacy}'))  # pyright: ignore[reportDeprecated]
+        if legacy
+        else Agent(SessionModel(), name=f'session_model_{legacy}', capabilities=[PrefectDurability()])
+    )
+
+    @flow(name=f'session_model_flow_{legacy}')
+    async def run_session() -> list[str]:
+        async with agent.session() as session:
+            first = await session.run('first')
+            second = await session.run('second')
+            assert first.run_id != second.run_id
+            assert len(session.conversation.messages) == 4
+            return [first.output, second.output]
+
+    assert await run_session() == ['bound', 'bound']
+    assert events == ['open', 'close'] * 2
 
 
 async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> None:

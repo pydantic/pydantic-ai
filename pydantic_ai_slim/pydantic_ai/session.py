@@ -212,13 +212,18 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
     ) -> AgentRunResult[Any]:
         """Use the session dependencies unless this run explicitly overrides them."""
-        return await super().run(
-            user_prompt,
-            output_type=output_type,
-            deps=deps if _utils.is_set(deps) else self._deps,
-            event_stream_handler=event_stream_handler,
-            **kwargs,
-        )
+        self._prepare_options(kwargs)
+        async with self._execution():
+            result = await self.wrapped.run(
+                user_prompt,
+                output_type=output_type,
+                deps=deps if _utils.is_set(deps) else self._deps,
+                event_stream_handler=event_stream_handler,
+                **kwargs,
+            )
+            self._runtime.require_attached()
+            self._runtime.record_result(result.conversation)
+            return result
 
     @overload
     def run_sync(
@@ -282,7 +287,8 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
-    def run_stream(
+    @asynccontextmanager
+    async def run_stream(
         self,
         user_prompt: str | Sequence[messages.UserContent] | None = None,
         *,
@@ -290,15 +296,19 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
-    ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Use the session dependencies unless this run explicitly overrides them."""
-        return super().run_stream(
-            user_prompt,
-            output_type=output_type,
-            deps=deps if _utils.is_set(deps) else self._deps,
-            event_stream_handler=event_stream_handler,
-            **kwargs,
-        )
+        self._prepare_options(kwargs)
+        async with self._execution():
+            async with self.wrapped.run_stream(
+                user_prompt,
+                output_type=output_type,
+                deps=deps if _utils.is_set(deps) else self._deps,
+                event_stream_handler=event_stream_handler,
+                **kwargs,
+            ) as streamed:
+                self._runtime.require_attached()
+                yield streamed
 
     @overload
     def run_stream_sync(
@@ -360,21 +370,28 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
     ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
-    def run_stream_events(
+    @asynccontextmanager
+    async def run_stream_events(
         self,
         user_prompt: str | Sequence[messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         **kwargs: Unpack[_InstructedRunOptions[AgentDepsT]],
-    ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
+    ) -> AsyncGenerator[AgentRunEvents[Any]]:
         """Use the session dependencies unless this run explicitly overrides them."""
-        return super().run_stream_events(
-            user_prompt,
-            output_type=output_type,
-            deps=deps if _utils.is_set(deps) else self._deps,
-            **kwargs,
-        )
+        self._prepare_options(kwargs)
+        async with self._execution():
+            async with self.wrapped.run_stream_events(
+                user_prompt,
+                output_type=output_type,
+                deps=deps if _utils.is_set(deps) else self._deps,
+                **kwargs,
+            ) as events:
+                yield events
+            if events.result is not None:
+                self._runtime.require_attached()
+                self._runtime.record_result(events.result.conversation)
 
     @overload
     def iter(
@@ -461,13 +478,47 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
         `conversation`, `message_history`, `conversation_id`, and `usage` must be supplied when
         creating the session, not per run. Only one run may write to a session at a time.
         """
-        if not self._entered:
-            raise UserError('Enter the agent session with `async with` before starting a run.')
         if any(value is not None for value in (conversation, message_history, conversation_id, usage)):
             raise UserError('The session owns `conversation`, `message_history`, `conversation_id`, and `usage`.')
+        async with self._execution():
+            async with self.wrapped.iter(
+                user_prompt,
+                output_type=output_type,
+                conversation=self._runtime.conversation,
+                deferred_tool_results=deferred_tool_results,
+                run_id=run_id,
+                model=model if model is not None else self._model,
+                instructions=instructions,
+                deps=deps if _utils.is_set(deps) else self._deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
+                metadata=metadata,
+                retries=retries,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                workspace=workspace,
+                spec=spec,
+            ) as run:
+                self._runtime.require_attached()
+                yield run
+            if run.result is not None:
+                self._runtime.record_result(run.result.conversation)
+
+    def _prepare_options(self, options: _RunOptions[AgentDepsT]) -> None:
+        if any(options.get(key) is not None for key in ('conversation', 'message_history', 'conversation_id', 'usage')):
+            raise UserError('The session owns `conversation`, `message_history`, `conversation_id`, and `usage`.')
+        options['conversation'] = self._runtime.conversation
+        if options.get('model') is None:
+            options['model'] = self._model
+
+    @asynccontextmanager
+    async def _execution(self) -> AsyncGenerator[None]:
+        if not self._entered:
+            raise UserError('Enter the agent session with `async with` before starting a run.')
         self._runtime.claim()
         finished = self._run_finished = anyio.Event()
-        final_conversation: Conversation | None = None
         error: BaseException | None = None
         try:
             with anyio.CancelScope() as scope:
@@ -477,39 +528,15 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
                     while isinstance(target, WrapperAgent):
                         target = target.wrapped
                     with bind_session(target, self._runtime):
-                        async with self.wrapped.iter(
-                            user_prompt,
-                            output_type=output_type,
-                            conversation=self._runtime.conversation,
-                            deferred_tool_results=deferred_tool_results,
-                            run_id=run_id,
-                            model=model if model is not None else self._model,
-                            instructions=instructions,
-                            deps=deps if _utils.is_set(deps) else self._deps,
-                            model_settings=model_settings,
-                            usage_limits=usage_limits,
-                            cancellation_token=cancellation_token,
-                            metadata=metadata,
-                            retries=retries,
-                            infer_name=infer_name,
-                            toolsets=toolsets,
-                            capabilities=capabilities,
-                            workspace=workspace,
-                            spec=spec,
-                        ) as run:
-                            self._runtime.require_attached()
-                            yield run
-                        if run.result is not None:
-                            final_conversation = run.result.conversation
+                        yield
                 except BaseException as exc:
                     error = exc
                     raise
-            # Closing a session cancels the run's scope; do not swallow that cancellation and
-            # pretend the caller received a successful result.
+            # Closing a session cancels the run's scope; do not turn cancellation into success.
             if error is not None:
                 raise error
         finally:
-            self._runtime.release(final_conversation)
+            self._runtime.release()
             self._run_scope = None
             self._run_finished = None
             finished.set()
