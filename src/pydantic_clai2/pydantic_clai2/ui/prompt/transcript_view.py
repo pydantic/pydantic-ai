@@ -27,6 +27,8 @@ class TranscriptView(Widget):
         self._width = 1
         self._height = 0
         self._memo: dict[int, tuple[str, ...]] = {}
+        self._shown: list[_Position] = []
+        """The rows the last `window` returned, top to bottom."""
 
     def follow(self) -> None:
         """Show the newest rows again."""
@@ -99,12 +101,27 @@ class TranscriptView(Widget):
         if height <= 0:
             return []
         position: _Position | None = self._bottom()
-        rows: list[str] = []
-        while position is not None and len(rows) < height:
-            rows.append(self._rows(position[0])[position[1]])
+        shown: list[_Position] = []
+        while position is not None and len(shown) < height:
+            shown.append(position)
             position = self._before(position)
-        rows.reverse()
-        return rows
+        shown.reverse()
+        self._shown = shown
+        return [self._rows(item)[row] for item, row in shown]
+
+    def joins(self) -> tuple[bool, ...]:
+        """For each row the last `window` returned, whether it wraps on from the row above it.
+
+        One more entry follows: whether the row after the last one, off screen, wraps on from it.
+        The first entry says whether the top row wraps on from a row scrolled out above.
+        """
+        if not self._shown:
+            return (False,)
+        after = self._after(self._shown[-1])
+        return tuple(
+            self.transcript.continued(item, width=self._width)[row]
+            for item, row in (*self._shown, *((after,) if after is not None else ()))
+        ) + ((False,) if after is None else ())
 
     def draw(self, region: Region, focused: bool) -> None:
         """Paint into `region`, with a hint while scrolled away from the newest output."""

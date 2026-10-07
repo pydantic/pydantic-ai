@@ -7,6 +7,7 @@ click on a URL finds it in the painted cells to open.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -135,29 +136,35 @@ def trim_url(url: str) -> str:
     return url[:end]
 
 
-def url_at(frame: ScreenBuffer, cell: Cell, *, rows: int) -> str | None:
-    """The `http(s)` URL painted under `cell` in the frame's top `rows`, if any.
+def url_at(frame: ScreenBuffer, cell: Cell, *, rows: int, joins: Sequence[bool]) -> str | None:
+    """The `http(s)` URL painted under `cell` in the frame's top `rows`, if all of it is on screen.
 
-    A URL too long for one row wraps onto the next, so rows that end and start with text are read
-    as one line. Painted cells carry no hyperlink, so this reads the URL from the visible text.
+    `joins[i]` says whether row `i` wraps on from row `i - 1`, and `joins[rows]` whether a row below
+    the transcript wraps on from its last one. Only those genuine wraps join rows, so a URL that ends
+    at the right edge never runs into the next line. A URL cut off by the top or bottom of the
+    transcript is not returned, since its address is incomplete. Painted cells carry no hyperlink,
+    so the URL is read from the visible text.
     """
     row, column = cell
     width = frame.width
     if not (0 <= row < rows and 0 <= column < width):
         return None
 
-    def joined(upper: int) -> bool:
-        return bool(frame.chars[(upper + 1) * width - 1].strip() and frame.chars[(upper + 1) * width].strip())
+    def joined(index: int) -> bool:
+        return index < len(joins) and joins[index]
 
     first, last = row, row
-    while first > 0 and joined(first - 1):
+    while first > 0 and joined(first):
         first -= 1
-    while last + 1 < rows and joined(last):
+    while last + 1 < rows and joined(last + 1):
         last += 1
     cells = frame.chars[first * width : (last + 1) * width]
+    text = ''.join(cells)
     offset = len(''.join(cells[: (row - first) * width + column]))
-    for match in _URL.finditer(''.join(cells)):
+    for match in _URL.finditer(text):
         url = trim_url(match[0])
         if match.start() <= offset < match.start() + len(url):
-            return url
+            above = match.start() == 0 and first == 0 and joined(0)
+            below = match.end() == len(text) and last == rows - 1 and joined(rows)
+            return None if above or below else url
     return None

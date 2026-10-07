@@ -595,6 +595,53 @@ def test_clicking_a_url_wrapped_across_rows_opens_all_of_it() -> None:
     assert click(screen, 2, 4) == []
 
 
+@pytest.mark.parametrize('after', ['next', 'API_KEY=secret'])
+def test_a_url_ending_at_the_edge_never_runs_into_the_next_line(after: str) -> None:
+    """Only genuine wraps join rows, so a click cannot open, or leak, the line after a URL."""
+    url = 'https://example.com/a'
+    screen = Screen(width=len(url), height=10)
+    screen.surface.paint(ROWS)
+    screen.write(f'{url}\n{after}\n')
+    assert screen.lines()[:2] == [url, after]
+    assert click(screen, 5, 1) == [url]
+    assert click(screen, 2, 2) == []
+
+
+def test_a_url_cut_off_by_the_viewport_is_not_opened() -> None:
+    """Its address is incomplete, and its visible part may even be another URL from its query."""
+    outer, inner = 'https://a.dev/?next=', 'https://b.dev/page'
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(f'{outer}{inner}\ndone\nmore\n')
+    assert screen.lines()[:4] == [inner, 'done', 'more', ''], 'the first row scrolled away above'
+    assert click(screen, 3, 1) == []
+    screen.surface.transcript_key('pageup')
+    assert screen.lines()[:2] == [outer, inner], 'once all of it shows'
+    assert click(screen, 3, 2) == [outer + inner]
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(''.join(f'line {index}\n' for index in range(4)) + f'{url}\n')
+    screen.surface.scroll(2)
+    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'the hint covers the rest of the URL'
+    assert click(screen, 3, 3) == []
+
+
+def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+
+    def render(*, source: str, width: int) -> str:
+        return f'{source}\nafter\n'
+
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    screen.surface.markdown(render=render, width=40).extend(url)
+    screen.surface.paint(ROWS)
+    assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
+    assert click(screen, 3, 2) == [url]
+    assert click(screen, 2, 4) == []
+
+
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
     opened: list[str] = []
     monkeypatch.setattr('webbrowser.open', opened.append)

@@ -215,15 +215,17 @@ class PromptSurface(io.StringIO):
                 if text.strip():
                     copy_text(text, output=self.output)
                     return text
-            elif (
-                clicked
-                and self._frame is not None
-                and (url := url_at(self._frame, report.cell, rows=self._transcript_rows))
-            ):
+            elif clicked and self._frame is not None and (url := self._url_at(report.cell)):
                 self.open_url(url)
             elif self._live and not self._holds:
                 self._paint()
         return None
+
+    def _url_at(self, cell: tuple[int, int]) -> str | None:
+        assert self._frame is not None
+        # The scrolled-away hint covers the bottom transcript row, so a URL there reads as cut off.
+        rows = self._transcript_rows - (self.view.anchor is not None)
+        return url_at(self._frame, cell, rows=rows, joins=self.view.joins())
 
     @property
     def page(self) -> int:
