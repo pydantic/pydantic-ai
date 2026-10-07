@@ -84,9 +84,21 @@ class RealtimeAttachment:
             session._persistent = True  # pyright: ignore[reportPrivateUsage]
             session._run.task_context = copy_context()  # pyright: ignore[reportPrivateUsage]
             await session.__aenter__()
+        handle = session._run.handle  # pyright: ignore[reportPrivateUsage]
+        assert handle is not None
         try:
-            yield
-            await session._finish_run()  # pyright: ignore[reportPrivateUsage]
+            try:
+                yield
+                await handle._stop_inputs()  # pyright: ignore[reportPrivateUsage]
+                await session._finish_run()  # pyright: ignore[reportPrivateUsage]
+            except BaseException:
+                # Normal exit drains sends, but an abort must cancel blocked sends before waiting
+                # for their producers. The connection is then closed, never reused at an unknown frontier.
+                with anyio.CancelScope(shield=True):
+                    await handle._stop_inputs(abort=True)  # pyright: ignore[reportPrivateUsage]
+                raise
+            finally:
+                await handle._close_streams()  # pyright: ignore[reportPrivateUsage]
         except BaseException as exc:
             session._closing_error = exc  # pyright: ignore[reportPrivateUsage]
             await self.close()

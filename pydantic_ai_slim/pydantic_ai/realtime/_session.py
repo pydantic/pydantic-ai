@@ -139,6 +139,7 @@ if TYPE_CHECKING:
     from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
+    from ._run import RealtimeRun
     from .model import RealtimeModel, RealtimeProviderSession
 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
@@ -707,6 +708,7 @@ class _RealtimeRunState:
     tool_manager_lock: Lock = field(default_factory=Lock)
     pending_messages: _RealtimePendingMessages = field(default_factory=_RealtimePendingMessages)
     task_context: TaskContext | None = None
+    handle: RealtimeRun | None = None
     finished: bool = False
     queue: deque[RealtimeEvent | object] = field(default_factory=deque[RealtimeEvent | object])
     queue_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -1015,6 +1017,9 @@ class RealtimeSession:
         # Whether audio was sent since the last `commit_audio()` or `clear_audio()`: committing an empty
         # buffer is no user turn.
         self._audio_uncommitted = False
+        # Whether local, uncommitted audio owns the newest anonymous history reservation. A
+        # commit, transcript, or provider speech boundary transfers that reservation to the turn.
+        self._uncommitted_turn_anchor = False
         # Retained input audio (`audio_retention='input_audio'`/`'all'`). `_input_audio` is the rolling buffer
         # of audio sent since the last turn boundary; on providers that report a per-item speech-stopped
         # boundary, each segment is cut into `_input_segments` keyed by its input item id, so overlapping
@@ -2200,6 +2205,7 @@ class RealtimeSession:
                 # Audio starting is the earliest sign of a user turn, and the only one on a provider that
                 # reports no speech boundaries, so it's where the turn's place in history is reserved.
                 self._open_user_turn_anchor()
+                self._uncommitted_turn_anchor = True
             self._user_turn_active = True
         previous_length: int | None = None
         if self._retain_input:
@@ -2249,6 +2255,7 @@ class RealtimeSession:
             # The provider rejects an empty commit, so there is no user turn to record.
             return
         self._audio_uncommitted = False
+        self._uncommitted_turn_anchor = False
         if (
             self._input_transcription_enabled
             and len(self._pending_anonymous_user_turn_anchors) <= self._anonymous_user_turns_ended
@@ -2269,10 +2276,16 @@ class RealtimeSession:
         if self._core is not None:
             self._core.apply(AudioCleared())
         self._audio_uncommitted = False
+        if self._uncommitted_turn_anchor:
+            # Remove only the reservation made by this buffer, never an earlier committed turn
+            # whose asynchronous transcript has not arrived yet.
+            self._pending_anonymous_user_turn_anchors.pop()
+            self._uncommitted_turn_anchor = False
         # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
         self._input_audio.clear()
-        self._user_turn_active = False
+        self._user_turn_active = any(not turn.finalized for turn in self._user_turns.values())
+        self._exchange_progress.set()
 
     async def create_response(self) -> None:
         """Ask the model to respond now (manual turn-taking, after `commit_audio`).
@@ -3204,6 +3217,8 @@ class RealtimeSession:
             # Only the reply's first output marks that boundary: audio sent while the model answers
             # opens nothing that output could end.
             self._anonymous_user_turns_ended += 1
+            if len(self._pending_anonymous_user_turn_anchors) == self._anonymous_user_turns_ended:
+                self._uncommitted_turn_anchor = False
             self._user_turn_active = False
             self._anonymous_user_turn_awaiting_answer = True
         return events
@@ -3290,6 +3305,7 @@ class RealtimeSession:
             if len(anchors) > self._anonymous_user_turns_ended:
                 # The provider named the turn local audio opened: its speech start is the fresher position.
                 anchor = self._fresher_anchor(anchors.pop(), anchor)
+                self._uncommitted_turn_anchor = False
             self._pending_user_turn_anchors[item_id] = (anchor,)
 
     @staticmethod
@@ -3327,6 +3343,8 @@ class RealtimeSession:
             # With no speech start to name it (push-to-talk reports none), an identified turn is the one
             # the audio sent for it opened.
             anchor = anchors.popleft()
+            if not anchors:
+                self._uncommitted_turn_anchor = False
             if item_id is not None and self._anonymous_user_turns_ended:
                 self._anonymous_user_turns_ended -= 1
         else:
@@ -3510,6 +3528,7 @@ class RealtimeSession:
         assert not self._user_turns, 'every pending user turn should have been recorded'
         self._user_turn_anchors.clear()
         self._pending_anonymous_user_turn_anchors.clear()
+        self._uncommitted_turn_anchor = False
         self._anonymous_user_turns_ended = 0
         self._anonymous_user_turn_finalized = False
         self._anonymous_user_turn_awaiting_answer = False

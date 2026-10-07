@@ -4065,7 +4065,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
         [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
         """
-        from ..realtime import RealtimeSession
+        from ..realtime import RealtimeRun, RealtimeSession
         from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
 
         # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
@@ -4239,7 +4239,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if owner is not None:
                     session._attach_owner(owner)  # pyright: ignore[reportPrivateUsage]
                 lifecycle.session = session
-                resolved.run_context.realtime_session = session
+                if attachment is not None:
+                    handle = session._run.handle = RealtimeRun(session)  # pyright: ignore[reportPrivateUsage]
+                    resolved.run_context.realtime_session = handle
+                    if resolved.tool_manager.ctx is not None:
+                        resolved.tool_manager.ctx.realtime_session = handle
+                else:
+                    resolved.run_context.realtime_session = session
                 async with attachment.run(session) if attachment is not None else session:
                     try:
                         yield session

@@ -314,13 +314,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
     async def __aexit__(self, *args: Any) -> bool | None:
         self._entered = False
         self._runtime.close()
-        # Runs started by a streaming handle or another task must finish teardown before the
-        # resources they use close. The run task, not this caller, exits its cancel scope.
-        if self._run_scope is not None:
-            self._run_scope.cancel()
-            assert self._run_finished is not None
-            with anyio.CancelScope(shield=True):
-                await self._run_finished.wait()
+        await self._cancel_active_run()
         if self._runtime.realtime is not None:
             await self._runtime.realtime.close()
         self._runtime.resources.close()
@@ -330,6 +324,15 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
             if len(group.exceptions) == 1:
                 raise group.exceptions[0] from None
             raise
+
+    async def _cancel_active_run(self) -> None:
+        # Runs started by a streaming handle or another task must finish teardown before the
+        # resources they use close. The run task, not this caller, exits its cancel scope.
+        if self._run_scope is not None:
+            self._run_scope.cancel()
+            assert self._run_finished is not None
+            with anyio.CancelScope(shield=True):
+                await self._run_finished.wait()
 
     @property
     def conversation(self) -> Conversation:
@@ -812,7 +815,9 @@ class RealtimeAgentSession(Generic[AgentDepsT]):
 
     async def __aexit__(self, *args: Any) -> None:
         assert self._attachment is not None
+        self._attachment.closed = True
         try:
+            await self._owner._cancel_active_run()  # pyright: ignore[reportPrivateUsage]
             await self._attachment.close()
         finally:
             self._owner._runtime.realtime = None  # pyright: ignore[reportPrivateUsage]
@@ -846,10 +851,7 @@ class RealtimeAgentSession(Generic[AgentDepsT]):
         handle: RealtimeRun | None = None
         try:
             async with definition.session(**self._media) as session:
-                handle = RealtimeRun(session)
-                manager = session._run.tool_manager  # pyright: ignore[reportPrivateUsage]
-                if manager.ctx is not None:
-                    manager.ctx.realtime_session = handle
+                handle = session._run.handle or RealtimeRun(session)  # pyright: ignore[reportPrivateUsage]
                 yield handle
         finally:
             if handle is not None:
