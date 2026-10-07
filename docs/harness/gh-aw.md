@@ -524,7 +524,9 @@ is often quicker.
 The engine emits `session.init`, `user.message`, `assistant.message`, `assistant.reasoning`,
 `tool.execution_start`, `tool.execution_complete`, and `session.result`. The result includes
 reported usage when available; startup failures still record status without usage when none
-is available. The inline parser selects framed typed events from captured engine stdio,
+is available. If finalizing the recording fails, the launcher reports the error on stderr,
+preserves the CLI exit status, and attempts a status-only result. The inline parser selects
+framed typed events from captured engine stdio,
 and the gh-aw runtime bootstrap writes the canonical stream to `agent-session.jsonl`.
 Errors and calls still pending at interruption remain accurately represented; no tool IDs,
 completions or turns are inferred. A compatible gh-aw

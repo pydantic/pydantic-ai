@@ -76,9 +76,11 @@ runtime bootstrap writes the canonical stream to `agent-session.jsonl`: `session
 `user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when
 available; startup failures still record status without usage when none is available. Errors
-and tool calls still pending at interruption are represented as observed. The engine does not synthesize tool IDs, completions, or turn
-counts. A compatible gh-aw conclusion also collects usage and `aw_session.jsonl`, including
-gateway and safe-output activity.
+and tool calls still pending at interruption are represented as observed. If finalizing the
+recording fails, the launcher reports the error on stderr, preserves the CLI exit status,
+and attempts a status-only result. The engine does not synthesize tool IDs, completions,
+or turn counts. A compatible gh-aw conclusion also collects usage and `aw_session.jsonl`,
+including gateway and safe-output activity.
 
 ## Running your own agent
 
