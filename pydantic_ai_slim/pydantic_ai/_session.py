@@ -220,6 +220,9 @@ class SessionRuntime:
                 self.conversation = conversation or state.snapshot()
                 queue = state.pending_messages
                 if self.persistent:
+                    # Completed run handles remain user-owned. Detach both history and effect facts
+                    # together, preserving their internal associations without exposing next-run state.
+                    self.conversation, self.operations = deepcopy((self.conversation, self.operations))
                     # Close and transfer atomically; a worker thread can still hold this run's context.
                     self._inbox = PendingMessageQueue([*queue.close_and_take(), *self._inbox.snapshot()])
                 else:

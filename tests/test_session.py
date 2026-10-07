@@ -488,3 +488,20 @@ async def test_session_rejects_wrapper_that_discards_session_conversation():
         assert session.state.active_run_id is None
         assert len(session.state.pending) == 1
         assert session.conversation.messages == []
+
+
+async def test_completed_session_result_cannot_mutate_history_or_operation_ledger():
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def value() -> dict[str, str]:
+        return {'value': 'original'}
+
+    async with agent.session() as session:
+        result = await session.run('first')
+        checkpoint = session.state
+        for message in result.all_messages():
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart):
+                    part.tool_call_id = 'changed after completion'
+        assert session.state == checkpoint

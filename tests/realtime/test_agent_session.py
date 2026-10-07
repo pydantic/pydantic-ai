@@ -276,3 +276,13 @@ async def test_realtime_short_circuit_keeps_owner_inbox_order(second: str | Bina
             if isinstance(part, UserPromptPart)
         ]
         assert prompts == ['continue', 'first', second if isinstance(second, str) else [second]]
+
+
+async def test_completed_realtime_result_is_detached_from_owner_history():
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(FakeRealtimeModel(BlockingRealtimeConnection([]))).session() as live:
+            await live.send('first')
+        assert live.result is not None
+        original = owner.conversation
+        live.result.all_messages()[0].parts = []
+        assert owner.conversation == original
