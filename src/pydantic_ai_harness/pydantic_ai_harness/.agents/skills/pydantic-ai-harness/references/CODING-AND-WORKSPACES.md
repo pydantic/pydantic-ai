@@ -51,7 +51,7 @@ except UserError as e:
 ## Coder
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
-`ClearToolResults(max_fraction=0.7)`, `WarnNearLimits(max_context_fraction=0.9)`, a `ToolOutputLimits`
+`ClearToolResults(max_fraction=0.7)`, a `ToolOutputLimits`
 that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`.
 
 ```bash

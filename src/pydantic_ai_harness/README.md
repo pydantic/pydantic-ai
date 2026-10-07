@@ -98,7 +98,7 @@ agent = Agent(
 
 ## No magic: it's capabilities all the way down
 
-`Coder` is a regular combined capability: [`FileSystem`](pydantic_ai_harness/filesystem/) with five of its tools and content hashes off, [`Shell`](pydantic_ai_harness/shell/) with its persistent `shell` tool and no allowlist, [`RepoContext`](pydantic_ai_harness/repo_context/), [`SubAgents`](pydantic_ai_harness/subagents/) delegating to the agent itself, [`ClearToolResults` and `WarnNearLimits`](pydantic_ai_harness/compaction/), and a bounded [`ToolOutputLimits`](pydantic_ai_harness/tool_output_limits/), plus its default instructions and JSON argument repair. Use it whole, or build the same agent from those capabilities to change any setting; the [Coder page](pydantic_ai_harness/coder/) lists the exact configuration, tool signatures, delegation, and the persistent shell lifecycle.
+`Coder` is a regular combined capability: [`FileSystem`](pydantic_ai_harness/filesystem/) with five of its tools and content hashes off, [`Shell`](pydantic_ai_harness/shell/) with its persistent `shell` tool and no allowlist, [`RepoContext`](pydantic_ai_harness/repo_context/), [`SubAgents`](pydantic_ai_harness/subagents/) delegating to the agent itself, [`ClearToolResults`](pydantic_ai_harness/compaction/), and a bounded [`ToolOutputLimits`](pydantic_ai_harness/tool_output_limits/), plus its default instructions and JSON argument repair. Use it whole, or build the same agent from those capabilities to change any setting; the [Coder page](pydantic_ai_harness/coder/) lists the exact configuration, tool signatures, delegation, and the persistent shell lifecycle.
 
 ## Workspaces
 

@@ -11,7 +11,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import INSTRUCTIONS, project_instructions
-from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
+from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
@@ -126,7 +126,6 @@ class Coder(CombinedCapability[AgentDepsT]):
             capabilities.append(SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders))
         capabilities += [
             ClearToolResults[AgentDepsT](max_fraction=0.7),
-            WarnNearLimits[AgentDepsT](max_context_fraction=0.9),
             _BoundToolOutputs[AgentDepsT](
                 id='coder_tool_output_limits',
                 bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))],
