@@ -1,5 +1,6 @@
 """The live panel paints frames from the transcript, on the alternate screen, and prints the session on close."""
 
+import asyncio
 import io
 
 import pytest
@@ -395,6 +396,23 @@ async def test_drain_settles_a_partial_line_once() -> None:
     await surface.drain()
     assert [Text.from_ansi(row).plain for row in surface.transcript.frame(width=80, height=5).rows] == ['partial', '']
     assert surface.isatty() is False
+
+
+async def test_a_burst_of_wheel_reports_paints_once_after_the_input_callback() -> None:
+    screen = Screen(height=10)
+    screen.surface.paint(ROWS)
+    for index in range(40):
+        screen.write(f'line {index}\n')
+    newest = int(screen.lines()[0].split()[1])
+    frames = screen.terminal.getvalue().count('\x1b[?2026h')
+    for _ in range(5):
+        screen.surface.transcript_key('mouse', '\x1b[<64;1;1M')
+    assert screen.terminal.getvalue().count('\x1b[?2026h') == frames, 'nothing paints mid-burst'
+    await asyncio.sleep(0)
+    assert screen.terminal.getvalue().count('\x1b[?2026h') == frames + 1, 'one frame shows the whole burst'
+    assert screen.lines()[0] == f'line {newest - 5 * WHEEL_ROWS}'
+    await asyncio.sleep(0)
+    assert screen.terminal.getvalue().count('\x1b[?2026h') == frames + 1
 
 
 def test_scroll_before_open_and_during_a_hold_does_not_paint() -> None:

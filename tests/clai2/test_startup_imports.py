@@ -38,6 +38,18 @@ finally:
     assert 'AssertionError' not in result.stderr
 
 
+def test_splash_paints_before_settings_load_pydantic() -> None:
+    # Building the first Pydantic model loads every installed Pydantic plugin, Logfire's among them.
+    script = """
+import sys
+import pydantic_clai2.ui.rendering.splash
+for name in ('pydantic', 'pydantic_clai2.config'):
+    assert name not in sys.modules, name
+"""
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=15, check=False)
+    assert result.returncode == 0, result.stderr
+
+
 def test_prompt_ready_without_provider_or_model_menu_imports(tmp_path: Path) -> None:
     script = """
 import sys

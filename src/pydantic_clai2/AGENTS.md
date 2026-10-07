@@ -436,6 +436,8 @@ the input cursor is a painted reverse-video cell. Keep terminal mutations in
 `PromptSurface`, and detach the key reader before a menu owns the screen.
 The prompt-toolkit decoder preserves paste, modified keys, and SGR mouse reports.
 PageUp/PageDown and wheel input scroll the transcript, not the draft.
+Wheel and drag reports arrive in bursts, so they paint once after the input
+callback (`PromptSurface._paint_soon`), never once per report.
 Mouse reporting stops most terminals from selecting text, so a left-button drag
 selects painted cells in `PromptSurface` and its release copies them through
 `text_clipboard.copy_text`. Do not drop the drag modes (`?1002h`) or copy-out breaks.
