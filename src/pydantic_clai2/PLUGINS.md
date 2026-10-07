@@ -1967,8 +1967,10 @@ editor's input reader, and restores the editor and its draft when the block exit
 The editor remains active during agent turns. Enter queues a separate turn with
 its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
-through core's `RunContext.enqueue(priority='asap')`, without starting another
-turn or cancelling tools. Each press sends one message. Slash commands, `!` shell
+through core's `RunContext.enqueue(priority='asap')`. Accepted steering messages
+appear immediately in the transcript and are enqueued for the next model request,
+without starting another turn, interrupting the current response, or cancelling
+tools. Each press sends one message. Slash commands, `!` shell
 commands, and exit signals are never steered: such a draft, or any draft the run
 does not accept, is taken as Enter would take it, and such a queued message stays
 queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
