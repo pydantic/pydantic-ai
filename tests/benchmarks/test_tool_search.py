@@ -101,3 +101,64 @@ async def test_keyword_tool_search(
     assert pages == [
         [f'lookup_{index}' for index in range(offset + page * 10, offset + (page + 1) * 10)] for page in range(searches)
     ]
+
+
+@pytest.fixture(params=[256, 8192], ids=['256-tools', '8192-tools'])
+async def parallel_search_agent(request: pytest.FixtureRequest, searches: int) -> Agent[None, str]:
+    async def lookup() -> str:
+        return 'ok'
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        completed = sum(
+            isinstance(part, ToolSearchReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not completed:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('search_tools', {'queries': ['account profile']}, tool_call_id=f'search_{index}')
+                    for index in range(searches)
+                ]
+            )
+        return ModelResponse(parts=[TextPart('ok')])
+
+    shared_schema = Tool(lookup).function_schema
+    catalog = FunctionToolset[None](
+        tools=[
+            Tool(
+                lookup,
+                name=f'lookup_{index}',
+                description=f'Lookup account records and profile fields for service {index % 8}.',
+                defer_loading=True,
+                function_schema=shared_schema,
+            )
+            for index in range(request.param)
+        ]
+    )
+    agent = Agent(
+        FunctionModel(respond, profile=ModelProfile(supported_native_tools=frozenset())),
+        deps_type=type(None),
+        toolsets=[catalog],
+        capabilities=[ToolSearch()],
+    )
+    assert await lookup() == 'ok'
+    assert (await agent.run('Find account tools')).output == 'ok'
+    return agent
+
+
+@pytest.mark.parametrize('searches', [5, 20], ids=['five-parallel-searches', 'twenty-parallel-searches'])
+@pytest.mark.benchmark(max_time=15)
+async def test_parallel_keyword_tool_search(parallel_search_agent: Agent[None, str], searches: int) -> None:
+    result = await parallel_search_agent.run('Find account tools')
+    pages = [
+        [match['name'] for match in part.discovered_tools]
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart)
+    ]
+    assert result.output == 'ok'
+    assert result.usage.requests == 2
+    assert pages == [[f'lookup_{index}' for index in range(10)]] * searches
