@@ -187,7 +187,7 @@ def main() -> int:
     client = attention.GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
     if args.mode == 'snapshot':
-        lines = write_snapshot(client, repo, args.snapshot_path, now=dt.datetime.now(dt.timezone.utc))
+        lines = write_snapshot(client, repo, args.snapshot_path, now=dt.datetime.now(dt.UTC))
     else:
         if not args.agent_output:
             parser.error('--agent-output is required')

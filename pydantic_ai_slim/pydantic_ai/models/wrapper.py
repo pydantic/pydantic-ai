@@ -6,9 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -166,6 +164,8 @@ class WrapperModel(Model):
         return self.wrapped.base_url
 
     def __getattr__(self, item: str):
+        if item == 'wrapped':
+            raise AttributeError(item)
         return getattr(self.wrapped, item)
 
 

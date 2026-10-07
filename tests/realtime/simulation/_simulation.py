@@ -33,9 +33,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, ParamSpec, TypeVar
-
-from typing_extensions import Self
+from typing import Any, Literal, ParamSpec, Self, TypeVar
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import BinaryImage, ModelMessage, ToolReturn
@@ -47,7 +45,6 @@ from . import _invariants
 from ._invariants import SimulatedToolError
 from ._loop import SimulatedLoop, SimulationStuck
 from ._truth import GroundTruth
-from ._wire import SendFault
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -243,12 +240,6 @@ class Simulation(ABC):
     def expected_requests(self) -> int | None:
         """What `usage.requests` should be, if not one per recorded response (a model reporting requests with usage)."""
         return None
-
-    @property
-    @abstractmethod
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        """`(frame, last frame read, fault)` for every send a fault failed."""
-        ...
 
     # --- lifecycle ------------------------------------------------------------------------------
 
@@ -530,6 +521,8 @@ class Simulation(ABC):
             snapshot=frozenset(op.key for op in self.operations if op.done and op.key is not None and op.error is None),
         )
         self.waiters.append(waiter)
+        if (shadow := self.checker.shadow) is not None:
+            shadow.waiter_started(waiter)
 
         async def wait() -> None:
             try:

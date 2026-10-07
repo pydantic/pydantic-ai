@@ -1,6 +1,7 @@
 """Messages queue first; explicit steering uses core delivery."""
 
-from collections.abc import AsyncIterable
+import asyncio
+from collections.abc import AsyncIterable, Sequence
 from io import StringIO
 from pathlib import Path
 
@@ -17,8 +18,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2._app import create_shell
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from tests.clai2.test_live_prompt import editor
 
 
@@ -76,12 +79,10 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         assert live.buffer.text == ''
         live.buffer.replace('follow up')
         live.feed('enter')
-        live.buffer.replace('unfinished draft')
         pipe.send_text(sequence)
         await delivered.wait()
         assert accepted == ['change direction']
         assert live.queued_messages == ('follow up',)
-        assert live.buffer.text == 'unfinished draft'
         assert await live.read() == 'follow up'
         live.buffer.replace('/help')
         live.feed('enter')
@@ -96,6 +97,75 @@ async def test_enter_queues_alt_enter_steers_oldest(sequence: str) -> None:
         live.buffer.replace('idle prompt')
         live.feed('enter')
         assert await live.read() == 'idle prompt'
+
+
+@pytest.mark.parametrize('sequence', ['\x1b\r', '\x1b[13;3u', '\x1b[27;3;13~'])
+async def test_alt_enter_steers_the_typed_draft_ahead_of_the_queue(sequence: str) -> None:
+    accepted: list[str] = []
+    delivered = anyio.Event()
+
+    def steer(text: str) -> bool:
+        accepted.append(text)
+        delivered.set()
+        return True
+
+    async with editor() as (live, pipe, _):
+        live.steer = steer
+        queue(live, 'queued follow up')
+        live.buffer.replace('  change direction  ')
+        pipe.send_text(sequence)
+        await delivered.wait()
+        assert accepted == ['change direction']
+        assert live.buffer.text == ''
+        assert live.buffer.history[-1] == live.history.get_strings()[-1] == 'change direction'
+        assert live.queued_messages == ('queued follow up',)
+        assert await live.read() == 'queued follow up'
+
+
+async def test_steering_an_edited_queued_prompt_takes_it_out_of_the_queue() -> None:
+    accepted: list[str] = []
+
+    def steer(text: str) -> bool:
+        accepted.append(text)
+        return True
+
+    async with editor() as (live, _, _):
+        live.steer = steer
+        queue(live, 'first', 'second')
+        live.feed('up')
+        live.buffer.insert(' now')
+        live.feed('alt-enter')
+        assert accepted == ['second now']
+        assert live.queued_messages == ('first',)
+        live.feed('up')
+        assert await live.read() == 'first'
+        live.buffer.insert(' again')
+        live.feed('alt-enter')
+        # The run already took the recalled prompt, so the edit steers without touching the queue.
+        assert accepted == ['second now', 'first again']
+        assert live.queued_messages == ()
+
+
+@pytest.mark.parametrize('draft', ['/help', '!git status', 'clear', 'idle prompt'])
+async def test_alt_enter_on_a_draft_that_cannot_steer_acts_as_enter(draft: str) -> None:
+    attempted: list[str] = []
+
+    def idle(text: str) -> bool:
+        attempted.append(text)
+        return False
+
+    async with editor() as (live, _, _):
+        live.steer = idle
+        live.buffer.replace(draft)
+        live.feed('alt-enter')
+        assert live.buffer.text == ''
+        assert await live.read() == ('/clear' if draft == 'clear' else draft)
+        live.steer = None
+        live.buffer.replace('no run')
+        live.feed('alt-enter')
+        assert await live.read() == 'no run'
+    # Only plain prompts reach the run; commands and shell lines take their turn like Enter.
+    assert attempted == (['idle prompt'] if draft == 'idle prompt' else [])
 
 
 async def test_bare_clear_queues_as_a_command_that_steering_skips() -> None:
@@ -129,10 +199,8 @@ async def test_unavailable_steering_preserves_queue(head: str | KeyboardInterrup
         live.feed('alt-enter')
         live.submit(head)
         live.submit('second')
-        live.buffer.replace('draft')
         live.feed('alt-enter')
         assert attempted == (['follow up'] if available and head == 'follow up' else [])
-        assert live.buffer.text == 'draft'
         if isinstance(head, str):
             assert await live.read() == head
         else:
@@ -141,21 +209,24 @@ async def test_unavailable_steering_preserves_queue(head: str | KeyboardInterrup
         assert await live.read() == 'second'
 
 
-async def test_steering_last_message_clears_queue_and_preserves_draft() -> None:
+async def test_steering_last_message_clears_queue_and_whitespace_draft() -> None:
+    accepted: list[str] = []
+
     def steer(text: str) -> bool:
+        accepted.append(text)
         return True
 
     async with editor() as (live, _, _):
         live.steer = steer
         live.buffer.replace('queued')
         live.feed('enter')
-        live.buffer.replace('draft')
+        # A blank draft has nothing of its own to send, so the queue is steered instead.
+        live.buffer.replace('   ')
         live.feed('alt-enter')
         assert live.queued_messages == ()
-        assert live.buffer.text == 'draft'
         live.feed('alt-enter')
-        live.feed('enter')
-        assert await live.read() == 'draft'
+        assert accepted == ['queued']
+        assert live.buffer.text == '   '
 
 
 async def test_steering_reaches_running_agent_and_is_cleared() -> None:
@@ -234,12 +305,13 @@ async def test_shell_routes_steering_and_reports_expired_images(tmp_path: Path) 
         await release.wait()
         return 'done'
 
+    transcript = StringIO()
     shell = create_shell(
         agent,
         deps=None,
         plugins=(),
         usage_limits=None,
-        console=Console(file=StringIO()),
+        console=Console(file=transcript),
         settings=None,
         store=SettingsStore(tmp_path / 'config.db'),
         builtin_plugins=(),
@@ -260,14 +332,17 @@ async def test_shell_routes_steering_and_reports_expired_images(tmp_path: Path) 
             live.feed('enter')
             assert live.queued_messages == ('new direction',)
             live.feed('alt-enter')
-            assert shell.images.notice.startswith('Steering sent: new direction')
+            assert shell.images.notice == ''
+            assert '> new direction' in transcript.getvalue()
             assert live.queued_messages == ()
             release.set()
+        before_invalid = transcript.getvalue()
         live.buffer.replace('[image:12345678]')
         live.feed('enter')
         live.feed('alt-enter')
         assert 'expired' in shell.images.notice
         assert live.queued_messages == ()
+        assert transcript.getvalue() == before_invalid
 
 
 def queue(live: LivePrompt, *texts: str) -> None:
@@ -433,3 +508,163 @@ async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue
         live.feed('enter')
         assert ran == ['/now', 'changed']
         assert live.queued_messages == ('changed',)
+
+
+READINESS_WAIT_TIMEOUT = 10
+
+
+@pytest.mark.parametrize('route', ['draft', 'queued'])
+@pytest.mark.parametrize('attachments', [False, True])
+@pytest.mark.parametrize('blocked', ['tool', 'model'])
+@pytest.mark.parametrize('cancel', [False, True])
+async def test_shell_echoes_steering_while_run_blocked(
+    tmp_path: Path, route: str, attachments: bool, blocked: str, cancel: bool
+) -> None:
+    started, release, echoed = anyio.Event(), anyio.Event(), anyio.Event()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    async def wait_for_input() -> str:
+        started.set()
+        await release.wait()
+        return 'done'
+
+    class Transcript(StringIO):
+        def write(self, text: str) -> int:
+            result = super().write(text)
+            if '> change direction' in self.getvalue():
+                echoed.set()
+            return result
+
+    transcript = Transcript()
+    shell = create_shell(
+        agent,
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=transcript),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    if blocked == 'model':
+
+        async def resolve(name: str) -> Model:
+            started.set()
+            await release.wait()
+            return TestModel()
+
+        shell.session.model = 'test'
+        shell.session.resolve_model = resolve
+    image = BinaryContent(data=b'image', media_type='image/png')
+    marker = shell.images.attach([image]) if attachments else ''
+    direction = f'change direction {marker}'.strip()
+    before = asyncio.all_tasks()
+    async with editor() as (live, _, _):
+        live.steer = shell.steer
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(shell.run_turn, TurnStart(text='start'))
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await started.wait()
+            live.buffer.replace(direction)
+            if route == 'queued':
+                live.feed('enter')
+            live.feed('alt-enter')
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await echoed.wait()
+            assert not release.is_set()
+            assert transcript.getvalue().count(f'> {direction}') == 1
+            assert shell.images.notice == ''
+            assert live.buffer.text == ''
+            assert live.queued_messages == ()
+            if cancel:
+                tasks.cancel_scope.cancel()
+            else:
+                release.set()
+    assert asyncio.all_tasks() - before == set()
+    assert not shell.steer('after turn')
+    prompts = [
+        part.content
+        for message in shell.session.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    expected = ['change direction', image] if attachments else 'change direction'
+    assert (expected in prompts) is not cancel
+
+
+@pytest.mark.parametrize('fail', [False, True])
+async def test_turn_drains_accepted_steering_before_finishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
+) -> None:
+    model_done, echo_started, release, completed = (anyio.Event() for _ in range(4))
+    tool_started, model_release = anyio.Event(), anyio.Event()
+    echo_prompt = StreamRenderer.echo_prompt
+
+    async def paused_echo(renderer: StreamRenderer, text: str) -> None:
+        echo_started.set()
+        await release.wait()
+        await echo_prompt(renderer, text)
+
+    monkeypatch.setattr(StreamRenderer, 'echo_prompt', paused_echo)
+
+    transcript = StringIO()
+    shell = create_shell(
+        Agent(TestModel(custom_output_text='answer')),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=transcript),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+
+    async def prompt(text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[str]:
+        tool_started.set()
+        await model_release.wait()
+        model_done.set()
+        if fail:
+            raise ValueError('final hook failed')
+        return await Agent(TestModel(custom_output_text='answer')).run('start')
+
+    # Isolate turn-owned feedback draining from model event rendering's shared lock.
+    monkeypatch.setattr(shell.session, 'prompt', prompt)
+
+    def steer(text: str, *, images: Sequence[BinaryContent] = ()) -> bool:
+        return True
+
+    monkeypatch.setattr(shell.session, 'steer', steer)
+
+    async def run() -> None:
+        result = await shell.run_turn(TurnStart(text='start'))
+        assert result.outcome == ('failed' if fail else 'completed'), transcript.getvalue()
+        completed.set()
+
+    before = asyncio.all_tasks()
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(run)
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await tool_started.wait()
+        assert shell.steer('first')
+        assert shell.steer('second')
+        model_release.set()
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await model_done.wait()
+            await echo_started.wait()
+        assert not completed.is_set()
+        release.set()
+    assert completed.is_set()
+    assert asyncio.all_tasks() == before
+    output = transcript.getvalue()
+    assert output.count('> first') == output.count('> second') == 1
+    assert output.index('> first') < output.index('> second')
+    if fail:
+        assert output.index('> second') < output.index('ValueError: final hook failed')
+    monkeypatch.undo()
+    assert not shell.steer('after turn')

@@ -58,6 +58,7 @@ class SessionSettings(Generic[DepsT, OutputT]):
     def _apply(self, key: str, updated: Settings) -> None:
         if key == 'model':
             self.session.model = updated.model
+            self.session.model_chosen = 'model' in updated.model_fields_set
         elif key == 'run.tool_retries':
             self.session.tool_retries = updated.tool_retries
         else:

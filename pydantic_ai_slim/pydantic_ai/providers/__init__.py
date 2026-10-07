@@ -9,10 +9,10 @@ import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, Self
 
 import anyio
-from typing_extensions import Self, TypeVar
+from typing_extensions import TypeVar
 
 from .._http import AsyncHTTPClient
 from ..exceptions import UserError

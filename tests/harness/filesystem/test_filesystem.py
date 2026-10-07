@@ -56,7 +56,9 @@ from pydantic_ai_harness.filesystem._toolset import (
 )
 from pydantic_ai_harness.shell._toolset import ShellToolset
 
+from ...workspace_fakes import RunOnlyWorkspaceBackend
 from .._tool_calls import call_tool, call_tools
+from .conftest import tools_path
 
 
 class ReadOnlyMount(LocalWorkspaceBackend):
@@ -316,6 +318,20 @@ class TestPathSecurity:
             await toolset.write_file('escape/new.txt', 'x', workspace=ws)
         assert not (outside / 'new.txt').exists()
 
+    async def test_symlink_to_outside_fails_closed_when_readlink_is_missing(
+        self,
+        toolset: FileSystemToolset[None],
+        fs_root: Path,
+        outside: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        (fs_root / 'escape').symlink_to(outside)
+        path = tools_path(tmp_path_factory.mktemp('bin'), exclude=frozenset({'readlink'}))
+        workspace = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(fs_root, env={'PATH': path}))
+
+        with pytest.raises(ToolFailed, match='readlink'):
+            await toolset.read_file('escape/secret.txt', workspace=workspace)
+
     async def test_symlink_to_a_protected_file_is_protected(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:
@@ -370,6 +386,19 @@ class TestPathSecurity:
         assert (
             workspace.realpath_calls == 0
         )  # command-backed search needs no per-result realpath under an unrestricted root
+
+    async def test_root_at_the_filesystem_root_without_patterns_walks_without_resolving_files(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / 'a.txt').write_text('x\n')
+        (tmp_path / 'b.txt').write_text('x\n')
+        toolset = FileSystem[None](root_dir='/', read_only_patterns=[]).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        workspace = CountingWorkspace(tmp_path)
+        # A read-only workspace runs no commands, so the search walks the files itself.
+        result = await toolset.search_files('^x$', workspace=ReadOnlyWorkspace(Workspace(workspace)))
+        assert result == 'a.txt:1:x\nb.txt:1:x'
+        assert workspace.realpath_calls == 1  # the walk's start directory, and no file it reads
 
     async def test_symlinked_working_directory_is_the_default_root(self, tmp_path: Path) -> None:
         (tmp_path / 'real').mkdir()
@@ -1293,10 +1322,16 @@ class TestSearchFiles:
         toolset = FileSystem[None](root_dir=fs_root).get_toolset()
         assert isinstance(toolset, FileSystemToolset)
         backend = FailingWorkspace(fs_root, {'read_bytes': WorkspaceError('unreadable')}, where='unreadable.txt')
-        result = await toolset.search_files('needle', workspace=FilesystemOnlyWorkspace(backend))
-        assert 'good.txt:1:needle' in result
-        assert 'large.txt' in result and 'unreadable.txt' in result
-        assert 'skipped' in result
+        # A read-only workspace runs no commands, so the search walks, with the file sizes its listings report.
+        workspace = ReadOnlyWorkspace(Workspace(backend))
+        assert (await toolset.search_files('needle', workspace=workspace)).splitlines() == [
+            'good.txt:1:needle',
+            '[2 files skipped (too large or unreadable): large.txt, unreadable.txt]',
+            '[3 hidden entries omitted; name a hidden path explicitly to include it]',
+        ]
+        assert await toolset.search_files('needle', path='large.txt', workspace=workspace) == (
+            '[1 files skipped (too large or unreadable): large.txt]'
+        )
 
     async def test_search_basic(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.search_files('Hello', workspace=ws)
@@ -1476,6 +1511,8 @@ class TestSearchFiles:
         (fs_root / 'escape_link.txt').symlink_to(outside / 'secret.txt')
         (fs_root / 'escape_dir').symlink_to(outside)
         assert await toolset.search_files('escaped', workspace=ws) == 'No matches found.'
+        # A read-only workspace runs no commands, so the search walks the files itself.
+        assert 'escape' not in await toolset.search_files('escaped', workspace=ReadOnlyWorkspace(Workspace(ws)))
 
 
 class TestFindFiles:
@@ -2505,6 +2542,25 @@ class TestWorkspaceBackends:
     async def test_unresolvable_subdirectory_is_skipped(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         workspace = FailingWorkspace(fs_root, {'realpath': PermissionError(errno.EACCES, 'denied')}, where='/subdir')
         assert 'hello.txt' in await toolset.find_files('**/*.txt', workspace=workspace)
+
+    async def test_workspace_failure_resolving_a_subdirectory_is_reported(
+        self, toolset: FileSystemToolset[None], fs_root: Path
+    ) -> None:
+        # Unlike an unresolvable subdirectory, a workspace failure is not skipped as one directory's problem.
+        workspace = FailingWorkspace(fs_root, {'realpath': WorkspaceError('backend refused')}, where='/subdir')
+        with pytest.raises(ToolFailed, match='backend refused'):
+            await toolset.find_files('**/*.txt', workspace=workspace)
+
+    @pytest.mark.parametrize('operation', ['realpath', 'read_bytes'])
+    async def test_file_removed_while_it_is_read_is_not_found(
+        self, toolset: FileSystemToolset[None], operation: str, fs_root: Path
+    ) -> None:
+        # The file goes after the tool named it: before a backend that resolves paths strictly
+        # resolves it, or between the `stat` and the read.
+        missing = FileNotFoundError(errno.ENOENT, 'No such file or directory')
+        workspace = FailingWorkspace(fs_root, {operation: missing}, where='hello.txt')
+        assert await toolset.read_file('hello.txt', workspace=workspace) == 'Path not found: hello.txt'
+        assert await toolset.file_info('hello.txt', workspace=workspace) == 'Path not found: hello.txt'
 
     async def test_unlistable_search_root_is_recoverable(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         workspace = FailingWorkspace(

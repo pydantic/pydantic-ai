@@ -49,7 +49,7 @@ Most agents ask more than one thing. Give the agent an output type and each fiel
 - A `bool` field's question is usually all it needs. Where the line between yes and no is subtle, as it is for "urgent", [`BoolCriteria`][pydantic_ai.output.BoolCriteria] says what a yes and a no mean. It is `Annotated` metadata, so the field stays a plain `bool` to every type checker and at runtime.
 
 ```python
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict
@@ -57,7 +57,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
 
 
-class Area(UseEnumMemberDocstrings, str, Enum):
+class Area(UseEnumMemberDocstrings, StrEnum):
     billing = 'billing'
     """Charges, invoices, plans and payment methods."""
 
@@ -116,7 +116,7 @@ A model can also cap how many options a pick-one or how many levels a rubric may
 The pieces combine into an agent that does real work. This one runs a support desk: it triages problems for the team that owns them, refunds charges the customer did not owe, checks the status page when a service might be down, and leaves anything that has to be written to a language model:
 
 ```python {title="support_desk.py"}
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -125,7 +125,7 @@ from pydantic_ai import Agent, BoolCriteria, UseEnumMemberDocstrings
 from pydantic_ai.models.fallback import FallbackModel
 
 
-class Area(UseEnumMemberDocstrings, str, Enum):
+class Area(UseEnumMemberDocstrings, StrEnum):
     billing = 'billing'
     """Charges, invoices, plans and payment methods."""
 
@@ -928,14 +928,14 @@ Each of these is a [capability](../capabilities/overview.md) hook, and none of t
 The simplest shape is one run. An [output function](../output.md#output-functions) makes the decision a signature rather than a string to map afterwards — and because the function *runs* on the model's pick, it can do the work it routed to, so the router's result is the answer:
 
 ```python {title="route_to_a_model.py"}
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import Agent, RunContext, UseEnumMemberDocstrings
 
 assistant = Agent(instructions='You are a helpful engineering assistant.')
 
 
-class Tier(UseEnumMemberDocstrings, str, Enum):
+class Tier(UseEnumMemberDocstrings, StrEnum):
     fast = 'fast'
     """A lookup, an extraction, or a change confined to one place."""
 
@@ -971,7 +971,7 @@ The argument's `Enum` becomes the pick-one question: its `Args:` entry is the qu
 A run is not one decision. [`SelectModel`][pydantic_ai.capabilities.SelectModel] is evaluated before each step, so the same question can be asked of the conversation as it stands rather than once up front — a conversation that starts simple and turns hard moves up when it turns:
 
 ```python {title="select_the_model_per_step.py"}
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import Agent, ModelSelectionContext, UseEnumMemberDocstrings
 from pydantic_ai.capabilities import SelectModel
@@ -981,7 +981,7 @@ fast = infer_model('openai:gpt-5.6-luna')
 capable = infer_model('openai:gpt-5.6-sol')
 
 
-class Tier(UseEnumMemberDocstrings, str, Enum):
+class Tier(UseEnumMemberDocstrings, StrEnum):
     fast = 'fast'
     """A lookup, or a change confined to one place."""
 
