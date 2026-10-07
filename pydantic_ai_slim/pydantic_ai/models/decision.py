@@ -501,9 +501,9 @@ class DecisionModel(Model[InterfaceClient]):
         """Whether an answer is one its question allows: of its kind, picking an offered option, and in range.
 
         A pick-one or a score gives a probability for exactly the options or levels offered, every probability and
-        confidence is from 0 to 1, the probabilities sum to one within rounding, and a score is within the rubric and one
-        its rounded probabilities can produce. A backend that checks its API's answers calls this, and adds the checks its
-        own API calls for.
+        confidence is from 0 to 1, the probabilities sum to one within rounding, and a score is within the rubric and
+        one its rounded probabilities can produce. A backend that checks its API's answers calls this, and adds the
+        checks its own API calls for.
         """
         # Each range check is a chained comparison, which is false for NaN.
         if isinstance(question, NoulQuestion):
