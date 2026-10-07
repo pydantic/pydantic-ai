@@ -89,23 +89,25 @@ def decisions(*answers: Mapping[str, object]) -> httpx2.Response:
 
 
 URGENT = {'type': 'predicate', 'name': 'urgent', 'probability': 0.91}
+AREA_PROBABILITIES = [{'value': 'billing', 'probability': 0.94}, {'value': 'bug', 'probability': 0.06}]
 AREA = {
     'type': 'choice',
     'name': 'area',
     'choice': 'billing',
-    'probabilities': [{'value': 'billing', 'probability': 0.94}, {'value': 'bug', 'probability': 0.06}],
+    'probabilities': AREA_PROBABILITIES,
     'confidence': 0.88,
 }
 REFUND = {'type': 'predicate', 'name': 'refund', 'probability': 0.2}
+FRUSTRATION_PROBABILITIES = [
+    {'value': 0, 'label': '0', 'probability': 0.05},
+    {'value': 1, 'label': '1', 'probability': 0.2},
+    {'value': 2, 'label': '2', 'probability': 0.75},
+]
 FRUSTRATION = {
     'type': 'score',
     'name': 'frustration',
     'score': 1.7,
-    'probabilities': [
-        {'value': 0, 'label': '0', 'probability': 0.05},
-        {'value': 1, 'label': '1', 'probability': 0.2},
-        {'value': 2, 'label': '2', 'probability': 0.75},
-    ],
+    'probabilities': FRUSTRATION_PROBABILITIES,
     'confidence': 0.55,
 }
 
@@ -671,14 +673,15 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
                 URGENT,
                 {
                     **AREA,
-                    'probabilities': [
-                        {'value': 'billing', 'probability': 0.94},
-                        {'value': 'bug', 'probability': 0.06},
-                        {'value': True, 'probability': 0.0},
-                    ],
+                    'probabilities': [*AREA_PROBABILITIES, {'value': True, 'probability': 0.0}],
                 },
             ),
             id='boolean option',
+        ),
+        pytest.param(
+            Ticket,
+            (URGENT, {**AREA, 'probabilities': [*AREA_PROBABILITIES, {'value': 'bug', 'probability': 0.0}]}),
+            id='option twice',
         ),
         pytest.param(
             Ticket,
@@ -688,6 +691,17 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': 2.5}), id='score past the rubric'),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': float('nan')}), id='score not a number'),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'probabilities': []}), id='no levels'),
+        pytest.param(
+            Mood,
+            (
+                REFUND,
+                {
+                    **FRUSTRATION,
+                    'probabilities': [*FRUSTRATION_PROBABILITIES, {'value': 2, 'label': '2', 'probability': 0.0}],
+                },
+            ),
+            id='level twice',
+        ),
     ],
 )
 async def test_answers_match_questions(

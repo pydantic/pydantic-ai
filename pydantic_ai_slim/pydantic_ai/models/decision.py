@@ -240,21 +240,17 @@ def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  #
             isinstance(answer, ChoiceAnswer)
             and answer.choice in question.criteria
             and answer.probabilities.keys() == question.criteria.keys()
-            and _probabilities_fit(answer)
+            and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
         )
     elif isinstance(question, ScoreQuestion):
         return (
             isinstance(answer, ScoreAnswer)
             and answer.probabilities.keys() == set(range(len(question.criteria)))
             and 0 <= answer.score <= len(question.criteria) - 1
-            and _probabilities_fit(answer)
+            and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
         )
     else:
         assert_never(question)
-
-
-def _probabilities_fit(answer: ChoiceAnswer | ScoreAnswer) -> bool:
-    return all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
 
 
 _UNSUPPORTED_FIELD_HINT = (

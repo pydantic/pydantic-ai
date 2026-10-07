@@ -275,7 +275,10 @@ def _level(label: str, meaning: JsonValue) -> QuestionQuestionParamScoreLevel:
 def _answer(
     answer: AnswerAnswerResourcePredicate | AnswerAnswerResourceChoice | AnswerAnswerResourceScore,
 ) -> DecisionAnswer | None:
-    """A Decisions API answer as the protocol's, or `None` for a boolean option, which no question here offers."""
+    """A Decisions API answer as the protocol's, or `None` for one no question here allows.
+
+    That is a boolean option, which no question here offers, or an option or level given twice.
+    """
     if isinstance(answer, AnswerAnswerResourcePredicate):
         return NoulAnswer(noul=answer.probability)
     elif isinstance(answer, AnswerAnswerResourceChoice):
@@ -287,6 +290,8 @@ def _answer(
         return ChoiceAnswer(choice=answer.choice, confidence=answer.confidence, probabilities=probabilities)
     elif isinstance(answer, AnswerAnswerResourceScore):
         probabilities = {level.value: level.probability for level in answer.probabilities}
+        if len(probabilities) != len(answer.probabilities):
+            return None
         return ScoreAnswer(score=answer.score, confidence=answer.confidence, probabilities=probabilities)
     else:
         assert_never(answer)
