@@ -448,7 +448,7 @@ engine:
         // Which interpreter owns those user site-packages matters: only the one
         // that ran the pre-agent `pip install --user` can import them, and the
         // sandbox prelude prepends every `bin` directory under the runner tool
-        // cache — which caches several Python versions — so a bare `python3`
+        // cache (which caches several Python versions), so a bare `python3`
         // there resolves by `find` order rather than to the installing
         // interpreter. `actions/setup-python` names that one in `pythonLocation`;
         // putting its `bin` on PATH also gives the agent's own shell tool a
@@ -474,7 +474,7 @@ engine:
         const configuredBaseUrl = process.env.PAI_BASE_URL;
 
         // The client sends the model name verbatim, minus the provider marker that
-        // selects one of its clients, so the bare model ID reaches the api-proxy —
+        // selects one of its clients. The bare model ID reaches the api-proxy,
         // which steers to the configured provider by the port it is reached on, not
         // by a prefix in the model name: Copilot rejects `copilot/<model>` with
         // `model_not_supported`.
@@ -494,8 +494,8 @@ engine:
         const useMessagesAPI = !configuredBaseUrl && modelProvider === "anthropic";
         // The dotted-alias rewrite describes the api-proxy's Copilot backend,
         // which publishes Copilot's Claude models under dotted IDs. Every other
-        // destination — the anthropic and openai backends, or an endpoint named
-        // by PAI_BASE_URL — gets the id the workflow wrote: a model actually
+        // destination (the anthropic and openai backends, or an endpoint named
+        // by PAI_BASE_URL) gets the id the workflow wrote: a model actually
         // called `claude-sonnet-4-5` there has to arrive as that.
         const model = !configuredBaseUrl && modelProvider === "copilot"
           ? requestedModel.replace(/^(claude-(?:haiku|sonnet|opus)-\d+)-(\d+)$/, "$1.$2")
@@ -546,7 +546,7 @@ engine:
               // `endpoint.baseUrl` is the models-listing origin, while the
               // OpenAI-compatible client posts to `<base>/chat/completions`, so the
               // path prefix carried by models_url (`/v1` on some providers) has to
-              // come along — and this helper applies the same api-proxy ->
+              // come along. This helper applies the same api-proxy ->
               // host.docker.internal rewrite.
               //
               // The Anthropic client keeps the origin instead: it appends
