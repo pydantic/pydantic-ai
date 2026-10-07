@@ -494,6 +494,11 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not scores:
             return self._empty_return()
 
+        # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-discovered
+        # tool must never displace an undiscovered match when `max_results` trims — it only
+        # fills whatever slots are left over. Corpus order breaks remaining ties.
+        # A negative `max_results` keeps its slice semantics (drop that many from the end), so it
+        # ranks every match before slicing.
         indices = nsmallest(
             len(scores) if self.max_results < 0 else self.max_results,
             scores,
