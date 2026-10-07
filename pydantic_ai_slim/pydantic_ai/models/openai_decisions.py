@@ -268,13 +268,16 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         """The system / model provider."""
         return self._provider.name
 
-    async def _prepare_decision_request(self, messages: list[ModelMessage], *, turn: bool) -> DecisionRequest:
+    async def _prepare_decision_request(
+        self, messages: list[ModelMessage], model_settings: DecisionModelSettings, *, turn: bool
+    ) -> DecisionRequest:
+        _validate_extra_body(model_settings.get('extra_body'))
         preparer = _DecisionImagePreparer()
         prepared_messages = await preparer.prepare(messages)
         if not preparer.images:
-            return await super()._prepare_decision_request(messages, turn=turn)
+            return await super()._prepare_decision_request(messages, model_settings, turn=turn)
 
-        template = await super()._prepare_decision_request(prepared_messages, turn=turn)
+        template = await super()._prepare_decision_request(prepared_messages, model_settings, turn=turn)
         content: list[DecisionInputPartUnionParam] = [
             DecisionInputTextParam(type='input_text', text=_text(template.state))
         ]
@@ -296,10 +299,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         extra_headers: dict[str, str] = dict(model_settings.get('extra_headers', {}))
         if all(name.lower() != 'user-agent' for name in extra_headers):
             extra_headers['User-Agent'] = get_user_agent()
-        if (extra_body := model_settings.get('extra_body')) is not None and not isinstance(extra_body, Mapping):
-            raise UserError(
-                f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.'
-            )
+        _validate_extra_body(model_settings.get('extra_body'))
         with _map_api_errors(self._model_name, self._provider.model_id_namespace):
             response = await self.client.decisions.with_raw_response.create(
                 model=self._model_name,
@@ -360,6 +360,11 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             # The body carries no ID of its own.
             provider_response_id=response.request_id,
         )
+
+
+def _validate_extra_body(extra_body: object) -> None:
+    if extra_body is not None and not isinstance(extra_body, Mapping):
+        raise UserError(f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.')
 
 
 def _text(value: JsonValue) -> str:

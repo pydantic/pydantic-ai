@@ -654,7 +654,7 @@ class DecisionModel(Model[InterfaceClient]):
                 # a choice question, like the last tool left, and handing it off needs no request either.
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
-            request_template = await self._prepare_decision_request(messages, turn=done)
+            request_template = await self._prepare_decision_request(messages, settings, turn=done)
             async with self._decide(
                 dataclasses.replace(request_template, questions=ask.questions), settings, fields=True
             ) as (
@@ -667,7 +667,7 @@ class DecisionModel(Model[InterfaceClient]):
 
         route_questions: dict[str, DecisionQuestion] = {}
         route_key = _route_question(route_questions, routes, output_tools, tools, instructions, limits)
-        request_template = await self._prepare_decision_request(messages, turn=done)
+        request_template = await self._prepare_decision_request(messages, settings, turn=done)
         speculation = _Speculation.about(routes, output_tools, request_template.state, instructions, limits)
         questions = speculation.questions()
         questions.update(route_questions)
@@ -742,7 +742,9 @@ class DecisionModel(Model[InterfaceClient]):
             finish_reason='tool_call',
         )
 
-    async def _prepare_decision_request(self, messages: list[ModelMessage], *, turn: bool) -> DecisionRequest:
+    async def _prepare_decision_request(
+        self, messages: list[ModelMessage], model_settings: DecisionModelSettings, *, turn: bool
+    ) -> DecisionRequest:
         """Prepare state shared by every request in this step, without adding questions yet."""
         return DecisionRequest(state=_map_messages(messages, turn=turn), questions={})
 
@@ -799,7 +801,7 @@ class DecisionModel(Model[InterfaceClient]):
         fill = _Ask.to_fill(tool, instructions, limits, label=label)
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
-        request_template = await self._prepare_decision_request(messages, turn=turn)
+        request_template = await self._prepare_decision_request(messages, settings, turn=turn)
         response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)

@@ -666,6 +666,20 @@ async def test_extra_body_must_be_a_mapping(allow_model_requests: None):
     assert captured.requests == []
 
 
+async def test_decide_rejects_invalid_extra_body_before_a_request(allow_model_requests: None):
+    """The public `decide` method validates `extra_body` even when called without an agent run."""
+    captured = Captured(ticket_answers)
+    model = mock_model(captured)
+
+    with pytest.raises(UserError, match='`extra_body` must be a mapping'):
+        await model.decide(
+            DecisionRequest(state='Charged twice.', questions={'q': NoulQuestion()}),
+            OpenAIDecisionsModelSettings(extra_body=['not', 'a', 'mapping']),
+        )
+
+    assert captured.requests == []
+
+
 @pytest.mark.parametrize(
     'response',
     [
@@ -1367,6 +1381,31 @@ async def test_route_limit_prevents_image_download(allow_model_requests: None):
     assert captured.requests == []
 
 
+async def test_invalid_extra_body_prevents_image_download(allow_model_requests: None):
+    """Invalid `extra_body` settings are rejected before downloading an image prompt."""
+    captured = Captured(boolean_answers)
+    settings: OpenAIDecisionsModelSettings = {'extra_body': ['not', 'a', 'mapping']}
+    agent = Agent(
+        mock_model(captured),
+        output_type=bool,
+        instructions='Does the input contain an image?',
+        model_settings=settings,
+    )
+
+    with (
+        patch(
+            'pydantic_ai.models.openai_decisions.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download failed'),
+        ) as download,
+        pytest.raises(UserError, match='`extra_body` must be a mapping'),
+    ):
+        await agent.run([ImageUrl('https://example.com/missing.png')])
+
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
 async def test_unfillable_forced_tool_prevents_image_download(allow_model_requests: None):
     """A forced tool with an unsupported argument is handed off before downloading a history image."""
     history: list[ModelMessage] = [
@@ -1404,6 +1443,47 @@ async def test_unfillable_forced_tool_prevents_image_download(allow_model_reques
         )
 
     assert exc_info.value.route == 'write_note'
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
+@pytest.mark.parametrize(
+    'model_settings',
+    [
+        pytest.param(None, id='without-settings'),
+        pytest.param(OpenAIDecisionsModelSettings(extra_body=['ignored']), id='ignored-extra-body'),
+    ],
+)
+async def test_forced_argumentless_tool_skips_image_preparation(
+    allow_model_requests: None, model_settings: OpenAIDecisionsModelSettings | None
+):
+    """A sole argumentless route skips image preparation even with irrelevant request settings."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl('https://example.com/missing.png')])]),
+        ModelResponse(parts=[ToolCallPart('inspect_ticket', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('inspect_ticket', 'Inspected.', 'call_1')]),
+    ]
+    function_tools: list[ToolDefinition] = [
+        ToolDefinition(name='inspect_ticket', description='Inspect the ticket.'),
+        ToolDefinition(name='finish', description='Finish the task.'),
+    ]
+    captured = Captured(boolean_answers)
+    model = mock_model(captured)
+
+    with patch(
+        'pydantic_ai.models.openai_decisions.download_item',
+        new_callable=AsyncMock,
+        side_effect=httpx2.ConnectError('image download failed'),
+    ) as download:
+        response = await model.request(
+            history,
+            model_settings,
+            ModelRequestParameters(function_tools=function_tools, allow_text_output=False),
+        )
+
+    [tool_call] = [part for part in response.parts if isinstance(part, ToolCallPart)]
+    assert tool_call.tool_name == 'finish'
+    assert tool_call.args == {}
     download.assert_not_awaited()
     assert captured.requests == []
 
