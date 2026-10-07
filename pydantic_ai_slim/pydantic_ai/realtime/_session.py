@@ -26,6 +26,7 @@ from .. import _agent_graph, _operations
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._genai_prices import fill_response_cost
 from .._run_context import context_window_fraction
+from .._session import ActiveRun, SessionRuntime
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -676,11 +677,13 @@ class _RealtimePendingMessages(PendingMessageQueue):
     def bind(self, on_append: Callable[[PendingMessagePriority], None]) -> None:
         self._on_append = on_append
 
-    def append(self, pending: PendingMessage) -> None:
+    def try_append(self, pending: PendingMessage) -> bool:
         _pending_message_text(pending)
-        super().append(pending)
+        if not super().try_append(pending):
+            return False
         if self._on_append is not None:
             self._on_append(pending.priority)
+        return True
 
     def has_priority(self, priority: PendingMessagePriority) -> bool:
         with self._lock:
@@ -1120,6 +1123,9 @@ class RealtimeSession:
         self._connection._set_audio_commit_listener(self._place_held_commit)  # pyright: ignore[reportPrivateUsage]
 
         self._session_instrumentation.start_session_span()
+        for priority in ('asap', 'when_idle'):
+            if self._pending_messages.has_priority(priority):
+                self._notify_pending_messages(priority)
 
         return self
 
@@ -1767,6 +1773,20 @@ class RealtimeSession:
             messages=self.all_messages(),
             usage=copy(self.usage),
             conversation_id=self._conversation_id,
+        )
+
+    def _attach_owner(self, owner: SessionRuntime) -> None:
+        assert self._run_id is not None
+        self._tool_operations = owner.operations
+        owner.attach(
+            ActiveRun(
+                run_id=self._run_id,
+                pending_messages=self._pending_messages,
+                snapshot=lambda: self._result.conversation if self._result is not None else self.conversation,
+            ),
+            # A short-circuit or recovered setup never runs a driver. Leave all input on the
+            # owner, including content this particular driver could not accept.
+            transfer_pending=not self._closed,
         )
 
     @property

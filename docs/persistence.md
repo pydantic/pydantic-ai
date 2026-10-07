@@ -103,6 +103,12 @@ async def main():
 
 [`SessionState`][pydantic_ai.session.SessionState] contains a detached `Conversation`, pending input, tool-operation facts, and the active run ID if captured during a run. It does not contain connections, dependencies, tasks, or the durable engine's execution journal. Store it in trusted application storage; it is not a client-supplied request format.
 
+### Ordinary and realtime runs on one owner
+
+[`session.realtime(model).session()`][pydantic_ai.session.AgentSession.realtime] runs a live interaction against the same owner as `session.run(...)`. It uses the session's default dependencies, conversation, accumulated usage, and tool-operation records. The live attachment is one run, including all of its speech turns; close it before starting another ordinary or realtime run. Opening a second run concurrently raises `UserError` instead of racing two writers over the conversation.
+
+`session.enqueue(...)` submits to the active driver, or keeps input for the next run while idle. Realtime accepts the same queued text content as [`RealtimeSession.enqueue`][pydantic_ai.realtime.RealtimeSession.enqueue]; unsupported queued content fails attachment and remains available for a later ordinary run. A short-circuited live run also leaves the idle inbox untouched. `session.cancel()` cancels the active run, including its lifecycle hooks and connection setup, without closing the owner. Run teardown settles history and drains tool tasks before the next run can begin.
+
 ### Reconciling interrupted work
 
 Tool completion and result delivery are different facts. A tool can finish its external effect while the following model request fails. Its operation then retains the normalized result with `execution='completed'` and `delivery='uncertain'`. Opening that checkpoint directly is rejected.
@@ -151,4 +157,4 @@ Weigh it against a store of your own: it is one provider's feature, OpenAI docum
 
 ## What isn't here
 
-Nothing here snapshots state in the middle of a step, so there is no "rewind to step 4 of a half-finished run and replay from there" inside a single run. Snapshots are taken at settled boundaries between runs, not mid-node. For a run that must survive a crash *while it is executing*, that is what [durable execution](durable_execution/overview.md) is for.
+A `SessionState` captured during execution records the observable conversation and operation frontier, not a serialized execution stack. It cannot rewind to a graph node or resume a live socket at an arbitrary frame. Reconcile and abandon that run before starting another, or use [durable execution](durable_execution/overview.md) when the execution itself must survive a crash.

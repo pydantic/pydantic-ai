@@ -23,7 +23,7 @@ from contextlib import (
     contextmanager,
 )
 from contextvars import ContextVar
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NamedTuple, Self, cast, overload
@@ -67,7 +67,7 @@ from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import dispatch_event_stream, set_current_run_context
-from .._session import ModelResources, SessionRuntime, take_session
+from .._session import ActiveRun, ModelResources, SessionRuntime, take_session
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -1694,7 +1694,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 persistent=False,
             )
             session.claim()
-        session.attach(state)
+        state.tool_operations = session.operations
+        state.deferred_tool_requests = deepcopy(session.conversation.deferred_tool_requests)
+        assert isinstance(state.pending_messages, _enqueue.PendingMessageQueue)
+        session.attach(
+            ActiveRun(
+                run_id=state.run_id,
+                pending_messages=state.pending_messages,
+                snapshot=lambda: Conversation(
+                    messages=state.message_history,
+                    usage=state.usage,
+                    conversation_id=state.conversation_id,
+                    deferred_tool_requests=state.deferred_tool_requests,
+                ),
+            )
+        )
         historical_response = next(
             (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
             None,
@@ -3622,6 +3636,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         from ..realtime import RealtimeModel, infer_realtime_model
 
+        owner = take_session(self) if run_lifecycle else None
+        if owner is not None and (
+            message_history is not owner.conversation.messages
+            or conversation_id != owner.conversation.conversation_id
+            or usage is not owner.conversation.usage
+        ):
+            raise exceptions.UserError(
+                'The agent wrapper did not delegate to its wrapped agent with the session conversation.'
+            )
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
 
@@ -3837,6 +3860,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 await session_stack.enter_async_context(_translate_cancellation())
                 cancellation.bind()
                 session_stack.callback(cancellation.finish)
+                if owner is not None:
+                    owner.bind_cancellation(cancellation)
                 lifecycle = await session_stack.enter_async_context(
                     _run_lifecycle_hooks(
                         run_capability,
@@ -3866,6 +3891,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             instrumentation_settings=session_instrumentation_settings,
                             conversation_id=conversation_id,
                             run_id=run_id,
+                            owner=owner,
                             lifecycle=lifecycle_state,
                             short_circuited=True,
                         )
@@ -3968,6 +3994,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 conversation_id=conversation_id,
                 run_id=run_id,
                 wrap_event_stream=wrap_event_stream,
+                owner=owner,
                 lifecycle=lifecycle_state,
             )
             try:
@@ -3998,6 +4025,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=session_instrumentation_settings,
             conversation_id=conversation_id,
             run_id=run_id,
+            owner=owner,
             lifecycle=lifecycle_state,
             short_circuited=True,
         )
@@ -4061,6 +4089,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             message_history=message_history,
             run_lifecycle=True,
         ) as resolved:
+            owner = resolved.owner
             lifecycle = resolved.lifecycle
             assert lifecycle is not None
 
@@ -4092,6 +4121,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
                 session._result = result  # pyright: ignore[reportPrivateUsage]
                 session._closed = True  # pyright: ignore[reportPrivateUsage]
+                if owner is not None:
+                    session._attach_owner(owner)  # pyright: ignore[reportPrivateUsage]
                 return session
 
             if resolved.short_circuited:
@@ -4173,6 +4204,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_settings=resolved.model_settings,
                     wrap_event_stream=resolved.wrap_event_stream,
                 )
+                if owner is not None:
+                    session._attach_owner(owner)  # pyright: ignore[reportPrivateUsage]
                 lifecycle.session = session
                 resolved.run_context.realtime_session = session
                 async with session:

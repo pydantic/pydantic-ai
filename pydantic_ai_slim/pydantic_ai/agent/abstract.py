@@ -61,6 +61,7 @@ from ..toolsets import AbstractToolset
 from ..workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 if TYPE_CHECKING:
+    from pydantic_ai._session import SessionRuntime
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
     from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -2237,6 +2238,7 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     wrap_event_stream: (
         Callable[[AsyncIterable[_messages.AgentStreamEvent]], AsyncIterable[_messages.AgentStreamEvent]] | None
     ) = None
+    owner: SessionRuntime | None = None
     lifecycle: _RealtimeSessionLifecycle | None = None
     """Set only when the caller asked for run-lifecycle hooks, i.e. by `_open_realtime_session`."""
     short_circuited: bool = False

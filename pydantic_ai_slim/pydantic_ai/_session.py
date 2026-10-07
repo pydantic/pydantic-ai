@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
-from typing import TYPE_CHECKING
 
 import anyio
 from anyio.abc import TaskGroup, TaskStatus
 
+from . import _utils
 from ._cancel import RunCancellation
 from ._enqueue import PendingMessage, PendingMessageQueue
 from ._operations import ToolOperation
@@ -25,8 +25,18 @@ from .conversation import Conversation
 from .exceptions import UserError
 from .models import Model
 
-if TYPE_CHECKING:
-    from ._agent_graph import GraphAgentState
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ActiveRun:
+    """The session's driver-independent lease: identity, inbox, and current conversation.
+
+    The driver keeps its own graph or duplex state. Its queue is never replaced, so live
+    notification and validation remain attached to the same object held by RunContexts.
+    """
+
+    run_id: str
+    pending_messages: PendingMessageQueue
+    snapshot: Callable[[], Conversation]
 
 
 @dataclasses.dataclass
@@ -108,7 +118,7 @@ class SessionRuntime:
         self.inferred_models: dict[str, Model] = {}
         self.operations: dict[str, ToolOperation] = {}
         self._inbox = PendingMessageQueue(deepcopy(pending) if pending else ())
-        self._active: GraphAgentState | None = None
+        self._active: ActiveRun | None = None
         self._result_conversation: Conversation | None = None
         self._claimed = False
         self._cancellation: RunCancellation | None = None
@@ -146,14 +156,17 @@ class SessionRuntime:
         elif cancellation is not None:
             cancellation.cancel()
 
-    def attach(self, state: GraphAgentState) -> None:
+    def attach(self, run: ActiveRun, *, transfer_pending: bool = True) -> None:
         with self._lock:
             assert self._claimed and self._active is None
-            state.pending_messages = self._inbox
-            state.tool_operations = self.operations
-            state.deferred_tool_requests = deepcopy(self.conversation.deferred_tool_requests)
-            self._inbox = PendingMessageQueue()
-            self._active = state
+            if transfer_pending:
+                # Validate the whole transfer before consuming the idle inbox. An incompatible
+                # input (e.g. non-text realtime enqueue) must remain available to another driver.
+                for pending in self._inbox.snapshot():
+                    run.pending_messages.append(pending)
+                self._inbox.close_and_take()
+                self._inbox = PendingMessageQueue()
+            self._active = run
 
     def require_attached(self) -> None:
         if self._active is None:
@@ -165,7 +178,6 @@ class SessionRuntime:
                 raise UserError('`enqueue` is not available because the agent session has closed.')
             if self._active is not None:
                 queue = self._active.pending_messages
-                assert isinstance(queue, PendingMessageQueue)
                 ctx = get_current_run_context()
                 if (
                     ctx is not None
@@ -188,14 +200,8 @@ class SessionRuntime:
             run_id = None
             if self._active is not None:
                 state = self._active
-                conversation = Conversation(
-                    messages=state.message_history,
-                    usage=state.usage,
-                    conversation_id=state.conversation_id,
-                    deferred_tool_requests=state.deferred_tool_requests,
-                )
+                conversation = state.snapshot()
                 queue = state.pending_messages
-                assert isinstance(queue, PendingMessageQueue)
                 pending.extend(queue.snapshot())
                 run_id = state.run_id
             pending.extend(self._inbox.snapshot())
@@ -211,14 +217,8 @@ class SessionRuntime:
             self._result_conversation = None
             if self._active is not None:
                 state = self._active
-                self.conversation = conversation or Conversation(
-                    messages=state.message_history,
-                    usage=state.usage,
-                    conversation_id=state.conversation_id,
-                    deferred_tool_requests=state.deferred_tool_requests,
-                )
+                self.conversation = conversation or state.snapshot()
                 queue = state.pending_messages
-                assert isinstance(queue, PendingMessageQueue)
                 if self.persistent:
                     # Close and transfer atomically; a worker thread can still hold this run's context.
                     self._inbox = PendingMessageQueue([*queue.close_and_take(), *self._inbox.snapshot()])
@@ -250,9 +250,13 @@ def bind_session(agent: object, session: SessionRuntime) -> Generator[None]:
         _SESSION_BINDING.reset(token)
 
 
-def take_session(agent: object, conversation: Conversation | None) -> SessionRuntime | None:
+def take_session(
+    agent: object, conversation: Conversation | None | _utils.Unset = _utils.UNSET
+) -> SessionRuntime | None:
     binding = _SESSION_BINDING.get()
-    if binding is None or binding[0] is not agent or binding[1].conversation is not conversation:
+    if binding is None or binding[0] is not agent:
+        return None
+    if _utils.is_set(conversation) and binding[1].conversation is not conversation:
         return None
     _SESSION_BINDING.set(None)
     return binding[1]

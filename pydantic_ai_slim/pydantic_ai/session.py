@@ -21,6 +21,7 @@ from .agent.abstract import (
     AbstractAgent,
     AgentMetadata,
     AgentModelSettings,
+    AgentRealtime,
     AgentRetries,
     AgentRunEvents,
     EventStreamHandler,
@@ -38,6 +39,8 @@ from .workspaces import WorkspaceBackend, WorkspaceRef
 
 if TYPE_CHECKING:
     from .agent.spec import AgentSpec
+    from .realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from .realtime.model import RealtimeProviderSession
 
 __all__ = ('AgentSession', 'SessionState', 'SessionStateTypeAdapter', 'ToolOperation')
 
@@ -227,6 +230,28 @@ class _RunOptions(TypedDict, Generic[AgentDepsT], total=False):
 
 class _InstructedRunOptions(_RunOptions[AgentDepsT], total=False):
     instructions: _instructions.AgentInstructions[AgentDepsT]
+
+
+class _RealtimeOptions(TypedDict, Generic[AgentDepsT], total=False):
+    model_settings: RealtimeModelSettings | None
+    instructions: _instructions.AgentInstructions[AgentDepsT]
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None
+    capabilities: Sequence[AgentCapability[AgentDepsT]] | None
+    usage: _usage.RunUsage | None
+    usage_limits: _usage.UsageLimits | None
+    metadata: AgentMetadata[AgentDepsT] | None
+    conversation_id: str | None
+    run_id: str | None
+    message_history: Sequence[messages.ModelMessage] | None
+
+
+class _RealtimeSessionOptions(_RealtimeOptions[AgentDepsT], total=False):
+    audio_retention: AudioRetention
+    handle_barge_in: bool
+    retain_images_every_n: int
+    retain_images_max: int | None
+    retain_audio_max_seconds: float | None
+    provider_session: RealtimeProviderSession | None
 
 
 class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
@@ -654,6 +679,47 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
                 yield run
             if run.result is not None:
                 self._runtime.record_result(run.result.conversation)
+
+    def realtime(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        conversation: Conversation | None = None,
+        **kwargs: Unpack[_RealtimeOptions[AgentDepsT]],
+    ) -> AgentRealtime[AgentDepsT]:
+        """Bind a live interaction to this session's exclusive conversation owner.
+
+        The existing `.session()` attachment is one Run. Its history and pending input are
+        returned to this owner before another ordinary or live Run can begin.
+        """
+        if conversation is not None or any(
+            kwargs.get(key) is not None for key in ('message_history', 'conversation_id', 'usage')
+        ):
+            raise UserError('The session owns `conversation`, `message_history`, `conversation_id`, and `usage`.')
+        return super().realtime(model, deps=deps if _utils.is_set(deps) else self._deps, **kwargs)
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        **kwargs: Unpack[_RealtimeSessionOptions[AgentDepsT]],
+    ) -> AsyncGenerator[RealtimeSession]:
+        if any(kwargs.get(key) is not None for key in ('message_history', 'conversation_id', 'usage')):
+            raise UserError('The session owns `message_history`, `conversation_id`, and `usage`.')
+        async with self._execution():
+            conversation = self._runtime.conversation
+            if conversation.deferred_tool_requests is not None:
+                raise UserError("Resolve the conversation's deferred tools before starting a realtime run.")
+            kwargs['message_history'] = conversation.messages
+            kwargs['conversation_id'] = conversation.conversation_id
+            kwargs['usage'] = conversation.usage
+            async with self.wrapped._open_realtime_session(model, deps=deps, **kwargs) as live:
+                self._runtime.require_attached()
+                yield live
+            self._runtime.record_result(live.result.conversation if live.result is not None else live.conversation)
 
     def _prepare_options(self, options: _RunOptions[AgentDepsT]) -> None:
         if any(options.get(key) is not None for key in ('conversation', 'message_history', 'conversation_id', 'usage')):
