@@ -10,23 +10,34 @@ from typing import Any
 import anyio
 import pytest
 
-from pydantic_ai import Agent, AgentRunResult, RunContext, UserError
+from pydantic_ai import Agent, AgentRunResult, Conversation, DeferredToolRequests, RunContext, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.exceptions import RunCancelled
-from pydantic_ai.messages import BinaryImage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import BinaryImage, ModelRequest, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import RealtimeSession
-from pydantic_ai.realtime.codec import ToolCall, ToolResult
+from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeInput, ToolCall
+from pydantic_ai.usage import RunUsage
 
 from .test_session import BlockingRealtimeConnection, FakeRealtimeModel
 
 READINESS_WAIT_TIMEOUT = 10
 
 
+class AcknowledgedConnection(BlockingRealtimeConnection):
+    def __init__(self, events: list[RealtimeCodecEvent]) -> None:
+        super().__init__(events)
+        self.sent_event = asyncio.Event()
+
+    async def send(self, content: RealtimeInput) -> None:
+        await super().send(content)
+        self.sent_event.set()
+
+
 async def test_realtime_run_shares_owner_history_operations_and_dependencies():
-    connection = BlockingRealtimeConnection([ToolCall(tool_name='value', tool_call_id='call', args='{}')])
+    connection = AcknowledgedConnection([ToolCall(tool_name='value', tool_call_id='call', args='{}')])
     model = FakeRealtimeModel(connection, profile={'supports_session_seeding': True})
     contexts: list[RunContext[str]] = []
     agent = Agent(TestModel(call_tools=[]), deps_type=str)
@@ -44,10 +55,11 @@ async def test_realtime_run_shares_owner_history_operations_and_dependencies():
             with pytest.raises(UserError, match='one run at a time'):
                 async with owner.realtime(model).session():
                     pass
+            # Start receiving through a session-owned tap; this test observes tool completion,
+            # not the event iterator's exhaustion.
+            live.stream_transcripts()
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                async for _ in live:
-                    if any(isinstance(sent, ToolResult) for sent in connection.sent):
-                        break
+                await connection.sent_event.wait()
             checkpoint = owner.state
             assert checkpoint.active_run_id != first.run_id
             assert checkpoint.operations[0].execution == 'completed'
@@ -68,19 +80,17 @@ async def test_realtime_run_shares_owner_history_operations_and_dependencies():
 
 @pytest.mark.parametrize('initial', [False, True])
 async def test_realtime_owner_enqueue_wakes_driver(initial: bool):
-    connection = BlockingRealtimeConnection([])
+    connection = AcknowledgedConnection([])
     model = FakeRealtimeModel(connection)
     agent = Agent()
     async with agent.session() as owner:
         if initial:
             owner.enqueue('queued from owner')
-        async with owner.realtime(model).session() as live:
+        async with owner.realtime(model).session():
             if not initial:
                 owner.enqueue('queued from owner')
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                async for _ in live:
-                    if connection.sent:
-                        break
+                await connection.sent_event.wait()
             assert connection.sent == ['queued from owner']
         assert any(
             isinstance(message, ModelRequest)
@@ -98,7 +108,7 @@ async def test_realtime_invalid_inbox_transfer_preserves_all_pending_input():
         pending = owner.state.pending
         with pytest.raises(UserError, match='text'):
             async with owner.realtime(FakeRealtimeModel(connection)).session():
-                pytest.fail('Invalid input must fail before yielding the session')
+                pass
         assert owner.state.pending == pending
         assert owner.state.active_run_id is None
         assert connection.sent == []
@@ -122,10 +132,9 @@ async def test_realtime_cancellation_releases_owner_and_drains_tools(external: b
     async def hold() -> str:
         started.set()
         try:
-            await asyncio.Event().wait()
+            return await asyncio.Future[str]()
         finally:
             stopped.set()
-        return 'unreachable'  # pragma: no cover
 
     connection = BlockingRealtimeConnection([ToolCall(tool_name='hold', tool_call_id='hold', args='{}')])
     async with agent.session() as owner:
@@ -156,9 +165,8 @@ async def test_realtime_cancellation_releases_owner_and_drains_tools(external: b
             )
             await owner.run('continue')
         finally:
-            if not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     assert not (asyncio.all_tasks() - before)
 
 
@@ -205,7 +213,7 @@ async def test_realtime_owner_cancel_reaches_before_run_hook():
                 async with owner.realtime(
                     FakeRealtimeModel(BlockingRealtimeConnection([])), capabilities=[CancelBeforeRun()]
                 ).session():
-                    pytest.fail('Cancelled preparation must not enter the caller body')
+                    pass
         assert owner.state.active_run_id is None
         await owner.run('continue')
 
@@ -286,3 +294,59 @@ async def test_completed_realtime_result_is_detached_from_owner_history():
         original = owner.conversation
         live.result.all_messages()[0].parts = []
         assert owner.conversation == original
+
+
+@pytest.mark.parametrize('conflict', ['conversation', 'message_history', 'conversation_id', 'usage'])
+async def test_realtime_builder_rejects_owner_state_override(conflict: str):
+    async with Agent(TestModel()).session() as owner:
+        with pytest.raises(UserError, match='session owns'):
+            owner.realtime(
+                FakeRealtimeModel(BlockingRealtimeConnection([])),
+                conversation=Conversation() if conflict == 'conversation' else None,
+                message_history=[] if conflict == 'message_history' else None,
+                conversation_id='other' if conflict == 'conversation_id' else None,
+                usage=RunUsage() if conflict == 'usage' else None,
+            )
+
+
+async def test_wrapped_owner_rejects_history_override_at_realtime_entry():
+    # A transparent wrapper builds its own realtime definition, so validation at the owner's
+    # execution boundary remains necessary even though the owner's builder also rejects conflicts.
+    async with Agent(TestModel()).session() as owner:
+        wrapped = WrapperAgent(owner)
+        with pytest.raises(UserError, match='session owns'):
+            async with wrapped.realtime(
+                FakeRealtimeModel(BlockingRealtimeConnection([])), message_history=[]
+            ).session():
+                pass
+        assert owner.state.active_run_id is None
+
+
+async def test_realtime_rejects_unresolved_deferred_tools_without_consuming_them():
+    deferred = DeferredToolRequests(calls=[ToolCallPart('external', {}, tool_call_id='call')])
+    async with Agent(TestModel()).session(conversation=Conversation(deferred_tool_requests=deferred)) as owner:
+        with pytest.raises(UserError, match=r'Resolve.*deferred tools'):
+            async with owner.realtime(FakeRealtimeModel(BlockingRealtimeConnection([]))).session():
+                pass
+        assert owner.conversation.deferred_tool_requests == deferred
+        assert owner.state.active_run_id is None
+
+
+async def test_persistent_attachment_requires_entered_exclusive_owner():
+    model = FakeRealtimeModel(BlockingRealtimeConnection([]))
+    agent = Agent(TestModel())
+    with pytest.raises(UserError, match=r'agent\.session'):
+        agent.realtime(model).connect()
+    owner = agent.session()
+    connection = owner.realtime(model).connect()
+    with pytest.raises(UserError, match='Enter the agent session'):
+        async with connection:
+            pass
+    async with owner:
+        async with connection:
+            with pytest.raises(UserError, match='already owns a realtime connection'):
+                async with owner.realtime(model).connect():
+                    pass
+        with pytest.raises(UserError, match='only be entered once'):
+            async with connection:
+                pass

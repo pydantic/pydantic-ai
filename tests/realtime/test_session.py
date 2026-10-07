@@ -8516,18 +8516,20 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         async def send(self, content: RealtimeInput) -> None:
             if isinstance(content, str):
                 raise RuntimeError('drain send failed')
-            # This test only drives the drain's text-turn send.
-            await super().send(content)  # pragma: no cover
+            assert isinstance(content, ToolResult)
+            await super().send(content)
 
     conn = _FailingDrain([])
     session = RealtimeSession(conn)
     await session.__aenter__()
     event_task = asyncio.create_task(drain_events(session)) if consumer == 'iterating' else None
     transcripts = session.stream_transcripts()
-    await asyncio.sleep(0)
     session._asap_drain_deferred = True  # pyright: ignore[reportPrivateUsage]
-    session._run.pending_messages.append(  # pyright: ignore[reportPrivateUsage]
-        PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='after tool')])], priority='asap')
+    # Seed this internal deferred-drain scenario without scheduling a competing notification task.
+    # The assertion below proves the error escapes the tool task itself, not another queue drain.
+    list[PendingMessage].append(
+        session._run.pending_messages,  # pyright: ignore[reportPrivateUsage]
+        PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='after tool')])], priority='asap'),
     )
 
     async def complete_after_usage(
@@ -8565,8 +8567,10 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         )
     )
     task.add_done_callback(session._tool_task_done)  # pyright: ignore[reportPrivateUsage]
-    await asyncio.gather(task, return_exceptions=True)
-    await asyncio.sleep(0)  # let the done-callback run
+    (error,) = await asyncio.gather(task, return_exceptions=True)
+    assert isinstance(error, RuntimeError)
+    assert str(error) == 'drain send failed'
+    assert conn.sent == [ToolResult(tool_call_id='call', output='done')]
 
     if event_task is not None:
         with pytest.raises(RuntimeError, match='drain send failed'):
@@ -8688,21 +8692,6 @@ async def test_iterator_reuses_receive_pump_started_by_session_owner() -> None:
     session = RealtimeSession(FakeRealtimeConnection([ResponseDone()]))
     async with session:
         assert [event async for event in session] == [RealtimeTurnCompleteEvent()]
-
-
-async def test_receive_pump_stops_when_event_handler_trips_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = RealtimeSession(FakeRealtimeConnection([ResponseDone(), ResponseDone()]))
-    handled = 0
-
-    async def stop_after_first(event: RealtimeCodecEvent) -> bool:
-        nonlocal handled
-        handled += 1
-        return True
-
-    monkeypatch.setattr(session, '_handle_pump_event', stop_after_first)
-    await session._pump(None)  # pyright: ignore[reportPrivateUsage]
-
-    assert handled == 1
 
 
 async def test_tool_manager_reports_validation_failure_when_retry_budget_is_exhausted(

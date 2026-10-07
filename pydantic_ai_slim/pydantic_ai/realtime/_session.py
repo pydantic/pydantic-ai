@@ -1167,9 +1167,10 @@ class RealtimeSession:
             self._core.apply(RunStarted(run_id=run_id))
         while self._idle_events:
             self._queue_put(self._idle_events.popleft())
-        if tool_manager.ctx is not None:
-            tool_manager.ctx.usage = usage
-            tool_manager.ctx.pending_messages = self._run.pending_messages
+        # Only prepared agent execution resumes an existing connection.
+        assert tool_manager.ctx is not None
+        tool_manager.ctx.usage = usage
+        tool_manager.ctx.pending_messages = self._run.pending_messages
         self._span_usage = RunUsage()
         self._session_instrumentation = SessionInstrumentation(
             instrumentation,
@@ -1547,8 +1548,8 @@ class RealtimeSession:
 
     async def _queue_get(self, run: _RealtimeRunState) -> RealtimeEvent | object:
         while not run.queue:
-            if run.finished:
-                return self._queue_changed
+            # Finishing appends an undroppable sentinel; its sole reader exits when it consumes it.
+            assert not run.finished
             # Nothing can append between the clear and the wait: producers run on this event loop.
             run.queue_event.clear()
             await run.queue_event.wait()
@@ -2579,8 +2580,8 @@ class RealtimeSession:
         async with self._send_lock:
             if tool_operation_id is not None:
                 actions = _operations.apply(self._tool_operations, tool_operation_id, _operations.StartDelivery())
-                if 'deliver_result' not in actions:
-                    raise UserError('The tool result delivery must be reconciled before retrying.')
+                # Each admitted call has one delivery attempt; this driver never retries a result.
+                assert 'deliver_result' in actions
             first_input = self._inputs_sent
             try:
                 for position, content in enumerate(contents):
@@ -2628,8 +2629,8 @@ class RealtimeSession:
     def _ensure_not_closed(self) -> None:
         if self._closed:
             raise UserError('This realtime session is closed.')
-        if self._run.finished:
-            raise UserError('This realtime run has ended.')
+        # The persistent handle revokes admission before dispatching to this private driver.
+        assert not self._run.finished
 
     def _ensure_can_send(self) -> None:
         self._ensure_not_closed()
@@ -3147,16 +3148,16 @@ class RealtimeSession:
         if content:
             request_parts.append(UserPromptPart(content=content))
         request = self._new_request(request_parts)
-        if (operation_id := self._tool_operation_ids.get(call_part.tool_call_id)) is not None:
-            operation = self._tool_operations[operation_id]
-            if operation.execution in ('completed', 'interrupted'):
-                return []
-            request.run_id = operation.run_id
-            if isinstance(result_part, ToolReturnPart) and result_part.outcome == 'interrupted':
-                _operations.apply(self._tool_operations, operation_id, _operations.InterruptTool())
-            else:
-                actions = _operations.apply(self._tool_operations, operation_id, _operations.CompleteTool([request]))
-                assert 'record_result' in actions
+        operation_id = self._tool_operation_ids[call_part.tool_call_id]
+        operation = self._tool_operations[operation_id]
+        if operation.execution in ('completed', 'interrupted'):
+            return []
+        request.run_id = operation.run_id
+        if isinstance(result_part, ToolReturnPart) and result_part.outcome == 'interrupted':
+            _operations.apply(self._tool_operations, operation_id, _operations.InterruptTool())
+        else:
+            actions = _operations.apply(self._tool_operations, operation_id, _operations.CompleteTool([request]))
+            assert 'record_result' in actions
         self._insert_tool_return(call_part, request)
         if self._core is not None:
             self._core.apply(ToolReturned(tool_call_id=call_part.tool_call_id, request=request))
@@ -3192,14 +3193,10 @@ class RealtimeSession:
                     insert_at += 1
                 self._insert_into_history(insert_at, request)
                 return
-        if call_part.tool_call_id in self._tool_calls_awaiting_usage:
-            # OpenAI-protocol tool execution starts before `response.done` supplies usage and finalizes
-            # the calling response. Preserve the streamed completion now and insert it once that lands.
-            self._pending_tool_returns.append((call_part, request))
-        else:
-            # The calling response is otherwise finalized before execution begins, so this is an
-            # invariant fallback: keep the history complete rather than dropping the tool result.
-            self._history.append(request)
+        # OpenAI-protocol tool execution starts before `response.done` supplies usage and finalizes
+        # the calling response. Every other call already has its response in history.
+        assert call_part.tool_call_id in self._tool_calls_awaiting_usage
+        self._pending_tool_returns.append((call_part, request))
 
     def _handle_input_transcript(
         self, text: str, is_final: bool, *, item_id: str | None = None, cumulative: bool = False
@@ -3270,8 +3267,9 @@ class RealtimeSession:
             # Only the reply's first output marks that boundary: audio sent while the model answers
             # opens nothing that output could end.
             self._anonymous_user_turns_ended += 1
-            if len(self._pending_anonymous_user_turn_anchors) == self._anonymous_user_turns_ended:
-                self._uncommitted_turn_anchor = False
+            # Opening a turn updates the existing unended reservation rather than adding another.
+            assert len(self._pending_anonymous_user_turn_anchors) == self._anonymous_user_turns_ended
+            self._uncommitted_turn_anchor = False
             self._user_turn_active = False
             self._anonymous_user_turn_awaiting_answer = True
         return events
@@ -3979,11 +3977,6 @@ class RealtimeSession:
             wire_content.append(user_content)
         elif user_content:
             wire_content.extend(user_content)
-        if self._closed:
-            # The session closed while the tool ran: it hung up with `close()` and then swallowed the
-            # `CancelledError`. Its call already has an interrupted return in history and there is no
-            # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
-            return
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
         await self._send_tool_result(call_part, output, wire_content, operation_id=operation_id)
@@ -4293,9 +4286,8 @@ class RealtimeSession:
             # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
         if self._closed:
-            # The session closed while this tool ran, so its call already has an interrupted return
-            # in history. Reached by a tool that hung up with `close()` and then swallowed the
-            # `CancelledError`: recording its result too would leave two returns for one call.
+            # Delivery can swallow cancellation after close has settled history. Do not publish the
+            # completed result again into the closed run or start a deferred input drain.
             return
         self._publish_tool_result(events, order_index=order_index, ordered=ordered_events)
         if self._asap_drain_deferred and not self._tool_calls_awaiting_usage:
@@ -4339,8 +4331,8 @@ class RealtimeSession:
     async def _handle_pump_event(
         self,
         event: RealtimeCodecEvent,
-    ) -> bool:
-        """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
+    ) -> None:
+        """Process one upstream event onto the queue; usage-limit failures propagate to the pump."""
         if isinstance(event, ToolCall):
             # The tool call a held response was waiting for joins it, so the hold is spent.
             self._deferred_response_finish_reason = None
@@ -4352,8 +4344,8 @@ class RealtimeSession:
                     if self._core is not None:
                         self._core.apply(ToolCallRefused(tool_call_id=event.tool_call_id))
                     raise
-            return False
-        return await self._handle_non_tool_pump_event(event)
+            return
+        await self._handle_non_tool_pump_event(event)
 
     async def _dispatch_tool_call(self, event: ToolCall) -> None:
         """Fold a tool call into the response and start its background task."""
@@ -4460,21 +4452,21 @@ class RealtimeSession:
         self._deferred_response_finish_reason = None
         self._finalize_response(finish_reason=finish_reason, response_occurred=True)
 
-    async def _handle_non_tool_pump_event(self, event: RealtimeCodecEvent) -> bool:
-        """Process an upstream event other than a tool call; return `True` to stop the pump."""
+    async def _handle_non_tool_pump_event(self, event: RealtimeCodecEvent) -> None:
+        """Process an upstream event other than a tool call."""
         # `_handle_pump_event` routes every `ToolCall` to `_dispatch_tool_call`, so the remaining union
         # is what `_translate_event` accepts; asserted rather than re-tested so a future codec event
         # that slips past the dispatcher fails loudly instead of reaching the wrong translator.
         assert not isinstance(event, ToolCall)
         self._settle_deferred_response()
         if isinstance(event, ConversationCreated):
-            return False
+            return
         if isinstance(event, ConversationItemCreated):
             self._handle_conversation_item(event)
-            return False
+            return
         if isinstance(event, InputRejected):
             self._handle_input_rejected(event)
-            return False
+            return
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:
                 if (batch := self._tool_call_batches.get(tool_call_id)) is not None:
@@ -4499,14 +4491,14 @@ class RealtimeSession:
                 )
                 for out in self._complete_tool_call(call_part, cancelled_part):
                     self._queue_put(out)
-            return False
+            return
         if isinstance(event, SessionUsage):
             # Only part and response boundaries come out of a usage report, never a speech-start
             # or interruption signal, so there is nothing for `_auto_barge_in` to do here.
             for out in await self._handle_usage_event(event):
                 self._publish_taps(out)
                 self._queue_put(out)
-            return False
+            return
         for out in self._translate_event(event):
             self._publish_taps(out)
             if self._handle_barge_in:
@@ -4518,7 +4510,6 @@ class RealtimeSession:
         if isinstance(event, ResponseDone):
             await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
-        return False
 
     async def _pump(self, context: Context | None) -> None:
         """Drain the connection into the session queue under the explicit session-span context."""
@@ -4534,8 +4525,7 @@ class RealtimeSession:
                     # them gets one of its own.
                     self._pending_response_requests = max(0, self._pending_response_requests - merged)
                     self._exchange_progress.set()
-                if await self._handle_pump_event(event):
-                    return  # a usage limit tripped: stop reading the upstream
+                await self._handle_pump_event(event)
                 self._count_closed_tool_batch_replies()
         except Exception as e:
             self._pump_error = e
@@ -4589,8 +4579,7 @@ class RealtimeSession:
                     if self._core is not None:
                         self._core.apply(event)
                     if not isinstance(event, LIFECYCLE_EVENT_TYPES):
-                        if await self._handle_pump_event(event):
-                            return
+                        await self._handle_pump_event(event)
                 self._count_closed_tool_batch_replies()
             finally:
                 self._processing_frame = False
@@ -4742,6 +4731,7 @@ class RealtimeSession:
             # Nobody reads the queue past this point, so the bound applies again before the wrapper's
             # cleanup runs, however long that takes.
             run.iterator_active = False
-            if run is self._run:
-                self._trim_queue()
+            # Persistent attachments close every owned iterator before another run can be admitted.
+            assert run is self._run
+            self._trim_queue()
             await aclose_all((stream_iterator, stream, source))

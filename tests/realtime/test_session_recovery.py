@@ -43,7 +43,8 @@ async def test_recover_realtime_tool_after_an_earlier_response(
                 )
                 if not delayed_boundary or content == 'first':
                     self.events.put_nowait(ResponseDone())
-            elif isinstance(content, ToolResult):
+            else:
+                assert isinstance(content, ToolResult)
                 self.events.put_nowait(OutputTranscript('done', output_text=True, is_final=True))
                 self.events.put_nowait(ResponseDone())
 
@@ -131,16 +132,21 @@ async def test_recover_realtime_tool_after_an_earlier_response(
 
 
 async def test_persistent_run_enqueue_is_delivered_and_revoked():
-    connection = DuplexConnection()
+    sent = asyncio.Event()
+
+    class AcknowledgedConnection(DuplexConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            await super().send(content)
+            sent.set()
+
+    connection = AcknowledgedConnection()
     async with Agent(TestModel()).session() as owner:
         async with owner.realtime(CountedModel(connection)).connect() as live:
             async with live.run() as first:
                 enqueue_id = first.enqueue('queued input', priority='asap')
                 assert enqueue_id is not None
                 with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                    async for _ in first:
-                        if connection.sent:
-                            break
+                    await sent.wait()
             async with live.run() as second:
                 with pytest.raises(UserError, match='run has ended'):
                     first.enqueue('stale input')
@@ -155,25 +161,24 @@ async def test_recover_parallel_realtime_tools_preserves_separate_results():
     class ParallelConnection(DuplexConnection):
         async def send(self, content: RealtimeInput) -> None:
             self.sent.append(content)
-            if isinstance(content, str):
-                for name in entered:
-                    self.events.put_nowait(
-                        ToolCall(
-                            tool_name='work',
-                            tool_call_id=name,
-                            args=json.dumps({'label': name}),
-                            response_usage_follows=True,
-                        )
+            assert isinstance(content, str)
+            for name in entered:
+                self.events.put_nowait(
+                    ToolCall(
+                        tool_name='work',
+                        tool_call_id=name,
+                        args=json.dumps({'label': name}),
+                        response_usage_follows=True,
                     )
-                self.events.put_nowait(ResponseDone())
+                )
+            self.events.put_nowait(ResponseDone())
 
     agent = Agent(TestModel(call_tools=[]))
 
     @agent.tool_plain
     async def work(label: str) -> str:
         entered[label].set()
-        await asyncio.Event().wait()
-        return label
+        return await asyncio.Future[str]()
 
     async with agent.session() as owner:
         async with owner.realtime(CountedModel(ParallelConnection())).session() as run:

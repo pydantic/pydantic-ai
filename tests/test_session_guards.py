@@ -225,8 +225,10 @@ async def test_session_steering_uses_the_active_callback_context():
 
     @agent.tool
     async def check_steering(ctx: RunContext[None]) -> str:
-        with pytest.raises(UserError, match='active, steering-enabled'):
-            await session.steer('not enabled')
+        # Durable adapters can bind a context projection; session steering must use its guard.
+        with set_current_run_context(ctx):
+            with pytest.raises(UserError, match='active, steering-enabled'):
+                await session.steer('not enabled')
         return 'checked'
 
     async with agent.session() as session:
