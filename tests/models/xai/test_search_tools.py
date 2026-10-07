@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -247,7 +247,7 @@ async def test_xai_builtin_x_search_tool(allow_model_requests: None, xai_provide
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -354,7 +354,7 @@ async def test_xai_builtin_x_search_tool_stream(allow_model_requests: None, xai_
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -662,7 +662,7 @@ async def test_xai_x_search_tool_type_in_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

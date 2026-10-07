@@ -1008,6 +1008,19 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
         )
     jobs = _as_mapping(monitor.get('jobs'))
     monitor_job = _as_mapping(jobs.get('monitor'))
+    if ' '.join(str(monitor_job.get('if', '')).split()) != (
+        "github.repository == 'pydantic/pydantic-ai' && "
+        "(github.event_name != 'workflow_run' || "
+        "github.event.workflow_run.event != 'pull_request' || "
+        'github.event.workflow_run.head_repository.full_name == github.repository)'
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-fork-gate',
+                'Monitor must exclude fork `pull_request` completions while retaining trusted runs and recovery triggers.',
+            )
+        )
     concurrency = _as_mapping(monitor.get('concurrency'))
     if not concurrency.get('group') or concurrency.get('cancel-in-progress') is not False:
         violations.append(

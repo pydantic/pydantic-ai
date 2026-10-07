@@ -25,9 +25,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, TypeAlias
-
-from typing_extensions import assert_never
+from typing import Any, Literal, TypeAlias, assert_never
 
 from .._genai_prices import fill_response_cost
 from .._utils import fill_run_metadata

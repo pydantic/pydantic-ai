@@ -10,12 +10,12 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from itertools import count
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from pydantic_core import to_json
-from typing_extensions import ParamSpec, TypedDict, assert_never
+from typing_extensions import ParamSpec, TypedDict
 
 try:
     from botocore.client import BaseClient

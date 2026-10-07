@@ -2,7 +2,7 @@
 
 import subprocess
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from io import StringIO
 from itertools import chain, repeat
 from pathlib import Path
@@ -209,7 +209,7 @@ def test_resume_without_directory_confirmation(workspace: str) -> None:
 
 
 def test_date_buckets() -> None:
-    now = datetime(2026, 9, 18, 12, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 18, 12, tzinfo=UTC)
     assert date_label(now, now=now) == 'TODAY'
     assert date_label(now - timedelta(days=1), now=now) == 'YESTERDAY'
     assert date_label(now - timedelta(days=365), now=now).startswith(str((now - timedelta(days=365)).year))
