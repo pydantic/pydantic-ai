@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Generator, Mapping
+from contextlib import contextmanager
 from typing import Literal, Self, cast
 
 import anyio
@@ -84,6 +85,15 @@ class ResponsesWebSocket:
             raise UserError('This Responses model session has closed.')
         if self.active:
             raise UserError('A Responses model session can execute only one request at a time.')
+        # Reject malformed wire options before opening or invalidating a usable connection.
+        body = {key: value for key, value in options.items() if not isinstance(value, Omit)}
+        if extra_body is not None:
+            if not is_str_dict(extra_body):
+                raise UserError('Responses WebSocket `extra_body` must be a JSON object.')
+            body.update(extra_body)
+        body['type'] = 'response.create'
+        if 'stream' in body or 'background' in body:
+            raise UserError('Responses WebSocket requests do not accept `stream` or `background`.')
         self.active = True
         try:
             if self.connection is not None and headers != self.headers:
@@ -93,24 +103,17 @@ class ResponsesWebSocket:
                 # its HTTP path. On Linux this can run `uname`; initialize them off the event loop.
                 await anyio.to_thread.run_sync(self.client.platform_headers)
                 connect_timeout = timeout.connect if isinstance(timeout, Timeout) else timeout
-                with anyio.fail_after(connect_timeout):
+                with _map_websocket_errors(self.model_name), anyio.fail_after(connect_timeout):
                     self.connection = await self.client.responses.connect(
                         extra_headers=headers,
                         # Do not replay requests with unknown outcomes or lose connection-local input.
                         max_retries=0,
                     ).enter()
                 self.headers = dict(headers)
-            # The SDK's typed send accepts only wire values, not its own Omit sentinel.
-            # Remove that sentinel before adding the documented extra_body escape hatch.
-            body = {key: value for key, value in options.items() if not isinstance(value, Omit)}
-            if extra_body is not None:
-                if not is_str_dict(extra_body):
-                    raise UserError('Responses WebSocket `extra_body` must be a JSON object.')
-                body.update(extra_body)
-            body['type'] = 'response.create'
-            if 'stream' in body or 'background' in body:
-                raise UserError('Responses WebSocket requests do not accept `stream` or `background`.')
-            await self.connection.send(cast(ResponseCreate, body))
+            write_timeout = timeout.write if isinstance(timeout, Timeout) else timeout
+            with _map_websocket_errors(self.model_name), anyio.fail_after(write_timeout):
+                # The SDK accepts wire values only: omitted settings were removed above.
+                await self.connection.send(cast(ResponseCreate, body))
             return ResponsesWebSocketStream(self, timeout.read if isinstance(timeout, Timeout) else timeout)
         except BaseException:
             self.active = False
@@ -150,7 +153,7 @@ class ResponsesWebSocketStream:
         assert connection is not None
         try:
             while not self.closed and not self.finished:
-                with anyio.fail_after(self.read_timeout):
+                with _map_websocket_errors(self.owner.model_name), anyio.fail_after(self.read_timeout):
                     event = await connection.recv()
                 if isinstance(event, ResponseWsError):
                     error = event.error
@@ -180,3 +183,27 @@ class ResponsesWebSocketStream:
         except BaseException:
             await self.close()
             raise
+
+
+@contextmanager
+def _map_websocket_errors(model_name: str) -> Generator[None]:
+    # Keep the optional transport dependency out of the default HTTP import path.
+    try:
+        from websockets.exceptions import InvalidStatus, WebSocketException
+    except ImportError as exc:
+        raise ImportError('Install `openai[realtime]` to use Responses WebSocket transport.') from exc
+
+    try:
+        yield
+    except InvalidStatus as exc:
+        response = exc.response
+        raise ModelHTTPError(
+            response.status_code,
+            model_name,
+            response.body.decode('utf-8', errors='replace'),
+            headers={key.lower(): value for key, value in response.headers.raw_items()},
+        ) from exc
+    except TimeoutError as exc:
+        raise ModelAPIError(model_name, 'Responses WebSocket request timed out.') from exc
+    except (OSError, WebSocketException) as exc:
+        raise ModelAPIError(model_name, f'Responses WebSocket connection failed: {exc}') from exc

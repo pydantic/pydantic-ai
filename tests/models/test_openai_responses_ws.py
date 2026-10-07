@@ -4,25 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+from unittest.mock import Mock
 
 import anyio
 import pytest
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai import Agent, ModelAPIError, ModelHTTPError, ModelRequest, ModelResponse, UserError, UserPromptPart
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelRequestParameters
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from httpx import Timeout
+    from openai.resources.responses.responses import AsyncResponsesConnection
     from openai.types import responses
     from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
     from websockets.asyncio.server import ServerConnection, serve
     from websockets.exceptions import ConnectionClosed
+    from websockets.http11 import Request, Response
 
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .mock_openai import response_message
@@ -59,7 +64,9 @@ def text_frames(response_id: str, text: str = 'Hello') -> list[dict[str, Any]]:
 
 @dataclass
 class Peer:
-    scripts: list[list[dict[str, Any]] | None] = field(default_factory=list[list[dict[str, Any]] | None])
+    scripts: list[Sequence[dict[str, Any] | None] | None] = field(
+        default_factory=list[Sequence[dict[str, Any] | None] | None]
+    )
     requests: list[tuple[int, dict[str, Any]]] = field(default_factory=list[tuple[int, dict[str, Any]]])
     connections: list[ServerConnection] = field(default_factory=list[ServerConnection])
     closed: list[asyncio.Event] = field(default_factory=list[asyncio.Event])
@@ -80,6 +87,9 @@ class Peer:
                     await connection.close()
                     return
                 for frame in script:
+                    if frame is None:
+                        await connection.close()
+                        return
                     await connection.send(json.dumps(frame))
         except ConnectionClosed:
             pass
@@ -171,7 +181,7 @@ async def test_websocket_tool_roundtrip_uses_same_connection(peer: Peer):
 @pytest.mark.parametrize('cancel', [False, True])
 async def test_aborted_request_discards_socket_not_conversation(peer: Peer, cancel: bool):
     peer.scripts = [text_frames('resp_partial')[:2], text_frames('resp_next')]
-    agent = Agent(peer.model())
+    agent = Agent(peer.model(), model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
     async with agent.session() as session:
         if cancel:
             async with anyio.create_task_group() as group:
@@ -185,6 +195,7 @@ async def test_aborted_request_discards_socket_not_conversation(peer: Peer, canc
         assert (await session.run('two')).output == 'Hello'
         assert len(peer.connections) == 2
         assert len(peer.requests) == 2
+        assert 'previous_response_id' not in peer.requests[1][1]
 
 
 async def test_websocket_error_no_automatic_replay(peer: Peer):
@@ -208,3 +219,149 @@ async def test_direct_model_websocket_request_owns_temporary_connection(peer: Pe
     assert result.text == 'Hello'
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await peer.closed[0].wait()
+
+
+async def test_incremental_history_resets_after_header_change_and_restore(peer: Peer):
+    agent = Agent(peer.model(), model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+    async with agent.session() as session:
+        await session.run('one')
+        await session.run('two')
+        await session.run('three', model_settings={'extra_headers': {'x-session-test': 'changed'}})
+        await session.run('four')
+        conversation = session.conversation
+    async with agent.session(conversation=conversation) as restored:
+        await restored.run('five')
+    assert [connection_id for connection_id, _ in peer.requests] == [0, 0, 1, 2, 3]
+    bodies = [body for _, body in peer.requests]
+    assert [body.get('previous_response_id') for body in bodies] == [None, 'resp_1', None, None, None]
+    assert bodies[1]['input'] == [{'role': 'user', 'content': 'two'}]
+    assert [item['content'] for item in bodies[-1]['input'] if item.get('role') == 'user'] == [
+        'one',
+        'two',
+        'three',
+        'four',
+        'five',
+    ]
+    request = peer.connections[1].request
+    assert request is not None
+    assert request.headers['x-session-test'] == 'changed'
+
+
+@pytest.mark.parametrize('after_created', [False, True])
+async def test_disconnect_never_replays_uncertain_request(peer: Peer, after_created: bool):
+    peer.scripts = [[text_frames('resp_lost')[0], None] if after_created else None, text_frames('resp_next')]
+    async with Agent(peer.model()).session() as session:
+        with pytest.raises(ModelAPIError, match='WebSocket connection failed') as exc:
+            await session.run('one')
+        assert isinstance(exc.value.__cause__, ConnectionClosed)
+        assert len(peer.requests) == 1
+        assert (await session.run('two')).output == 'Hello'
+        assert [connection_id for connection_id, _ in peer.requests] == [0, 1]
+
+
+async def test_handshake_error_preserves_status_body_and_headers(allow_model_requests: None):
+    peer = Peer()
+
+    def reject(connection: ServerConnection, request: Request) -> Response:
+        response = connection.respond(429, 'slow down')
+        response.headers['Retry-After'] = '7'
+        return response
+
+    async with serve(peer.handle, '127.0.0.1', 0, process_request=reject) as server:
+        peer.url = f'http://127.0.0.1:{next(iter(server.sockets)).getsockname()[1]}/v1'
+        with pytest.raises(ModelHTTPError) as exc:
+            await Agent(peer.model()).run('one')
+        assert exc.value.status_code == 429
+        assert exc.value.body == 'slow down'
+        assert exc.value.headers is not None
+        assert exc.value.headers['retry-after'] == '7'
+        assert not peer.requests
+
+
+async def test_read_timeout_releases_connection_for_next_run(peer: Peer):
+    peer.scripts = [[], text_frames('resp_next')]
+    async with Agent(peer.model()).session() as session:
+        with pytest.raises(ModelAPIError, match='timed out'):
+            # Only the deliberately silent peer is subject to the short read deadline.
+            await session.run('one', model_settings={'timeout': Timeout(10, read=0.05)})
+        assert (await session.run('two')).output == 'Hello'
+        assert [connection_id for connection_id, _ in peer.requests] == [0, 1]
+
+
+async def test_write_timeout_discards_connection(peer: Peer, monkeypatch: pytest.MonkeyPatch):
+    # A loopback socket cannot reliably fill its write buffer. Block the SDK send boundary
+    # while retaining its real handshake and close behavior.
+    async def blocked_send(*args: object, **kwargs: object) -> None:
+        await anyio.sleep_forever()
+
+    async with Agent(peer.model()).session() as session:
+        with monkeypatch.context() as patch:
+            patch.setattr(AsyncResponsesConnection, 'send', blocked_send)
+            with pytest.raises(ModelAPIError, match='timed out'):
+                await session.run('one', model_settings={'timeout': Timeout(10, write=0)})
+        assert not peer.requests
+        assert (await session.run('two')).output == 'Hello'
+        assert len(peer.connections) == 2
+
+
+@pytest.mark.parametrize('extra_body', [['invalid'], {'stream': True}, {'background': False}])
+async def test_invalid_websocket_options_do_not_open_connection(peer: Peer, extra_body: Any):
+    async with Agent(peer.model()).session() as session:
+        with pytest.raises(UserError, match='Responses WebSocket'):
+            await session.run('one', model_settings={'extra_body': extra_body})
+        assert not peer.connections
+        assert (await session.run('two')).output == 'Hello'
+
+
+async def test_bound_model_rejects_overlapping_and_closed_requests(peer: Peer):
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('one')])]
+    parameters = ModelRequestParameters()
+    async with peer.model().open_session() as bound:
+        async with bound.request_stream(messages, None, parameters) as stream:
+            with pytest.raises(UserError, match='one request at a time'):
+                await bound.request(messages, None, parameters)
+            async for _ in stream:
+                pass
+        assert (await bound.request(messages, None, parameters)).text == 'Hello'
+    with pytest.raises(UserError, match='session has closed'):
+        await bound.request(messages, None, parameters)
+    assert len(peer.requests) == 2
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_direct_request_prepares_once(peer: Peer, monkeypatch: pytest.MonkeyPatch, stream: bool):
+    model = peer.model()
+    prepare = Mock(wraps=model.prepare_request)
+    monkeypatch.setattr(model, 'prepare_request', prepare)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('one')])]
+    if stream:
+        async with model.request_stream(messages, None, ModelRequestParameters()) as result:
+            async for _ in result:
+                pass
+    else:
+        await model.request(messages, None, ModelRequestParameters())
+    assert prepare.call_count == 1
+
+
+async def test_missing_previous_response_is_not_replayed(peer: Peer):
+    peer.scripts = [
+        text_frames('resp_1'),
+        [
+            {
+                'type': 'error',
+                'status': 400,
+                'error': {'code': 'previous_response_not_found', 'message': 'cache expired'},
+            }
+        ],
+        text_frames('resp_3'),
+    ]
+    agent = Agent(peer.model(), model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+    async with agent.session() as session:
+        await session.run('one')
+        with pytest.raises(ModelHTTPError, match='previous_response_not_found'):
+            await session.run('two')
+        assert len(peer.requests) == 2
+        await session.run('three')
+    assert [connection_id for connection_id, _ in peer.requests] == [0, 0, 1]
+    assert peer.requests[1][1]['previous_response_id'] == 'resp_1'
+    assert 'previous_response_id' not in peer.requests[2][1]

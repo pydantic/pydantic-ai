@@ -2456,15 +2456,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        if self._transport == 'websocket' and self._websocket is None:
+            async with self.open_session() as bound:
+                return await bound.request(messages, model_settings, model_request_parameters)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
-        if self._transport == 'websocket' and self._websocket is None:
-            async with self.open_session() as bound:
-                return await bound.request(messages, settings, model_request_parameters)
-
         if info := self._get_continuation_info(messages, settings):
             # Non-streaming retrieve: on `store=false` backends (Codex, which is also stream-only)
             # `_get_continuation_info` already rejected the continuation with `UserError`.
@@ -2562,17 +2561,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
+        if self._transport == 'websocket' and self._websocket is None:
+            async with self.open_session() as bound:
+                async with bound.request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as stream:
+                    yield stream
+            return
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
-        if self._transport == 'websocket' and self._websocket is None:
-            async with self.open_session() as bound:
-                async with bound.request_stream(messages, settings, model_request_parameters, run_context) as stream:
-                    yield stream
-            return
-
         if info := self._get_continuation_info(messages, settings):
             response_id, last_sequence_number, previous_model_name = info
             expected_response_id = response_id
