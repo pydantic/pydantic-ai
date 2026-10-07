@@ -691,6 +691,17 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
             (URGENT, {**AREA, 'probabilities': [*AREA_PROBABILITIES, {'value': 'bug', 'probability': 0.0}]}),
             id='option twice',
         ),
+        pytest.param(
+            Ticket,
+            (
+                URGENT,
+                {
+                    **AREA,
+                    'probabilities': [{'value': 'billing', 'probability': 1.0}, {'value': 'bug', 'probability': 1.0}],
+                },
+            ),
+            id='probabilities past one',
+        ),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': -0.5}), id='score below the rubric'),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'score': 2.5}), id='score past the rubric'),
         pytest.param(Mood, (REFUND, {**FRUSTRATION, 'probabilities': []}), id='no levels'),
@@ -701,7 +712,11 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
                 REFUND,
                 {
                     **FRUSTRATION,
-                    'probabilities': [*FRUSTRATION_PROBABILITIES[:2], {'value': 2, 'label': '2', 'probability': 1.5}],
+                    'probabilities': [
+                        {'value': 0, 'label': '0', 'probability': 0.0},
+                        {'value': 1, 'label': '1', 'probability': 0.0},
+                        {'value': 2, 'label': '2', 'probability': 1.01},
+                    ],
                 },
             ),
             id='level probability past 1',
@@ -716,6 +731,17 @@ async def test_answer_names_match_questions(answers: tuple[Mapping[str, object],
                 },
             ),
             id='level twice',
+        ),
+        pytest.param(
+            Mood,
+            (
+                REFUND,
+                {
+                    **FRUSTRATION,
+                    'probabilities': [*FRUSTRATION_PROBABILITIES[:2], {'value': 2, 'label': '2', 'probability': 0.5}],
+                },
+            ),
+            id='level probabilities short of one',
         ),
     ],
 )

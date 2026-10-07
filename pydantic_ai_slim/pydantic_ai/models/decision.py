@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import json
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Collection, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -229,8 +229,8 @@ def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  #
     """Whether an answer is one its question allows: of its kind, picking an offered option, and in range.
 
     A pick-one or a score gives a probability for exactly the options or levels offered, every probability and
-    confidence is from 0 to 1, and a score is within the rubric. A backend that checks its API's answers adds the
-    checks its own API calls for.
+    confidence is from 0 to 1, the probabilities sum to one within rounding, and a score is within the rubric. A
+    backend that checks its API's answers adds the checks its own API calls for.
     """
     # Each range check is a chained comparison, which is false for NaN.
     if isinstance(question, NoulQuestion):
@@ -241,6 +241,7 @@ def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  #
             and answer.choice in question.criteria
             and answer.probabilities.keys() == question.criteria.keys()
             and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
+            and _sums_to_one(answer.probabilities.values())
         )
     elif isinstance(question, ScoreQuestion):
         return (
@@ -248,9 +249,15 @@ def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  #
             and answer.probabilities.keys() == set(range(len(question.criteria)))
             and 0 <= answer.score <= len(question.criteria) - 1
             and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
+            and _sums_to_one(answer.probabilities.values())
         )
     else:
         assert_never(question)
+
+
+def _sums_to_one(probabilities: Collection[float]) -> bool:
+    # The decision APIs round each probability to two decimal places, so each may be off by half a unit.
+    return abs(sum(probabilities) - 1) <= 1e-6 + len(probabilities) * 0.005
 
 
 _UNSUPPORTED_FIELD_HINT = (
