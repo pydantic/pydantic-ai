@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, overload
 
@@ -14,6 +15,7 @@ from typing_extensions import TypedDict, Unpack
 from . import _instructions, _utils, messages, models, result, usage as _usage
 from ._cancel import CancellationToken
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._operations import ToolOperation as ToolOperation
 from ._session import SessionRuntime, bind_session
 from .agent.abstract import (
     AbstractAgent,
@@ -37,7 +39,7 @@ from .workspaces import WorkspaceBackend, WorkspaceRef
 if TYPE_CHECKING:
     from .agent.spec import AgentSpec
 
-__all__ = ('AgentSession', 'SessionState', 'SessionStateTypeAdapter')
+__all__ = ('AgentSession', 'SessionState', 'SessionStateTypeAdapter', 'ToolOperation')
 
 
 @dataclass(kw_only=True)
@@ -54,6 +56,8 @@ class SessionState:
     """Messages, accumulated usage, conversation identity, and deferred tool requests."""
     pending: list[PendingMessage] = field(default_factory=list[PendingMessage])
     """Input not yet delivered into a run's history, preserving enqueue identity and priority."""
+    operations: list[ToolOperation] = field(default_factory=list[ToolOperation])
+    """Tool execution and result-delivery facts; never an instruction to repeat an effect."""
     active_run_id: str | None = None
     """Unfinished work at capture time. This is not an instruction to retry that work."""
 
@@ -114,6 +118,8 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
             state.conversation if state is not None else conversation or Conversation(),
             state.pending if state is not None else None,
         )
+        if state is not None:
+            self._runtime.operations.update((op.operation_id, deepcopy(op)) for op in state.operations)
         self._deps = deps
         self._model = model
         self._stack = AsyncExitStack()
@@ -158,7 +164,12 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
     def state(self) -> SessionState:
         """A detached checkpoint of conversation, pending input, and unfinished work."""
         conversation, pending, active_run_id = self._runtime.snapshot()
-        return SessionState(conversation=conversation, pending=pending, active_run_id=active_run_id)
+        return SessionState(
+            conversation=conversation,
+            pending=pending,
+            active_run_id=active_run_id,
+            operations=deepcopy(list(self._runtime.operations.values())),
+        )
 
     def enqueue(self, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> str | None:
         """Submit input to the active run or retain it for the next run while idle.

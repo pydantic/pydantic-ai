@@ -17,7 +17,7 @@ from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
 from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
-from . import _output, exceptions, messages as _messages, result
+from . import _operations, _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
@@ -717,6 +717,37 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self,
         tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
         *,
+        call_index: int,
+        tool_call_result: DeferredToolResult | None,
+    ) -> tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]:
+        state = self.ctx.state
+        call = tool_call.call if isinstance(tool_call, ValidatedToolCall) else tool_call
+        operation_id = _operations.admit(
+            state.tool_operations, run_id=state.run_id, run_step=state.run_step, call=call, call_index=call_index
+        )
+        actions = _operations.apply(state.tool_operations, operation_id, _operations.StartTool())
+        assert 'execute_tool' in actions
+        try:
+            parts, content = await self._execute_tool(tool_call, tool_call_result=tool_call_result)
+        except (exceptions.CallDeferred, exceptions.ApprovalRequired):
+            _operations.apply(state.tool_operations, operation_id, _operations.DeferTool())
+            raise
+        except BaseException:
+            _operations.apply(state.tool_operations, operation_id, _operations.InterruptTool())
+            raise
+        request_parts: list[_messages.ModelRequestPart] = list(parts)
+        if content:
+            request_parts.append(_messages.UserPromptPart(content))
+        request = _messages.ModelRequest(
+            parts=request_parts, run_id=state.run_id, conversation_id=state.conversation_id
+        )
+        _operations.apply(state.tool_operations, operation_id, _operations.CompleteTool([request]))
+        return parts, content
+
+    async def _execute_tool(
+        self,
+        tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
+        *,
         tool_call_result: DeferredToolResult | None,
     ) -> tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]:
         if isinstance(tool_call, ValidatedToolCall):
@@ -843,6 +874,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             call = tool_calls[index]
             return self._call_tool(
                 validated_calls.get(call.tool_call_id, call),
+                call_index=next(i for i, original in enumerate(self.tool_calls) if original is call),
                 tool_call_result=tool_call_results.get(call.tool_call_id),
             )
 
@@ -1224,6 +1256,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             try:
                 return index, await self._call_tool(
                     validated_calls.get(call.tool_call_id, call),
+                    call_index=index,
                     tool_call_result=self.calls_to_run_results.get(call.tool_call_id),
                 )
             except (exceptions.CallDeferred, exceptions.ApprovalRequired) as e:

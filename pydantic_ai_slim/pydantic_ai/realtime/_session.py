@@ -8,7 +8,7 @@ import difflib
 import weakref
 from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field, replace
 from itertools import takewhile
 from pprint import pformat
@@ -22,7 +22,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.context import Context
 from typing_extensions import TypeAliasType
 
-from .. import _agent_graph
+from .. import _agent_graph, _operations
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._genai_prices import fill_response_cost
 from .._run_context import context_window_fraction
@@ -803,6 +803,8 @@ class RealtimeSession:
         self._agent_name = agent_name
         self._conversation_id = conversation_id
         self._run_id = run_id
+        self._tool_operations: dict[str, _operations.ToolOperation] = {}
+        self._tool_operation_ids: dict[str, str] = {}
         # The request parameters and settings the session was opened with. Unlike a classic run — where
         # each model request can vary — a realtime session sends these once at connect, so they belong on
         # the session span (set once), not repeated on every per-turn `chat` span. Carrying
@@ -1767,6 +1769,11 @@ class RealtimeSession:
             conversation_id=self._conversation_id,
         )
 
+    @property
+    def tool_operations(self) -> list[_operations.ToolOperation]:
+        """Detached execution/delivery facts; a transport send is not a provider acknowledgement."""
+        return deepcopy(list(self._tool_operations.values()))
+
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
         """Create a request carrying the framework-managed session metadata."""
         request = ModelRequest(parts=parts)
@@ -2352,7 +2359,11 @@ class RealtimeSession:
             self._interrupted_audio_part_index = self._audio_part_index
 
     async def _send_frame(
-        self, *contents: RealtimeInput, request: ModelRequest | None = None, reply_asked: bool = True
+        self,
+        *contents: RealtimeInput,
+        request: ModelRequest | None = None,
+        reply_asked: bool = True,
+        tool_operation_id: str | None = None,
     ) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
 
@@ -2374,6 +2385,10 @@ class RealtimeSession:
         # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
         # which is a caller that asked to send.
         async with self._send_lock:
+            if tool_operation_id is not None:
+                actions = _operations.apply(self._tool_operations, tool_operation_id, _operations.StartDelivery())
+                if 'deliver_result' not in actions:
+                    raise UserError('The tool result delivery must be reconciled before retrying.')
             first_input = self._inputs_sent
             try:
                 for position, content in enumerate(contents):
@@ -2395,6 +2410,8 @@ class RealtimeSession:
                         )
                     await self._connection.send(content)
             except BaseException as e:
+                if tool_operation_id is not None:
+                    _operations.apply(self._tool_operations, tool_operation_id, _operations.LoseDelivery())
                 if self._core is not None:
                     # The caller takes back what it sent, so the shadow core does too.
                     self._core.apply(InputWithdrawn(input_ids=tuple(range(first_input, self._inputs_sent))))
@@ -2407,6 +2424,9 @@ class RealtimeSession:
                     model_name=self._error_model_name,
                     message=f'Realtime connection failed while sending: {e}',
                 ) from e
+            else:
+                if tool_operation_id is not None:
+                    _operations.apply(self._tool_operations, tool_operation_id, _operations.ObserveDelivery('sent'))
 
     @property
     def _error_model_name(self) -> str:
@@ -2920,6 +2940,16 @@ class RealtimeSession:
         if content:
             request_parts.append(UserPromptPart(content=content))
         request = self._new_request(request_parts)
+        if (operation_id := self._tool_operation_ids.get(call_part.tool_call_id)) is not None:
+            operation = self._tool_operations[operation_id]
+            if operation.execution in ('completed', 'interrupted'):
+                return []
+            request.run_id = operation.run_id
+            if isinstance(result_part, ToolReturnPart) and result_part.outcome == 'interrupted':
+                _operations.apply(self._tool_operations, operation_id, _operations.InterruptTool())
+            else:
+                actions = _operations.apply(self._tool_operations, operation_id, _operations.CompleteTool([request]))
+                assert 'record_result' in actions
         self._insert_tool_return(call_part, request)
         if self._core is not None:
             self._core.apply(ToolReturned(tool_call_id=call_part.tool_call_id, request=request))
@@ -3431,6 +3461,8 @@ class RealtimeSession:
         `Agent.run(message_history=...)` handoff instead of dropping the tail of the conversation or
         ending on a dangling `ToolCallPart`.
         """
+        for operation_id in self._tool_operations:
+            _operations.apply(self._tool_operations, operation_id, _operations.LoseDelivery())
         # The response the provider was cancelling on speech onset is one of the things being
         # settled here, so interrupting whatever comes next is the client's job again.
         self._server_cancelled_the_response_on_speech = False
@@ -3713,6 +3745,17 @@ class RealtimeSession:
             # every concurrent call.
             self._tool_calls_in_flight -= int(reserved_budget)
 
+        return result_part, user_content
+
+    async def _deliver_tool_return(
+        self,
+        call_part: ToolCallPart,
+        result_part: ToolReturnPart | RetryPromptPart,
+        user_content: str | Sequence[UserContent] | None,
+        *,
+        response_usage_follows: bool,
+        operation_id: str,
+    ) -> None:
         if isinstance(result_part, RetryPromptPart):
             output = result_part.model_response()
             wire_content: list[UserContent] = []
@@ -3726,20 +3769,21 @@ class RealtimeSession:
             # The session closed while the tool ran: it hung up with `close()` and then swallowed the
             # `CancelledError`. Its call already has an interrupted return in history and there is no
             # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
-            return result_part, user_content
+            return
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
-        await self._send_tool_result(call_part, output, wire_content)
-        return result_part, user_content
+        await self._send_tool_result(call_part, output, wire_content, operation_id=operation_id)
 
-    async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
+    async def _send_tool_result(
+        self, call_part: ToolCallPart, output: str, wire_content: list[UserContent], *, operation_id: str | None = None
+    ) -> None:
         result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
         if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is None:
             # A connection that answers each result (or a call dispatched outside the pump): the result is
             # a reply of its own, as it always has been.
             self._reserve_response_request()
             try:
-                await self._send_frame(result)
+                await self._send_frame(result, tool_operation_id=operation_id)
             except BaseException:
                 self._release_response_reservation()
                 raise
@@ -3755,7 +3799,7 @@ class RealtimeSession:
             self._check_request_limit()
         batch.sending += 1
         try:
-            await self._send_frame(result, reply_asked=not batch.abandoned)
+            await self._send_frame(result, reply_asked=not batch.abandoned, tool_operation_id=operation_id)
         except BaseException:
             # A provider missing one of the batch's results won't answer it.
             batch.abandoned = True
@@ -3967,7 +4011,14 @@ class RealtimeSession:
         order_index: int,
         ordered_events: bool,
     ) -> None:
-        """Run a tool and feed its completion (or failure) back through the queue."""
+        """Run a tool, record its result, then independently deliver it to the provider."""
+        operation_id = _operations.admit(
+            self._tool_operations, run_id=self._run_id, run_step=run_step, call=call_part, call_index=order_index
+        )
+        self._tool_operation_ids[call_part.tool_call_id] = operation_id
+        actions = _operations.apply(self._tool_operations, operation_id, _operations.StartTool())
+        assert 'execute_tool' in actions
+        events: list[RealtimeEvent] = []
         try:
             result_part, content = await self._execute_tool(
                 call_part,
@@ -3977,7 +4028,21 @@ class RealtimeSession:
                 run_step=run_step,
                 reserved_budget=reserved_budget,
             )
+            if self._closed or self._tool_operations[operation_id].execution != 'running':
+                return
+            # Record completion before the first delivery await: a lost socket cannot turn a
+            # completed external effect into an interrupted tool or erase its actual return.
+            events = self._complete_tool_call(call_part, result_part, content)
+            await self._deliver_tool_return(
+                call_part,
+                result_part,
+                content,
+                response_usage_follows=response_usage_follows,
+                operation_id=operation_id,
+            )
         except asyncio.CancelledError:
+            self._publish_tool_result(events, order_index=order_index, ordered=ordered_events)
+            _operations.apply(self._tool_operations, operation_id, _operations.InterruptTool())
             if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is not None:
                 batch.running.discard(call_part.tool_call_id)
                 self._retire_tool_batch_if_settled(batch)
@@ -3988,7 +4053,10 @@ class RealtimeSession:
                 batch.running.discard(call_part.tool_call_id)
                 batch.abandoned = True
                 self._retire_tool_batch_if_settled(batch)
-            self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
+            if self._tool_operations[operation_id].execution == 'running':
+                self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
+                _operations.apply(self._tool_operations, operation_id, _operations.InterruptTool())
+            self._publish_tool_result(events, order_index=order_index, ordered=ordered_events)
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.
@@ -4005,18 +4073,18 @@ class RealtimeSession:
             # in history. Reached by a tool that hung up with `close()` and then swallowed the
             # `CancelledError`: recording its result too would leave two returns for one call.
             return
-        events = self._complete_tool_call(call_part, result_part, content)
-        if ordered_events:
-            # Held until nothing is still running, then released in call order — the graph waits for a
-            # whole segment (`ALL_COMPLETED`) and replays it by index for the same reason. The release
-            # is driven from `_tool_task_done`, which runs even for a tool that raised or was
-            # cancelled, so a failed sibling can't strand the batch.
+        self._publish_tool_result(events, order_index=order_index, ordered=ordered_events)
+        if self._asap_drain_deferred and not self._tool_calls_awaiting_usage:
+            await self._drain_pending_messages('asap')
+
+    def _publish_tool_result(self, events: list[RealtimeEvent], *, order_index: int, ordered: bool) -> None:
+        if ordered:
+            # _tool_task_done releases these in call order once every sibling settles, including
+            # delivery errors and cancellation after the tool has already completed.
             self._ordered_tool_events[order_index] = events
         else:
             for event in events:
                 self._queue_put(event)
-        if self._asap_drain_deferred and not self._tool_calls_awaiting_usage:
-            await self._drain_pending_messages('asap')
 
     def _tool_task_done(self, task: asyncio.Task[None]) -> None:
         self._background_tasks.discard(task)

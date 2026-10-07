@@ -48,6 +48,7 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import (
     _display,
     _enqueue,
+    _operations,
     _output,
     _system_prompt,
     _usage_attribution,
@@ -402,6 +403,10 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
+    tool_operations: dict[str, _operations.ToolOperation] = dataclasses.field(
+        default_factory=dict[str, _operations.ToolOperation]
+    )
+    """Session-owned projection of logical tool completion and provider delivery."""
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
@@ -1385,7 +1390,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         return await self._make_request(ctx)
 
     @asynccontextmanager
-    async def stream(
+    async def stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -1437,20 +1442,23 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # into one continuous stream, so the whole chain is presented as a single
             # `AgentStream` and the model-request hooks wrap it once. The step is counted in
             # `ctx.state.usage.requests` when its response is committed, not here.
-            async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
-                self._did_stream = True
-                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                agent_stream_holder.append(agent_stream)
-                stream_ready.set()
-                try:
-                    await stream_done.wait()
-                finally:
-                    # Report TTFT in a `finally` so it also lands when the consumer raises
-                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
-                    # that cancelled path `finish` is never reached today (no metrics of any
-                    # kind are recorded), so this is symmetry rather than an observable fix.
-                    time_to_first_chunk = sr.time_to_first_chunk(request_start)
+            with _operations.request_delivery(ctx.state.tool_operations, req_ctx.messages) as deliveries:
+                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                    self._did_stream = True
+                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                    agent_stream_holder.append(agent_stream)
+                    stream_ready.set()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk = sr.time_to_first_chunk(request_start)
+                if sr.get().state == 'complete':
+                    _operations.commit_request_delivery(ctx.state.tool_operations, deliveries)
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
@@ -1667,9 +1675,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             capture_model_request_span_context(req_ctx)
             try:
-                response = await model_request(
-                    req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
-                )
+                with _operations.request_delivery(ctx.state.tool_operations, req_ctx.messages) as deliveries:
+                    response = await model_request(
+                        req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
+                    )
+                    _operations.commit_request_delivery(ctx.state.tool_operations, deliveries)
                 _handler_response = response
                 _handler_usage_recorded = True
                 self._record_response_usage(ctx, response, request_context=req_ctx)

@@ -19,6 +19,7 @@ from anyio.abc import TaskGroup, TaskStatus
 
 from ._cancel import RunCancellation
 from ._enqueue import PendingMessage, PendingMessageQueue
+from ._operations import ToolOperation
 from ._run_context import get_current_run_context
 from .conversation import Conversation
 from .exceptions import UserError
@@ -105,6 +106,7 @@ class SessionRuntime:
         self.conversation = deepcopy(conversation) if persistent else conversation
         self.resources = ModelResources()
         self.inferred_models: dict[str, Model] = {}
+        self.operations: dict[str, ToolOperation] = {}
         self._inbox = PendingMessageQueue(deepcopy(pending) if pending else ())
         self._active: GraphAgentState | None = None
         self._result_conversation: Conversation | None = None
@@ -148,6 +150,7 @@ class SessionRuntime:
         with self._lock:
             assert self._claimed and self._active is None
             state.pending_messages = self._inbox
+            state.tool_operations = self.operations
             self._inbox = PendingMessageQueue()
             self._active = state
 

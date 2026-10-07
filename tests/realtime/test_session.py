@@ -11791,7 +11791,10 @@ async def test_wait_for_reply_returns_when_a_tool_result_trips_the_request_limit
                 await session.wait_for_reply()
             await events
     returns = [part for message in session.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)]
-    assert [part.outcome for part in returns] == ['failed']
+    # Execution succeeded. Refusing the follow-up request must not erase the actual result.
+    assert [(part.outcome, part.content) for part in returns] == [('success', 'done')]
+    (operation,) = session.tool_operations
+    assert (operation.execution, operation.delivery) == ('completed', 'ready')
 
 
 # --- context window ----------------------------------------------------------------------------

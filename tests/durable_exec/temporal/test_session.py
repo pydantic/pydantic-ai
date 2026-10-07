@@ -32,6 +32,7 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_ai import Agent, RunContext
     from pydantic_ai._warnings import PydanticAIDeprecationWarning
     from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+    from pydantic_ai.messages import ToolReturnPart
     from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
     from pydantic_ai.models.test import TestModel
 
@@ -129,6 +130,14 @@ class SessionWorkflow:
             assert second is not None
             assert first.run_id != second.run_id
             assert len(session.conversation.messages) == 6
+            (operation,) = session.state.operations
+            assert operation.run_id == first.run_id
+            assert (operation.execution, operation.delivery) == ('completed', 'committed')
+            # These assertions also run during Replayer: engine-cached outcomes reconstruct the
+            # projection without either opening an interaction or re-executing the tool.
+            returned = operation.result[0].parts[0]
+            assert isinstance(returned, ToolReturnPart)
+            assert returned.content == 'recorded'
             return [first.output, second.output]
 
 
