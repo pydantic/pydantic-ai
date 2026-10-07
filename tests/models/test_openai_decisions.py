@@ -52,7 +52,9 @@ from pydantic_ai.models.decision import (
     NoulCriteria,
     NoulQuestion,
     ScoreQuestion,
+    UnfillableRoute,
 )
+from pydantic_ai.profiles.decision import DecisionModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -505,6 +507,7 @@ async def test_api_limits(
     question: DecisionQuestion,
     allow_model_requests: None,
     capture_model: OpenAIDecisionsModel,
+    request_capture: RequestCapture,
 ):
     """`max_choice_options` and `max_score_levels` are the API's own limits: one more is a 400 naming them.
 
@@ -514,11 +517,31 @@ async def test_api_limits(
         await capture_model.decide(DecisionRequest(state='Charged twice.', questions={'q': question}), {})
     assert exc_info.value.status_code == 400
 
+    request_body = request_capture.body('/v1/decisions')
+    request_questions = request_body['questions']
+    assert isinstance(request_questions, list)
+    assert len(request_questions) == 1
+    request_question = request_questions[0]
+    assert isinstance(request_question, dict)
+    if isinstance(question, ChoiceQuestion):
+        assert request_question['type'] == 'choice'
+        choices = request_question['choices']
+        assert isinstance(choices, list)
+        assert len(choices) == 256
+    else:
+        assert isinstance(question, ScoreQuestion)
+        assert request_question['type'] == 'score'
+        levels = request_question['levels']
+        assert isinstance(levels, list)
+        assert len(levels) == 11
+
 
 @pytest.mark.vcr
-async def test_http_error(allow_model_requests: None, openai_api_key: str):
+async def test_http_error(allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture):
     """A model the API does not serve is an error response, raised for a `FallbackModel` to take over."""
-    model = OpenAIDecisionsModel('gpt-5', provider=OpenAIDecisionsProvider(api_key=openai_api_key))
+    model = OpenAIDecisionsModel(
+        'gpt-5', provider=OpenAIDecisionsProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
 
     with pytest.raises(ModelHTTPError) as exc_info:
         await Agent(model, output_type=Ticket).run('Charged twice.')
@@ -532,6 +555,7 @@ async def test_http_error(allow_model_requests: None, openai_api_key: str):
             'code': 'model_not_found',
         }
     )
+    assert request_capture.body('/v1/decisions')['model'] == 'gpt-5'
 
 
 async def test_too_many_routes(allow_model_requests: None):
@@ -1199,7 +1223,9 @@ async def test_unsupported_files_fail_before_a_decisions_request(
     captured = Captured(boolean_answers)
 
     with pytest.raises(UserError, match='OpenAI Decisions supports text and inline images only'):
-        await Agent(mock_model(captured), output_type=bool).run(prompt, message_history=history)
+        await Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?').run(
+            prompt, message_history=history
+        )
     assert captured.requests == []
 
 
@@ -1241,6 +1267,144 @@ async def test_image_download_error_prevents_a_decisions_request(allow_model_req
     ):
         await agent.run([ImageUrl('https://example.com/missing.png')])
 
+    assert captured.requests == []
+
+
+@pytest.mark.parametrize(
+    ('model_settings', 'threshold_name'),
+    [
+        pytest.param(
+            OpenAIDecisionsModelSettings(decision_boolean_threshold=2.0),
+            'decision_boolean_threshold',
+            id='boolean-threshold',
+        ),
+        pytest.param(
+            OpenAIDecisionsModelSettings(decision_route_threshold=2.0),
+            'decision_route_threshold',
+            id='route-threshold',
+        ),
+    ],
+)
+async def test_invalid_threshold_prevents_image_download(
+    allow_model_requests: None,
+    model_settings: OpenAIDecisionsModelSettings,
+    threshold_name: str,
+):
+    """Invalid decision thresholds are rejected before downloading an image prompt."""
+    captured = Captured(boolean_answers)
+    agent = Agent(
+        mock_model(captured),
+        output_type=bool,
+        instructions='Does the input contain an image?',
+        model_settings=model_settings,
+    )
+
+    with (
+        patch(
+            'pydantic_ai.models.openai_decisions.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download failed'),
+        ) as download,
+        pytest.raises(UserError, match=f'`{threshold_name}` must be between 0 and 1'),
+    ):
+        await agent.run([ImageUrl('https://example.com/missing.png')])
+
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
+async def test_unfillable_output_prevents_image_download(allow_model_requests: None):
+    """An unsupported output field is rejected before downloading an image prompt."""
+
+    class FreeTextOutput(BaseModel):
+        free_text: str = Field(description='A free-form explanation.')
+
+    captured = Captured(boolean_answers)
+    agent = Agent(mock_model(captured), output_type=FreeTextOutput)
+
+    with (
+        patch(
+            'pydantic_ai.models.openai_decisions.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download failed'),
+        ) as download,
+        pytest.raises(UserError, match="Output field 'free_text' is not supported by this model"),
+    ):
+        await agent.run([ImageUrl('https://example.com/missing.png')])
+
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
+async def test_route_limit_prevents_image_download(allow_model_requests: None):
+    """An overfull route question is rejected before downloading an image prompt."""
+
+    def inspect_ticket() -> None:
+        """Inspect the ticket."""
+
+    captured = Captured(boolean_answers)
+    client = AsyncOpenAI(
+        api_key='test', max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(captured))
+    )
+    model = OpenAIDecisionsModel(
+        'gpt-6-luna',
+        provider=OpenAIDecisionsProvider(openai_client=client),
+        profile=DecisionModelProfile(decision_max_choice_options=1),
+    )
+    agent = Agent(model, output_type=bool, tools=[inspect_ticket], instructions='Is this safe?')
+
+    with (
+        patch(
+            'pydantic_ai.models.openai_decisions.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download failed'),
+        ) as download,
+        pytest.raises(UserError, match='being offered 2 routes'),
+    ):
+        await agent.run([ImageUrl('https://example.com/missing.png')])
+
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
+async def test_unfillable_forced_tool_prevents_image_download(allow_model_requests: None):
+    """A forced tool with an unsupported argument is handed off before downloading a history image."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl('https://example.com/missing.png')])]),
+        ModelResponse(parts=[ToolCallPart('inspect_ticket', {}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('inspect_ticket', 'Inspected.', 'call_1')]),
+    ]
+    function_tools: list[ToolDefinition] = [
+        ToolDefinition(name='inspect_ticket', description='Inspect the ticket.'),
+        ToolDefinition(
+            name='write_note',
+            description='Write a note.',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'note': {'type': 'string', 'description': 'A note to write.'}},
+                'required': ['note'],
+            },
+        ),
+    ]
+    captured = Captured(boolean_answers)
+    model = mock_model(captured)
+
+    with (
+        patch(
+            'pydantic_ai.models.openai_decisions.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download failed'),
+        ) as download,
+        pytest.raises(UnfillableRoute) as exc_info,
+    ):
+        await model.request(
+            history,
+            None,
+            ModelRequestParameters(function_tools=function_tools, allow_text_output=False),
+        )
+
+    assert exc_info.value.route == 'write_note'
+    download.assert_not_awaited()
     assert captured.requests == []
 
 

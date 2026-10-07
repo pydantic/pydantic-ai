@@ -609,7 +609,6 @@ class DecisionModel(Model[InterfaceClient]):
         ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool, next(iter(routes)))
-        request_template = await self._prepare_decision_request(messages, turn=done)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         settings = cast(DecisionModelSettings, model_settings or {})
@@ -627,7 +626,7 @@ class DecisionModel(Model[InterfaceClient]):
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
             return await self._forced_with_arguments(
-                forced_tool, next(iter(routes)), request_template, instructions, settings, boolean_threshold, limits
+                forced_tool, next(iter(routes)), messages, instructions, settings, boolean_threshold, limits, turn=done
             )
         fillable = [tool for tool in output_tools if _expressible(tool, instructions, limits)]
         if (
@@ -655,6 +654,7 @@ class DecisionModel(Model[InterfaceClient]):
                 # a choice question, like the last tool left, and handing it off needs no request either.
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
+            request_template = await self._prepare_decision_request(messages, turn=done)
             async with self._decide(
                 dataclasses.replace(request_template, questions=ask.questions), settings, fields=True
             ) as (
@@ -665,9 +665,12 @@ class DecisionModel(Model[InterfaceClient]):
                 _record_outcome(span, confidence)
             return self._response(output_tool, args, response.usage, response.model_name, provider_details)
 
+        route_questions: dict[str, DecisionQuestion] = {}
+        route_key = _route_question(route_questions, routes, output_tools, tools, instructions, limits)
+        request_template = await self._prepare_decision_request(messages, turn=done)
         speculation = _Speculation.about(routes, output_tools, request_template.state, instructions, limits)
         questions = speculation.questions()
-        route_key = _route_question(questions, routes, output_tools, tools, instructions, limits)
+        questions.update(route_questions)
 
         # A picked route whose fields are asked in a second request, past the size cutoff: the route, its label and
         # its questions.
@@ -784,16 +787,19 @@ class DecisionModel(Model[InterfaceClient]):
         self,
         tool: ToolDefinition,
         label: str,
-        request_template: DecisionRequest,
+        messages: list[ModelMessage],
         instructions: str | None,
         settings: DecisionModelSettings,
         boolean_threshold: float,
         limits: _Limits,
+        *,
+        turn: bool,
     ) -> ModelResponse:
         """Fill the arguments of the one route left, without a choice request."""
         fill = _Ask.to_fill(tool, instructions, limits, label=label)
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
+        request_template = await self._prepare_decision_request(messages, turn=turn)
         response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)
