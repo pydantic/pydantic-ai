@@ -2116,13 +2116,15 @@ or choose browser sign-in. See [PLUGINS.md](PLUGINS.md#linear-issues-and-project
 
 When the task is ambiguous, the model can call `ask_user_question` instead of
 guessing. Questions appear inline, with the conversation still visible above a
-compact numbered picker. Use Up/Down and Enter, or press an option's number to
+compact numbered picker. The question stays pinned above its choices, so output that
+streams meanwhile, from a delegated task for instance, scrolls past above it instead
+of pushing it away. A delegated task's question names the task in its title. Use Up/Down and Enter, or press an option's number to
 select it. For multiple selections, Enter or a number toggles a choice; select
 `Done` to submit. At least one choice is required. Esc or Ctrl-C declines the
 whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
-preserved, and your picks are printed to the transcript afterwards.
+preserved, and the question and your picks are printed to the transcript afterwards.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
