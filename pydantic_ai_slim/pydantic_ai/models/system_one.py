@@ -22,9 +22,6 @@ from .decision import (
     DecisionRequest,
     DecisionResponse,
     ScoreAnswer,
-    ScoreQuestion,
-    _answer_fits,  # pyright: ignore[reportPrivateUsage]
-    _score_matches_probabilities,  # pyright: ignore[reportPrivateUsage]
     _wire,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -179,13 +176,11 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             )
         for name, question in questions.items():
             answer = parsed.answers[name]
-            valid = _answer_fits(question, answer) and (
+            valid = self._answer_fits(question, answer) and (
                 not isinstance(answer, ScoreAnswer)
                 or not answer.legend
                 or answer.legend.keys() == answer.probabilities.keys()
             )
-            if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
-                valid = _score_matches_probabilities(question, answer)
             if not valid:
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',

@@ -25,7 +25,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.exceptions import ContentFilterError, FallbackExceptionGroup, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import (
@@ -171,8 +171,6 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
         UserError.__name__,
         PydanticUserError.__name__,
         UnexpectedModelBehavior.__name__,
-        # Temporal matches the exact class name, so a subclass raised in an activity needs its own entry.
-        ContentFilterError.__name__,
         FallbackExceptionGroup.__name__,
         # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
         # restarting a command could repeat its already-completed side effects.
