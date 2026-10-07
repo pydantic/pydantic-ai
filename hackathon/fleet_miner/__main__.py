@@ -364,7 +364,10 @@ async def watch(args: argparse.Namespace) -> None:
                 base | (current or {}) | {k: v.isoformat() if isinstance(v, datetime) else v for k, v in fields.items()}
             )
 
-        await control.update_json(CONTROL_VARIABLE, build, description=description)
+        try:
+            await control.update_json(CONTROL_VARIABLE, build, description=description)
+        except Exception as exc:  # a status write (e.g. a 503 from Logfire) must not stop the demo loop
+            print(f'{datetime.now(UTC):%H:%M:%S} status write error: {type(exc).__name__}: {exc}'[:200], flush=True)
 
     if await control.read_json(CONTROL_VARIABLE) is None:
         print(f'creating `{CONTROL_VARIABLE}`', flush=True)
