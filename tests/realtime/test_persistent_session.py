@@ -12,7 +12,7 @@ import pytest
 
 from pydantic_ai import Agent, AgentRunResult, RunCancelled, RunContext, UserError
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, SpeechPart
+from pydantic_ai.messages import AgentStreamEvent, BinaryImage, ModelMessage, ModelResponse, SpeechPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import RealtimeModelSettings, RealtimeRun
@@ -23,9 +23,11 @@ from pydantic_ai.realtime.codec import (
     RealtimeConnection,
     RealtimeInput,
     ResponseDone,
+    SessionUsage,
     ToolCall,
     ToolResult,
 )
+from pydantic_ai.usage import RequestUsage
 
 from .test_session import FakeRealtimeModel
 
@@ -513,3 +515,200 @@ async def test_cancelled_run_aborts_blocked_audio_send_before_draining_producer(
                 release_send.set()
                 await asyncio.gather(task, *producers, return_exceptions=True)
     assert asyncio.all_tasks() == before
+
+
+@pytest.mark.parametrize('operation', ['context', 'audio', 'clear', 'interrupt'])
+async def test_abort_drains_in_flight_run_calls(operation: str):
+    before = asyncio.all_tasks()
+    sending, cancelled, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    calls: list[asyncio.Task[None]] = []
+
+    class BlockedConnection(DuplexConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            sending.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    model = CountedModel(BlockedConnection())
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(model).connect() as live:
+
+            async def execute() -> None:
+                async with live.run() as run:
+                    if operation == 'context':
+                        call = run.send('context only', respond=False)
+                    elif operation == 'audio':
+                        call = run.send_audio(b'\x00\x00' * 100)
+                    elif operation == 'clear':
+                        call = run.clear_audio()
+                    else:
+                        call = run.interrupt()
+                    calls.append(asyncio.create_task(call))
+                    await asyncio.Event().wait()
+
+            task = asyncio.create_task(execute())
+            try:
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await sending.wait()
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                assert cancelled.is_set()
+                assert calls[0].done()
+                with pytest.raises(asyncio.CancelledError):
+                    await calls[0]
+                assert model.closes == 1
+            finally:
+                release.set()
+                await asyncio.gather(task, *calls, return_exceptions=True)
+    assert asyncio.all_tasks() == before
+
+
+async def test_normal_exit_waits_for_in_flight_control_call():
+    sending, release, exiting = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    calls: list[asyncio.Task[None]] = []
+
+    class BlockedConnection(DuplexConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            sending.set()
+            await release.wait()
+            await super().send(content)
+
+    model = CountedModel(BlockedConnection())
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(model).connect() as live:
+
+            async def execute() -> None:
+                async with live.run() as run:
+                    calls.append(asyncio.create_task(run.clear_audio()))
+                    await sending.wait()
+                    exiting.set()
+
+            task = asyncio.create_task(execute())
+            try:
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    await exiting.wait()
+                    # A checkpoint after the driver's exit starts must still belong to this run.
+                    await anyio.lowlevel.checkpoint()
+                    assert owner.state.active_run_id is not None
+                    release.set()
+                    await task
+                assert calls[0].done()
+                await calls[0]
+                async with live.run() as second:
+                    await second.send('second')
+            finally:
+                release.set()
+                await asyncio.gather(task, *calls, return_exceptions=True)
+
+
+async def test_explicit_run_close_settles_without_spurious_boundary_error():
+    model = CountedModel(DuplexConnection())
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(model).connect() as live:
+            async with live.run() as run:
+                await run.send('hello')
+                await run.wait_for_reply()
+                await run.close()
+            assert run.result is not None
+            assert run.result.output == 'reply to hello'
+            with pytest.raises(UserError, match='closed'):
+                async with live.run():
+                    pytest.fail('Explicit close must revoke the attachment')
+        assert model.closes == 1
+
+
+async def test_image_retention_preserves_new_message_boundary_across_runs():
+    image = BinaryImage(data=b'image', media_type='image/png')
+    async with Agent(TestModel()).session() as owner:
+        async with owner.realtime(CountedModel(DuplexConnection())).connect(retain_images_max=1) as live:
+            async with live.run() as first:
+                await first.send(image)
+                await first.send('first')
+            saved = first.all_messages()
+            async with live.run() as second:
+                await second.send(image)
+                await second.send('second')
+            assert second.result is not None
+            assert len(second.new_messages()) == 3
+            assert second.new_messages() == second.result.new_messages()
+            assert all(message.run_id == second.result.run_id for message in second.new_messages())
+            assert first.all_messages() == saved
+            assert len(owner.conversation.messages) == 5
+
+
+@pytest.mark.parametrize('explicit_close', [False, True])
+async def test_connection_final_usage_updates_owner_without_mutating_results(explicit_close: bool):
+    class FinalUsageConnection(DuplexConnection):
+        async def _end_session(self) -> AsyncIterator[SessionUsage]:
+            yield SessionUsage(RequestUsage(input_tokens=11, audio_seconds=1.5))
+
+    class AccountExtraUsage(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            result.usage.input_tokens += 100
+            return result
+
+    async with Agent(TestModel(), deps_type=type(None), capabilities=[AccountExtraUsage()]).session() as owner:
+        async with owner.realtime(CountedModel(FinalUsageConnection())).connect() as live:
+            async with live.run() as run:
+                await run.send('hello')
+                await run.wait_for_reply()
+                if explicit_close:
+                    await run.close()
+            assert run.result is not None
+            saved = run.result.usage.input_tokens
+        assert owner.conversation.usage.input_tokens == 111
+        assert owner.conversation.usage.audio_seconds == 1.5
+        assert run.result.usage.input_tokens == saved
+        assert run.usage.input_tokens == saved
+
+
+@pytest.mark.parametrize('from_tool', [False, True])
+async def test_explicit_close_while_run_exit_is_waiting(from_tool: bool):
+    exiting, release_tool = asyncio.Event(), asyncio.Event()
+    handles: list[RealtimeRun] = []
+
+    class ToolConnection(DuplexConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            self.sent.append(content)
+            if isinstance(content, str):
+                self.events.put_nowait(ToolCall(tool_name='end_call', tool_call_id='end-call', args='{}'))
+                self.events.put_nowait(ResponseDone())
+
+    agent = Agent(TestModel(), deps_type=type(None))
+
+    @agent.tool
+    async def end_call(ctx: RunContext[None]) -> None:
+        await release_tool.wait()
+        assert isinstance(ctx.realtime_session, RealtimeRun)
+        await ctx.realtime_session.close()
+
+    model = CountedModel(ToolConnection() if from_tool else DuplexConnection())
+    async with agent.session() as owner:
+        async with owner.realtime(model).connect() as live:
+
+            async def execute() -> None:
+                async with live.run() as run:
+                    handles.append(run)
+                    if from_tool:
+                        await run.send('close via tool')
+                    else:
+                        # An input transcript that won't arrive keeps normal exit waiting.
+                        await run.send_audio(b'\x00\x00' * 100)
+                        await run.commit_audio()
+                    exiting.set()
+
+            task = asyncio.create_task(execute())
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await exiting.wait()
+                assert not task.done()
+                if from_tool:
+                    release_tool.set()
+                else:
+                    await handles[0].close()
+                await task
+            assert handles[0].result is not None
+            assert model.closes == 1

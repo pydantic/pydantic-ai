@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Generic, Literal, TypeVar, overload
@@ -23,6 +24,13 @@ from .profiles import RealtimeModelProfile
 __all__ = ('RealtimeRun',)
 
 _Item = TypeVar('_Item')
+
+
+@dataclass
+class _RunCall:
+    scope: anyio.CancelScope
+    observer: bool
+    finished: anyio.Event = field(default_factory=anyio.Event)
 
 
 @dataclass
@@ -137,6 +145,34 @@ class RealtimeRun:
         self._streams: list[AsyncIterator[object]] = []
         self._audio_inputs: list[_AudioInput] = []
         self._inputs_stopping = False
+        self._calls: list[_RunCall] = []
+        self._calls_stopping = False
+
+    @asynccontextmanager
+    async def _call(self, *, observer: bool = False) -> AsyncGenerator[RealtimeSession]:
+        session = self._active()
+        if self._calls_stopping:
+            raise UserError('This realtime run has ended.')
+        with anyio.CancelScope() as scope:
+            call = _RunCall(scope, observer)
+            self._calls.append(call)
+            try:
+                yield session
+            finally:
+                self._calls.remove(call)
+                call.finished.set()
+                session._exchange_progress.set()  # pyright: ignore[reportPrivateUsage]
+        # An aborted wire call must not look like a successful send to its caller.
+        if scope.cancel_called:
+            raise asyncio.CancelledError('Realtime run ended')
+
+    async def _stop_calls(self) -> None:
+        self._calls_stopping = True
+        calls = self._calls.copy()
+        for call in calls:
+            call.scope.cancel()
+        for call in calls:
+            await call.finished.wait()
 
     async def _stop_inputs(self, *, abort: bool = False) -> None:
         self._inputs_stopping = True
@@ -160,7 +196,9 @@ class RealtimeRun:
         return stream
 
     def _capture(self) -> None:
-        self._conversation = deepcopy(self._session.conversation)
+        self._conversation = deepcopy(
+            self.result.conversation if self.result is not None else self._session.conversation
+        )
 
     def _active(self) -> RealtimeSession:
         if self.closed or self._session._run is not self._state:  # pyright: ignore[reportPrivateUsage]
@@ -219,13 +257,15 @@ class RealtimeRun:
         self, content: RealtimeSessionInput | Sequence[RealtimeSessionInput], *, respond: bool | None = None
     ) -> None:
         """Send text, images or audio, as on `RealtimeSession.send`."""
-        await self._active().send(content, respond=respond)
+        async with self._call() as session:
+            await session.send(content, respond=respond)
 
     async def send_audio(self, data: bytes | AsyncIterable[bytes]) -> None:
         """Stream PCM audio into this run."""
-        session = self._active()
+        self._active()
         if isinstance(data, bytes):
-            await session.send_audio(data)
+            async with self._call() as session:
+                await session.send_audio(data)
             return
         if self._inputs_stopping:
             raise UserError('This realtime run is no longer accepting audio streams.')
@@ -248,23 +288,28 @@ class RealtimeRun:
 
     async def commit_audio(self) -> None:
         """Commit the current input audio turn."""
-        await self._active().commit_audio()
+        async with self._call() as session:
+            await session.commit_audio()
 
     async def clear_audio(self) -> None:
         """Clear uncommitted input audio."""
-        await self._active().clear_audio()
+        async with self._call() as session:
+            await session.clear_audio()
 
     async def create_response(self) -> None:
         """Request a response to the current conversation."""
-        await self._active().create_response()
+        async with self._call() as session:
+            await session.create_response()
 
     async def wait_for_reply(self) -> None:
         """Wait for generation, not playback or run finalization."""
-        await self._active().wait_for_reply()
+        async with self._call(observer=True) as session:
+            await session.wait_for_reply()
 
     async def wait_for_playback(self) -> None:
         """Wait for subscribed audio playback to catch up."""
-        await self._active().wait_for_playback()
+        async with self._call(observer=True) as session:
+            await session.wait_for_playback()
 
     @overload
     async def interrupt(self, *, played_ms: int | None = None) -> None: ...
@@ -274,10 +319,10 @@ class RealtimeRun:
 
     async def interrupt(self, *, played_ms: int | None = None, played_bytes: int | None = None) -> bool | None:
         """Interrupt generation and truncate unheard audio."""
-        session = self._active()
-        if played_bytes is not None:
-            return await session.interrupt(played_bytes=played_bytes)
-        return await session.interrupt(played_ms=played_ms)
+        async with self._call() as session:
+            if played_bytes is not None:
+                return await session.interrupt(played_bytes=played_bytes)
+            return await session.interrupt(played_ms=played_ms)
 
     def stream_audio(self) -> AsyncIterator[bytes]:
         """Subscribe to this run's model audio."""
@@ -299,8 +344,18 @@ class RealtimeRun:
 
     async def close(self) -> None:
         """Abort this run and its connection; normal context exit instead drains the run."""
-        await self._active().close()
+        if self.closed:
+            return
+        session = self._active()
+        with anyio.CancelScope(shield=True):
+            await self._stop_calls()
+            await self._stop_inputs(abort=True)
+            await session.close()
 
     async def hang_up(self) -> None:
         """End the provider call, including a WebRTC media connection."""
-        await self._active().hang_up()
+        session = self._active()
+        with anyio.CancelScope(shield=True):
+            await self._stop_calls()
+            await self._stop_inputs(abort=True)
+            await session.hang_up()

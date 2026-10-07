@@ -1190,10 +1190,17 @@ class RealtimeSession:
             self._exchange_progress.clear()
             if (error := self._first_undelivered_error()) is not None:
                 self._raise_delivered(error)
-            if self._closed or self._pump_finished:
+            if self._closed:
+                # A tool or another task can close while normal exit is waiting. Close owns the
+                # interrupted-history settlement and error delivery; wait for that same teardown.
+                await self.close()
+                return
+            if self._pump_finished:
                 raise UserError('The realtime connection ended before the run could settle.')
             pending = (
                 self._processing_frame
+                or self._run.handle is not None
+                and any(not call.observer for call in self._run.handle._calls)  # pyright: ignore[reportPrivateUsage]
                 or self._reply_outstanding()
                 or self._response_in_flight
                 or self._background_tasks
@@ -2155,8 +2162,11 @@ class RealtimeSession:
             for index, message in enumerate(messages):
                 if message is request:
                     messages.pop(index)
-                    if messages is self._history and index < self._audio_eviction_start:
-                        self._audio_eviction_start -= 1
+                    if messages is self._history:
+                        if index < self._audio_eviction_start:
+                            self._audio_eviction_start -= 1
+                        if len(self._seeded) + index < self._run.new_message_index:
+                            self._run.new_message_index -= 1
                     return
 
     async def send_audio(self, data: bytes | AsyncIterable[bytes]) -> None:
