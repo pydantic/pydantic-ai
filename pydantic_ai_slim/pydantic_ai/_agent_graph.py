@@ -98,6 +98,7 @@ from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -407,6 +408,8 @@ class GraphAgentState:
         default_factory=dict[str, _operations.ToolOperation]
     )
     """Session-owned projection of logical tool completion and provider delivery."""
+    deferred_tool_requests: DeferredToolRequests | None = None
+    """Unresolved approval/external requests, retained even before run finalization."""
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
@@ -2499,6 +2502,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             async for event in process_tool_calls(
                 tool_manager=ctx.deps.tool_manager,
                 tool_calls=tool_calls,
+                source_response=self.model_response,
                 tool_call_results=self.tool_call_results,
                 tool_call_metadata=self.tool_call_metadata,
                 final_result=final_result,

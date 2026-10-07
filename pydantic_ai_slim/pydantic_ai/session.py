@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, overload
 
 import anyio
 from pydantic import ConfigDict, TypeAdapter
 from typing_extensions import TypedDict, Unpack
 
-from . import _instructions, _utils, messages, models, result, usage as _usage
+from . import _instructions, _operations, _utils, messages, models, result, usage as _usage
 from ._cancel import CancellationToken
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._operations import ToolOperation as ToolOperation
@@ -60,6 +60,143 @@ class SessionState:
     """Tool execution and result-delivery facts; never an instruction to repeat an effect."""
     active_run_id: str | None = None
     """Unfinished work at capture time. This is not an instruction to retry that work."""
+
+    def recover(
+        self,
+        *,
+        tool_results: Mapping[str, messages.ModelRequest] | None = None,
+        deliveries: Mapping[str, Literal['ready', 'committed']] | None = None,
+        abandon_run: bool = False,
+    ) -> SessionState:
+        """Reconcile a detached checkpoint before opening a new session.
+
+        Keys are `ToolOperation.operation_id`, not provider tool-call IDs. Supply normalized
+        `tool_results` only after verifying an unknown external outcome; this never runs a tool.
+        Each request must contain one matching return/retry and optional user content.
+        `deliveries` explicitly authorizes resending an existing result (`ready`), or records
+        external confirmation (`committed`). A lost send is never silently made ready.
+
+        An active checkpoint additionally requires `abandon_run=True`: the application must first
+        stop its old driver and fence any other writers. This abandons unfinished model generation
+        and closes unanswered calls, not external effects. All unknown tool outcomes still need
+        results. Usage after the checkpoint cannot be recovered here. Durable engines should
+        normally replay their own recorded operations rather than abandon an active workflow.
+
+        The original checkpoint is unchanged, including if reconciliation fails.
+        """
+        if self.active_run_id is not None and not abandon_run:
+            raise UserError('The checkpoint contains an unfinished run; stop its owner and pass `abandon_run=True`.')
+        recovered = deepcopy(self)
+        operations = {op.operation_id: op for op in recovered.operations}
+        if len(operations) != len(recovered.operations):
+            raise UserError('The checkpoint contains duplicate tool operation IDs.')
+        for operation_id, request in (tool_results or {}).items():
+            operation = _get_operation(operations, operation_id)
+            request = deepcopy(request)
+            returns = [p for p in request.parts if isinstance(p, (messages.ToolReturnPart, messages.RetryPromptPart))]
+            if (
+                len(returns) != 1
+                or returns[0].tool_call_id != operation.call.tool_call_id
+                or returns[0].tool_name != operation.call.tool_name
+                or any(
+                    not isinstance(p, (messages.ToolReturnPart, messages.RetryPromptPart, messages.UserPromptPart))
+                    for p in request.parts
+                )
+            ):
+                raise UserError(f'Recovery result must answer only tool operation {operation_id!r}.')
+            request = replace(
+                request,
+                run_id=operation.run_id,
+                conversation_id=recovered.conversation.conversation_id,
+                state='complete',
+            )
+            _operations.apply(operations, operation_id, _operations.ReconcileTool([request]))
+        for operation_id, status in (deliveries or {}).items():
+            _get_operation(operations, operation_id)
+            _operations.apply(operations, operation_id, _operations.ReconcileDelivery(status))
+        recovered.operations = list(operations.values())
+        _require_settled_operations(recovered.operations)
+        for operation in recovered.operations:
+            if operation.execution == 'completed' and (
+                operation.operation_id in (tool_results or {})
+                or self.active_run_id is not None
+                and any(request.run_id == self.active_run_id for request in operation.result)
+            ):
+                _restore_operation_result(recovered.conversation, operation)
+        if self.active_run_id is not None:
+            recovered.conversation.messages = messages.repair_messages(
+                recovered.conversation.messages,
+                repair_last_response=recovered.conversation.deferred_tool_requests is None,
+            )
+            if recovered.conversation.messages:
+                last = recovered.conversation.messages[-1]
+                recovered.conversation.messages[-1] = replace(last, state='interrupted')
+        recovered.active_run_id = None
+        return recovered
+
+
+def _get_operation(operations: Mapping[str, ToolOperation], operation_id: str) -> ToolOperation:
+    try:
+        return operations[operation_id]
+    except KeyError:
+        raise UserError(f'Unknown tool operation {operation_id!r}.') from None
+
+
+def _require_settled_operations(operations: Sequence[ToolOperation]) -> None:
+    for operation in operations:
+        if operation.execution in ('running', 'interrupted') or operation.delivery in (
+            'sending',
+            'sent',
+            'accepted',
+            'uncertain',
+        ):
+            raise UserError(f'Tool operation {operation.operation_id!r} is unresolved; use `state.recover()` first.')
+
+
+def _restore_operation_result(conversation: Conversation, operation: ToolOperation) -> None:
+    # Restore beside the originating response, not at the end of unrelated later history.
+    history = conversation.messages
+    indices = [
+        index
+        for index, response in enumerate(history)
+        if isinstance(response, messages.ModelResponse)
+        and response.run_id == operation.run_id
+        and (operation.response_timestamp is None or response.timestamp == operation.response_timestamp)
+        and operation.call_index < len(response.tool_calls)
+        and response.tool_calls[operation.call_index].tool_call_id == operation.call.tool_call_id
+        and response.tool_calls[operation.call_index].tool_name == operation.call.tool_name
+    ]
+    if len(indices) != 1:
+        raise UserError(
+            f'The conversation cannot unambiguously locate the call for operation {operation.operation_id!r}.'
+        )
+    index = indices[0]
+    following = history[index + 1] if index + 1 < len(history) else None
+    existing = (
+        list(following.parts) if isinstance(following, messages.ModelRequest) else list[messages.ModelRequestPart]()
+    )
+    restored_parts: list[messages.ModelRequestPart] = []
+    for request in operation.result:
+        assert isinstance(request, messages.ModelRequest)
+        restored_parts.extend(request.parts)
+    for part in existing:
+        if (
+            isinstance(part, (messages.ToolReturnPart, messages.RetryPromptPart))
+            and part.tool_call_id == operation.call.tool_call_id
+        ):
+            if any(
+                isinstance(restored, (messages.ToolReturnPart, messages.RetryPromptPart))
+                and restored.timestamp == part.timestamp
+                and restored.tool_name == part.tool_name
+                for restored in restored_parts
+            ):
+                # Already assembled completion must not duplicate multimodal user content.
+                return
+            raise UserError(f'History already has a different result for operation {operation.operation_id!r}.')
+    if isinstance(following, messages.ModelRequest):
+        history[index + 1] = replace(following, parts=[*existing, *restored_parts])
+    else:
+        history[index + 1 : index + 1] = deepcopy(operation.result)
 
 
 SessionStateTypeAdapter = TypeAdapter(SessionState)
@@ -119,6 +256,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
             state.pending if state is not None else None,
         )
         if state is not None:
+            _require_settled_operations(state.operations)
             self._runtime.operations.update((op.operation_id, deepcopy(op)) for op in state.operations)
         self._deps = deps
         self._model = model

@@ -1124,6 +1124,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 async for _event in _agent_graph.process_tool_calls(
                                     tool_manager=graph_ctx.deps.tool_manager,
                                     tool_calls=stream.response.tool_calls,
+                                    source_response=stream.response,
                                     tool_call_results=None,
                                     tool_call_metadata=None,
                                     final_result=final_result,

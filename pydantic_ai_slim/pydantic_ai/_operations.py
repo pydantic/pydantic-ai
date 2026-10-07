@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import Literal, assert_never
 
 from ._messages_serialization import MessageHistory
@@ -32,6 +33,7 @@ class ToolOperation:
     run_step: int
     call: ToolCallPart
     call_index: int = 0
+    response_timestamp: datetime | None = None
     execution: Literal['pending', 'running', 'deferred', 'completed', 'interrupted'] = 'pending'
     delivery: Literal['pending', 'ready', 'sending', 'sent', 'accepted', 'committed', 'uncertain', 'abandoned'] = (
         'pending'
@@ -47,6 +49,13 @@ class StartTool:
 
 @dataclass(frozen=True)
 class CompleteTool:
+    result: MessageHistory
+
+
+@dataclass(frozen=True)
+class ReconcileTool:
+    """Externally verified outcome of an interrupted effect; never execute it again."""
+
     result: MessageHistory
 
 
@@ -85,6 +94,7 @@ class ReconcileDelivery:
 OperationEvent = (
     StartTool
     | CompleteTool
+    | ReconcileTool
     | DeferTool
     | InterruptTool
     | StartDelivery
@@ -109,9 +119,13 @@ def transition(  # noqa: C901
         if operation.execution != 'running':
             raise UserError(f'Tool operation {operation.operation_id!r} is not running.')
         return replace(operation, execution='completed', delivery='ready', result=event.result), ('record_result',)
+    if isinstance(event, ReconcileTool):
+        if operation.execution not in ('running', 'interrupted'):
+            raise UserError(f'Tool operation {operation.operation_id!r} has no unresolved outcome.')
+        return replace(operation, execution='completed', delivery='ready', result=event.result), ('record_result',)
     if isinstance(event, DeferTool):
-        if operation.execution != 'running':
-            raise UserError(f'Tool operation {operation.operation_id!r} is not running.')
+        if operation.execution not in ('pending', 'running', 'deferred'):
+            raise UserError(f'Tool operation {operation.operation_id!r} cannot be deferred.')
         return replace(operation, execution='deferred'), ()
     if isinstance(event, InterruptTool):
         if operation.execution == 'running':
@@ -156,7 +170,13 @@ def apply(
 
 
 def admit(
-    operations: dict[str, ToolOperation], *, run_id: str | None, run_step: int, call: ToolCallPart, call_index: int = 0
+    operations: dict[str, ToolOperation],
+    *,
+    run_id: str | None,
+    run_step: int,
+    call: ToolCallPart,
+    call_index: int = 0,
+    response_timestamp: datetime | None = None,
 ) -> str:
     # Length-prefix the run ID so even caller-supplied IDs containing separators are unambiguous.
     # The scope and model step distinguish provider call IDs reused in later responses or runs.
@@ -164,7 +184,12 @@ def admit(
     operation_id = f'{len(scope)}:{scope}:{run_step}:{call_index}:{call.tool_call_id}'
     if operation_id not in operations:
         operations[operation_id] = ToolOperation(
-            operation_id=operation_id, run_id=run_id, run_step=run_step, call=call, call_index=call_index
+            operation_id=operation_id,
+            run_id=run_id,
+            run_step=run_step,
+            call=call,
+            call_index=call_index,
+            response_timestamp=response_timestamp,
         )
     return operation_id
 
@@ -187,7 +212,7 @@ def begin_request_delivery(operations: dict[str, ToolOperation], messages: Seque
         if operation.delivery not in ('ready', 'uncertain'):
             continue
         if any(
-            (operation.run_id, part.tool_call_id, part.tool_name, part.timestamp) in results
+            (message.run_id, part.tool_call_id, part.tool_name, part.timestamp) in results
             or (None, part.tool_call_id, part.tool_name, part.timestamp) in results
             for message in operation.result
             for part in message.parts

@@ -308,6 +308,7 @@ async def process_tool_calls(
     tool_manager: ToolManager[DepsT],
     *,
     tool_calls: list[_messages.ToolCallPart],
+    source_response: _messages.ModelResponse,
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
@@ -362,6 +363,7 @@ async def process_tool_calls(
     processor = processor_class(
         tool_manager=tool_manager,
         tool_calls=tool_calls,
+        source_response=source_response,
         tool_call_results=tool_call_results,
         tool_call_metadata=tool_call_metadata,
         ctx=ctx,
@@ -389,6 +391,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     tool_manager: ToolManager[DepsT]
     tool_calls: list[_messages.ToolCallPart]
+    source_response: _messages.ModelResponse
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None
     tool_call_metadata: dict[str, dict[str, Any]] | None
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -713,6 +716,30 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 if self._is_retry_wins_trigger(part, kind=kind):
                     self.retry_wins_triggered = True
 
+    def _operation_id(self, call: _messages.ToolCallPart, call_index: int) -> str:
+        state = self.ctx.state
+        if self.tool_call_results is not None:
+            # A deferred resume is a new Run, but settles the original logical operation.
+            # The resume path already rejects duplicate call IDs in its source response.
+            for operation in reversed(state.tool_operations.values()):
+                if (
+                    operation.run_id == self.source_response.run_id
+                    and operation.response_timestamp == self.source_response.timestamp
+                    and operation.call_index == call_index
+                    and operation.call.tool_call_id == call.tool_call_id
+                    and operation.call.tool_name == call.tool_name
+                    and operation.execution == 'deferred'
+                ):
+                    return operation.operation_id
+        return _operations.admit(
+            state.tool_operations,
+            run_id=state.run_id,
+            run_step=state.run_step,
+            call=call,
+            call_index=call_index,
+            response_timestamp=self.source_response.timestamp,
+        )
+
     async def _call_tool(
         self,
         tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
@@ -722,15 +749,28 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     ) -> tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]:
         state = self.ctx.state
         call = tool_call.call if isinstance(tool_call, ValidatedToolCall) else tool_call
-        operation_id = _operations.admit(
-            state.tool_operations, run_id=state.run_id, run_step=state.run_step, call=call, call_index=call_index
-        )
+        operation_id = self._operation_id(call, call_index)
         actions = _operations.apply(state.tool_operations, operation_id, _operations.StartTool())
         assert 'execute_tool' in actions
+        if pending := state.deferred_tool_requests:
+            pending.calls = [p for p in pending.calls if p.tool_call_id != call.tool_call_id]
+            pending.approvals = [p for p in pending.approvals if p.tool_call_id != call.tool_call_id]
+            pending.metadata.pop(call.tool_call_id, None)
+            if not pending.calls and not pending.approvals:
+                state.deferred_tool_requests = None
         try:
             parts, content = await self._execute_tool(tool_call, tool_call_result=tool_call_result)
-        except (exceptions.CallDeferred, exceptions.ApprovalRequired):
+        except (exceptions.CallDeferred, exceptions.ApprovalRequired) as exc:
             _operations.apply(state.tool_operations, operation_id, _operations.DeferTool())
+            if state.deferred_tool_requests is None:
+                state.deferred_tool_requests = DeferredToolRequests()
+            pending = state.deferred_tool_requests
+            if isinstance(exc, exceptions.CallDeferred):
+                pending.calls.append(call)
+            else:
+                pending.approvals.append(call)
+            if exc.metadata is not None:
+                pending.metadata[call.tool_call_id] = exc.metadata
             raise
         except BaseException:
             _operations.apply(state.tool_operations, operation_id, _operations.InterruptTool())
@@ -1065,10 +1105,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 f'Deferred tool calls must have unique tool_call_id values; duplicate ids: {duplicate_ids}'
             )
 
+        for call in [*self.deferred_calls['external'], *self.deferred_calls['unapproved']]:
+            call_index = next(i for i, original in enumerate(self.tool_calls) if original is call)
+            operation_id = self._operation_id(call, call_index)
+            _operations.apply(self.ctx.state.tool_operations, operation_id, _operations.DeferTool())
+
         deferred_tool_requests: DeferredToolRequests | None = DeferredToolRequests(
             calls=self.deferred_calls['external'],
             approvals=self.deferred_calls['unapproved'],
             metadata=self.deferred_metadata,
+        )
+
+        self.ctx.state.deferred_tool_requests = dataclasses.replace(
+            deferred_tool_requests,
+            calls=list(deferred_tool_requests.calls),
+            approvals=list(deferred_tool_requests.approvals),
+            metadata=dict(deferred_tool_requests.metadata),
         )
 
         # Emit the batch of deferred requests so stream consumers can observe the pending
@@ -1133,6 +1185,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_tool_requests.approvals.extend(new_deferred_calls['unapproved'])
                 deferred_tool_requests.metadata.update(new_deferred_metadata)
 
+        self.ctx.state.deferred_tool_requests = deferred_tool_requests
         if deferred_tool_requests is not None:
             if not self.ctx.deps.output_schema.allows_deferred_tools:
                 raise exceptions.UserError(

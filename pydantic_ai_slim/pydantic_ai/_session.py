@@ -151,6 +151,7 @@ class SessionRuntime:
             assert self._claimed and self._active is None
             state.pending_messages = self._inbox
             state.tool_operations = self.operations
+            state.deferred_tool_requests = deepcopy(self.conversation.deferred_tool_requests)
             self._inbox = PendingMessageQueue()
             self._active = state
 
@@ -191,6 +192,7 @@ class SessionRuntime:
                     messages=state.message_history,
                     usage=state.usage,
                     conversation_id=state.conversation_id,
+                    deferred_tool_requests=state.deferred_tool_requests,
                 )
                 queue = state.pending_messages
                 assert isinstance(queue, PendingMessageQueue)
@@ -213,11 +215,7 @@ class SessionRuntime:
                     messages=state.message_history,
                     usage=state.usage,
                     conversation_id=state.conversation_id,
-                    deferred_tool_requests=(
-                        self.conversation.deferred_tool_requests
-                        if state.message_history == self.conversation.messages
-                        else None
-                    ),
+                    deferred_tool_requests=state.deferred_tool_requests,
                 )
                 queue = state.pending_messages
                 assert isinstance(queue, PendingMessageQueue)

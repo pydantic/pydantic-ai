@@ -11,7 +11,15 @@ from typing import Literal
 import anyio
 import pytest
 
-from pydantic_ai import Agent, ModelRetry, RunContext, SessionStateTypeAdapter, UserError
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    ModelRetry,
+    RunContext,
+    SessionStateTypeAdapter,
+    UserError,
+)
 from pydantic_ai._operations import (
     CompleteTool,
     InterruptTool,
@@ -50,6 +58,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.session import SessionState
 from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import ToolApproved
 
 from .realtime.test_session import BlockingRealtimeConnection, FakeRealtimeConnection, FakeRealtimeModel
 
@@ -323,3 +332,34 @@ async def test_provider_cancellation_during_delivery_emits_actual_completion(ord
     assert (returns[0].content, returns[0].outcome) == ('done', 'success')
     (operation,) = session.tool_operations
     assert (operation.execution, operation.delivery) == ('completed', 'uncertain')
+
+
+@pytest.mark.parametrize('dynamic', [False, True])
+async def test_deferred_resume_preserves_operation_identity(dynamic: bool):
+    calls: list[int] = []
+    agent = Agent(TestModel(), deps_type=type(None), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=not dynamic)
+    def value(ctx: RunContext[None], amount: int) -> int:
+        if dynamic and not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        calls.append(amount)
+        return amount
+
+    async with agent.session() as session:
+        first = await session.run('call')
+        assert isinstance(first.output, DeferredToolRequests)
+        state = SessionStateTypeAdapter.validate_json(SessionStateTypeAdapter.dump_json(session.state))
+        (original,) = state.operations
+        assert (original.execution, original.delivery) == ('deferred', 'pending')
+        results = first.output.build_results(approve_all=True)
+        results.approvals[original.call.tool_call_id] = ToolApproved(override_args={'amount': 42})
+    assert calls == []
+    async with agent.session(state=state) as restored:
+        resumed = await restored.run(deferred_tool_results=results)
+        (completed,) = restored.state.operations
+        assert completed.operation_id == original.operation_id
+        assert completed.run_id == first.run_id != resumed.run_id
+        assert (completed.execution, completed.delivery) == ('completed', 'committed')
+        assert completed.result[0].run_id == resumed.run_id
+    assert calls == [42]
