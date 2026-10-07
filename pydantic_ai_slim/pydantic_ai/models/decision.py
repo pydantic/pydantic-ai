@@ -227,9 +227,10 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
 
 
 def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  # pyright: ignore[reportUnusedFunction]
-    """Whether a backend's answer is one its question allows: of its kind, an offered option, or within the rubric.
+    """Whether an answer is one its question allows: its kind, an offered option, and values in range.
 
-    The checks every backend's answers need; a backend adds the ones its own API calls for.
+    A yes/no's probability is from 0 to 1 and a score is within the rubric. A backend that checks its API's answers
+    adds the checks its own API calls for.
     """
     if isinstance(question, NoulQuestion):
         return isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1

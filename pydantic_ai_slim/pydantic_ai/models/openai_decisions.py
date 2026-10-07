@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, ClassVar, Literal, NotRequired, TypeAlias, assert_never, cast
+from typing import Annotated, ClassVar, Literal, NotRequired, TypeAlias, assert_never
 
 import httpx2
 from pydantic import Field, JsonValue, TypeAdapter
@@ -207,7 +207,7 @@ def _request_options(model_settings: DecisionModelSettings) -> RequestOptions:
             raise UserError(
                 f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.'
             )
-        options['extra_json'] = cast('Mapping[str, object]', extra_body)
+        options['extra_json'] = extra_body
     return options
 
 
