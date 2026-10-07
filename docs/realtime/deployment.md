@@ -1,3 +1,7 @@
+---
+description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, with keys and tools on your server."
+---
+
 # Connecting a frontend
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
@@ -85,6 +89,13 @@ indicators — [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] c
 outbound WebRTC audio buffer so [barge-in](turns.md#barge-in) stops playback. A
 dropped sideband follows the same [reconnect](lifecycle.md#reconnecting) rules, with one wrinkle
 covered there: a clean close is treated as the browser hanging up.
+
+Closing a sideband session, or leaving its `async with` block, only detaches your server: the
+browser's call stays up, and billed, until the browser hangs up. To end the call from the server,
+call [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] instead (it works from a
+[tool](tools.md#ending-the-session-from-a-tool) too), or
+[`hang_up(answer.session)`][pydantic_ai.agent.AgentRealtime.hang_up] on `agent.realtime(model)` when
+no sideband is attached. OpenAI supports this for both gpt-realtime and GPT-Live; Azure OpenAI doesn't yet.
 
 The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the full FastAPI and
 browser flow. Provider-specific setup (Azure's Microsoft Entra ID and `webrtcfilter`) lives on the

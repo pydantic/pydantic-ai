@@ -14,9 +14,11 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
-from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
+    CAPABILITY_TYPES,
     AbstractCapability,
+    Instrumentation,
     ProcessEventStream,
     ResolveModelId,
     WrapperCapability,
@@ -49,9 +51,14 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
+from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
+
+with try_import() as logfire_installed:
+    from logfire.testing import CaptureLogfire
 
 if TYPE_CHECKING:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -99,7 +106,6 @@ else:
         ActivityDefinition = TemporalDurability = cast(Any, None)
         temporal_available = False
 
-pytestmark = pytest.mark.anyio
 
 requires_dbos = pytest.mark.skipif(not dbos_available, reason='DBOS is not installed')
 requires_prefect = pytest.mark.skipif(not prefect_available, reason='Prefect is not installed')
@@ -246,6 +252,117 @@ def _tracked_model_resolver(
         return model
 
     return resolve
+
+
+class _BindLoggingDurability(RecordingDurability):
+    """Logs each bind, which is where an engine registers its durable operations."""
+
+    def __init__(self, bound: list[str]) -> None:
+        super().__init__()
+        self._bound = bound
+
+    def _bind_for_agent(self, agent: AbstractAgent[Any, Any]) -> _BindLoggingDurability:
+        self._bound.append(self.engine_name)
+        return super()._bind_for_agent(agent)
+
+
+class _OtherEngineDurability(_BindLoggingDurability):
+    engine_spec = DurabilityEngineSpec(
+        engine_name='other',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+    )
+
+
+_SECOND_ENGINE = re.escape(
+    'An agent can have only one durable execution engine, but this one would have 2: '
+    '`_BindLoggingDurability`, `_OtherEngineDurability`.'
+)
+
+
+def test_a_second_durable_engine_is_refused_at_construction() -> None:
+    bound: list[str] = []
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        Agent(
+            TestModel(),
+            name='two_engines',
+            capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)],
+        )
+    assert bound == []
+
+
+async def test_two_durable_engines_for_one_run_are_refused_before_either_binds() -> None:
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='two_engines')
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)])
+    assert bound == []
+
+
+async def test_a_durable_engine_for_a_run_is_refused_beside_the_agents_own() -> None:
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='two_engines', capabilities=[_BindLoggingDurability(bound)])
+    assert bound == ['recording']
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[_OtherEngineDurability(bound)])
+    assert bound == ['recording'], 'the run-level engine never bound'
+
+
+async def test_a_durable_engine_returned_by_a_capability_factory_is_refused() -> None:
+    """A factory's capability only exists once `for_run` resolves it, after the pre-bind check."""
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='factory_engine', capabilities=[_BindLoggingDurability(bound)])
+    other = _OtherEngineDurability(bound)
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[lambda ctx: other])
+    assert other.calls == [], 'the factory engine never took over dispatch'
+
+
+def test_two_durable_engines_in_an_override_spec_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`override(spec=...)` replaces the agent's capabilities with the spec's, and binds them itself."""
+    bound: list[str] = []
+
+    class _SpecEngine(_BindLoggingDurability):
+        def __init__(self) -> None:
+            super().__init__(bound)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'SpecEngine'
+
+    class _OtherSpecEngine(_OtherEngineDurability):
+        def __init__(self) -> None:
+            super().__init__(bound)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'OtherSpecEngine'
+
+    monkeypatch.setitem(CAPABILITY_TYPES, 'SpecEngine', _SpecEngine)
+    monkeypatch.setitem(CAPABILITY_TYPES, 'OtherSpecEngine', _OtherSpecEngine)
+    agent = Agent(TestModel(), name='override_two_engines')
+    with pytest.raises(UserError, match='would have 2: `_SpecEngine`, `_OtherSpecEngine`'):
+        with agent.override(spec={'capabilities': ['SpecEngine', 'OtherSpecEngine']}):
+            pass  # pragma: no cover
+    assert bound == []
+
+
+async def test_one_durable_engine_listed_twice_is_refused() -> None:
+    engine = _BindLoggingDurability([])
+    agent = Agent(TestModel(), name='one_engine_twice')
+    with pytest.raises(UserError, match='would have 2: `_BindLoggingDurability`, `_BindLoggingDurability`'):
+        await agent.run('hi', capabilities=[engine, engine])
+
+
+def test_a_wrapped_durable_engine_still_counts() -> None:
+    bound: list[str] = []
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        Agent(
+            TestModel(),
+            name='wrapped_engine',
+            capabilities=[_BindLoggingDurability(bound).prefix_tools('p'), _OtherEngineDurability(bound)],
+        )
 
 
 async def test_capability_operation_is_direct_outside_durable_context() -> None:
@@ -1093,6 +1210,87 @@ async def test_wrapped_durability_dispatches_capability_operation() -> None:
     assert any(name == 'wrapped_durability__capability__operations.calculate' for name, _ in durability.calls)
 
 
+class ToolCallingOperation(AbstractCapability[Any]):
+    id = 'tool_calling'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[Any], query: str) -> str:
+        self.calls += 1
+        return f'fetched {query}'
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def lookup(ctx: RunContext[Any], query: str) -> str:
+            return await self.fetch(ctx, query)
+
+        return toolset
+
+
+async def test_operation_called_from_a_wrapped_tool_runs_inside_the_tool_unit() -> None:
+    """The tool's unit already records the result, and engines like AWS Lambda can't nest units."""
+    capability = ToolCallingOperation()
+    durability = RecordingDurability()
+    agent = Agent(TestModel(), name='tool_calling', capabilities=[capability, durability])
+
+    await agent.run('test')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    names = [name for name, _ in bound.calls]
+    assert 'tool_calling__function_toolset__tool_calling.call_tool:lookup' in names
+    assert not [name for name in names if '__capability__' in name]
+    assert capability.calls == 1
+
+
+class CallsAnotherCapabilitysOperation(AbstractCapability[Any]):
+    id = 'tool_owner'
+
+    def __init__(self, emitter: EmittingOperation) -> None:
+        self.emitter = emitter
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def checkpoint(ctx: RunContext[Any]) -> str:
+            await self.emitter.checkpoint(ctx)
+            return 'done'
+
+        return toolset
+
+
+async def test_operation_run_inside_another_capabilitys_unit_emits_as_its_own_capability() -> None:
+    """Run inline in another capability's tool unit, the operation runs as its own capability, as in its own unit."""
+    observed: list[str | None] = []
+
+    async def observe(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, OperationCheckpointEvent):
+                observed.append(event.capability_id)
+
+    emitter = EmittingOperation()
+    agent = Agent(
+        TestModel(),
+        name='cross_capability_emit',
+        capabilities=[
+            emitter,
+            CallsAnotherCapabilitysOperation(emitter),
+            ProcessEventStream(observe),
+            RecordingDurability(),
+        ],
+    )
+
+    await agent.run('test')
+
+    # Once from `before_run`, outside any unit, and once from the other capability's tool unit.
+    assert observed == ['emitting_operation', 'emitting_operation']
+
+
 @requires_temporal
 def test_wrapped_temporal_durability_registers_capability_operation() -> None:
     agent = Agent(
@@ -1147,6 +1345,41 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.details['custom_units'],
         ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
+
+
+@pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
+async def test_replayed_usage_delta_of_an_uninstrumented_delegate_is_not_credited_to_its_caller(
+    capfire: CaptureLogfire,
+) -> None:
+    """A delegate without a span doesn't report the usage its replayed operation folds in on the caller's.
+
+    On replay the operation's body doesn't run: its recorded usage delta is folded into the delegate's
+    usage from inside the delegate's run, which must not credit the instrumented run that started it.
+    """
+    capability = UsageOperation()
+    delegate = Agent(TestModel(), name='delegate', capabilities=[capability, ReplayingDurability()])
+    parent = Agent(TestModel(), name='parent', capabilities=[Instrumentation()])
+
+    @parent.tool_plain
+    async def ask_delegate() -> str:
+        return (await delegate.run('x')).output
+
+    results = [await parent.run('go'), await parent.run('go')]
+    assert capability.calls == 1
+
+    reported = [
+        {key: value for key, value in span['attributes'].items() if key.startswith('gen_ai.aggregated_usage.')}
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['name'] == 'invoke_agent parent'
+    ]
+    # What each parent run spent itself, on both the first run and the replayed one.
+    assert reported == [
+        {
+            'gen_ai.aggregated_usage.input_tokens': result.usage.input_tokens,
+            'gen_ai.aggregated_usage.output_tokens': result.usage.output_tokens,
+        }
+        for result in results
+    ]
 
 
 @dataclass(kw_only=True)
@@ -1339,7 +1572,7 @@ def test_unannotated_parameter_is_rejected_at_bind() -> None:
         Agent(TestModel(), name='unannotated', capabilities=[Unannotated(), RecordingDurability()])
 
 
-async def test_decorated_model_request_hook_round_trips_mutation() -> None:
+async def test_decorated_model_request_hook_round_trips_request_only_mutation() -> None:
     agent = Agent(
         TestModel(call_tools=[]),
         name='before_model',
@@ -1350,13 +1583,18 @@ async def test_decorated_model_request_hook_round_trips_mutation() -> None:
 
     requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
     assert isinstance(requests[-1].parts[0], UserPromptPart)
-    assert requests[-1].parts[0].content == 'replaced'
+    assert requests[-1].parts[0].content == 'original'
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(name == 'before_model__capability__before_model.before_model_request' for name, _ in durability.calls)
+    model_call = next(cache_key for name, cache_key in durability.calls if name == 'before_model__model.request')
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'replaced'
 
 
-async def test_custom_model_request_operation_round_trips_projection() -> None:
+async def test_custom_model_request_operation_round_trips_request_only_projection() -> None:
     agent = Agent(
         TestModel(call_tools=[]),
         name='custom_model_request',
@@ -1367,12 +1605,19 @@ async def test_custom_model_request_operation_round_trips_projection() -> None:
 
     requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
     assert isinstance(requests[-1].parts[0], UserPromptPart)
-    assert requests[-1].parts[0].content == 'custom replacement'
+    assert requests[-1].parts[0].content == 'original'
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert any(
         name == 'custom_model_request__capability__custom_model_request.rewrite_request' for name, _ in durability.calls
     )
+    model_call = next(
+        cache_key for name, cache_key in durability.calls if name == 'custom_model_request__model.request'
+    )
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'custom replacement'
 
 
 async def test_decorated_model_request_hook_round_trips_registered_model_replacement() -> None:

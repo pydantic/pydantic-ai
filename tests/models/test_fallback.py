@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import timezone
+from datetime import UTC
 from decimal import Decimal
 from typing import Any, Literal, cast
 
+import httpx2
 import pytest
 from dirty_equals import IsJson
 from pydantic import BaseModel
@@ -60,6 +60,7 @@ from ..conftest import IsDatetime, IsFloat, IsNow, IsStr, strip_logfire_metrics,
 
 with try_import() as openai_imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from openai import AsyncOpenAI
     from openai.types.chat import ChatCompletionMessage
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -80,16 +81,8 @@ with try_import() as openai_imports_successful:
 
 requires_openai = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
-
-
-pytestmark = pytest.mark.anyio
 
 
 def success_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
@@ -149,7 +142,7 @@ def test_first_successful() -> None:
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='hello', timestamp=IsNow(tz=UTC)),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -159,7 +152,7 @@ def test_first_successful() -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -178,7 +171,7 @@ def test_first_failed() -> None:
                 parts=[
                     UserPromptPart(
                         content='hello',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -189,7 +182,7 @@ def test_first_failed() -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -284,7 +277,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 parts=[
                     UserPromptPart(
                         content='hello',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -295,7 +288,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -418,21 +411,21 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -761,21 +754,21 @@ async def test_first_success_streaming() -> None:
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -802,21 +795,21 @@ async def test_first_failed_streaming() -> None:
                     parts=[TextPart(content='hello ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -896,7 +889,7 @@ async def test_fallback_condition_tuple() -> None:
     assert response.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -905,7 +898,7 @@ async def test_fallback_condition_tuple() -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -926,7 +919,7 @@ async def test_fallback_connection_error() -> None:
     assert response.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -935,7 +928,7 @@ async def test_fallback_connection_error() -> None:
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1249,7 +1242,7 @@ Don't include any text or Markdown fencing before or after.
                 parts=[
                     UserPromptPart(
                         content='hello',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1261,7 +1254,7 @@ Don't include any text or Markdown fencing before or after.
                 parts=[TextPart(content='{"bar":"baz"}')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:prompted_output_func:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1441,9 +1434,9 @@ async def test_response_handler_triggered() -> None:
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='hello', timestamp=IsNow(tz=UTC)),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1451,7 +1444,7 @@ async def test_response_handler_triggered() -> None:
                 parts=[TextPart(content='fallback response')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:fallback_response:',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2196,7 +2189,7 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2205,7 +2198,7 @@ def test_fallback_primary_continuation_then_succeeds() -> None:
                 parts=[TextPart(content='paused'), TextPart(content='done')],
                 usage=RequestUsage(input_tokens=102, output_tokens=3),
                 model_name='primary',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
@@ -2239,7 +2232,7 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2248,7 +2241,7 @@ def test_fallback_primary_continuation_multiple_pauses() -> None:
                 parts=[TextPart(content='paused'), TextPart(content='paused'), TextPart(content='done')],
                 usage=RequestUsage(input_tokens=153, output_tokens=6),
                 model_name='primary',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 metadata={'__pydantic_ai__': {'fallback_model_id': 'function:primary'}},
@@ -2298,7 +2291,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2310,7 +2303,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                 ],
                 usage=RequestUsage(input_tokens=102, output_tokens=6),
                 model_name='fallback',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 metadata={'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}},
@@ -2321,7 +2314,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                         tool_name='my_tool',
                         content='tool result',
                         tool_call_id='call_1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2332,7 +2325,7 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                 parts=[TextPart(content='final answer')],
                 usage=RequestUsage(input_tokens=53, output_tokens=6),
                 model_name='primary',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3395,3 +3388,43 @@ def test_context_window_is_smallest_known_candidate_window() -> None:
     with pytest.raises(NotImplementedError):
         FallbackModel(windowed(200_000)).profile
     assert WrapperModel(FallbackModel(windowed(200_000), windowed(128_000))).context_window == 128_000
+
+
+@requires_openai
+async def test_fallback_tries_next_model_on_non_json_response_body(allow_model_requests: None) -> None:
+    """A 200 response whose body is not valid JSON fires the default fallback trigger, so the second model answers.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+    completion = openai_completion_message(ChatCompletionMessage(content='Hello from fallback', role='assistant'))
+    requests_made = {'primary': 0, 'fallback': 0}
+
+    async def primary_handler(request: httpx2.Request) -> httpx2.Response:
+        requests_made['primary'] += 1
+        return httpx2.Response(200, text='   ', headers={'content-type': 'application/json'})
+
+    async def fallback_handler(request: httpx2.Request) -> httpx2.Response:
+        requests_made['fallback'] += 1
+        return httpx2.Response(200, json=completion.model_dump(mode='json'))
+
+    async with (
+        AsyncOpenAI(
+            api_key='test',
+            base_url='https://api.openai.com/v1',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(primary_handler)),
+        ) as primary_client,
+        AsyncOpenAI(
+            api_key='test',
+            base_url='https://api.openai.com/v1',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fallback_handler)),
+        ) as fallback_client,
+    ):
+        primary_model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=primary_client))
+        fallback_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=fallback_client))
+        agent = Agent(FallbackModel(primary_model, fallback_model))
+
+        result = await agent.run('Hello')
+
+    assert result.output == 'Hello from fallback'
+    assert requests_made == {'primary': 1, 'fallback': 1}

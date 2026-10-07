@@ -1,3 +1,7 @@
+---
+description: "Use an LLM as a judge in Pydantic Evals: grade outputs against a rubric with LLMJudge, get pass/fail or scores, pick the judge model and write good rubrics."
+---
+
 # LLM Judge Deep Dive
 
 The [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] evaluator uses an LLM to assess subjective qualities of outputs based on a rubric.
@@ -138,7 +142,7 @@ LLMJudge(
 )
 ```
 
-When the judge model cannot generate text, like [TypeSafe's Jev](../../models/typesafe.md), `LLMJudge` asks it only for the pass/fail verdict. The result has no reason rather than a fabricated one, and its score is `1.0` for pass or `0.0` for fail. A model reports this through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on its profile.
+When the judge model cannot generate text, like a [decision model](../../models/decision.md) such as [TypeSafe's Jev](../../models/typesafe.md), `LLMJudge` asks it only for the pass/fail verdict. The result has no reason rather than a fabricated one, and its score is `1.0` for pass or `0.0` for fail. A model reports this through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on its profile.
 
 The verdict is one yes-or-no question naming only the sections the prompt carries, so a rubric judged without an expected output is not asked to weigh one.
 

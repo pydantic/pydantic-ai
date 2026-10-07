@@ -24,16 +24,16 @@ network:
     - python
     # ANTHROPIC_BASE_URL is a compile-time literal (below) so gh-aw already
     # auto-allowlists the host; this explicit entry is a harmless safety net.
-    - api.minimax.io
+    - api.z.ai
 # We register as the built-in `claude` engine and only override `command`, so
 # gh-aw runs its full Claude proxy + credential-injection machinery for us.
 # ANTHROPIC_BASE_URL MUST be a compile-time literal (not a ${{ vars.* }}
 # expression): gh-aw derives the api-proxy target host AND the
 # `--anthropic-api-base-path` from its parsed URL path at compile time. With a
-# vars expression the path can't be parsed, so the proxy drops the `/anthropic`
+# vars expression the path can't be parsed, so the proxy drops the `/api/anthropic`
 # prefix and the upstream returns 404. Only ANTHROPIC_API_KEY stays a secret
-# (injected by the AWF api-proxy, excluded from the agent container). MiniMax
-# exposes an Anthropic-compatible API at https://api.minimax.io/anthropic.
+# (injected by the AWF api-proxy, excluded from the agent container). Z.AI Coding Plan
+# exposes an Anthropic-compatible API at https://api.z.ai/api/anthropic.
 runtimes:
   uv: {}
 engine:
@@ -47,8 +47,12 @@ engine:
   # `uv run --script` against the workspace harness.
   command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
   env:
-    ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+    GITHUB_WORKFLOW: ${{ github.workflow }}
+    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
     # The custom shim is stateless, so an outer retry repeats the whole task.
     GH_AW_HARNESS_MAX_RETRIES: "0"
 tools:
@@ -61,7 +65,15 @@ safe-outputs:
   # for search-ability.
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
+    report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-issue:
     max: 1
     title-prefix: "[stale-finder] "
@@ -79,8 +91,8 @@ safe-outputs:
       id: claude
       model: ${{ vars.GH_AW_MODEL }}
       env:
-        ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
-        ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
         GH_AW_HARNESS_MAX_RETRIES: "3"
 timeout-minutes: 60
 env:
@@ -92,17 +104,19 @@ env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "60"
 # Fallback pricing in dollars per 1M tokens, read only if an AI-credits budget is ever
 # active — it is not, and no `models.providers` entry accompanies it. See
-# `shared/engine-minimax.md` for why pricing `MiniMax-M3` there is what stops the agent.
+# `shared/engine-zai.md` for why pricing the configured model there can stop the agent.
 models:
   default-ai-credits-pricing:
     input: 0.6
     output: 2.4
+if: ${{ needs.provider_health.outputs.ready == 'true' }}
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
+  - shared/provider-health.md
 pre-steps:
   # Setting engine.command makes gh-aw skip ALL engine installation steps,
   # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
@@ -168,5 +182,7 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_PROMPT_TOKEN }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-eu.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

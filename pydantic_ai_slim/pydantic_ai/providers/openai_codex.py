@@ -19,20 +19,19 @@ import json
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import KW_ONLY, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from typing import TYPE_CHECKING, Annotated, Any, Protocol, Self
 from urllib.parse import urlencode
 
 import anyio
 import httpx2
 from pydantic import Field, StrictFloat, StrictInt, TypeAdapter, ValidationError
-from typing_extensions import Self
 
 from pydantic_ai._http import create_async_httpx2_client
 from pydantic_ai.exceptions import ModelAPIError, UserError
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.openai_codex import openai_codex_model_profile
 
 from ._oauth import OAuthFlow
@@ -40,6 +39,7 @@ from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
     OpenAICompatibleProvider as _OpenAICompatibleProvider,
 )
+from .openai import OpenAIProvider
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
@@ -221,7 +221,7 @@ def _jwt_expires_at(token: str) -> datetime | None:
     if payload is None or payload.exp is None:
         return None
     try:
-        return datetime.fromtimestamp(payload.exp, tz=timezone.utc)
+        return datetime.fromtimestamp(payload.exp, tz=UTC)
     except (OverflowError, OSError, ValueError):
         return None
 
@@ -330,7 +330,7 @@ def _read_codex_cli_credentials() -> OpenAICodexCredentials:
     code_home = Path(os.getenv('CODEX_HOME') or Path.home() / '.codex')
     path = code_home / 'auth.json'
     try:
-        text = path.read_text()
+        text = path.read_text(encoding='utf-8')
     except FileNotFoundError:
         raise UserError(
             f'No Codex CLI credentials found at `{path}`. Run `codex login` first, or pass '
@@ -338,6 +338,8 @@ def _read_codex_cli_credentials() -> OpenAICodexCredentials:
         ) from None
     except OSError as e:
         raise UserError(f'Could not read Codex CLI credentials at `{path}`: {e}') from e
+    except UnicodeDecodeError as e:
+        raise UserError(f'Codex CLI credentials at `{path}` are not valid UTF-8: {e}') from e
     try:
         data = json.loads(text)
     except ValueError as e:
@@ -491,7 +493,10 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_codex_model_profile(model_name)
+        # Codex is OpenAI's own backend, so it inherits first-party flags kept out of the shared
+        # profile because compatible endpoints may not implement them. Its profile then layers
+        # only the narrower Codex wire dialect on top.
+        return merge_profile(OpenAIProvider.model_profile(model_name), openai_codex_model_profile(model_name))
 
     def __init__(
         self,
@@ -678,4 +683,4 @@ class OpenAICodexProvider(_OpenAICompatibleProvider):
         # The unverified JWT `exp` claim is a refresh hint, not an authority; refresh proactively
         # once the token is within the pre-expiry buffer.
         expires_at = _jwt_expires_at(self.credentials.access_token)
-        return expires_at is not None and datetime.now(timezone.utc) >= expires_at - _TOKEN_EXPIRY_BUFFER
+        return expires_at is not None and datetime.now(UTC) >= expires_at - _TOKEN_EXPIRY_BUFFER

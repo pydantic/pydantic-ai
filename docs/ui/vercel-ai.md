@@ -1,3 +1,7 @@
+---
+description: "Stream Pydantic AI agent runs to frontends built with Vercel AI SDK UI hooks like useChat, using the Vercel AI Data Stream Protocol adapter."
+---
+
 # Vercel AI Data Stream Protocol
 
 Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a frontend using [AI SDK UI](https://ai-sdk.dev/docs/ai-sdk-ui/overview) hooks like [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat). You can optionally use [AI Elements](https://ai-sdk.dev/elements) for pre-built UI components.
@@ -223,13 +227,15 @@ Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool
 
 [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes application keys from [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those application keys and the timestamp on the way back. The framework-reserved `__pydantic_ai__` namespace is excluded in both directions.
 
+`load_messages` also keeps the `UIMessage.id` in that reserved namespace, and `dump_messages` uses it as the id again, so a history the browser sent comes back with the ids the browser assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive `UIMessage`s merge into one message, such as a system message followed by a user message, only the last id is kept. Pass `generate_message_id` to `dump_messages` to choose ids yourself instead.
+
 When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
 
 `UIMessage.metadata` is fully client-controlled, so `timestamp` is the only server-owned field that is round-tripped. The `__pydantic_ai__` namespace and fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Keep framework and provider state in trusted server-side storage instead. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
 
 ## Trust model
 
-Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
+Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), workspace references ([`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
 
 ## Compaction
 
@@ -241,6 +247,12 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
     Tool approval requires AI SDK UI v6 or later on the frontend.
 
 Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for details on setting up tools that require approval.
+
+If an approved tool needs the same workspace on the next request, save `result.workspace.ref`
+in `on_complete` on your server (keyed by an authorized conversation identity), then pass that
+saved ref as `workspace=` on the approval turn. Vercel AI messages do not carry workspace refs;
+client-submitted history alone cannot resume a sandbox. See
+[Continuing in the same workspace](../workspace.md#continuing-in-the-same-workspace).
 
 To enable tool approval streaming, pass `sdk_version=6` to `dispatch_request`:
 
