@@ -278,6 +278,7 @@ class SocketHarness:
     opened: list[ScriptedSocket] = field(default_factory=list[ScriptedSocket])
     urls: list[str] = field(default_factory=list[str])
     headers: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    options: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
     connecting: anyio.Event = field(default_factory=anyio.Event)
     connect_gate: anyio.Event | None = None
     connect_error: Exception | None = None
@@ -297,6 +298,7 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
         headers = {key.lower(): value for key, value in additional_headers.items()}
         assert headers.pop('authorization').startswith('Bearer ')
         harness.headers.append(headers)
+        harness.options.append(options)
         socket = harness.pending.popleft()
         harness.opened.append(socket)
         return socket
@@ -886,10 +888,12 @@ async def test_request_settings(allow_model_requests: None, sockets: SocketHarne
         'extra_body': {'temperature': 0.3, 'metadata': {'test': 'websocket'}},
     }
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=settings)
-    async with source.connect(extra_headers={'x-test': 'connected'}) as connected:
+    options: WebSocketConnectionOptions = {'max_size': 128 * 1024}
+    async with source.connect(extra_headers={'x-test': 'connected'}, websocket_connection_options=options) as connected:
         assert (await Agent(source).run('hello', model=connected)).output == 'ready'
     assert sockets.headers[0]['x-test'] == 'connected'
     assert sockets.headers[0]['user-agent'] == 'custom-client'
+    assert sockets.options[0]['max_size'] == 128 * 1024
     assert sockets.urls == ['wss://api.openai.com/v1/responses']
     assert source.settings == settings
     sent = sockets.opened[0].sent[0]
