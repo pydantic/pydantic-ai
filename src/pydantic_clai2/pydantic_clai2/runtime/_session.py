@@ -35,6 +35,7 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
 from pydantic_ai_harness.step_persistence.conversations import (
+    ConversationConflict,
     ConversationSummary,
     SqliteConversationStore,
     ensure_inactive,
@@ -232,6 +233,28 @@ def local_workspace(
     return LocalWorkspace[DepsT](directory, env=_command_env())
 
 
+def _interrupted(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """`messages` with the last one marked interrupted, so core closes unanswered calls without replaying them."""
+    marked = list(messages)
+    if marked:
+        last = marked[-1]
+        if not isinstance(last, ModelResponse) or last.state != 'suspended':
+            marked[-1] = replace(last, state='interrupted')
+    return marked
+
+
+def _fork_summary(busy: ConversationSummary) -> ConversationSummary:
+    """A new saved session continuing `busy`, which another process is still running."""
+    return ConversationSummary(
+        workspace=busy.workspace,
+        title=f'{busy.title} (fork)',
+        subtitle=busy.subtitle,
+        tags=busy.tags,
+        title_source=busy.title_source,
+        model=busy.model,
+    )
+
+
 def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> bool:
     """Whether the history's latest response names a local directory other than `workspace`.
 
@@ -375,7 +398,11 @@ class Session(Generic[DepsT, OutputT]):
             self._running = False
 
     async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
-        """Restore a saved head without invoking the model or replaying tools."""
+        """Restore a saved head without invoking the model or replaying tools.
+
+        A session another live process is running is not taken over: its newest saved state is
+        copied into a new saved session, which this one continues while the original keeps running.
+        """
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -385,27 +412,41 @@ class Session(Generic[DepsT, OutputT]):
             saved = await self.conversations.get(conversation_id=conversation_id)
             if not allow_other_workspace:
                 self.check_workspace(saved.summary.workspace)
-            ensure_inactive(saved.summary)
+            busy: ConversationConflict | None = None
+            try:
+                ensure_inactive(saved.summary)
+            except ConversationConflict as conflict:
+                busy = conflict
             messages = saved.messages
+            interrupted = saved.summary.outcome in ('running', 'failed', 'cancelled')
             warning = ''
-            if saved.summary.outcome in ('running', 'failed', 'cancelled'):
+            if interrupted:
                 warning = ' Interrupted session: inspect external effects before continuing. No tools were replayed.'
             if saved.summary.outcome == 'running' and saved.summary.run_id and self.step_store:
                 snapshot = await self.step_store.latest_snapshot(run_id=saved.summary.run_id, include_interrupted=True)
                 if snapshot is not None:
                     messages = snapshot.messages
+            if interrupted:
+                messages = _interrupted(messages)
+            summary = saved.summary
+            notice = f'Resumed {summary.title} ({summary.id}).{warning}'
+            if busy is not None:
+                summary = await self.conversations.save(summary=_fork_summary(saved.summary), messages=messages)
+                notice = (
+                    f'{busy} Resumed a fork of it instead: {summary.title} ({summary.id}). '
+                    'The original keeps running there and may still change files. No tools were replayed.'
+                )
             self._messages = list(messages)
-            if saved.summary.outcome in ('running', 'failed', 'cancelled'):
-                self._mark_interrupted()
-            self.summary = saved.summary
+            self.summary = summary
             telemetry.record(
                 'conversation resumed',
                 outcome=saved.summary.outcome,
                 messages=len(messages),
                 other_workspace=saved.summary.workspace != self.workspace,
+                forked=busy is not None,
             )
             # Keep the caller's current model and approval configuration. Saved models are informational.
-            return f'Resumed {saved.summary.title} ({saved.summary.id}).{warning}'
+            return notice
         finally:
             self._running = False
 
@@ -415,11 +456,7 @@ class Session(Generic[DepsT, OutputT]):
             raise ValueError(f'Session belongs to {workspace}. Select it in /resume to confirm.')
 
     def _mark_interrupted(self) -> None:
-        # Let core close unanswered calls without replaying them on the next prompt.
-        if self._messages:
-            last = self._messages[-1]
-            if not isinstance(last, ModelResponse) or last.state != 'suspended':
-                self._messages[-1] = replace(last, state='interrupted')
+        self._messages = _interrupted(self._messages)
 
     async def _save_turn(self, *, outcome: Literal['running', 'completed', 'failed', 'cancelled']) -> None:
         if self.conversations is None:

@@ -154,7 +154,8 @@ before reinstalling. Plugin code runs as the user; install only trusted reposito
 The second built-in is ask_user (pydantic_clai2.builtin_plugins.ask_user_menu): the
 harness AskUser capability with an inline numbered picker as its answerer, so
 the model can ask the user multiple-choice questions mid-run through
-ask_user_question. The conversation remains visible. Enter or a number selects;
+ask_user_question. The conversation remains visible, and the question stays pinned
+above its choices while output streams. Enter or a number selects;
 for multiple selections it toggles, then Done submits. /plugins disable ask_user removes the tool. To answer the
 questions somewhere other than the terminal, declare ask_user again with a
 module whose Plugin returns AskUser(answerer=...) from get_capabilities with your

@@ -333,7 +333,7 @@ async def test_conversations_cleared_and_resumed(exporter: InMemorySpanExporter,
     await session.resume(saved)
     assert recorded(exporter) == [
         ('conversation cleared', {'messages': 2}),
-        ('conversation resumed', {'outcome': 'completed', 'messages': 2, 'other_workspace': False}),
+        ('conversation resumed', {'outcome': 'completed', 'messages': 2, 'other_workspace': False, 'forked': False}),
     ]
 
 
