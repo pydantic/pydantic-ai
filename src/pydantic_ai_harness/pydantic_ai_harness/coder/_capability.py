@@ -59,7 +59,7 @@ COMPACTION_KEEP_TOKENS = 50_000
 """Tokens of the most recent messages that compaction keeps, on a model with a large enough window."""
 
 COMPACTION_KEEP_FRACTION = 0.4
-"""The most of the model's context window compaction keeps, so a small window still gets room back."""
+"""The largest fraction of the model's context window compaction keeps, so a small window still gets room back."""
 
 
 def _compaction() -> FallbackCompaction[AgentDepsT]:
@@ -110,8 +110,9 @@ class Coder(CombinedCapability[AgentDepsT]):
     bind their own and would otherwise load the instruction files twice.
 
     Above 85% of the model's context window, the run's model summarizes older
-    messages, keeping the most recent 50,000 tokens or 40% of the window,
-    whichever is less; a model that cannot summarize drops them instead.
+    messages, keeping the first user message and the most recent 50,000
+    tokens or 40% of the window, whichever is less; a model that cannot
+    summarize drops them instead.
     `compaction=False` leaves this out, for hosts that bind their own.
 
     `sub_agents=True` adds `delegate_task`, which hands a self-contained sub-task

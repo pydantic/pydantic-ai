@@ -287,14 +287,17 @@ Add it to `fallback_on` to truncate on such models instead of failing the run; o
 still propagate.
 
 ```python
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
 from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction import CannotSummarizeError
 
 fallback = FallbackCompaction(
     max_fraction=0.85,
     fallback_chain=[
         SummarizingCompaction(max_messages=1, keep_tokens=20_000),
         SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
-    ]
+    ],
+    fallback_on=(ModelAPIError, FallbackExceptionGroup, CannotSummarizeError),
 )
 ```
 

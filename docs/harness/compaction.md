@@ -238,14 +238,17 @@ A `SummarizingCompaction` without `model=` summarizes with the run's model. When
 Register it directly when summarization should fall back to deterministic truncation:
 
 ```python
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
 from pydantic_ai_harness import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction import CannotSummarizeError
 
 fallback = FallbackCompaction(
     max_fraction=0.85,
     fallback_chain=[
         SummarizingCompaction(max_messages=1, keep_tokens=20_000),
         SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
-    ]
+    ],
+    fallback_on=(ModelAPIError, FallbackExceptionGroup, CannotSummarizeError),
 )
 ```
 
