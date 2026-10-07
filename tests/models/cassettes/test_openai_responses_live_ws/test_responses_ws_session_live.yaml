@@ -1,0 +1,797 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Remember the word persimmon for my next message. Reply only OK.
+    reasoning:
+      effort: low
+      context: all_turns
+    max_output_tokens: 256
+    store: false
+    include:
+    - reasoning.encrypted_content
+    type: response.create
+- kind: message
+  direction: received
+  at: 1.631
+  data:
+    type: codex.rate_limits
+- kind: message
+  direction: received
+  at: 1.947
+  data:
+    type: codex.response.metadata
+- kind: message
+  direction: received
+  at: 1.947
+  data:
+    type: response.created
+    sequence_number: 0
+    response:
+      id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      object: response
+      created_at: 1791377931
+      completed_at: null
+      status: in_progress
+      background: false
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+      moderation: null
+      model: gpt-6-astra
+      access_programs:
+        cyber: standard
+      previous_response_id: null
+      instructions: null
+      output: []
+      error: null
+      incomplete_details: null
+      tools: []
+      tool_choice: auto
+      parallel_tool_calls: true
+      prompt_cache_key: <scrubbed>
+      prompt_cache_retention: 24h
+      text:
+        format:
+          type: text
+        verbosity: medium
+      top_p: 0.98
+      top_logprobs: 0
+      temperature: 1.0
+      reasoning:
+        effort: low
+        context: all_turns
+        summary: null
+        mode: standard
+      user: null
+      usage: null
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            text_tokens: 0
+            image_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+        web_search:
+          num_requests: 0
+      safety_identifier: <scrubbed>
+      store: false
+      metadata: {}
+      max_output_tokens: null
+      max_tool_calls: null
+      service_tier: auto
+      truncation: disabled
+    safety_buffering: false
+- kind: message
+  direction: received
+  at: 1.948
+  data:
+    type: response.in_progress
+    sequence_number: 1
+    response:
+      id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      object: response
+      created_at: 1791377931
+      completed_at: null
+      status: in_progress
+      background: false
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+      moderation: null
+      model: gpt-6-astra
+      access_programs:
+        cyber: standard
+      previous_response_id: null
+      instructions: null
+      output: []
+      error: null
+      incomplete_details: null
+      tools: []
+      tool_choice: auto
+      parallel_tool_calls: true
+      prompt_cache_key: <scrubbed>
+      prompt_cache_retention: 24h
+      text:
+        format:
+          type: text
+        verbosity: medium
+      top_p: 0.98
+      top_logprobs: 0
+      temperature: 1.0
+      reasoning:
+        effort: low
+        context: all_turns
+        summary: null
+        mode: standard
+      user: null
+      usage: null
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            text_tokens: 0
+            image_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+        web_search:
+          num_requests: 0
+      safety_identifier: <scrubbed>
+      store: false
+      metadata: {}
+      max_output_tokens: null
+      max_tool_calls: null
+      service_tier: auto
+      truncation: disabled
+    safety_buffering: false
+- kind: message
+  direction: received
+  at: 2.656
+  data:
+    type: response.output_item.added
+    sequence_number: 2
+    output_index: 0
+    item:
+      type: message
+      id: msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832
+      role: assistant
+      status: in_progress
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 2.657
+  data:
+    type: response.content_part.added
+    sequence_number: 3
+    item_id: msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832
+    output_index: 0
+    content_index: 0
+    part:
+      type: output_text
+      text: ''
+      annotations: []
+      logprobs: []
+- kind: message
+  direction: received
+  at: 2.658
+  data:
+    type: response.output_text.delta
+    sequence_number: 4
+    item_id: msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832
+    output_index: 0
+    content_index: 0
+    delta: OK
+    logprobs: []
+    safety_buffering: false
+    obfuscation: hvKd27tsK5DwdB
+- kind: message
+  direction: received
+  at: 2.659
+  data:
+    type: response.output_text.done
+    sequence_number: 5
+    item_id: msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832
+    output_index: 0
+    content_index: 0
+    text: OK
+    logprobs: []
+- kind: message
+  direction: received
+  at: 2.66
+  data:
+    type: response.content_part.done
+    sequence_number: 6
+    item_id: msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832
+    output_index: 0
+    content_index: 0
+    part:
+      type: output_text
+      text: OK
+      annotations: []
+      logprobs: []
+- kind: message
+  direction: received
+  at: 2.66
+  data:
+    type: response.output_item.done
+    sequence_number: 7
+    output_index: 0
+    item:
+      type: message
+      id: msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832
+      role: assistant
+      status: completed
+      content:
+      - type: output_text
+        text: OK
+        annotations: []
+        logprobs: []
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 2.66
+  data:
+    type: responsesapi.websocket_timing
+    timing_metrics:
+      timing_scope: logical_turn
+      response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      responsesapi_chat_runner_streaming_token_batch_size: 0
+      websocket_output_text_delta_tbt_ms: null
+      websocket_output_text_delta_count: 1
+      pre_inference_ms: 339.250973
+      client_tool_pause_total_ms: 0.0
+      total_turn_time_s: 0.992990817
+      xapi_validation_time_s: 0.000627406
+      num_engine_calls: 1
+      engine_total_prompt_tokens_total: 163
+      first_sampled_message_ttft_ms: null
+      num_sampled_tokens_total: 5
+      critical_path:
+        scope: response
+        coverage: missing_harness_boundary
+        boundary_type: missing_harness_boundary
+        num_engine_calls: 1
+- kind: message
+  direction: received
+  at: 2.661
+  data:
+    type: response.completed
+    sequence_number: 8
+    response:
+      id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      object: response
+      created_at: 1791377931
+      completed_at: 1791377933
+      status: completed
+      background: false
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+      moderation: null
+      model: gpt-6-astra
+      access_programs:
+        cyber: standard
+      previous_response_id: null
+      instructions: null
+      output:
+      - type: message
+        id: msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832
+        role: assistant
+        status: completed
+        content:
+        - type: output_text
+          text: OK
+          annotations: []
+          logprobs: []
+        phase: final_answer
+      error: null
+      incomplete_details: null
+      tools: []
+      tool_choice: auto
+      parallel_tool_calls: true
+      prompt_cache_key: <scrubbed>
+      prompt_cache_retention: 24h
+      text:
+        format:
+          type: text
+        verbosity: medium
+      top_p: 0.98
+      top_logprobs: 0
+      temperature: 1.0
+      reasoning:
+        effort: low
+        context: all_turns
+        summary: null
+        mode: standard
+      user: null
+      usage:
+        input_tokens: 21
+        input_tokens_details:
+          cached_tokens: 0
+          cache_write_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 26
+        attribution:
+          items:
+            msg_095a71f55c40ed48016ac6420ba8108196a2e159219abcdeb9:
+              input_tokens: 19
+              cached_tokens: 0
+              cache_write_tokens: 0
+              output_tokens: 0
+              content:
+              - input_tokens: 19
+                cached_tokens: 0
+                cache_write_tokens: 0
+                output_tokens: 0
+            msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832:
+              input_tokens: 2
+              cached_tokens: 0
+              cache_write_tokens: 0
+              output_tokens: 5
+              content:
+              - input_tokens: 2
+                cached_tokens: 0
+                cache_write_tokens: 0
+                output_tokens: 5
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            text_tokens: 0
+            image_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+        web_search:
+          num_requests: 0
+      safety_identifier: <scrubbed>
+      store: false
+      metadata: {}
+      max_output_tokens: null
+      max_tool_calls: null
+      service_tier: default
+      truncation: disabled
+    safety_buffering: false
+- kind: message
+  direction: sent
+  at: 2.665
+  data:
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: What word did I ask you to remember? Reply with only that word.
+    previous_response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+    reasoning:
+      effort: low
+      context: all_turns
+    max_output_tokens: 256
+    store: false
+    include:
+    - reasoning.encrypted_content
+    prompt_cache_options:
+      comparison_response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+    type: response.create
+- kind: message
+  direction: received
+  at: 3.436
+  data:
+    type: codex.rate_limits
+- kind: message
+  direction: received
+  at: 3.438
+  data:
+    type: codex.response.metadata
+- kind: message
+  direction: received
+  at: 3.44
+  data:
+    type: response.created
+    sequence_number: 0
+    response:
+      id: resp_095a71f55c40ed48016ac6420da0d081968d7c4b3cfd8152db
+      object: response
+      created_at: 1791377933
+      completed_at: null
+      status: in_progress
+      background: false
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+      moderation: null
+      model: gpt-6-astra
+      access_programs:
+        cyber: standard
+      previous_response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      instructions: null
+      output: []
+      error: null
+      incomplete_details: null
+      tools: []
+      tool_choice: auto
+      parallel_tool_calls: true
+      prompt_cache_key: <scrubbed>
+      prompt_cache_retention: 24h
+      prompt_cache_options:
+        ttl: 30m
+        mode: implicit
+        comparison_response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      text:
+        format:
+          type: text
+        verbosity: medium
+      top_p: 0.98
+      top_logprobs: 0
+      temperature: 1.0
+      reasoning:
+        effort: low
+        context: all_turns
+        summary: null
+        mode: standard
+      user: null
+      usage: null
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            text_tokens: 0
+            image_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+        web_search:
+          num_requests: 0
+      safety_identifier: <scrubbed>
+      store: false
+      metadata: {}
+      max_output_tokens: null
+      max_tool_calls: null
+      service_tier: auto
+      truncation: disabled
+    safety_buffering: false
+- kind: message
+  direction: received
+  at: 3.441
+  data:
+    type: response.in_progress
+    sequence_number: 1
+    response:
+      id: resp_095a71f55c40ed48016ac6420da0d081968d7c4b3cfd8152db
+      object: response
+      created_at: 1791377933
+      completed_at: null
+      status: in_progress
+      background: false
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+      moderation: null
+      model: gpt-6-astra
+      access_programs:
+        cyber: standard
+      previous_response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      instructions: null
+      output: []
+      error: null
+      incomplete_details: null
+      tools: []
+      tool_choice: auto
+      parallel_tool_calls: true
+      prompt_cache_key: <scrubbed>
+      prompt_cache_retention: 24h
+      prompt_cache_options:
+        ttl: 30m
+        mode: implicit
+        comparison_response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      text:
+        format:
+          type: text
+        verbosity: medium
+      top_p: 0.98
+      top_logprobs: 0
+      temperature: 1.0
+      reasoning:
+        effort: low
+        context: all_turns
+        summary: null
+        mode: standard
+      user: null
+      usage: null
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            text_tokens: 0
+            image_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+        web_search:
+          num_requests: 0
+      safety_identifier: <scrubbed>
+      store: false
+      metadata: {}
+      max_output_tokens: null
+      max_tool_calls: null
+      service_tier: auto
+      truncation: disabled
+    safety_buffering: false
+- kind: message
+  direction: received
+  at: 4.602
+  data:
+    type: response.output_item.added
+    sequence_number: 2
+    output_index: 0
+    item:
+      type: message
+      id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+      role: assistant
+      status: in_progress
+      content: []
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 4.603
+  data:
+    type: response.content_part.added
+    sequence_number: 3
+    item_id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+    output_index: 0
+    content_index: 0
+    part:
+      type: output_text
+      text: ''
+      annotations: []
+      logprobs: []
+- kind: message
+  direction: received
+  at: 4.604
+  data:
+    type: response.output_text.delta
+    sequence_number: 4
+    item_id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+    output_index: 0
+    content_index: 0
+    delta: pers
+    logprobs: []
+    safety_buffering: false
+    obfuscation: kT96R6lg1BT4
+- kind: message
+  direction: received
+  at: 4.604
+  data:
+    type: response.output_text.delta
+    sequence_number: 5
+    item_id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+    output_index: 0
+    content_index: 0
+    delta: im
+    logprobs: []
+    safety_buffering: false
+    obfuscation: 3sL3IKuLOVvIZd
+- kind: message
+  direction: received
+  at: 4.605
+  data:
+    type: response.output_text.delta
+    sequence_number: 6
+    item_id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+    output_index: 0
+    content_index: 0
+    delta: mon
+    logprobs: []
+    safety_buffering: false
+    obfuscation: IMP8gsv1lmQnT
+- kind: message
+  direction: received
+  at: 4.606
+  data:
+    type: response.output_text.done
+    sequence_number: 7
+    item_id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+    output_index: 0
+    content_index: 0
+    text: persimmon
+    logprobs: []
+- kind: message
+  direction: received
+  at: 4.606
+  data:
+    type: response.content_part.done
+    sequence_number: 8
+    item_id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+    output_index: 0
+    content_index: 0
+    part:
+      type: output_text
+      text: persimmon
+      annotations: []
+      logprobs: []
+- kind: message
+  direction: received
+  at: 4.606
+  data:
+    type: response.output_item.done
+    sequence_number: 9
+    output_index: 0
+    item:
+      type: message
+      id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+      role: assistant
+      status: completed
+      content:
+      - type: output_text
+        text: persimmon
+        annotations: []
+        logprobs: []
+      phase: final_answer
+- kind: message
+  direction: received
+  at: 4.607
+  data:
+    type: responsesapi.websocket_timing
+    timing_metrics:
+      timing_scope: logical_turn
+      response_id: resp_095a71f55c40ed48016ac6420da0d081968d7c4b3cfd8152db
+      responsesapi_chat_runner_streaming_token_batch_size: 0
+      websocket_output_text_delta_tbt_ms: 0.0816255
+      websocket_output_text_delta_count: 3
+      pre_inference_ms: 214.761329
+      client_tool_pause_total_ms: 0.0
+      total_turn_time_s: 1.093679454
+      xapi_validation_time_s: 0.000890185
+      num_engine_calls: 1
+      engine_total_prompt_tokens_total: 189
+      first_sampled_message_ttft_ms: null
+      num_sampled_tokens_total: 7
+      critical_path:
+        scope: response
+        coverage: missing_harness_boundary
+        boundary_type: missing_harness_boundary
+        num_engine_calls: 1
+- kind: message
+  direction: received
+  at: 4.607
+  data:
+    type: response.completed
+    sequence_number: 10
+    response:
+      id: resp_095a71f55c40ed48016ac6420da0d081968d7c4b3cfd8152db
+      object: response
+      created_at: 1791377933
+      completed_at: 1791377934
+      status: completed
+      background: false
+      frequency_penalty: 0.0
+      presence_penalty: 0.0
+      moderation: null
+      model: gpt-6-astra
+      access_programs:
+        cyber: standard
+      previous_response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      instructions: null
+      output:
+      - type: message
+        id: msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101
+        role: assistant
+        status: completed
+        content:
+        - type: output_text
+          text: persimmon
+          annotations: []
+          logprobs: []
+        phase: final_answer
+      error: null
+      incomplete_details: null
+      tools: []
+      tool_choice: auto
+      parallel_tool_calls: true
+      prompt_cache_key: <scrubbed>
+      prompt_cache_retention: 24h
+      prompt_cache_options:
+        ttl: 30m
+        mode: implicit
+        comparison_response_id: resp_095a71f55c40ed48016ac6420ba7fc8196a3e82ea21144ff02
+      prompt_cache_diagnostics:
+        type: unavailable
+      text:
+        format:
+          type: text
+        verbosity: medium
+      top_p: 0.98
+      top_logprobs: 0
+      temperature: 1.0
+      reasoning:
+        effort: low
+        context: all_turns
+        summary: null
+        mode: standard
+      user: null
+      usage:
+        input_tokens: 47
+        input_tokens_details:
+          cached_tokens: 0
+          cache_write_tokens: 0
+        output_tokens: 7
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 54
+        attribution:
+          items:
+            msg_095a71f55c40ed48016ac6420ba8108196a2e159219abcdeb9:
+              input_tokens: 19
+              cached_tokens: 0
+              cache_write_tokens: 0
+              output_tokens: 0
+              content:
+              - input_tokens: 19
+                cached_tokens: 0
+                cache_write_tokens: 0
+                output_tokens: 0
+            msg_095a71f55c40ed48016ac6420cfc5c819686f776d139e2b832:
+              input_tokens: 7
+              cached_tokens: 0
+              cache_write_tokens: 0
+              output_tokens: 0
+              content:
+              - input_tokens: 7
+                cached_tokens: 0
+                cache_write_tokens: 0
+                output_tokens: 0
+            msg_095a71f55c40ed48016ac6420da0e88196b78331f9163fba9a:
+              input_tokens: 19
+              cached_tokens: 0
+              cache_write_tokens: 0
+              output_tokens: 0
+              content:
+              - input_tokens: 19
+                cached_tokens: 0
+                cache_write_tokens: 0
+                output_tokens: 0
+            msg_095a71f55c40ed48016ac6420eefb08196b628aacb3a559101:
+              input_tokens: 2
+              cached_tokens: 0
+              cache_write_tokens: 0
+              output_tokens: 7
+              content:
+              - input_tokens: 2
+                cached_tokens: 0
+                cache_write_tokens: 0
+                output_tokens: 7
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          output_tokens: 0
+          total_tokens: 0
+          input_tokens_details:
+            text_tokens: 0
+            image_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+        web_search:
+          num_requests: 0
+      safety_identifier: <scrubbed>
+      store: false
+      metadata: {}
+      max_output_tokens: null
+      max_tool_calls: null
+      service_tier: default
+      truncation: disabled
+    safety_buffering: false
