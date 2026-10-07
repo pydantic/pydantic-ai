@@ -232,6 +232,7 @@ class ScriptedSocket:
     sent: list[Frame] = field(default_factory=list[Frame])
     incoming: deque[Frame | Exception] = field(default_factory=lambda: deque[Frame | Exception]())
     receiving: anyio.Event = field(default_factory=anyio.Event)
+    waiting_for_input: anyio.Event = field(default_factory=anyio.Event)
     available: anyio.Event = field(default_factory=anyio.Event)
     sending: anyio.Event = field(default_factory=anyio.Event)
     send_gate: anyio.Event | None = None
@@ -257,8 +258,9 @@ class ScriptedSocket:
         while not self.incoming:
             if self.close_count:
                 raise ConnectionClosedOK(None, None)
-            await self.available.wait()
             self.available = anyio.Event()
+            self.waiting_for_input.set()
+            await self.available.wait()
         event = self.incoming.popleft()
         if isinstance(event, Exception):
             raise event
@@ -570,6 +572,32 @@ async def test_interruption(allow_model_requests: None, sockets: SocketHarness, 
             await Agent(connected).run('cannot reuse')
     assert socket.close_count == 1
     assert asyncio.all_tasks() == before
+
+
+async def test_stream_cancel_during_receive(allow_model_requests: None, sockets: SocketHarness):
+    """Cancelling a blocked consumer closes the socket without leaking its transport error."""
+    socket = sockets.pending[0]
+    socket.responses = deque([text_events()[:-1]])
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    async with source.connect() as connected:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with connected.request_stream(
+                [ModelRequest(parts=[UserPromptPart('hello')])], None, ModelRequestParameters()
+            ) as response:
+
+                async def consume() -> None:
+                    async for _ in response:
+                        pass
+
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(consume)
+                    await socket.waiting_for_input.wait()
+                    await response.cancel()
+
+                assert response.cancelled
+                assert response.get().state == 'interrupted'
+                assert response.get().text == 'ready'
+    assert socket.close_count == 1
 
 
 @pytest.mark.parametrize(

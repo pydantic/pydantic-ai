@@ -4811,6 +4811,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
             }
 
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        if isinstance(self._response.source, AsyncStream):
+            return super().get_stream_cancel_errors()
+        return (ModelAPIError,)
+
     async def close_stream(self) -> None:
         await self._response.source.close()
 
