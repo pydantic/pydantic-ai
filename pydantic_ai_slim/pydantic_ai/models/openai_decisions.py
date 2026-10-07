@@ -155,7 +155,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         )
         options = _request_options(model_settings)
         with _map_api_errors(self._model_name, self._provider.model_id_namespace):
-            # Not `client.decisions.create`, which needs `openai>=3.26.0`, above this package's floor.
+            # TODO: use `client.decisions.create` once the `openai` floor reaches 3.26.0: https://github.com/pydantic/pydantic-ai/pull/9634
             response = await self.client.post('/decisions', cast_to=httpx2.Response, body=body, options=options)
 
         try:
