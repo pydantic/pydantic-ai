@@ -559,6 +559,11 @@ during_turn_subcommands=('add',) does the same for a bare subcommand such as
 mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
 as /plugins does.
 
+Pass live=True to Command for a slow handler that only prints, such as /compact,
+so the editor stays live while it runs: the working spinner shows, Esc or Ctrl-C
+cancels it, and Enter queues a follow-up. Leave it off for anything that reads
+keys or opens a menu; those need the suspended editor.
+
 For named validated fields, reuse FieldSource, FieldMenu and run_flow in
 field_menu.py rather than write another editor. SettingsSource in set_menu.py
 shows the adapter; model_menu.py uses the same editor for model settings. Tests
