@@ -248,6 +248,19 @@ def _restore_operation_result(
             f'The conversation cannot unambiguously locate the call for operation {operation.operation_id!r}.'
         )
     index = indices[0]
+    # Realtime may record sibling results in separate consecutive requests. Restore in the
+    # request that actually answers this call, preserving other tools and their user content.
+    for request_index in range(index + 1, len(history)):
+        request = history[request_index]
+        if not isinstance(request, messages.ModelRequest):
+            break
+        if any(
+            isinstance(part, (messages.ToolReturnPart, messages.RetryPromptPart))
+            and part.tool_call_id == operation.call.tool_call_id
+            for part in request.parts
+        ):
+            index = request_index - 1
+            break
     following = history[index + 1] if index + 1 < len(history) else None
     existing = (
         list(following.parts) if isinstance(following, messages.ModelRequest) else list[messages.ModelRequestPart]()

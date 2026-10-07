@@ -146,3 +146,69 @@ async def test_persistent_run_enqueue_is_delivered_and_revoked():
                     first.enqueue('stale input')
                 await second.send('next run')
             assert connection.sent == ['queued input', 'next run']
+
+
+async def test_recover_parallel_realtime_tools_preserves_separate_results():
+    before = asyncio.all_tasks()
+    entered = {name: asyncio.Event() for name in ('a', 'b')}
+
+    class ParallelConnection(DuplexConnection):
+        async def send(self, content: RealtimeInput) -> None:
+            self.sent.append(content)
+            if isinstance(content, str):
+                for name in entered:
+                    self.events.put_nowait(
+                        ToolCall(
+                            tool_name='work',
+                            tool_call_id=name,
+                            args=json.dumps({'label': name}),
+                            response_usage_follows=True,
+                        )
+                    )
+                self.events.put_nowait(ResponseDone())
+
+    agent = Agent(TestModel(call_tools=[]))
+
+    @agent.tool_plain
+    async def work(label: str) -> str:
+        entered[label].set()
+        await asyncio.Event().wait()
+        return label
+
+    async with agent.session() as owner:
+        async with owner.realtime(CountedModel(ParallelConnection())).session() as run:
+            await run.send('start')
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                for event in entered.values():
+                    await event.wait()
+            await run.close()
+        checkpoint = SessionStateTypeAdapter.validate_json(SessionStateTypeAdapter.dump_json(owner.state))
+    verified = {
+        operation.operation_id: ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'work', f'verified {operation.call.tool_call_id}', tool_call_id=operation.call.tool_call_id
+                ),
+                UserPromptPart(f'evidence {operation.call.tool_call_id}'),
+            ]
+        )
+        for operation in checkpoint.operations
+    }
+    recovered = checkpoint.recover(tool_results=verified)
+    returns = [
+        part
+        for message in recovered.conversation.messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.tool_call_id, part.content, part.outcome) for part in returns] == [
+        ('a', 'verified a', 'success'),
+        ('b', 'verified b', 'success'),
+    ]
+    requests = [
+        message
+        for message in recovered.conversation.messages
+        if isinstance(message, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in message.parts)
+    ]
+    assert [request.parts for request in requests] == [request.parts for request in verified.values()]
+    assert asyncio.all_tasks() == before
