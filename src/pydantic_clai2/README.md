@@ -2102,9 +2102,9 @@ it again. CLAI builds from before this
 check apply every saved setting as they always did.
 
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
-settings menu (`/plugins configure notion` reopens it). The token is picked from
-`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
-signs in through the browser. Plugin settings never hold the token. See
+settings menu (`/plugins configure notion` reopens it). It signs in through the
+browser by default, or uses a token picked from `/keys` by name (a new one is
+saved there as `NOTION_API_KEY`). Plugin settings never hold the token. See
 [PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
 `/plugins enable linear` gives the agent Linear's hosted MCP tools, read-only by

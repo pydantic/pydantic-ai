@@ -9,10 +9,8 @@ credential store, and it is resolved on every run. Replacing the key in `/keys` 
 it fails the run closed, and `/keys` refuses to rename it while Ordinal uses it.
 
 Harness `Ordinal` has one endpoint and reaches every workspace the token's user belongs to, so there is no base URL
-or workspace to choose. Its non-secret options are `include_instructions` and, here, how to sign in:
-
-- `auto`: a chosen `/keys` entry, else `ORDINAL_ACCESS_TOKEN`, else a browser sign-in.
-- `key`, `environment`, or `browser`: only that one, failing closed when it is missing.
+or workspace to choose. Its non-secret options are `include_instructions` and, here, how to sign in: `browser`
+(the default), `key`, or `environment`, each used alone and failing closed when it is missing.
 
 A browser sign-in keeps its OAuth tokens in the OS keyring, as `/mcp` servers' do. Harness `Ordinal(auth='oauth')`
 would keep them in memory, so every launch would sign in again.
@@ -29,7 +27,7 @@ from typing import Generic, Literal
 from anyio import to_thread
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_ai.capabilities import AgentCapability
@@ -66,17 +64,23 @@ USAGE = 'Usage: /ordinal [logout]'
 RUNNERS: Runners = TERMINAL
 """How the settings menu's widgets are shown; tests swap in scripted ones."""
 
-SignIn = Literal['auto', 'key', 'environment', 'browser']
+SignIn = Literal['browser', 'key', 'environment']
 
 
 class OrdinalSettings(BaseModel):
     """The plugin's settings. Nothing here is secret; an unknown field such as a pasted token fails to load."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
-    sign_in: SignIn = 'auto'
+    sign_in: SignIn = 'browser'
     """Which credential runs use; see the module docstring."""
     include_instructions: bool = True
     """Pass Ordinal's own server instructions to the model."""
+
+    @field_validator('sign_in', mode='before')
+    @classmethod
+    def _automatic_is_browser(cls, value: object) -> object:
+        """Earlier builds offered `auto`; it now means the browser sign-in default."""
+        return 'browser' if value == 'auto' else value
 
 
 class KeyChoice(BaseModel):
@@ -101,15 +105,9 @@ def source(method: SignIn) -> KeyReference | Literal['environment', 'browser', '
 
     Runs, `/ordinal`, and the no-terminal check all decide here, so they cannot disagree.
     """
-    if method in ('auto', 'key'):
-        reference = saved_key()
-        if reference is not None:
-            return reference
-        if method == 'key':
-            return 'none'
-    if method == 'environment' or (method == 'auto' and os.environ.get(KEY_NAME)):
-        return 'environment'
-    return 'browser'
+    if method == 'key':
+        return saved_key() or 'none'
+    return method
 
 
 def ready(method: SignIn, tokens: TokenStore) -> bool:
@@ -226,14 +224,13 @@ def status(settings: OrdinalSettings, tokens: TokenStore) -> str:
 SIGN_IN = FieldRow(
     key='sign_in',
     label='Sign-in',
-    description='Which credential runs use. Automatic tries a /keys entry, then the environment, then the browser.',
-    default='auto',
-    choices=('auto', 'key', 'environment', 'browser'),
+    description='Which credential runs use: the browser sign-in by default, a /keys entry, or the environment.',
+    default='browser',
+    choices=('browser', 'key', 'environment'),
     choice_labels={
-        'auto': 'Automatic',
+        'browser': 'Browser sign-in',
         'key': 'Saved key from /keys',
         'environment': f'{KEY_NAME} environment variable',
-        'browser': 'Browser sign-in',
     },
     allow_custom=False,
 )
@@ -336,7 +333,7 @@ async def configure(source: OrdinalSource[DepsT]) -> str:
         choice = KeyChoice(token=reference).model_dump_json()
         save_key_connection(account=KEY_ACCOUNT, token=reference, value=choice)
         messages = [f'Ordinal uses {reference.name} from /keys. Manage it there.']
-        if source.settings.sign_in in ('environment', 'browser'):
+        if source.settings.sign_in != 'key':
             source.save(source.settings.model_copy(update={'sign_in': 'key'}))
             messages.append(f'Saved {SIGN_IN.label}: {SIGN_IN.display("key")}.')
         return messages

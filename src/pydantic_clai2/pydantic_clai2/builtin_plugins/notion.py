@@ -1,6 +1,6 @@
 """Use Notion, signed in with a key from /keys or in the browser.
 
-The built-in `notion` plugin: harness `Notion`, connected with a named key from `/keys` or a browser sign-in.
+The built-in `notion` plugin: harness `Notion`, connected with a browser sign-in by default or a named key from `/keys`.
 
 Plugin settings are plaintext SQLite, so they hold only `Notion`'s non-secret options, all edited in the menu
 `/plugins configure notion` opens. Its key row picks or enters a key in the named keystore and saves only the
@@ -16,7 +16,7 @@ from typing import Generic, Literal
 import anyio
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AgentCapability
@@ -48,13 +48,19 @@ class NotionSettings(BaseModel):
     """The JSON a `notion` declaration may carry. Secrets are not accepted here; they live in `/keys`."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
-    auth: Literal['key', 'oauth'] | None = Field(
-        default=None,
-        description='`key` uses the chosen key and never opens a browser; `oauth` always signs in through the '
-        'browser; unset uses the chosen key when there is one.',
+    auth: Literal['key', 'oauth'] = Field(
+        default='oauth',
+        description='`oauth` (the default) signs in through the browser; `key` uses the chosen key and never opens '
+        'a browser.',
     )
     read_only: bool = Field(default=False, description='Keep only the tools the server marks as read-only.')
     include_instructions: bool = Field(default=True, description="Forward the server's instructions to the agent.")
+
+    @field_validator('auth', mode='before')
+    @classmethod
+    def _automatic_is_browser(cls, value: object) -> object:
+        """Earlier builds saved `null` for an automatic choice; it now means the browser sign-in default."""
+        return 'oauth' if value is None else value
 
 
 class _Selection(BaseModel):
@@ -104,16 +110,14 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
 
     async def _connect(self, _: RunContext[DepsT]) -> Notion[DepsT]:
         settings = self.settings
-        reference = (
-            None if settings.auth == 'oauth' else await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
-        )
-        if reference is not None:
+        if settings.auth == 'key':
+            reference = await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
+            if reference is None:
+                raise UserError(f'No Notion key is selected. {SETUP}')
             token = await anyio.to_thread.run_sync(partial(resolve_key, token=reference), abandon_on_cancel=True)
             return Notion[DepsT](
                 auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions
             )
-        if settings.auth == 'key':
-            raise UserError(f'No Notion key is selected. {SETUP}')
         # Harness `auth='oauth'` keeps tokens in memory behind a 5-second handshake; this keeps them in the
         # keyring and allows the browser round trip, like an OAuth server added through `/mcp`.
         transport = StreamableHttpTransport(NOTION_MCP_URL, auth=sign_in(TOKENS.name), httpx_client_factory=http_client)
@@ -129,23 +133,24 @@ _KEY = FieldRow(
     label='Key',
     description=(
         f'The saved API key in /keys that Notion connects with. Enter picks a saved key or saves a new one there '
-        f'as {KEY_NAME}; only its name is kept. Any plugin naming the same key shares it. R clears the choice, '
-        'so Notion signs in through the browser instead.'
+        f'as {KEY_NAME}; only its name is kept, and Sign-in switches to key only. Any plugin naming the same key '
+        'shares it. R clears the choice, so Notion signs in through the browser instead.'
     ),
     default='(none)',
 )
+_AUTH = FieldRow(
+    key='auth',
+    label='Sign-in',
+    description='Browser, the default, signs in through the browser and keeps the tokens in the keyring. Key only '
+    'uses the chosen key and never opens a browser, for headless and remote machines.',
+    default='oauth',
+    choices=('oauth', 'key'),
+    choice_labels={'oauth': 'browser', 'key': 'key only'},
+    allow_custom=False,
+)
 _ROWS = (
     _KEY,
-    FieldRow(
-        key='auth',
-        label='Sign-in',
-        description='Automatic uses the chosen key and otherwise opens the browser. Key only never opens a '
-        'browser, for headless and remote machines. Browser always signs in through the browser.',
-        default='auto',
-        choices=('auto', 'key', 'oauth'),
-        choice_labels={'auto': 'automatic', 'key': 'key only', 'oauth': 'browser'},
-        allow_custom=False,
-    ),
+    _AUTH,
     FieldRow(
         key='read_only',
         label='Tools',
@@ -195,8 +200,6 @@ class NotionSource(Generic[DepsT]):
                 return '(invalid; choose again)'
             return reference.name if reference else row.default
         value: object = getattr(self.settings, row.key)
-        if value is None:
-            return 'auto'
         return str(value).lower() if isinstance(value, bool) else str(value)
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -216,7 +219,9 @@ class NotionSource(Generic[DepsT]):
         """Restore one option's default, or forget the chosen key (the key itself stays in `/keys`)."""
         if row.key == 'key':
             delete_credentials(account=ACCOUNT)
-            return 'Notion no longer uses a saved key. The key itself stays in /keys.'
+            if self.settings.auth == 'key':
+                self.apply(_AUTH, 'oauth')
+            return 'Notion no longer uses a saved key and signs in through the browser. The key itself stays in /keys.'
         data = self.settings.model_dump(mode='json')
         del data[row.key]
         self._host.save_settings(NotionSettings.model_validate(data))
@@ -225,9 +230,7 @@ class NotionSource(Generic[DepsT]):
     def _updated(self, row: FieldRow, raw: str) -> NotionSettings:
         data = self.settings.model_dump(mode='json')
         value: JsonValue = raw
-        if row.key == 'auth':
-            value = None if raw == 'auto' else raw
-        elif raw in ('true', 'false'):
+        if raw in ('true', 'false'):
             value = raw == 'true'
         data[row.key] = value
         return NotionSettings.model_validate(data)
@@ -242,7 +245,12 @@ async def _configure(source: NotionSource[DepsT]) -> str:
         if reference is None:
             return []
         select_key(reference)
-        return [f'Notion uses the saved key {reference.name}. Manage it in /keys.']
+        messages = [f'Notion uses the saved key {reference.name}. Manage it in /keys.']
+        if source.settings.auth != 'key':
+            # A chosen key is only used with key-only sign-in, so choosing one switches to it.
+            source.apply(_AUTH, 'key')
+            messages.append(f'Saved {_AUTH.label}: {_AUTH.display("key")}.')
+        return messages
 
     menu = FieldMenu(source)
     messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus={'key': choose}))
