@@ -4178,7 +4178,7 @@ class RealtimeSession:
     def _record_usage(self, usage: RequestUsage) -> None:
         if self._persistent and self._run.finished:
             assert self._owner is not None
-            self._idle_usage.incr(usage)
+            self._idle_usage.incr(usage)  # usage-attribution: connection-only billing outside a run
             self._owner.record_connection_usage(usage)
         else:
             self.usage.incr(usage)  # usage-attribution: the session owns its spans

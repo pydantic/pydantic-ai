@@ -252,8 +252,8 @@ class SteeringController:
         if self.closed or self.parent_response_id != parent or self.pending:
             raise UserError('The native steering response changed while preparing input; submit it again explicitly.')
         usage = deepcopy(self.usage)
-        usage.incr(self.current_usage())
-        usage.requests += 1  # Reserve the parent, which has not yet been committed by the graph.
+        usage.incr(self.current_usage())  # usage-attribution: provisional admission-check copy
+        usage.requests += 1  # usage-attribution: reserve the uncommitted parent on the provisional copy
         self.limits.check_before_request(usage)
         self.limits.check_tokens(usage)
         self.limits.check_cost(usage, warn_if_cost_unavailable=False)
@@ -288,10 +288,14 @@ class SteeringController:
                 scope.cancel()
             for _, finished in writers:
                 await finished.wait()
-            if self.pending:
-                self.observe(LoseSteering())
-                if self.disconnect is not None:
-                    await self.disconnect()
+            try:
+                if self.pending:
+                    self.observe(LoseSteering())
+                    if self.disconnect is not None:
+                        await self.disconnect()
+            finally:
+                # Retained run contexts must not keep a request-scoped model alive after teardown.
+                self.inherited_request = None
 
 
 def require_settled(deliveries: list[SteeringDelivery]) -> None:

@@ -100,8 +100,10 @@ class ModelResources:
                 selected_model.wrapped,
                 enter_model=enter_model and id(selected_model.wrapped) not in self._models,
             )
-            bound = copy(selected_model)
-            bound.wrapped = wrapped
+            bound = selected_model
+            if wrapped is not selected_model.wrapped:
+                bound = copy(selected_model)
+                bound.wrapped = wrapped
             self.entered_model_ids.add(id(selected_model))
         elif self._group is not None:
             # A custom model may own task groups or cancel scopes. Its entry and exit must stay
@@ -249,7 +251,7 @@ class SessionRuntime:
                 run_id = state.run_id
             pending.extend(self._inbox.snapshot())
             conversation = deepcopy(conversation)
-            conversation.usage.incr(self._connection_usage)
+            conversation.usage.incr(self._connection_usage)  # usage-attribution: checkpoint-only idle billing
             return conversation, deepcopy(pending), run_id
 
     def record_connection_usage(self, usage: RequestUsage) -> None:
@@ -262,9 +264,9 @@ class SessionRuntime:
         """
         with self._lock:
             if self._active is not None:
-                self._connection_usage.incr(usage)
+                self._connection_usage.incr(usage)  # usage-attribution: idle connection delta, not run usage
             else:
-                self.conversation.usage.incr(usage)
+                self.conversation.usage.incr(usage)  # usage-attribution: idle billing belongs to the session
 
     def record_result(self, conversation: Conversation) -> None:
         with self._lock:
@@ -294,7 +296,7 @@ class SessionRuntime:
                     # Legacy run handles keep their undelivered messages visible after termination.
                     queue.close()
                 self._active = None
-            self.conversation.usage.incr(self._connection_usage)
+            self.conversation.usage.incr(self._connection_usage)  # usage-attribution: settle idle connection billing
             self._connection_usage = RunUsage()
             self._claimed = False
             self._cancellation = None

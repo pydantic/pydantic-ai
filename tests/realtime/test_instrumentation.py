@@ -1696,8 +1696,21 @@ async def test_direct_session_runs_tool_via_runner() -> None:
     The hand-managed path has no `Instrumentation` capability, so no `execute_tool` span is produced;
     the runner's result is inserted into history when it completes.
     """
+    delivered = asyncio.Event()
+
+    class OrderedConnection(_Connection):
+        async def send(self, content: RealtimeInput) -> None:
+            delivered.set()
+
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            async for event in super().__aiter__():
+                if isinstance(event, OutputTranscript) and event.text == 'it is sunny':
+                    # The provider answers only after receiving the concurrent tool's result.
+                    await delivered.wait()
+                yield event
+
     settings, exporter = _settings()
-    conn = _Connection(
+    conn = OrderedConnection(
         [
             InputTranscript(text='weather in Paris?', is_final=True),
             OutputTranscript(text='let me check'),
@@ -1728,11 +1741,9 @@ async def test_direct_session_runs_tool_via_runner() -> None:
     assert len(chats) == 2
     _, second = chats
     assert second.attributes is not None
-    # The connection does not yield between the call and response, so the concurrent tool finishes
-    # after this span opens and is not yet present in its input attributes.
+    # Logical completion is recorded before delivery; the successor sees the completed result.
     assert json.loads(str(second.attributes['gen_ai.input.messages']))[-1]['parts'] == [
-        {'type': 'text', 'content': 'let me check'},
-        {'type': 'tool_call', 'id': 'c1', 'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
+        {'type': 'tool_call_response', 'id': 'c1', 'name': 'get_weather', 'result': 'sunny'},
     ]
 
 
