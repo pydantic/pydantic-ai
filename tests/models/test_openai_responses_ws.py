@@ -45,6 +45,12 @@ Frame = dict[str, JsonValue]
 FRAME_ADAPTER = TypeAdapter(Frame)
 
 
+@pytest.fixture(autouse=True)
+def stable_platform_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avoid the SDK's macOS platform probe spawning a subprocess inside async tests."""
+    monkeypatch.setattr('openai._base_client.get_platform', lambda: 'Unknown')
+
+
 @dataclass
 class RecordedResponses:
     model: OpenAIResponsesModel
@@ -261,7 +267,6 @@ class SocketHarness:
 
 @pytest.fixture
 def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
-    monkeypatch.setattr('openai._base_client.get_platform', lambda: 'Unknown')
     harness = SocketHarness()
 
     async def connect(uri: str, *, additional_headers: Mapping[str, str], **options: object) -> ScriptedSocket:
