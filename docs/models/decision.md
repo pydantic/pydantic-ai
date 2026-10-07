@@ -14,7 +14,7 @@ Pydantic AI supports three decision model backends out of the box:
 
 - TypeSafe's Jev, through [`TypeSafeModel`](typesafe.md), as `typesafe:jev-latest`.
 - Any other decision model behind the same `/v1/systemone` API as Jev, such as [Contrastive Language Models](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) (CLM), [Laya](https://huggingface.co/convaiinnovations/laya), or the models [Ollama](system-one.md#ollama) runs locally, through [`SystemOneModel`](system-one.md), as `system-one:<model>`.
-- OpenAI's `gpt-6-luna` on its Decisions API, through [`OpenAIDecisionsModel`](openai.md#decisions-api), as `openai-decisions:gpt-6-luna`.
+- OpenAI's `gpt-6-luna` on its Decisions API, with image input support, through [`OpenAIDecisionsModel`](openai.md#decisions-api), as `openai-decisions:gpt-6-luna`.
 
 The examples on this page use Jev, and run on any other decision model by changing the model name. This page covers what `DecisionModel` does for any backend; each backend's page covers its setup, its own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
 
@@ -1173,11 +1173,11 @@ Two things to hold on to. A classifier in the loop is a component like any other
 
 ## What decision models cannot do
 
-A decision model does not write text or read files, and it only fills tool arguments that map to the [typed questions](#supported-field-types) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or files is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
+A decision model does not write text, and it only fills tool arguments that map to the [typed questions](#supported-field-types) above. Its model profile records the first of those as [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output], and an agent that needs text output or input unsupported by its backend is refused with a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent:
 
 - The `output_type` must be made of the field types above, or be [handed off](#escalating-to-a-language-model) when it is picked from beside other routes: no `str`, no [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]. An [output function](../output.md#output-functions)'s arguments are fields like any other, so they are subject to the same list, and one that takes nothing but the run context is a [hand-off](#tools-pick-then-fill) picked without filling anything. A [union](#a-union-of-output-types) of structured types is supported; a union of structured types as a *field* of an output type is not.
 - No native tools. A function tool is offered to the model; supported arguments are [filled when it is picked](#tools-pick-then-fill), while any unsupported argument makes the pick an `UnfillableRoute` after the request rather than a refusal before it. With tools attached, the output type needs a docstring or the agent instructions to be weighed against them.
-- No image, audio, video or document in the prompt or the history.
+- OpenAI Decisions supports image input as described on the [OpenAI page](openai.md#decisions-api); other decision backends accept text only. Decision models do not support audio, video or documents in the prompt or history.
 - A pick-one needs two or more options, each a string or a whole number: one option leaves nothing to pick, and `True` is not a label.
 - No more options in one question than the backend's `max_choice_options`, where it sets one. A pick-one field counts its own options, and the route question counts every tool plus every output type, so on Jev 255 tools is already one too many once the output type is counted beside them.
 - The model needs something to ask. A run with no user text and no history has nothing to judge, and an `output_type` with no fields to fill — a lone argumentless output function — leaves no question to ask unless there is more than one route to pick between.

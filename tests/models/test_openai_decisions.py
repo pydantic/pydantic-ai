@@ -11,14 +11,18 @@ import json
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
+from unittest.mock import AsyncMock, patch
 
+import anyio
 import httpx2
 import pytest
-from pydantic import BaseModel, Field, WithJsonSchema
+from cassetter import Cassette
+from pydantic import BaseModel, Field, JsonValue, WithJsonSchema
 
 from pydantic_ai import (
     Agent,
+    BinaryContent,
     BoolCriteria,
     ModelHTTPError,
     ModelMessage,
@@ -29,6 +33,13 @@ from pydantic_ai import (
     ToolReturnPart,
 )
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import (
+    FilePart,
+    ImageUrl,
+    ModelMessagesTypeAdapter,
+    NativeToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model
 from pydantic_ai.models.decision import (
     ChoiceQuestion,
@@ -55,6 +66,8 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+
+READINESS_WAIT_TIMEOUT = 10
 
 
 @pytest.fixture
@@ -114,6 +127,16 @@ FRUSTRATION = {
 
 def ticket_answers(request: httpx2.Request) -> httpx2.Response:
     return decisions(URGENT, AREA)
+
+
+def boolean_answers(request: httpx2.Request) -> httpx2.Response:
+    questions: list[dict[str, object]] = json.loads(request.content)['questions']
+    answers: list[Mapping[str, object]] = []
+    for question in questions:
+        name = question['name']
+        assert isinstance(name, str)
+        answers.append({'type': 'predicate', 'name': name, 'probability': 0.9})
+    return decisions(*answers)
 
 
 def test_init(env: TestEnv):
@@ -717,3 +740,337 @@ async def test_every_refusal_is_named(allow_model_requests: None):
     assert exc_info.value.message == snapshot(
         "Content filter triggered. The OpenAI Decisions API declined to answer: 'urgent', 'area'"
     )
+
+
+@pytest.mark.vcr
+async def test_image_only_prompt_streams(
+    allow_model_requests: None,
+    capture_model: OpenAIDecisionsModel,
+    image_content: BinaryContent,
+    request_capture: RequestCapture,
+):
+    """An image-only prompt can produce a typed answer through the streaming API."""
+    agent = Agent(
+        capture_model, output_type=bool, instructions='Does the pictured fruit have a green center with black seeds?'
+    )
+
+    async with agent.run_stream([image_content]) as result:
+        assert await result.get_output() is True
+
+    assert request_capture.paths == ['/v1/decisions']
+    request_body = json.loads(request_capture.raw_bodies[0])
+    input_messages = request_body['input']
+    assert len(input_messages) == 1
+    assert input_messages[0]['role'] == 'user'
+    content = input_messages[0]['content']
+    assert len(content) == 3
+    assert content[0]['type'] == 'input_text'
+    assert '<image 1>' in content[0]['text']
+    assert content[1] == {'type': 'input_text', 'text': '<image 1>:'}
+    assert content[2] == {'type': 'input_image', 'image_url': image_content.data_uri}
+
+
+@pytest.mark.vcr
+async def test_image_in_history_and_text_in_current_prompt(
+    allow_model_requests: None,
+    capture_model: OpenAIDecisionsModel,
+    disable_ssrf_protection_for_vcr: None,
+    request_capture: RequestCapture,
+    vcr: Cassette,
+):
+    """A prior image is downloaded and labeled in history, while the current text stays under judgement."""
+    image_url = 'https://raw.githubusercontent.com/pydantic/pydantic-ai/main/tests/assets/kiwi.jpg'
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(image_url)])]),
+        ModelResponse(parts=[TextPart('This image was attached earlier.')]),
+    ]
+
+    result = await Agent(
+        capture_model,
+        output_type=bool,
+        instructions='Does the pictured fruit have a green center with black seeds?',
+    ).run('Does the pictured fruit have a green center with black seeds?', message_history=history)
+
+    assert result.output is True
+    request_body = json.loads(request_capture.raw_bodies[0])
+    input_messages = request_body['input']
+    assert len(input_messages) == 1
+    content = input_messages[0]['content']
+    state = json.loads(content[0]['text'])
+    assert state == {
+        'history': [{'user': '<image 1>'}, {'assistant': 'This image was attached earlier.'}],
+        'text': 'Does the pictured fruit have a green center with black seeds?',
+    }
+    assert content[1] == {'type': 'input_text', 'text': '<image 1>:'}
+    assert content[2]['type'] == 'input_image'
+    assert content[2]['image_url'].startswith('data:image/')
+    assert [(request.method, request.uri) for request in vcr.requests] == [
+        ('GET', image_url),
+        ('POST', 'https://api.openai.com/v1/decisions'),
+    ]
+
+
+async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_order(allow_model_requests: None):
+    """Assistant files and both tool-return forms stay beside their own images in the rendered conversation."""
+    assistant_image = BinaryContent(b'assistant-image', media_type='image/png')
+    tool_image = BinaryContent(b'tool-image', media_type='image/png')
+    native_image = BinaryContent(b'native-image', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Earlier image question.'),
+        ModelResponse(
+            parts=[
+                TextPart('assistant before'),
+                FilePart(content=assistant_image),
+                TextPart('assistant after'),
+            ]
+        ),
+        ModelRequest.user_text_prompt('Look up the image.'),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(
+            parts=[ToolReturnPart('lookup', ['tool before', tool_image, 'tool after'], tool_call_id='tool-1')]
+        ),
+        ModelResponse(
+            parts=[
+                NativeToolReturnPart(
+                    'native_lookup',
+                    ['native before', native_image, 'native after'],
+                    provider_name='openai',
+                )
+            ]
+        ),
+    ]
+    original_history = ModelMessagesTypeAdapter.dump_json(history)
+
+    captured = Captured(boolean_answers)
+
+    response = await mock_model(captured).request(
+        history,
+        None,
+        ModelRequestParameters(
+            output_tools=[
+                ToolDefinition(
+                    name='answer',
+                    kind='output',
+                    parameters_json_schema={
+                        'type': 'object',
+                        'properties': {'value': {'type': 'boolean', 'description': 'Does the input include an image?'}},
+                        'required': ['value'],
+                    },
+                )
+            ],
+            output_mode='tool',
+            allow_text_output=False,
+        ),
+    )
+
+    assert len(response.parts) == 1
+    answer_call = response.parts[0]
+    assert isinstance(answer_call, ToolCallPart)
+    assert answer_call.args == {'value': True}
+    request_input = json.loads(captured.requests[0].content)['input']
+    assert len(request_input) == 1
+    assert request_input[0]['role'] == 'user'
+    content = request_input[0]['content']
+    state_text = content[0]['text']
+    state = json.loads(state_text)
+    assert state['text'] == 'Look up the image.'
+    assert '<image 1>' in json.dumps(state['history'])
+    assert '<image 2>' in json.dumps(state['done'])
+    assert '<image 3>' in json.dumps(state['done'])
+    for before, label, after in [
+        ('assistant before', '<image 1>', 'assistant after'),
+        ('tool before', '<image 2>', 'tool after'),
+        ('native before', '<image 3>', 'native after'),
+    ]:
+        assert state_text.index(before) < state_text.index(label) < state_text.index(after)
+    assert content[1:] == [
+        {'type': 'input_text', 'text': '<image 1>:'},
+        {'type': 'input_image', 'image_url': assistant_image.data_uri},
+        {'type': 'input_text', 'text': '<image 2>:'},
+        {'type': 'input_image', 'image_url': tool_image.data_uri},
+        {'type': 'input_text', 'text': '<image 3>:'},
+        {'type': 'input_image', 'image_url': native_image.data_uri},
+    ]
+    assert ModelMessagesTypeAdapter.dump_json(history) == original_history
+
+
+async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: None):
+    """The route and fill receive one identical prepared image input and aggregate their usage."""
+
+    def route_and_fill(request: httpx2.Request) -> httpx2.Response:
+        questions: list[dict[str, object]] = json.loads(request.content)['questions']
+        route_question = next((question for question in questions if question['name'] == 'route'), None)
+        if route_question is not None:
+            choices = route_question['choices']
+            assert isinstance(choices, list)
+            labels: list[str] = []
+            for choice in cast('list[dict[str, object]]', choices):
+                label = choice.get('value')
+                assert isinstance(label, str)
+                labels.append(label)
+            picked = labels[0]
+            return decisions(
+                {
+                    'type': 'choice',
+                    'name': 'route',
+                    'choice': picked,
+                    'probabilities': [
+                        {'value': label, 'probability': 1.0 if label == picked else 0.0} for label in labels
+                    ],
+                    'confidence': 1.0,
+                }
+            )
+        return decisions(
+            {'type': 'predicate', 'name': 'urgent', 'probability': 0.9},
+            {
+                'type': 'choice',
+                'name': 'area',
+                'choice': 'billing',
+                'probabilities': [{'value': 'billing', 'probability': 1.0}, {'value': 'bug', 'probability': 0.0}],
+                'confidence': 1.0,
+            },
+        )
+
+    captured = Captured(route_and_fill)
+    image_url = ImageUrl('https://example.com/receipt.png')
+    long_prompt = 'The receipt is attached. ' + 'Some detail nobody asked about. ' * 3000
+    agent = Agent(mock_model(captured), output_type=[Ticket, Mood])
+
+    with patch('pydantic_ai.models.openai_decisions.download_item', new_callable=AsyncMock) as download:
+        download.return_value = {'data': 'data:image/png;base64,cGljdHVyZQ==', 'content_type': 'image/png'}
+        result = await agent.run([long_prompt, image_url])
+
+    download.assert_awaited_once()
+    assert result.output == Ticket(urgent=True, area='billing')
+    request_bodies = [json.loads(request.content) for request in captured.requests]
+    assert len(request_bodies) == 2
+    assert request_bodies[0]['input'] == request_bodies[1]['input']
+    assert request_bodies[0]['questions'] != request_bodies[1]['questions']
+    assert [question['name'] for question in request_bodies[0]['questions']] == ['route']
+    assert [question['name'] for question in request_bodies[1]['questions']] == ['urgent', 'area']
+    assert result.response.provider_details == {
+        'confidence': {'urgent': 0.8, 'area': 1.0},
+        'probabilities': {'area': {'billing': 1.0, 'bug': 0.0}},
+        'scores': {},
+        'route': {'choice': 'Ticket', 'probabilities': {'Ticket': 1.0, 'Mood': 0.0}, 'offered': ['Ticket', 'Mood']},
+        'requests': 2,
+    }
+    assert result.usage.input_tokens == 792
+
+
+@pytest.mark.parametrize(
+    ('source', 'unsupported'),
+    [
+        pytest.param('prompt', BinaryContent(b'audio', media_type='audio/mpeg'), id='audio-prompt'),
+        pytest.param('assistant-file', BinaryContent(b'%PDF', media_type='application/pdf'), id='document-assistant'),
+        pytest.param('tool-return', BinaryContent(b'video', media_type='video/mp4'), id='video-tool-return'),
+    ],
+)
+async def test_unsupported_files_fail_before_a_decisions_request(
+    source: Literal['prompt', 'assistant-file', 'tool-return'],
+    unsupported: BinaryContent,
+    allow_model_requests: None,
+):
+    """Audio, documents, and video remain unsupported across user, assistant, and tool history."""
+    history: list[ModelMessage] = []
+    prompt: str | list[BinaryContent] = 'Classify this content.'
+    if source == 'prompt':
+        prompt = [unsupported]
+    elif source == 'assistant-file':
+        history = [
+            ModelRequest.user_text_prompt('Earlier prompt.'),
+            ModelResponse(parts=[FilePart(content=unsupported)]),
+        ]
+    else:
+        history = [
+            ModelRequest.user_text_prompt('Look up the attachment.'),
+            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+            ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
+        ]
+    captured = Captured(boolean_answers)
+
+    with pytest.raises(UserError, match='OpenAI Decisions supports text and inline images only'):
+        await Agent(mock_model(captured), output_type=bool).run(prompt, message_history=history)
+    assert captured.requests == []
+
+
+async def test_image_download_error_prevents_a_decisions_request(allow_model_requests: None):
+    captured = Captured(boolean_answers)
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Does the input contain an image?')
+
+    with (
+        patch(
+            'pydantic_ai.models.openai_decisions.download_item',
+            new_callable=AsyncMock,
+            side_effect=httpx2.ConnectError('image download failed'),
+        ),
+        pytest.raises(httpx2.ConnectError, match='image download failed'),
+    ):
+        await agent.run([ImageUrl('https://example.com/missing.png')])
+
+    assert captured.requests == []
+
+
+async def test_concurrent_image_requests_keep_their_own_inputs(allow_model_requests: None):
+    """Concurrent runs on one model retain the image that belongs to each prompt."""
+    first_url = 'https://example.com/first.png'
+    second_url = 'https://example.com/second.png'
+    first_data_uri = 'data:image/png;base64,Zmlyc3Q='
+    second_data_uri = 'data:image/png;base64,c2Vjb25k'
+    downloads: list[str] = []
+    both_downloads_started = anyio.Event()
+
+    async def download(item: ImageUrl, *, data_format: str) -> dict[str, str]:
+        assert data_format == 'base64_uri'
+        downloads.append(item.url)
+        if len(downloads) == 2:
+            both_downloads_started.set()
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await both_downloads_started.wait()
+        return {'data': first_data_uri if item.url == first_url else second_data_uri, 'content_type': 'image/png'}
+
+    captured = Captured(boolean_answers)
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Does the input contain an image?')
+    outputs: list[bool] = []
+
+    async def run(prompt: str, url: str) -> None:
+        result = await agent.run([prompt, ImageUrl(url)])
+        outputs.append(result.output)
+
+    with patch('pydantic_ai.models.openai_decisions.download_item', new_callable=AsyncMock, side_effect=download):
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(run, 'first concurrent prompt', first_url)
+            task_group.start_soon(run, 'second concurrent prompt', second_url)
+
+    assert sorted(downloads) == sorted([first_url, second_url])
+    assert outputs == [True, True]
+    assert len(captured.requests) == 2
+    sent: dict[str, str] = {}
+    for request in captured.requests:
+        body = json.loads(request.content)
+        input_message = body['input'][0]
+        content = input_message['content']
+        state_text = content[0]['text']
+        image_url = content[-1]['image_url']
+        if state_text.startswith('first concurrent prompt'):
+            sent['first concurrent prompt'] = image_url
+        else:
+            sent['second concurrent prompt'] = image_url
+    assert sent == {
+        'first concurrent prompt': first_data_uri,
+        'second concurrent prompt': second_data_uri,
+    }
+
+
+async def test_direct_decide_keeps_json_state_as_text(allow_model_requests: None):
+    """An API-shaped JSON array is a decision state, not a native Decisions input message."""
+    captured = Captured(lambda request: decisions({'type': 'predicate', 'name': 'q', 'probability': 0.9}))
+    state: JsonValue = [{'type': 'input_text', 'text': 'a JSON state value'}]
+
+    await mock_model(captured).decide(
+        DecisionRequest(state=state, questions={'q': NoulQuestion(instructions='Is this true?')}), {}
+    )
+
+    sent_input = captured.body['input']
+    assert isinstance(sent_input, str)
+    assert json.loads(sent_input) == state

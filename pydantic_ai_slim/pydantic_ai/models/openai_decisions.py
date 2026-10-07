@@ -2,13 +2,30 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from typing import ClassVar, Literal, assert_never
+from dataclasses import dataclass, field, replace
+from typing import ClassVar, Literal, TypeVar, assert_never
 
 from pydantic import JsonValue
 
 from .._http import to_httpx2_timeout
 from ..exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
+from ..messages import (
+    BaseToolReturnPart,
+    BinaryContent,
+    FilePart,
+    ImageUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    NativeToolReturnPart,
+    TextPart,
+    ToolReturnPart,
+    UserContent,
+    UserPromptPart,
+    is_multi_modal_content,
+)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -48,8 +65,13 @@ try:
         QuestionQuestionParamScore,
         QuestionQuestionParamScoreLevel,
     )
+    from openai.types.decision_input_image_param import DecisionInputImageParam
+    from openai.types.decision_input_message_param import DecisionInputMessageParam
+    from openai.types.decision_input_part_union_param import DecisionInputPartUnionParam
+    from openai.types.decision_input_text_param import DecisionInputTextParam
 
     from ..providers.openai_decisions import OpenAIDecisionsProvider
+    from . import download_item
     from .openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -74,11 +96,103 @@ class OpenAIDecisionsModelSettings(DecisionModelSettings, total=False):
     # This class is a placeholder for any future Decisions API-specific settings.
 
 
+@dataclass(kw_only=True)
+class _OpenAIDecisionRequest(DecisionRequest):
+    input: list[DecisionInputMessageParam]
+
+
+_ToolReturnPartT = TypeVar('_ToolReturnPartT', bound=BaseToolReturnPart)
+
+
+@dataclass
+class _DecisionImagePreparer:
+    images: list[DecisionInputImageParam] = field(default_factory=list[DecisionInputImageParam])
+
+    @staticmethod
+    def _unsupported_file(context: str) -> UserError:
+        return UserError(
+            f'OpenAI Decisions supports text and inline images only; {context} contains an unsupported file.'
+        )
+
+    async def _add_image(self, item: BinaryContent | ImageUrl) -> str:
+        image_url = (
+            item.data_uri
+            if isinstance(item, BinaryContent)
+            else (await download_item(item, data_format='base64_uri'))['data']
+        )
+        label = f'<image {len(self.images) + 1}>'
+        self.images.append(DecisionInputImageParam(type='input_image', image_url=image_url))
+        return label
+
+    async def _prepare_user_prompt(self, part: UserPromptPart) -> UserPromptPart:
+        if isinstance(part.content, str):
+            return part
+        content: list[UserContent] = []
+        for item in part.content:
+            if isinstance(item, BinaryContent):
+                if not item.is_image:
+                    raise self._unsupported_file('A user prompt')
+                content.append(await self._add_image(item))
+            elif isinstance(item, ImageUrl):
+                content.append(await self._add_image(item))
+            elif is_multi_modal_content(item):
+                raise self._unsupported_file('A user prompt')
+            else:
+                content.append(item)
+        return replace(part, content=content)
+
+    async def _prepare_tool_return(self, part: _ToolReturnPartT) -> _ToolReturnPartT:
+        if not part.files:
+            return part
+        content: list[str] = []
+        for item in part.content_items(mode='str'):
+            if isinstance(item, str):
+                content.append(item)
+            elif isinstance(item, BinaryContent):
+                if not item.is_image:
+                    raise self._unsupported_file('A tool result')
+                content.append(await self._add_image(item))
+            elif isinstance(item, ImageUrl):
+                content.append(await self._add_image(item))
+            else:
+                raise self._unsupported_file('A tool result')
+        return replace(part, content=content)
+
+    async def prepare(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        prepared: list[ModelMessage] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                request_parts: list[ModelRequestPart] = []
+                for part in message.parts:
+                    if isinstance(part, UserPromptPart):
+                        request_parts.append(await self._prepare_user_prompt(part))
+                    elif isinstance(part, ToolReturnPart):
+                        request_parts.append(await self._prepare_tool_return(part))
+                    else:
+                        request_parts.append(part)
+                prepared.append(replace(message, parts=request_parts))
+            elif isinstance(message, ModelResponse):
+                response_parts: list[ModelResponsePart] = []
+                for part in message.parts:
+                    if isinstance(part, FilePart):
+                        if not part.content.is_image:
+                            raise self._unsupported_file('An assistant response')
+                        response_parts.append(TextPart(content=await self._add_image(part.content)))
+                    elif isinstance(part, NativeToolReturnPart):
+                        response_parts.append(await self._prepare_tool_return(part))
+                    else:
+                        response_parts.append(part)
+                prepared.append(replace(message, parts=response_parts))
+            else:
+                assert_never(message)
+        return prepared
+
+
 @dataclass(init=False)
 class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
     """The model class for OpenAI's Decisions API, which runs a GPT model as a [decision model][pydantic_ai.models.decision.DecisionModel].
 
-    The Decisions API answers typed questions about a text, each with a probability or a distribution over the
+    The Decisions API answers typed questions about text or images, each with a probability or a distribution over the
     options, rather than writing text. An agent whose job is to decide something runs on it like on any other model,
     with the `output_type` as the questions:
 
@@ -160,6 +274,29 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         """The system / model provider."""
         return self._provider.name
 
+    async def _prepare_decision_request(self, messages: list[ModelMessage], *, turn: bool) -> DecisionRequest:
+        preparer = _DecisionImagePreparer()
+        prepared_messages = await preparer.prepare(messages)
+        if not preparer.images:
+            return await super()._prepare_decision_request(messages, turn=turn)
+
+        template = await super()._prepare_decision_request(prepared_messages, turn=turn)
+        content: list[DecisionInputPartUnionParam] = [
+            DecisionInputTextParam(type='input_text', text=_text(template.state))
+        ]
+        for index, image in enumerate(preparer.images, start=1):
+            content.extend(
+                (
+                    DecisionInputTextParam(type='input_text', text=f'<image {index}>:'),
+                    image,
+                )
+            )
+        return _OpenAIDecisionRequest(
+            state=template.state,
+            questions={},
+            input=[DecisionInputMessageParam(role='user', content=content)],
+        )
+
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
         extra_headers = dict(model_settings.get('extra_headers', {}))
@@ -171,7 +308,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         with _map_api_errors(self._model_name, self._provider.model_id_namespace):
             response = await self.client.decisions.with_raw_response.create(
                 model=self._model_name,
-                input=_text(request.state),
+                input=request.input if isinstance(request, _OpenAIDecisionRequest) else _text(request.state),
                 questions=[_question(name, question) for name, question in request.questions.items()],
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),

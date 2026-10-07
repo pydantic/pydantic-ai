@@ -574,7 +574,7 @@ class DecisionModel(Model[InterfaceClient]):
         ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool, next(iter(routes)))
-        state = _map_messages(messages, turn=done)
+        request_template = await self._prepare_decision_request(messages, turn=done)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         settings = cast(DecisionModelSettings, model_settings or {})
@@ -592,7 +592,7 @@ class DecisionModel(Model[InterfaceClient]):
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
             return await self._forced_with_arguments(
-                forced_tool, next(iter(routes)), state, instructions, settings, boolean_threshold, limits
+                forced_tool, next(iter(routes)), request_template, instructions, settings, boolean_threshold, limits
             )
         fillable = [tool for tool in output_tools if _expressible(tool, instructions, limits)]
         if (
@@ -620,7 +620,9 @@ class DecisionModel(Model[InterfaceClient]):
                 # a choice question, like the last tool left, and handing it off needs no request either.
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
-            async with self._decide(DecisionRequest(state=state, questions=ask.questions), settings, fields=True) as (
+            async with self._decide(
+                dataclasses.replace(request_template, questions=ask.questions), settings, fields=True
+            ) as (
                 response,
                 span,
             ):
@@ -628,7 +630,7 @@ class DecisionModel(Model[InterfaceClient]):
                 _record_outcome(span, confidence)
             return self._response(output_tool, args, response.usage, response.model_name, provider_details)
 
-        speculation = _Speculation.about(routes, output_tools, state, instructions, limits)
+        speculation = _Speculation.about(routes, output_tools, request_template.state, instructions, limits)
         questions = speculation.questions()
         route_key = _route_question(questions, routes, output_tools, tools, instructions, limits)
 
@@ -636,7 +638,7 @@ class DecisionModel(Model[InterfaceClient]):
         # its questions.
         to_fill: tuple[ToolDefinition, str, _Ask] | None = None
         async with self._decide(
-            DecisionRequest(state=state, questions=questions),
+            dataclasses.replace(request_template, questions=questions),
             settings,
             fields=bool(speculation.asks),
             route_question=route_key,
@@ -672,7 +674,9 @@ class DecisionModel(Model[InterfaceClient]):
 
         if to_fill is not None:
             route, label, fill = to_fill
-            response, args, provider_details = await self._fill(label, fill, state, settings, boolean_threshold)
+            response, args, provider_details = await self._fill(
+                label, fill, request_template, settings, boolean_threshold
+            )
             response_usage += response.usage
             # `RequestUsage.requests` is fixed at 1, so usage cannot say that this turn asked twice: the
             # choice and the fill are two requests inside one step. The count is reported here, and only
@@ -700,11 +704,15 @@ class DecisionModel(Model[InterfaceClient]):
             finish_reason='tool_call',
         )
 
+    async def _prepare_decision_request(self, messages: list[ModelMessage], *, turn: bool) -> DecisionRequest:
+        """Prepare state shared by every request in this step, without adding questions yet."""
+        return DecisionRequest(state=_map_messages(messages, turn=turn), questions={})
+
     async def _fill(
         self,
         label: str,
         ask: _Ask,
-        state: JsonValue,
+        request_template: DecisionRequest,
         settings: DecisionModelSettings,
         boolean_threshold: float,
     ) -> tuple[DecisionResponse, dict[str, Any], dict[str, Any]]:
@@ -722,7 +730,7 @@ class DecisionModel(Model[InterfaceClient]):
         """
         try:
             async with self._decide(
-                DecisionRequest(state=state, questions=ask.questions),
+                dataclasses.replace(request_template, questions=ask.questions),
                 settings,
                 route=label,
                 fields=True,
@@ -741,7 +749,7 @@ class DecisionModel(Model[InterfaceClient]):
         self,
         tool: ToolDefinition,
         label: str,
-        state: JsonValue,
+        request_template: DecisionRequest,
         instructions: str | None,
         settings: DecisionModelSettings,
         boolean_threshold: float,
@@ -751,7 +759,7 @@ class DecisionModel(Model[InterfaceClient]):
         fill = _Ask.to_fill(tool, instructions, limits, label=label)
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
-        response, args, details = await self._fill(label, fill, state, settings, boolean_threshold)
+        response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)
 
