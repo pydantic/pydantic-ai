@@ -6,6 +6,7 @@ from collections import deque
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from unittest.mock import Mock
 
 import anyio
 import httpx2
@@ -607,7 +608,7 @@ async def test_stream_cancel_during_receive(allow_model_requests: None, sockets:
 )
 @pytest.mark.parametrize('stream', [False, True])
 async def test_errors(allow_model_requests: None, sockets: SocketHarness, failure: str, stream: bool):
-    """Server errors and interrupted transports are not mistaken for successful partial output."""
+    """WebSocket failures never trigger HTTP fallback or return successful partial output."""
     socket = sockets.pending[0]
     settings: OpenAIResponsesModelSettings = {}
     if failure in ('envelope', 'status', 'model_not_found'):
@@ -648,8 +649,10 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
         socket.responses.clear()
         settings['timeout'] = 0.01
     model_name = 'gpt-5.2-proo' if failure == 'model_not_found' else 'gpt-4o'
-    source = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key='test'))
-    async with source.connect() as connected:
+    http_handler = Mock(return_value=httpx2.Response(401))
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler))
+    source = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key='test', http_client=http_client))
+    async with http_client, source.connect() as connected:
         with pytest.raises(UnexpectedModelBehavior if failure == 'steering' else ModelAPIError) as raised:
             agent = Agent(connected, model_settings=settings)
             if stream:
@@ -673,6 +676,8 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
             assert 'server_error' in str(raised.value)
             socket.responses.append(text_events())
             assert (await Agent(connected).run('recover')).output == 'ready'
+
+    http_handler.assert_not_called()
 
 
 async def test_incomplete_response(allow_model_requests: None, sockets: SocketHarness):
