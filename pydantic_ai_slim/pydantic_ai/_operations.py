@@ -53,6 +53,20 @@ class CompleteTool:
 
 
 @dataclass(frozen=True)
+class UpdateOutputCall:
+    """Record the latest arguments processed by a streamed output callback."""
+
+    call: ToolCallPart
+
+
+@dataclass(frozen=True)
+class SetOutputResult:
+    """Settle an output tool's status after winner selection, before any delivery."""
+
+    result: MessageHistory
+
+
+@dataclass(frozen=True)
 class ReconcileTool:
     """Externally verified outcome of an interrupted effect; never execute it again."""
 
@@ -94,6 +108,8 @@ class ReconcileDelivery:
 OperationEvent = (
     StartTool
     | CompleteTool
+    | UpdateOutputCall
+    | SetOutputResult
     | ReconcileTool
     | DeferTool
     | InterruptTool
@@ -119,6 +135,14 @@ def transition(  # noqa: C901
         if operation.execution != 'running':
             raise UserError(f'Tool operation {operation.operation_id!r} is not running.')
         return replace(operation, execution='completed', delivery='ready', result=event.result), ('record_result',)
+    if isinstance(event, UpdateOutputCall):
+        if operation.execution != 'running':
+            raise UserError(f'Tool operation {operation.operation_id!r} is not running.')
+        return replace(operation, call=event.call), ()
+    if isinstance(event, SetOutputResult):
+        if operation.execution != 'completed' or operation.delivery != 'ready':
+            raise UserError(f'Tool operation {operation.operation_id!r} cannot change a delivered result.')
+        return replace(operation, result=event.result), ('record_result',)
     if isinstance(event, ReconcileTool):
         if operation.execution not in ('running', 'interrupted'):
             raise UserError(f'Tool operation {operation.operation_id!r} has no unresolved outcome.')

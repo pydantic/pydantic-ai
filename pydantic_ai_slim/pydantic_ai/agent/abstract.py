@@ -1072,6 +1072,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 node = await cap.before_node_run(run_ctx, node=node)
 
                 if self.is_model_request_node(node):
+                    tool_returns: _messages.ModelRequest | None = None
                     async with node.stream(graph_ctx) as stream:
                         final_result_event = None
 
@@ -1110,7 +1111,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 The model response will have been added to messages by now
                                 by `StreamedRunResult._marked_completed`.
                                 """
-                                nonlocal final_result
+                                nonlocal final_result, tool_returns
                                 final_result = FinalResult(
                                     await stream.get_output(), final_result.tool_name, final_result.tool_call_id
                                 )
@@ -1139,14 +1140,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # To allow this message history to be used in a future run without dangling tool calls,
                                 # append a new ModelRequest using the tool returns and retries
                                 if parts:
-                                    messages.append(
-                                        _messages.ModelRequest(
-                                            parts,
-                                            run_id=graph_ctx.state.run_id,
-                                            conversation_id=graph_ctx.state.conversation_id,
-                                            timestamp=_utils.now_utc(),
-                                        )
+                                    tool_returns = _messages.ModelRequest(
+                                        parts,
+                                        run_id=graph_ctx.state.run_id,
+                                        conversation_id=graph_ctx.state.conversation_id,
+                                        timestamp=_utils.now_utc(),
                                     )
+                                    messages.append(tool_returns)
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
@@ -1165,14 +1165,20 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
                             # for SetFinalResult, but not for this ModelRequestNode.
-                            break
+                    # The node commits its response on context exit. Append the tool returns
+                    # only afterwards, so the session and run hooks see the same ordered history
+                    # as the streamed result, without counting the response usage twice.
+                    if tool_returns is not None:
+                        graph_ctx.state.message_history.append(tool_returns)
+                    if yielded:
+                        break
                 elif self.is_call_tools_node(node):
-                    async with node.stream(agent_run.ctx) as stream:
+                    async with node.stream(agent_run.ctx) as tool_stream:
                         if event_stream_handler is not None:
-                            await event_stream_handler(run_ctx, stream)
+                            await event_stream_handler(run_ctx, tool_stream)
                         # Drain after the handler, same as the `ModelRequestNode` branch above, so the
                         # capability chain `node.stream()` wrapped around the node's events finalizes here.
-                        async for _ in stream:
+                        async for _ in tool_stream:
                             pass
 
                 # Advance through the documented streaming exception: `before_node_run` already

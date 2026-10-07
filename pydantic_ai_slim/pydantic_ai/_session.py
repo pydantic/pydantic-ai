@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import anyio
 from anyio.abc import TaskGroup, TaskStatus
 
-from . import _utils
+from . import _operations, _utils
 from ._cancel import RunCancellation
 from ._enqueue import PendingMessage, PendingMessageQueue
 from ._operations import ToolOperation
@@ -277,6 +277,10 @@ class SessionRuntime:
             if self._active is not None:
                 state = self._active
                 self.conversation = conversation or state.snapshot()
+                # Output processing can span partial stream callbacks and the following tool
+                # node. Only run teardown establishes that an unfinished operation was abandoned.
+                for operation_id in self.operations:
+                    _operations.apply(self.operations, operation_id, _operations.InterruptTool())
                 queue = state.pending_messages
                 if self.persistent:
                     # Completed run handles remain user-owned. Detach both history and effect facts

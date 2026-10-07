@@ -1704,12 +1704,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 run_id=state.run_id,
                 pending_messages=state.pending_messages,
                 steering=steering,
-                snapshot=lambda: Conversation(
-                    messages=state.message_history,
-                    usage=state.usage,
-                    conversation_id=state.conversation_id,
-                    deferred_tool_requests=state.deferred_tool_requests,
-                ),
+                snapshot=state.snapshot_conversation,
             )
         )
         historical_response = next(

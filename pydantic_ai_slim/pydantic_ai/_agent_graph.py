@@ -434,6 +434,23 @@ class GraphAgentState:
         # Keep the persisted shape a plain list while ensuring every live graph state uses the
         # thread-safe list subclass. Pydantic deserialization also runs this hook.
         self.pending_messages = _enqueue.PendingMessageQueue(self.pending_messages)
+        # Runtime-only observation, never serialized with graph state. A checkpoint must include
+        # the response being processed even before the model node commits it on context exit.
+        self.stream_snapshot: Callable[[], tuple[_messages.ModelResponse, _usage.RunUsage]] | None = None
+
+    def snapshot_conversation(self) -> Conversation:
+        messages = self.message_history
+        usage = self.usage
+        if self.stream_snapshot is not None:
+            response, usage = self.stream_snapshot()
+            response = replace(response, run_id=self.run_id, conversation_id=self.conversation_id)
+            messages = [*messages, response]
+        return Conversation(
+            messages=messages,
+            usage=usage,
+            conversation_id=self.conversation_id,
+            deferred_tool_requests=self.deferred_tool_requests,
+        )
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -1635,6 +1652,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # a stream that failed before producing anything doesn't.
             _usage_attribution.record_request(ctx.state.usage)
         ctx.state.message_history.append(partial_response)
+        ctx.state.stream_snapshot = None
 
     @staticmethod
     def _build_agent_stream(
@@ -1643,7 +1661,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters: models.ModelRequestParameters,
     ) -> result.AgentStream[DepsT, T]:
         """Build an AgentStream from the given stream response and context."""
-        return result.AgentStream[DepsT, T](
+        stream = result.AgentStream[DepsT, T](
             _raw_stream_response=stream_response,
             _output_schema=ctx.deps.output_schema,
             _model_request_parameters=model_request_parameters,
@@ -1652,10 +1670,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _carried_workspace_ref=ctx.deps.carried_workspace_ref,
             _usage_limits=ctx.deps.usage_limits,
             _tool_manager=ctx.deps.tool_manager,
+            _tool_operations=ctx.state.tool_operations,
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
         )
+        ctx.state.stream_snapshot = lambda: (stream.response, stream.usage)
+        return stream
 
     @asynccontextmanager
     async def _stream_successor(
@@ -2198,6 +2219,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ModelRequestNode._record_response_usage(ctx, response)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
         ctx.state.message_history.append(response)
+        ctx.state.stream_snapshot = None
 
     @staticmethod
     def _record_response_usage(

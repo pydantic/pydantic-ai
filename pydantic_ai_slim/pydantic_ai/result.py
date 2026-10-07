@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic, Self, cast, overload
 import anyio
 from pydantic import ValidationError
 
-from . import _utils, exceptions, messages as _messages, models
+from . import _operations, _utils, exceptions, messages as _messages, models
 from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
@@ -62,9 +62,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
 
+    _tool_operations: dict[str, _operations.ToolOperation] = field(
+        default_factory=dict[str, _operations.ToolOperation], repr=False
+    )
+    _output_operation_id: str | None = field(default=None, init=False)
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
-    _cached_output: OutputDataT | None = field(default=None, init=False)
+    _cached_output: OutputDataT | _utils.Unset = field(default=_utils.UNSET, init=False)
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
@@ -81,7 +85,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
-        if self._cached_output is not None:
+        if _utils.is_set(self._cached_output):
             yield deepcopy(self._cached_output)
             return
 
@@ -240,7 +244,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
-        if self._cached_output is not None:
+        if _utils.is_set(self._cached_output):
             return deepcopy(self._cached_output)
 
         # Iterate through any stream events
@@ -258,7 +262,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         so by then `_cached_output` holds it. Cancelling does not: it marks the stream complete
         without a final response, and there is no output to settle on.
         """
-        if self._cached_output is None and self.cancelled:
+        if not _utils.is_set(self._cached_output) and self.cancelled:
             raise exceptions.UserError(
                 'The stream was cancelled before it produced an output, so this run has no settled '
                 'result. The messages recorded up to the interruption are still available from '
@@ -290,12 +294,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
-                return await self._tool_manager.handle_output_tool_call(
-                    tool_call,
-                    schema=self._output_schema,
-                    allow_partial=allow_partial,
-                    wrap_validation_errors=False,
-                )
+                return await self._process_output_tool(message, tool_call, allow_partial=allow_partial)
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
                     raise exceptions.UserError(
@@ -435,6 +434,45 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
 
         return self._pull_shared(self._events_iterator)
+
+    async def _process_output_tool(
+        self, message: _messages.ModelResponse, call: _messages.ToolCallPart, *, allow_partial: bool
+    ) -> OutputDataT:
+        # Partial output callbacks remain part of one logical processing operation. A successful
+        # partial value is not completion: abandoning the stream leaves its effects unresolved.
+        if self._output_operation_id is None:
+            self._output_operation_id = _operations.admit(
+                self._tool_operations,
+                run_id=self._run_ctx.run_id,
+                run_step=self._run_ctx.run_step,
+                call=call,
+                call_index=next(i for i, part in enumerate(message.tool_calls) if part is call),
+                response_timestamp=message.timestamp,
+            )
+            _operations.apply(self._tool_operations, self._output_operation_id, _operations.StartTool())
+        operation_id = self._output_operation_id
+        # Explicit `validate_response_output()` calls after completion are caller-driven
+        # validation, not a continuation of the settled run or a rewrite of its checkpoint.
+        if self._tool_operations[operation_id].execution == 'running':
+            _operations.apply(self._tool_operations, operation_id, _operations.UpdateOutputCall(call))
+        try:
+            output = await self._tool_manager.handle_output_tool_call(
+                call,
+                schema=self._output_schema,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+            )
+        except (ValidationError, exceptions.ModelRetry):
+            if not allow_partial:
+                _operations.apply(self._tool_operations, operation_id, _operations.InterruptTool())
+            raise
+        except BaseException:
+            _operations.apply(self._tool_operations, operation_id, _operations.InterruptTool())
+            raise
+        # The caller may explicitly validate more snapshots (including final snapshots).
+        # Completion is recorded when run_stream's response handler chooses the normalized
+        # output status, not when an individual validation callback returns.
+        return output
 
     async def aclose_events(self) -> None:
         """Close the event stream when a consumer walks away before exhausting it.

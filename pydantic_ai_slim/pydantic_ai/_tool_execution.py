@@ -535,9 +535,45 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     ) -> Iterator[_messages.HandleResponseEvent]:
         """Append an output tool's return/retry `part` to `output_parts` and emit its call/result events."""
         self.output_parts.append(part)
+        # Only executed/validated output calls have an operation; skipped siblings must not
+        # acquire execution permission merely because their status is written to history.
+        call_index = next(i for i, original in enumerate(self.tool_calls) if original is call)
+        state = self.ctx.state
+        operation_id = self._operation_id(call, call_index) if args_valid is not None else None
+        if operation_id is not None:
+            operation = state.tool_operations[operation_id]
+            request = _messages.ModelRequest(parts=[part], run_id=state.run_id, conversation_id=state.conversation_id)
+            if operation.execution == 'running':
+                _operations.apply(state.tool_operations, operation_id, _operations.CompleteTool([request]))
+            elif operation.execution == 'completed':
+                _operations.apply(state.tool_operations, operation_id, _operations.SetOutputResult([request]))
         yield from _emit_output_tool_events(call, part, args_valid=args_valid)
 
     async def _run_output_tool_call(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:
+        state = self.ctx.state
+        call_index = next(i for i, original in enumerate(self.tool_calls) if original is call)
+        operation_id = self._operation_id(call, call_index)
+        # `Agent.iter()` may already have processed partial output snapshots in the model
+        # node. Final validation continues that operation, rather than admitting a second effect.
+        if state.tool_operations[operation_id].execution != 'running':
+            _operations.apply(state.tool_operations, operation_id, _operations.StartTool())
+        _operations.apply(state.tool_operations, operation_id, _operations.UpdateOutputCall(call))
+        try:
+            outcome = await self._execute_output_tool_call(call)
+        except BaseException:
+            _operations.apply(state.tool_operations, operation_id, _operations.InterruptTool())
+            raise
+        status = (
+            (_OUTPUT_EXECUTION_FAILED if outcome.args_valid else _OUTPUT_VALIDATION_FAILED)
+            if outcome.raise_exc is not None
+            else _FINAL_RESULT_PROCESSED
+        )
+        part = outcome.retry_part or self._status_part(call, status)
+        request = _messages.ModelRequest(parts=[part], run_id=state.run_id, conversation_id=state.conversation_id)
+        _operations.apply(state.tool_operations, operation_id, _operations.CompleteTool([request]))
+        return outcome
+
+    async def _execute_output_tool_call(self, call: _messages.ToolCallPart) -> _OutputCallResult[NodeRunEndT]:
         """Validate and execute an output tool call, returning a structured result.
 
         The caller interprets the result against the winner (first valid output by emission
@@ -1037,7 +1073,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # locate it by identity and replace it in `output_parts` without scanning for a content match.
         assert self.winning_output_part is not None
         idx = self.output_parts.index(self.winning_output_part)
-        self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
+        replacement = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
+        self.output_parts[idx] = replacement
+        # The emitted event keeps its original status; persisted execution facts must instead
+        # match the final request that will actually be delivered. Identity also handles
+        # providers that reuse a call ID within one response.
+        for operation in self.ctx.state.tool_operations.values():
+            if operation.result and operation.result[0].parts[0] is self.winning_output_part:
+                request = dataclasses.replace(operation.result[0], parts=[replacement])
+                _operations.apply(
+                    self.ctx.state.tool_operations, operation.operation_id, _operations.SetOutputResult([request])
+                )
+                break
         self.final_result = None
 
     async def _finalize_deferred(self) -> AsyncIterator[_messages.AgentStreamEvent]:
