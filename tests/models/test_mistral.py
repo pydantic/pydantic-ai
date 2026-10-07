@@ -3717,6 +3717,36 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
     assert all(kwargs['reasoning_effort'] == 'none' for kwargs in mock_client.chat_completion_kwargs)
 
 
+@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
+async def test_large4_adjustable_reasoning_sends_reasoning_effort_high(
+    allow_model_requests: None, model_name: str
+) -> None:
+    """Large 4 ids behave like the Small 4/Medium 3.5 ids: `thinking=True` maps to `reasoning_effort='high'`."""
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=True))
+    assert result.output == 'thought deeply'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'high'
+
+
+@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
+async def test_large4_thinking_disabled_sends_reasoning_effort_none(
+    allow_model_requests: None, model_name: str
+) -> None:
+    """Large 4 ids behave like the Small 4/Medium 3.5 ids: only `thinking=False` maps to `reasoning_effort='none'`."""
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=False))
+    assert result.output == 'thought deeply'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'none'
+
+
 #####################
 ## Prompt cache key / parallel tool calls
 #####################
