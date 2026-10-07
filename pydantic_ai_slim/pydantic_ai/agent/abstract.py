@@ -2473,8 +2473,12 @@ class AgentRealtime(Generic[AgentDepsT]):
                 left at `'transcript_only'`. See the realtime docs for the full browser/WebRTC flow.
         """
         from ..session import AgentSession
+        from .wrapper import WrapperAgent
 
-        if isinstance(self._agent, AgentSession) and self._agent._runtime.realtime is not None:  # pyright: ignore[reportPrivateUsage]
+        owner = self._agent
+        while isinstance(owner, WrapperAgent) and not isinstance(owner, AgentSession):
+            owner = owner.wrapped
+        if isinstance(owner, AgentSession) and owner._runtime.realtime is not None:  # pyright: ignore[reportPrivateUsage]
             raise exceptions.UserError("Use the persistent connection's `run()` instead of `session()`.")
         async with self._session(
             audio_retention=audio_retention,

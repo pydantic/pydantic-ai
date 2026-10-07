@@ -11,6 +11,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, AgentRunResult, RunCancelled, RunContext, UserError
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import AgentStreamEvent, BinaryImage, ModelMessage, ModelResponse, SpeechPart
 from pydantic_ai.models import ModelRequestParameters
@@ -721,12 +722,14 @@ async def test_explicit_close_while_run_exit_is_waiting(from_tool: bool):
             assert model.closes == 1
 
 
-async def test_legacy_session_cannot_expose_persistent_driver():
+@pytest.mark.parametrize('wrapped', [False, True])
+async def test_legacy_session_cannot_expose_persistent_driver(wrapped: bool):
     model = CountedModel(DuplexConnection())
     async with Agent(TestModel()).session() as owner:
         async with owner.realtime(model).connect() as live:
+            public_owner = WrapperAgent(owner) if wrapped else owner
             with pytest.raises(UserError, match=r'run.*instead'):
-                async with owner.realtime(model).session():
+                async with public_owner.realtime(model).session():
                     pass
             async with live.run() as run:
                 await run.send('hello')
