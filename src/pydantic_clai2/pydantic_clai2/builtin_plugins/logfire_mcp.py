@@ -107,7 +107,7 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
             )
         elif isinstance(client := self.capability.client, Client) and managed_target() is not None:
             if isinstance(auth := client.transport.auth, DeviceAuth):
-                self._launch_sign_in = asyncio.get_running_loop().create_task(self._sign_in_at_launch(auth))
+                await self._sign_in_at_launch(auth)
 
     async def on_session_end(self, event: SessionEnd) -> None:
         if self._launch_sign_in is not None:
@@ -127,7 +127,11 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
         )
         if signed == 'signed in':
             return
+        # Printed now, while launch output is still going to the transcript; the link and code follow.
         self._announce(f'Logfire MCP ({urlsplit(settings.url).hostname}) needs its own sign-in; starting it now.')
+        self._launch_sign_in = asyncio.get_running_loop().create_task(self._finish_sign_in(auth))
+
+    async def _finish_sign_in(self, auth: DeviceAuth) -> None:
         try:
             await auth.token()
         except SignInError as exc:
