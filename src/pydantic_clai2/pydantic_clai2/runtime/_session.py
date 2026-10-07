@@ -19,6 +19,7 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
+    Capability,
     CapabilityOrdering,
     CombinedCapability,
     DynamicCapability,
@@ -340,6 +341,11 @@ class Session(Generic[DepsT, OutputT]):
         self.model_defaults: FamilyDefaults | None = None
         """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
+        self.instructions = ''
+        """The user's own instructions, sent after the agent's and its plugins' on each request; empty sends none.
+
+        A stock agent binds them with its plugins, so delegated tasks get them too; a supplied agent gets them
+        per run. Either way they are read on each request, so changing them does not rebuild the agent."""
         self.resolve_model: ModelNameResolver = lambda name: name
         self.agent = agent
         self._base_agent = agent
@@ -504,7 +510,8 @@ class Session(Generic[DepsT, OutputT]):
                 or len(self.plugins) != len(self._bound_plugins)
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
-                self.agent = self._base_agent.with_plugins(self.plugins, model=agent_model)
+                instructions = Capability[DepsT](instructions=self._user_instructions)
+                self.agent = self._base_agent.with_plugins([*self.plugins, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
             # Already bound to the stock agent, including delegation and guardrails.
@@ -514,6 +521,9 @@ class Session(Generic[DepsT, OutputT]):
         if self.model_defaults is not None:
             capabilities.append(ModelDefaults[DepsT](self.model_defaults))
         return run_model, capabilities
+
+    def _user_instructions(self) -> str | None:
+        return self.instructions or None
 
     async def _resolve_model_id(self, ctx: ModelResolutionContext[DepsT], model_id: str) -> Model | None:
         return await resolve_model_name(self.resolve_model, model_id)
@@ -580,6 +590,9 @@ class Session(Generic[DepsT, OutputT]):
                             deps=self.deps,
                             model=run_model,
                             model_settings=self._run_settings(),
+                            # Run-level, not a capability: composing one more would split a plugin group that
+                            # supplies the workspace into its members. A stock agent has them bound already.
+                            instructions=None if isinstance(self._base_agent, StockAgent) else self._user_instructions,
                             retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
                             message_history=previous,
                             conversation_id=self.summary.id,

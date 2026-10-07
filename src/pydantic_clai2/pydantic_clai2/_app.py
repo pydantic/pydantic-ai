@@ -86,6 +86,7 @@ from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
+from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command
 from pydantic_clai2.ui.menus.task_menu import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
@@ -551,6 +552,7 @@ def create_shell(
     session.model = settings.model
     session.model_chosen = 'model' in settings.model_fields_set
     session.tool_retries = settings.tool_retries
+    session.instructions = settings.instructions
     models = _ModelResolver(console=console, store=store)
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
@@ -645,6 +647,14 @@ def create_shell(
             description='Select a Termflow palette; no arguments opens the picker',
             handler=lambda args: theme_command(context, args),
             complete=lambda args: theme.names() if len(args) <= 1 else (),
+            during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='system_prompt',
+            description='View the system prompt and edit your own instructions, sent after the built-in ones',
+            handler=lambda args: system_prompt_command(context, args, history=lambda: session.messages),
             during_turn=True,
         )
     )
@@ -954,6 +964,7 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model = model or self.session.model
         child.model_chosen = model is not None or self.session.model_chosen
         child.tool_retries = self.session.tool_retries
+        child.instructions = self.session.instructions
         child.resolve_model = self.session.resolve_model
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
