@@ -1,5 +1,6 @@
 """The `logfire_mcp` built-in: its settings menu, keys kept in `/keys`, credential order, and OAuth."""
 
+import asyncio
 import inspect
 import io
 import threading
@@ -346,40 +347,81 @@ async def test_browser_sign_in_is_the_default_and_waits_long_enough_for_the_code
     assert isinstance(client.transport.auth, DeviceAuth)
 
 
+def plugin_of(shell: Shell) -> LogfireMCPPlugin:
+    [factory] = shell.loader.capabilities()
+    assert inspect.ismethod(factory)
+    plugin = factory.__self__
+    assert isinstance(plugin, LogfireMCPPlugin)
+    return plugin
+
+
+async def launched(shell: Shell) -> None:
+    """Wait for a managed launch's background sign-in, if one started."""
+    task = plugin_of(shell)._launch_sign_in  # pyright: ignore[reportPrivateUsage]
+    if task is not None:
+        await task
+
+
 async def test_managed_clai2_signs_in_to_logfire_mcp_at_launch_not_mid_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv('CLAI2_MANAGED_URL', 'https://logfire-eu.pydantic.info/acme/clai2')
-    calls: list[str] = []
+    signed_in_with: list[DeviceAuth] = []
 
     async def sign_in(auth: DeviceAuth) -> Tokens:
-        calls.append(auth._resource)  # pyright: ignore[reportPrivateUsage]
+        signed_in_with.append(auth)
         auth._announce('Enter code: ABCD-EFGH')  # pyright: ignore[reportPrivateUsage]
         return Tokens(client_id='c', token_endpoint='https://t', access_token='a', expires_at=0)
 
     monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
     shell = Shell(tmp_path, {'url': LOGFIRE_EU_MCP_URL})
     await shell.loader.enable('logfire_mcp')
-    assert calls == [LOGFIRE_EU_MCP_URL]
+    await launched(shell)
     assert shell.output.getvalue() == (
-        'Logfire MCP (logfire-eu.pydantic.dev) needs its own sign-in; doing it now.\nEnter code: ABCD-EFGH\n'
+        'Logfire MCP (logfire-eu.pydantic.dev) needs its own sign-in; starting it now.\nEnter code: ABCD-EFGH\n'
     )
+    # Through the connection's own `DeviceAuth`, so a prompt sent before approval waits for this sign-in.
+    client = shell.capability().client
+    assert isinstance(client, Client)
+    assert signed_in_with == [client.transport.auth]
+    await shell.loader.close('exit')
 
     # Already signed in: launch stays quiet.
     def signed_in(**_: object) -> str:
         return 'signed in'
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.status', signed_in)
-    calls.clear()
+    signed_in_with.clear()
     shell = Shell(tmp_path / 'again', {'url': LOGFIRE_EU_MCP_URL})
     await shell.loader.enable('logfire_mcp')
-    assert calls == []
+    await launched(shell)
+    assert signed_in_with == []
     assert shell.output.getvalue() == ''
 
 
-async def test_a_failed_launch_sign_in_still_loads_and_says_it_will_ask_again(
+async def test_a_launch_sign_in_is_cancelled_when_the_session_ends(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv('CLAI2_MANAGED_URL', 'https://logfire-eu.pydantic.info/acme/clai2')
+    waiting = anyio.Event()
+
+    async def sign_in(auth: DeviceAuth) -> Tokens:
+        waiting.set()
+        await anyio.sleep_forever()
+        raise AssertionError  # pragma: no cover
+
+    monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
+    shell = Shell(tmp_path)
+    await shell.loader.enable('logfire_mcp')
+    await waiting.wait()
+    task = plugin_of(shell)._launch_sign_in  # pyright: ignore[reportPrivateUsage]
+    await shell.loader.close('exit')
+    assert task is not None
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_a_failed_launch_sign_in_says_it_will_ask_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('CLAI2_MANAGED_URL', 'https://logfire-eu.pydantic.info/acme/clai2')
 
     async def sign_in(auth: DeviceAuth) -> Tokens:
@@ -388,8 +430,8 @@ async def test_a_failed_launch_sign_in_still_loads_and_says_it_will_ask_again(
     monkeypatch.setattr(DeviceAuth, 'sign_in', sign_in)
     shell = Shell(tmp_path)
     await shell.loader.enable('logfire_mcp')
+    await launched(shell)
     assert 'Logfire MCP will ask again on the first prompt that uses it.' in shell.output.getvalue()
-    assert isinstance(shell.capability().client, Client)
 
 
 async def test_with_sign_in_off_and_no_key_the_menu_still_loads_and_runs_fail_closed(tmp_path: Path) -> None:

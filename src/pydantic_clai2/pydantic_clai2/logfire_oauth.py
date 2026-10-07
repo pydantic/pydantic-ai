@@ -451,6 +451,10 @@ class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatible
             request.headers['Authorization'] = f'Bearer {tokens.access_token}'
             yield request
 
+    async def token(self) -> Tokens:
+        """A usable sign-in: the stored one, refreshed, or a new browser sign-in; concurrent requests wait for it."""
+        return await self._tokens(rejected=None)
+
     async def _tokens(self, *, rejected: Tokens | None) -> Tokens:
         # One sign-in at a time: an MCP connection sends several requests at once.
         async with self._lock:

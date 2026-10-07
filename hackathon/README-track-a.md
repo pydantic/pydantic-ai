@@ -25,7 +25,8 @@ What happens:
 - **Header.** Every launch shows `◆ Managed by Pydantic through Logfire · logfire/clai2 · /catalog` under the
   banner, linked to the agent's configuration page in Logfire.
 - **Logfire MCP.** If you use the `logfire_mcp` plugin, its own sign-in (it is a separate OAuth client, often in
-  another region) happens at launch, never in the middle of a prompt.
+  another region) starts at launch in the background; a prompt sent before you approve waits for it rather than
+  showing a second code.
 - **Model.** The default comes from the company config in Logfire (shown on the status row) and runs through the
   gateway; no model keys needed. A model you pick with `/model` afterwards sticks.
 - **Later launches.** No prompt. An expired or revoked key brings the sign-in back. Ctrl-C at the sign-in exits.
