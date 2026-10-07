@@ -19,6 +19,7 @@ from unittest.mock import patch
 import anyio
 import httpx
 import pytest
+from opentelemetry.trace import NoOpTracer
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
@@ -54,9 +55,11 @@ from pydantic_ai import (
 from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import (
     Capability,
     ImageGeneration,
+    Instrumentation,
     ProcessHistory,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -76,6 +79,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import ImageGenerationTool
 from pydantic_ai.profiles import ModelProfile
@@ -3127,7 +3131,7 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
     assert str(exc_info.value) == snapshot(
         "'model_settings' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`."
     )
-    for name in ('prompt', 'messages', 'validation_context', 'model', 'tracer', 'capabilities'):
+    for name in ('prompt', 'messages', 'validation_context', 'model', 'capabilities'):
         with pytest.raises(UserError, match=f'{name!r} is not available'):
             getattr(reconstructed, name)
 
@@ -3138,6 +3142,49 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
     assert reconstructed.root_capability is None
     assert reconstructed.tool_manager is None
     assert reconstructed.available_tool_names == set()
+
+
+async def test_temporal_run_context_restores_tracer_from_worker_agent():
+    """`tracer` is resolved on the worker rather than raising, as a tool may open spans unconditionally.
+
+    A run always has a tracer: the instrumentation settings' one, or a no-op one when uninstrumented.
+    The tracer itself can't cross the boundary, but the worker holds the same agent the workflow
+    resolved the run's instrumentation from, so the activity resolves it the same way.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    serialized = await _serialized_run_context_across_the_wire(ctx)
+    assert 'tracer' not in serialized
+
+    # No agent to resolve from, or an uninstrumented one: the uninstrumented run's no-op tracer.
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=None)
+    assert isinstance(reconstructed.tracer, NoOpTracer)
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=Agent('test'))
+    assert isinstance(reconstructed.tracer, NoOpTracer)
+
+    # `instrument=` on the worker's agent resolves as it does on the workflow side.
+    settings = InstrumentationSettings()
+    agent = Agent('test')
+    agent.instrument = settings
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
+    assert reconstructed.tracer is settings.tracer
+
+    # An explicit `Instrumentation` capability supersedes `instrument=`, through a wrapper agent too.
+    capability_settings = InstrumentationSettings()
+    agent = Agent('test', capabilities=[Instrumentation(settings=capability_settings)])
+    agent.instrument = settings
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=WrapperAgent(agent))
+    assert reconstructed.tracer is capability_settings.tracer
+
+    # A subclass that restores a tracer of its own keeps it.
+    own_tracer = NoOpTracer()
+
+    class TracerRestoringRunContext(TemporalRunContext[Any]):
+        @classmethod
+        def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
+            return cls(**ctx, deps=deps, tracer=own_tracer)
+
+    reconstructed = deserialize_run_context(TracerRestoringRunContext, serialized, deps=None, agent=agent)
+    assert reconstructed.tracer is own_tracer
     # An attribute that isn't a `RunContext` field at all keeps raising plain `AttributeError`.
     with pytest.raises(AttributeError, match='has no attribute'):
         getattr(reconstructed, 'not_a_field')

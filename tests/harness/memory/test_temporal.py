@@ -110,6 +110,6 @@ async def test_memory_tools_run_inside_activities(client: Client) -> None:
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert output == 'The user prefers tabs.'
+    assert output == 'The user prefers tabs.\n'
     # `delete_memory` ran last, so the store is empty again.
     assert await memory_store.read('memory_agent/style.md', max_chars=100) is None

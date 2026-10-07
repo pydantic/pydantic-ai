@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, overload
 
+from opentelemetry.trace import NoOpTracer
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT
+from pydantic_ai.agent import Agent, WrapperAgent, _run_instrumentation_settings  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
@@ -65,12 +67,22 @@ _NONE_UNLESS_ATTACHED = (
     '_run_held_toolsets',
 )
 
+# The tracer an activity falls back to. A tracer is a live object that can't cross the boundary, but
+# unlike the other live fields it has a meaning when absent that `RunContext` already defines: an
+# uninstrumented run traces to a no-op tracer, so a tool may open spans unconditionally. Shared so
+# `deserialize_run_context` can tell this fallback from a tracer a custom subclass restored itself.
+_NO_OP_TRACER = NoOpTracer()
+
 # Defaulted rather than guarded when a payload doesn't carry it. Unlike the guarded fields, the
 # dataclass default can't be mistaken for real run state here: empty means "no anchored evidence",
 # which is exactly what `is_tool_available` reads when the serving response has no provenance. A
 # custom `serialize_run_context` written before this field existed therefore keeps answering — with
-# the history-derived window — instead of raising for a field it never knew to carry.
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
+# the history-derived window — instead of raising for a field it never knew to carry. `tracer` is
+# the uninstrumented run's tracer until `deserialize_run_context` resolves the worker agent's own.
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
+    ('_anchored_evidence', AnchoredEvidence()),
+    ('tracer', _NO_OP_TRACER),
+)
 
 # Payloads written by a worker running an older version, or by a custom `serialize_run_context` that
 # still spells the old name. An activity can be dispatched by one worker version and replayed by
@@ -92,7 +104,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_active` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
 
-    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `active_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract. A live `workspace` cannot cross the activity boundary either: only its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is serialized, and the activity rebuilds `workspace` from it through the agent's capabilities (their `get_workspace`, which may read only `deps` and the fields listed here), policy wrappers included. A subclass whose `deserialize_run_context` sets `workspace` itself keeps that value.
+    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `active_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` is excluded as a live object too. `tracer` can't cross the boundary either, so it is resolved on the worker instead: the tracer of the worker agent's instrumentation settings when it is instrumented, otherwise the same no-op tracer an uninstrumented run uses, so a tool that opens spans runs inside an activity as it does in-process. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract. A live `workspace` cannot cross the activity boundary either: only its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is serialized, and the activity rebuilds `workspace` from it through the agent's capabilities (their `get_workspace`, which may read only `deps` and the fields listed here), policy wrappers included. A subclass whose `deserialize_run_context` sets `workspace` itself keeps that value.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
     """
 
@@ -276,12 +288,32 @@ def deserialize_run_context(
         ctx.__dict__['agent'] = agent
         ctx.__dict__['root_capability'] = agent.root_capability
         _restore_workspace(ctx, agent)
+        _restore_tracer(ctx, agent)
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside
     # an activity (a tool, a `process_tool_call` hook, an `event_stream_handler`) is in a durable
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install
     # the same guard the in-process engines use so `ctx.enqueue()` raises the shared explanation.
     ctx.__dict__['pending_messages'] = EnqueueGuard(enqueue_not_supported_message('activity', 'workflow'))
     return ctx
+
+
+def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
+    """Point `ctx.tracer` at the worker agent's instrumentation, as a non-durable run would.
+
+    The workflow resolved the run's instrumentation from the agent's `instrument` setting and its
+    `Instrumentation` capability, and the worker is constructed with the same agent, so the same
+    resolution here gives activity-side spans the tracer the run's own spans use. An uninstrumented
+    agent keeps the no-op tracer, and a tracer a subclass restored itself is left alone.
+    """
+    if ctx.__dict__.get('tracer') is not _NO_OP_TRACER:
+        return
+    inner = agent
+    while isinstance(inner, WrapperAgent):
+        inner = inner.wrapped
+    default = inner._resolve_instrumentation_settings() if isinstance(inner, Agent) else None  # pyright: ignore[reportPrivateUsage]
+    settings = _run_instrumentation_settings([agent.root_capability], default=default)
+    if settings is not None:
+        ctx.__dict__['tracer'] = settings.tracer
 
 
 def _restore_workspace(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
