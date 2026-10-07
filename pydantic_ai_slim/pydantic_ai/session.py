@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, overload
 
@@ -40,9 +40,11 @@ from .workspaces import WorkspaceBackend, WorkspaceRef
 if TYPE_CHECKING:
     from .agent.spec import AgentSpec
     from .realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from .realtime._persistent import RealtimeAttachment
+    from .realtime._run import RealtimeRun
     from .realtime.model import RealtimeProviderSession
 
-__all__ = ('AgentSession', 'SessionState', 'SessionStateTypeAdapter', 'ToolOperation')
+__all__ = ('AgentSession', 'RealtimeAgentSession', 'SessionState', 'SessionStateTypeAdapter', 'ToolOperation')
 
 
 @dataclass(kw_only=True)
@@ -232,6 +234,15 @@ class _InstructedRunOptions(_RunOptions[AgentDepsT], total=False):
     instructions: _instructions.AgentInstructions[AgentDepsT]
 
 
+class _RealtimeMediaOptions(TypedDict, total=False):
+    audio_retention: AudioRetention
+    handle_barge_in: bool
+    retain_images_every_n: int
+    retain_images_max: int | None
+    retain_audio_max_seconds: float | None
+    provider_session: RealtimeProviderSession | None
+
+
 class _RealtimeOptions(TypedDict, Generic[AgentDepsT], total=False):
     model_settings: RealtimeModelSettings | None
     instructions: _instructions.AgentInstructions[AgentDepsT]
@@ -310,6 +321,8 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
             assert self._run_finished is not None
             with anyio.CancelScope(shield=True):
                 await self._run_finished.wait()
+        if self._runtime.realtime is not None:
+            await self._runtime.realtime.close()
         self._runtime.resources.close()
         try:
             return await self._stack.__aexit__(*args)
@@ -709,7 +722,7 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
     ) -> AsyncGenerator[RealtimeSession]:
         if any(kwargs.get(key) is not None for key in ('message_history', 'conversation_id', 'usage')):
             raise UserError('The session owns `message_history`, `conversation_id`, and `usage`.')
-        async with self._execution():
+        async with self._execution(realtime=True):
             conversation = self._runtime.conversation
             if conversation.deferred_tool_requests is not None:
                 raise UserError("Resolve the conversation's deferred tools before starting a realtime run.")
@@ -729,10 +742,10 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
             options['model'] = self._model
 
     @asynccontextmanager
-    async def _execution(self) -> AsyncGenerator[None]:
+    async def _execution(self, *, realtime: bool = False) -> AsyncGenerator[None]:
         if not self._entered:
             raise UserError('Enter the agent session with `async with` before starting a run.')
-        self._runtime.claim()
+        self._runtime.claim(realtime=realtime)
         finished = self._run_finished = anyio.Event()
         error: BaseException | None = None
         try:
@@ -755,3 +768,89 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
             self._run_scope = None
             self._run_finished = None
             finished.set()
+
+
+class RealtimeAgentSession(Generic[AgentDepsT]):
+    """A realtime attachment to an `AgentSession`, containing sequential, independent runs.
+
+    Created by `session.realtime(model).connect()`. The first non-short-circuited run opens the
+    connection. Normal run exit waits for outstanding replies, tools and input transcripts;
+    connection exit closes the transport. Stop submitting audio before leaving a run. Apply an
+    application deadline when the provider might never deliver its final transcript.
+
+    Dependencies, metadata, hooks and tool resources are resolved afresh per run. Wire settings,
+    instructions and advertised tool schemas must remain unchanged on this connection.
+    """
+
+    def __init__(self, definition: AgentRealtime[AgentDepsT], **media: Unpack[_RealtimeMediaOptions]) -> None:
+        owner = definition._agent  # pyright: ignore[reportPrivateUsage]
+        if not isinstance(owner, AgentSession):
+            raise UserError('Use `agent.session()` before `session.realtime(...).connect()`.')
+        self._owner = owner
+        self._definition = definition
+        self._media = media
+        self._attachment: RealtimeAttachment | None = None
+        self._used = False
+
+    async def __aenter__(self) -> Self:
+        from .realtime._persistent import RealtimeAttachment
+
+        if self._used:
+            raise UserError('A realtime attachment may only be entered once.')
+        if not self._owner._entered:  # pyright: ignore[reportPrivateUsage]
+            raise UserError('Enter the agent session before opening a realtime connection.')
+        runtime = self._owner._runtime  # pyright: ignore[reportPrivateUsage]
+        if runtime.realtime is not None:
+            raise UserError('This agent session already owns a realtime connection.')
+        runtime.claim(realtime=True)
+        runtime.release()
+        group = runtime.resources._group  # pyright: ignore[reportPrivateUsage]
+        assert group is not None
+        self._attachment = runtime.realtime = RealtimeAttachment(group)
+        self._used = True
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        assert self._attachment is not None
+        try:
+            await self._attachment.close()
+        finally:
+            self._owner._runtime.realtime = None  # pyright: ignore[reportPrivateUsage]
+
+    @asynccontextmanager
+    async def run(
+        self,
+        *,
+        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
+        usage_limits: _usage.UsageLimits | None | _utils.Unset = _utils.UNSET,
+        run_id: str | None = None,
+    ) -> AsyncGenerator[RealtimeRun]:
+        """Execute a fresh run on this attachment without reconnecting.
+
+        Normal exit drains pending work. Cancellation or an exceptional exit closes the connection;
+        create another attachment rather than reusing an uncertain provider execution frontier.
+        """
+        from .realtime._run import RealtimeRun
+
+        if self._attachment is None or self._attachment.closed:
+            raise UserError('Enter the realtime connection before starting a run; it must not be closed.')
+        definition = copy(self._definition)
+        if _utils.is_set(deps):
+            definition._deps = deps  # pyright: ignore[reportPrivateUsage]
+        if _utils.is_set(metadata):
+            definition._metadata = metadata  # pyright: ignore[reportPrivateUsage]
+        if _utils.is_set(usage_limits):
+            definition._usage_limits = usage_limits  # pyright: ignore[reportPrivateUsage]
+        definition._run_id = run_id  # pyright: ignore[reportPrivateUsage]
+        handle: RealtimeRun | None = None
+        try:
+            async with definition.session(**self._media) as session:
+                handle = RealtimeRun(session)
+                manager = session._run.tool_manager  # pyright: ignore[reportPrivateUsage]
+                if manager.ctx is not None:
+                    manager.ctx.realtime_session = handle
+                yield handle
+        finally:
+            if handle is not None:
+                handle._capture()  # pyright: ignore[reportPrivateUsage]

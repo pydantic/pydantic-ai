@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from .durable_exec._base import BaseDurabilityCapability
     from .durable_exec._toolset import RunHeldToolset
     from .models import AbstractModel
-    from .realtime import RealtimeModelSettings, RealtimeSession
+    from .realtime import RealtimeModelSettings, RealtimeRun, RealtimeSession
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -353,7 +353,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
-    realtime_session: RealtimeSession | None = field(default=None, repr=False)
+    realtime_session: RealtimeSession | RealtimeRun | None = field(default=None, repr=False)
     """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
 
     `None` in classic runs, during setup (`before_run` and instruction resolution), and throughout

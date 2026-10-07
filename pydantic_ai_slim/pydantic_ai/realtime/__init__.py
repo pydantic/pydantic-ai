@@ -29,6 +29,7 @@ from ..messages import (
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
 )
+from ._run import RealtimeRun
 from ._session import RealtimeEvent, RealtimeSession, TranscriptUpdate
 from .codec import RealtimeSessionInput
 from .model import (
@@ -75,6 +76,7 @@ __all__ = (
     'RealtimeModelProfileSpec',
     'RealtimeModelSettings',
     'RealtimeSession',
+    'RealtimeRun',
     'RealtimeSessionInput',
     'ReconnectPolicy',
     'RealtimeProviderSession',

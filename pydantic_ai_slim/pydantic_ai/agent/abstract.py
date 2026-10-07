@@ -78,6 +78,8 @@ if TYPE_CHECKING:
     )
     from pydantic_ai.session import AgentSession, SessionState
 
+    from ..session import RealtimeAgentSession
+
 
 T = TypeVar('T')
 S = TypeVar('S')
@@ -2285,6 +2287,33 @@ class AgentRealtime(Generic[AgentDepsT]):
         self._conversation_id = _conversation_id
         self._run_id = _run_id
         self._message_history = _message_history
+
+    def connect(
+        self,
+        *,
+        audio_retention: AudioRetention = 'transcript_only',
+        handle_barge_in: bool = False,
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        retain_audio_max_seconds: float | None = 1800,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> RealtimeAgentSession[AgentDepsT]:
+        """Attach one connection to an `AgentSession` and execute multiple `.run()` contexts.
+
+        Use `session.realtime(model).connect()` inside `agent.session()`. The connection opens lazily
+        on the first run and stays open between runs. Existing `.session()` still means one run.
+        """
+        from ..session import RealtimeAgentSession
+
+        return RealtimeAgentSession(
+            self,
+            audio_retention=audio_retention,
+            handle_barge_in=handle_barge_in,
+            retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
+            retain_audio_max_seconds=retain_audio_max_seconds,
+            provider_session=provider_session,
+        )
 
     async def answer_webrtc_offer(self, sdp_offer: str) -> WebRTCAnswer:
         """Resolve this agent's realtime configuration and relay a browser WebRTC SDP offer.

@@ -3645,6 +3645,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             raise exceptions.UserError(
                 'The agent wrapper did not delegate to its wrapped agent with the session conversation.'
             )
+        if owner is not None and (attachment := owner.realtime) is not None:
+            if attachment.requested_model is not None and model != attachment.requested_model:
+                raise exceptions.UserError('A realtime connection cannot switch models between runs.')
+            attachment.requested_model = model
+            if attachment.model is not None:
+                model = attachment.model
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
 
@@ -3814,7 +3820,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if lifecycle_state.session is None:
                 lifecycle_state.short_result = result
             else:
-                lifecycle_state.session._result = result  # pyright: ignore[reportPrivateUsage]
+                lifecycle_state.session._run.result = result  # pyright: ignore[reportPrivateUsage]
 
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
@@ -4090,6 +4096,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_lifecycle=True,
         ) as resolved:
             owner = resolved.owner
+            attachment = owner.realtime if owner is not None else None
             lifecycle = resolved.lifecycle
             assert lifecycle is not None
 
@@ -4119,9 +4126,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     run_id=resolved.run_id,
                     metadata=resolved.run_context.metadata,
                 )
-                session._result = result  # pyright: ignore[reportPrivateUsage]
+                session._run.result = result  # pyright: ignore[reportPrivateUsage]
                 session._closed = True  # pyright: ignore[reportPrivateUsage]
-                session._pending_messages.close()  # pyright: ignore[reportPrivateUsage]
+                session._run.pending_messages.close()  # pyright: ignore[reportPrivateUsage]
                 if owner is not None:
                     session._attach_owner(owner)  # pyright: ignore[reportPrivateUsage]
                 return session
@@ -4138,7 +4145,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     yielded = True
                 return
 
-            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
+            if (
+                message_history
+                and (attachment is None or attachment.connection is None)
+                and not resolved.model_profile.get('supports_session_seeding', False)
+            ):
                 raise exceptions.UserError(
                     f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
@@ -4169,47 +4180,67 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_request_parameters=resolved.model_request_parameters,
                 )
             )
-            async with connection_manager as connection:
-                session = RealtimeSession(
-                    connection,
+            if attachment is not None:
+                connection_manager = attachment.connect(
+                    connection_manager,
                     model=resolved.model,
-                    tool_manager=resolved.tool_manager,
-                    owns_media=owns_media,
-                    provider_session=provider_session,
-                    instrumentation=resolved.instrumentation_settings,
-                    # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
-                    # so the session span always carries an `agent_name`; backends that group runs by it
-                    # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
-                    agent_name=self.name or 'agent',
-                    usage=resolved.run_context.usage,
-                    usage_limits=usage_limits,
-                    audio_retention=audio_retention,
-                    handle_barge_in=handle_barge_in,
-                    retain_images_every_n=retain_images_every_n,
-                    retain_images_max=retain_images_max,
-                    retain_audio_max_seconds=retain_audio_max_seconds,
-                    message_history=message_history,
-                    conversation_id=resolved.conversation_id,
-                    run_id=resolved.run_id,
+                    settings=resolved.model_settings,
+                    parameters=resolved.model_request_parameters,
                     instructions=resolved.instructions,
-                    metadata=resolved.run_context.metadata,
-                    agent_description=(
-                        self.render_description(resolved.run_context.deps)
-                        if resolved.instrumentation_settings is not None
-                        else None
-                    ),
-                    output_modality=output_modality,
-                    # Surfaced on the session span so the session's configured native tools and realtime
-                    # settings are inspectable, respecting `include_model_request_parameters`.
-                    model_request_parameters=resolved.model_request_parameters,
-                    model_settings=resolved.model_settings,
-                    wrap_event_stream=resolved.wrap_event_stream,
                 )
+            async with connection_manager as connection:
+                if attachment is not None and attachment.session is not None:
+                    session = attachment.session
+                    session._resume_run(  # pyright: ignore[reportPrivateUsage]
+                        tool_manager=resolved.tool_manager,
+                        run_id=resolved.run_id,
+                        usage=resolved.run_context.usage,
+                        usage_limits=usage_limits,
+                        wrap_event_stream=resolved.wrap_event_stream,
+                        instrumentation=resolved.instrumentation_settings,
+                        metadata=resolved.run_context.metadata,
+                    )
+                else:
+                    session = RealtimeSession(
+                        connection,
+                        model=resolved.model,
+                        tool_manager=resolved.tool_manager,
+                        owns_media=owns_media,
+                        provider_session=provider_session,
+                        instrumentation=resolved.instrumentation_settings,
+                        # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
+                        # so the session span always carries an `agent_name`; backends that group runs by it
+                        # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
+                        agent_name=self.name or 'agent',
+                        usage=resolved.run_context.usage,
+                        usage_limits=usage_limits,
+                        audio_retention=audio_retention,
+                        handle_barge_in=handle_barge_in,
+                        retain_images_every_n=retain_images_every_n,
+                        retain_images_max=retain_images_max,
+                        retain_audio_max_seconds=retain_audio_max_seconds,
+                        message_history=message_history,
+                        conversation_id=resolved.conversation_id,
+                        run_id=resolved.run_id,
+                        instructions=resolved.instructions,
+                        metadata=resolved.run_context.metadata,
+                        agent_description=(
+                            self.render_description(resolved.run_context.deps)
+                            if resolved.instrumentation_settings is not None
+                            else None
+                        ),
+                        output_modality=output_modality,
+                        # Surfaced on the session span so the session's configured native tools and realtime
+                        # settings are inspectable, respecting `include_model_request_parameters`.
+                        model_request_parameters=resolved.model_request_parameters,
+                        model_settings=resolved.model_settings,
+                        wrap_event_stream=resolved.wrap_event_stream,
+                    )
                 if owner is not None:
                     session._attach_owner(owner)  # pyright: ignore[reportPrivateUsage]
                 lifecycle.session = session
                 resolved.run_context.realtime_session = session
-                async with session:
+                async with attachment.run(session) if attachment is not None else session:
                     try:
                         yield session
                     finally:

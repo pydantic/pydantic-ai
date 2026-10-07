@@ -12,6 +12,7 @@ from collections.abc import Callable, Generator
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 import anyio
 from anyio.abc import TaskGroup, TaskStatus
@@ -24,6 +25,9 @@ from ._run_context import get_current_run_context
 from .conversation import Conversation
 from .exceptions import UserError
 from .models import Model
+
+if TYPE_CHECKING:
+    from .realtime._persistent import RealtimeAttachment
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -115,6 +119,7 @@ class SessionRuntime:
         self.persistent = persistent
         self.conversation = deepcopy(conversation) if persistent else conversation
         self.resources = ModelResources()
+        self.realtime: RealtimeAttachment | None = None
         self.inferred_models: dict[str, Model] = {}
         self.operations: dict[str, ToolOperation] = {}
         self._inbox = PendingMessageQueue(deepcopy(pending) if pending else ())
@@ -126,12 +131,14 @@ class SessionRuntime:
         self._closed = False
         self._lock = threading.Lock()
 
-    def claim(self) -> None:
+    def claim(self, *, realtime: bool = False) -> None:
         with self._lock:
             if self._closed:
                 raise UserError('The agent session has closed.')
             if self._claimed:
                 raise UserError('An agent session can execute only one run at a time.')
+            if self.realtime is not None and not realtime:
+                raise UserError('Close the realtime connection before starting an ordinary run on this session.')
             self._claimed = True
 
     def bind_cancellation(self, cancellation: RunCancellation) -> None:
