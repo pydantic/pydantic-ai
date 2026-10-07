@@ -17808,17 +17808,8 @@ async def test_codex_suspended_continuation_is_rejected(allow_model_requests: No
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
-@pytest.mark.parametrize(
-    'settings',
-    [
-        OpenAIResponsesModelSettings(openai_responses_service_tier='ultrafast'),
-        OpenAIResponsesModelSettings(
-            openai_responses_service_tier='ultrafast', openai_service_tier='priority', service_tier='flex'
-        ),
-    ],
-    ids=['ultrafast', 'overrides-other-tiers'],
-)
-async def test_responses_service_tier_http(allow_model_requests: None, settings: OpenAIResponsesModelSettings):
+@pytest.mark.parametrize('other_tiers', [False, True], ids=['ultrafast', 'overrides-other-tiers'])
+async def test_responses_service_tier_http(allow_model_requests: None, other_tiers: bool):
     """Pin the serialized HTTP tier because cassette matching does not compare request bodies."""
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
@@ -17831,6 +17822,9 @@ async def test_responses_service_tier_http(allow_model_requests: None, settings:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     ) as openai_client:
         model = OpenAIResponsesModel('gpt-6-astra', provider=OpenAIProvider(openai_client=openai_client))
+        settings = OpenAIResponsesModelSettings(openai_responses_service_tier='ultrafast')
+        if other_tiers:
+            settings.update(openai_service_tier='priority', service_tier='flex')
         result = await Agent(model, model_settings=settings).run('Hello')
 
     assert result.output == 'hi there'
