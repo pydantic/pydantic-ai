@@ -1434,6 +1434,11 @@ contain secrets. Do not share the database between machines. An unfinished run
 whose recorded process is still alive is treated as busy; revision checks reject
 stale writers instead of overwriting another process's work.
 
+Resuming a busy session does not wait for it or take it over. CLAI copies its
+newest saved state, including the latest step checkpoint, into a new saved
+session titled with `(fork)`, and continues that copy. The original keeps
+running in its own process and may still change files; no tools are replayed.
+
 The built-in `persistence` plugin records additional Harness checkpoints before
 model requests, after model responses, and at settled tool-cycle boundaries.
 `/plugins disable persistence` disables that extra step capture, not conversation
@@ -2111,13 +2116,15 @@ or choose browser sign-in. See [PLUGINS.md](PLUGINS.md#linear-issues-and-project
 
 When the task is ambiguous, the model can call `ask_user_question` instead of
 guessing. Questions appear inline, with the conversation still visible above a
-compact numbered picker. Use Up/Down and Enter, or press an option's number to
+compact numbered picker. The question stays pinned above its choices, so output that
+streams meanwhile, from a delegated task for instance, scrolls past above it instead
+of pushing it away. A delegated task's question names the task in its title. Use Up/Down and Enter, or press an option's number to
 select it. For multiple selections, Enter or a number toggles a choice; select
 `Done` to submit. At least one choice is required. Esc or Ctrl-C declines the
 whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
-preserved, and your picks are printed to the transcript afterwards.
+preserved, and the question and your picks are printed to the transcript afterwards.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
