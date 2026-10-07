@@ -479,7 +479,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     evaluate_model_selector: Callable[
         [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[tuple[models.Model, str | None]]
     ]
-    enter_model: Callable[[models.Model], Awaitable[None]]
+    enter_model: Callable[[models.Model], Awaitable[models.Model]]
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
     max_output_retries: int
@@ -2676,8 +2676,7 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         usage=ctx.state.usage,
     )
     model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
-    await ctx.deps.enter_model(model)
-    ctx.deps.model = model
+    ctx.deps.model = await ctx.deps.enter_model(model)
     ctx.deps.model_id = model_id
     ctx.deps.model_selected_for_step = ctx.state.run_step
 

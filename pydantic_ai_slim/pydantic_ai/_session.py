@@ -33,6 +33,11 @@ class ModelResources:
     """Models entered on one execution owner's stack, deduplicated by identity."""
 
     entered_model_ids: set[int] = dataclasses.field(default_factory=set[int])
+    # Keep definitions strongly referenced as well as handles: arbitrary custom models can be
+    # unhashable, and an id must not be reused after a dynamic selector discards a definition.
+    _models: dict[int, tuple[Model, Model]] = dataclasses.field(
+        default_factory=dict[int, tuple[Model, Model]], init=False, repr=False
+    )
     _stack: AsyncExitStack | None = dataclasses.field(default=None, init=False, repr=False)
     _group: TaskGroup | None = dataclasses.field(default=None, init=False, repr=False)
     _closed: anyio.Event | None = dataclasses.field(default=None, init=False, repr=False)
@@ -49,26 +54,38 @@ class ModelResources:
         assert self._closed is not None
         self._closed.set()
 
-    async def enter_model(self, selected_model: Model) -> None:
-        if id(selected_model) in self.entered_model_ids:
-            return
+    async def get_model(self, selected_model: Model, *, enter_model: bool = True) -> Model:
+        existing = self._models.get(id(selected_model))
+        if existing is not None:
+            original, bound = existing
+            if enter_model and id(original) not in self.entered_model_ids:
+                assert self._stack is not None
+                await self._stack.enter_async_context(original)
+                self.entered_model_ids.add(id(original))
+            return bound
         if self._group is not None:
             # A custom model may own task groups or cancel scopes. Its entry and exit must stay
             # in one persistent task, even when different tasks drive successive session runs.
-            await self._group.start(self._hold_model, selected_model)
+            bound = await self._group.start(self._hold_model, selected_model)
         else:
             assert self._stack is not None
-            await self._stack.enter_async_context(selected_model)
-        self.entered_model_ids.add(id(selected_model))
+            if enter_model and id(selected_model) not in self.entered_model_ids:
+                await self._stack.enter_async_context(selected_model)
+                self.entered_model_ids.add(id(selected_model))
+            bound = await self._stack.enter_async_context(selected_model.open_session())
+        self._models[id(selected_model)] = (selected_model, bound)
+        self._models[id(bound)] = (selected_model, bound)
+        return bound
 
-    async def _hold_model(self, model: Model, *, task_status: TaskStatus[None]) -> None:
+    async def _hold_model(self, model: Model, *, task_status: TaskStatus[Model]) -> None:
         assert self._closed is not None
         with anyio.CancelScope() as cleanup_scope:
-            async with model:
+            async with model, model.open_session() as bound:
                 # Acquisition remains cancellable, but an entered model must outlive run cleanup.
                 # Session.__aexit__ signals closure only after its active run has unwound.
                 cleanup_scope.shield = True
-                task_status.started()
+                self.entered_model_ids.add(id(model))
+                task_status.started(bound)
                 await self._closed.wait()
 
 

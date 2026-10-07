@@ -184,6 +184,17 @@ class FallbackModel(Model):
                 return True
         return False
 
+    @asynccontextmanager
+    async def open_session(self) -> AsyncGenerator[Model]:
+        async with AsyncExitStack() as stack:
+            bound_models = [await stack.enter_async_context(model.open_session()) for model in self.models]
+            if all(bound is model for bound, model in zip(bound_models, self.models)):
+                yield self
+            else:
+                bound = copy(self)
+                bound.models = bound_models
+                yield bound
+
     async def __aenter__(self) -> FallbackModel:
         """Enter all sub-models so their providers can manage HTTP client lifecycle."""
         async with self._enter_lock:

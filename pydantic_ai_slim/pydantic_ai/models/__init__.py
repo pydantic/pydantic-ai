@@ -527,6 +527,19 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
+    @asynccontextmanager
+    async def open_session(self) -> AsyncGenerator[Model]:
+        """Open an isolated interaction for a conversation, yielding its request interface.
+
+        Stateless adapters yield themselves. Stateful adapters yield a bound model whose connections
+        and protocol state belong only to this context, never to the reusable model definition.
+        The yielded model retains the ordinary request/stream contract and must not be used after exit.
+
+        This context owns interaction resources, not the provider's shared HTTP client. Agent sessions
+        manage both lifetimes; low-level callers can enter the model separately to own its HTTP client.
+        """
+        yield self
+
     @property
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""

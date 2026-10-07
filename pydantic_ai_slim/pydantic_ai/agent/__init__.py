@@ -2028,7 +2028,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_selector=model_selector,
             model_selected_for_step=model_selected_for_step,
             evaluate_model_selector=evaluate_model_selector,
-            enter_model=model_resources.enter_model,
+            enter_model=model_resources.get_model,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_output_retries=effective_output_toolset_max_retries,
@@ -4478,8 +4478,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
-            if self.capability_owns_current_model or self.session.persistent:
-                await self.model_resources.enter_model(self.model)
+            graph_deps.model = await self.model_resources.get_model(
+                self.model, enter_model=self.capability_owns_current_model or self.session.persistent
+            )
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,
