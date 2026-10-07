@@ -3,7 +3,7 @@
 import asyncio
 import math
 import os
-from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -20,7 +20,7 @@ from prompt_toolkit.history import History
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
-from pydantic_ai import Agent, AgentStreamEvent
+from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
@@ -891,6 +891,7 @@ class _Shell(Generic[DepsT, OutputT]):
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
+    _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
 
     @property
@@ -1031,7 +1032,7 @@ class _Shell(Generic[DepsT, OutputT]):
         return await self._read_loop()
 
     def steer(self, text: str) -> bool:
-        """Resolve attachments and route input without printing over streamed output."""
+        """Enqueue steering in core and hand transcript feedback to the active turn."""
         try:
             resolved, images = self.images.resolve(text)
         except ValueError as exc:
@@ -1039,7 +1040,13 @@ class _Shell(Generic[DepsT, OutputT]):
             return True
         if not self.session.steer(resolved, images=images):
             return False
-        self.images.notice = f'Steering sent: {text}'
+        self.images.notice = ''
+        if self._steering is not None:
+            self._steering.send_nowait(text)
+        else:
+            # Direct session users have no active stream renderer to serialize against.
+            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
+            self.console.print()
         return True
 
     def _released(self) -> AbstractAsyncContextManager[None]:
@@ -1263,9 +1270,11 @@ class _Shell(Generic[DepsT, OutputT]):
         ended = TurnEnd(text=start.text, outcome='cancelled')
         with self.session_settings.turn(), self.speculation.turn():
             send, receive = create_memory_object_stream[str](math.inf)
+            steering_send, steering_receive = create_memory_object_stream[str](math.inf)
             async with self.loader.turn(), create_task_group() as mid_turn:
                 mid_turn.start_soon(self._serve_mid_turn, receive)
                 self._mid_turn_commands = send
+                self._steering = steering_send
                 try:
                     ended = await _run_prompt(
                         self.session,
@@ -1277,10 +1286,14 @@ class _Shell(Generic[DepsT, OutputT]):
                         renderers=self.loader.renderers(),
                         screen=self.screen,
                         spinner=self.spinners.active,
+                        steering=(steering_send, steering_receive),
                         tasks=self.tasks if self.session.delegations is not None else None,
                     )
                 finally:
                     self._mid_turn_commands = None
+                    self._steering = None
+                    steering_send.close()
+                    steering_receive.close()
                     send.close()
         return ended
 
@@ -1372,6 +1385,39 @@ def _stream_renderer(
     )
 
 
+async def _prompt_with_steering(
+    session: Session[DepsT, OutputT],
+    text: str | None,
+    images: Sequence[BinaryContent],
+    steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None,
+    echo: Callable[[str], Awaitable[None]],
+) -> AgentRunResult[OutputT]:
+    """Own feedback alongside the prompt, draining accepted messages at normal EOF."""
+    if steering is None:
+        return await session.prompt(text, images=images)
+    send, receive = steering
+
+    async def consume() -> None:
+        async with receive:
+            async for message in receive:
+                await echo(message)
+
+    error: Exception | None = None
+    result: AgentRunResult[OutputT] | None = None
+    async with create_task_group() as feedback:
+        feedback.start_soon(consume)
+        try:
+            result = await session.prompt(text, images=images)
+        except Exception as exc:  # noqa: BLE001 -- preserve the prompt error outside the task group.
+            error = exc
+        finally:
+            send.close()
+    if error is not None:
+        raise error
+    assert result is not None
+    return result
+
+
 async def _run_prompt(
     session: Session[DepsT, OutputT],
     text: str | None,
@@ -1384,6 +1430,7 @@ async def _run_prompt(
     spinner: Callable[[], Spinner],
     images: Sequence[BinaryContent] = (),
     tasks: Tasks | None = None,
+    steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None = None,
 ) -> TurnEnd:
     renderer = _stream_renderer(
         console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
@@ -1398,6 +1445,10 @@ async def _run_prompt(
         async with render_lock:
             status.observe(event)
             await renderer.on_stream_event(event)
+
+    async def echo_steering(text: str) -> None:
+        async with render_lock:
+            await renderer.echo_prompt(text)
 
     if tasks is not None:
         tasks.sink = observe
@@ -1417,14 +1468,15 @@ async def _run_prompt(
 
     @asynccontextmanager
     async def take_screen() -> AsyncGenerator[None]:
-        await renderer.finish()
+        async with render_lock:
+            await renderer.finish()
         async with status_line.paused():
             yield
 
     try:
         with screen.bound(take_screen):
             async with status_line:
-                result = await session.prompt(text, images=images)
+                result = await _prompt_with_steering(session, text, images, steering, echo_steering)
                 await renderer.finish()
         status.output_tokens = result.usage.output_tokens
         for message in reversed(result.all_messages()):  # pragma: no branch -- successful runs contain a response.

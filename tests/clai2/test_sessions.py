@@ -1,5 +1,6 @@
 """Saved sessions restore context, never tool execution or executable configuration."""
 
+import os
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from io import StringIO
@@ -158,7 +159,59 @@ async def test_recover_latest_frontier_without_replaying_tools(tmp_path: Path) -
     assert 'No tools were replayed' in notice
 
 
-async def test_cancellation_persists_and_live_session_cannot_resume(tmp_path: Path) -> None:
+async def test_busy_session_resumes_as_a_fork_of_its_latest_step(tmp_path: Path) -> None:
+    first = saved_session(tmp_path)
+    await first.prompt('first')
+    store, steps = first.conversations, first.step_store
+    assert store is not None and steps is not None
+    # This process is alive, so the session is busy in it.
+    head = await store.save(
+        summary=replace(first.summary, outcome='running', run_id='live', owner_pid=os.getpid()), messages=first.messages
+    )
+    frontier = [*first.messages, ModelResponse(parts=[ToolCallPart('slow', {'x': 1}, tool_call_id='t1')])]
+    await steps.save_snapshot(
+        ContinuableSnapshot(
+            run_id='live', step_index=2, messages=frontier, state='interrupted', conversation_id=head.id
+        )
+    )
+    second = saved_session(tmp_path)
+    notice = await second.resume(head.id)
+    fork = second.summary
+    assert notice == (
+        f'Session is busy in process {os.getpid()}. Resumed a fork of it instead: first (fork) ({fork.id}). '
+        'The original keeps running there and may still change files. No tools were replayed.'
+    )
+    assert fork.id != head.id
+    assert (fork.workspace, fork.outcome, fork.owner_pid, fork.run_id) == (head.workspace, 'ready', None, None)
+    assert second.messages == [*frontier[:-1], replace(frontier[-1], state='interrupted')]
+    assert (await store.get(conversation_id=fork.id)).messages == second.messages
+    await second.prompt('continue in the fork')
+    original = await store.get(conversation_id=head.id)
+    assert original.summary == head
+    assert original.messages == first.messages
+
+
+async def test_failed_fork_save_leaves_session_unchanged(tmp_path: Path) -> None:
+    class FullDisk(SqliteConversationStore):
+        async def save(self, *, summary: ConversationSummary, messages: Sequence[ModelMessage]) -> ConversationSummary:
+            if summary.title.endswith('(fork)'):
+                raise OSError('disk full')
+            return await super().save(summary=summary, messages=messages)
+
+    store = FullDisk(database=tmp_path / 'sessions.db')
+    first = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    await first.prompt('first')
+    head = await store.save(summary=replace(first.summary, outcome='running', owner_pid=os.getpid()), messages=[])
+    second = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    await second.prompt('mine')
+    previous, summary = second.messages, second.summary
+    with pytest.raises(OSError, match='disk full'):
+        await second.resume(head.id)
+    assert (second.messages, second.summary) == (previous, summary)
+    assert not second.running
+
+
+async def test_cancellation_persists_and_live_session_resumes_as_a_fork(tmp_path: Path) -> None:
     entered = anyio.Event()
 
     class Pause(AbstractCapability[None]):
@@ -178,8 +231,9 @@ async def test_cancellation_persists_and_live_session_cannot_resume(tmp_path: Pa
         async with anyio.create_task_group() as group:
             group.start_soon(session.prompt, 'interrupted prompt')
             await entered.wait()
-            with pytest.raises(ConversationConflict, match='busy'):
-                await other.resume(session.summary.id)
+            assert 'Resumed a fork of it instead' in await other.resume(session.summary.id)
+            assert other.summary.id != session.summary.id
+            assert other.messages == [replace(session.messages[0], state='interrupted')]
             with pytest.raises(RuntimeError):
                 await session.resume(session.summary.id)
             with pytest.raises(RuntimeError):

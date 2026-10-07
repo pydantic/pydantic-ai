@@ -3,6 +3,7 @@
 import io
 import re
 from collections.abc import Callable, Sequence
+from copy import deepcopy
 from functools import partial
 from typing import IO, Literal
 
@@ -166,7 +167,15 @@ def thinking_heading(console: Console) -> str:
 class MarkdownPipeline:
     """Termflow's line parser and renderer, with whole code fences highlighted by Rich."""
 
-    def __init__(self, *, output: IO[str], console: Console, thinking: bool, hyperlinks: bool) -> None:
+    def __init__(
+        self,
+        *,
+        output: IO[str],
+        console: Console,
+        thinking: bool,
+        hyperlinks: bool,
+        continuation: tuple[Parser, str] | None = None,
+    ) -> None:
         """Render to `output` at `console`'s width."""
         self.output = output
         self.console = console
@@ -181,6 +190,13 @@ class MarkdownPipeline:
         )
         self._code_lines: list[str] = []
         self._code_language = 'text'
+        if continuation is not None:
+            self._parser, self._code_language = deepcopy(continuation)
+        self._continued_fence = continuation is not None and self._parser.state.is_in_code()
+
+    def continuation(self) -> tuple[Parser, str]:
+        """Snapshot parsing context before finishing this display segment."""
+        return deepcopy(self._parser), self._code_language
 
     def line(self, line: str) -> None:
         """Render one complete source line."""
@@ -195,9 +211,15 @@ class MarkdownPipeline:
             if isinstance(event, CodeBlockStartEvent):
                 self._code_language = (event.language or 'text').split()[0]
                 self._code_lines = []
+                self._continued_fence = False
             elif isinstance(event, CodeBlockLineEvent):
                 self._code_lines.append(event.line)
             elif isinstance(event, CodeBlockEndEvent):
+                # Steering immediately before the closing fence has no code left to display.
+                if self._continued_fence and not self._code_lines:
+                    self._continued_fence = False
+                    continue
+                self._continued_fence = False
                 # Lex the whole fence so multiline strings and comments keep their state.
                 with self.console.capture() as capture:
                     self.console.rule(Text(self._code_language), align='left', style=theme.color(theme.MUTED))
@@ -227,7 +249,14 @@ def color_system(console: Console) -> ColorSystemName | None:
     return name if name in ('standard', '256', 'truecolor', 'windows') else None
 
 
-def render_markdown(*, source: str, width: int, thinking: bool, colors: ColorSystemName | None) -> str:
+def render_markdown(
+    *,
+    source: str,
+    width: int,
+    thinking: bool,
+    colors: ColorSystemName | None,
+    continuation: tuple[Parser, str] | None = None,
+) -> str:
     """Render a whole part as the stream did, for a width or theme it was not streamed at.
 
     `colors` must be the stream console's colour system. Rich caches a style's ANSI codes on the
@@ -238,7 +267,13 @@ def render_markdown(*, source: str, width: int, thinking: bool, colors: ColorSys
     console = Console(file=io.StringIO(), force_terminal=True, color_system=colors, width=width)
     if thinking and source:
         output.write(thinking_heading(console))
-    markdown = MarkdownPipeline(output=LinkOutput(output=output), console=console, thinking=thinking, hyperlinks=True)
+    markdown = MarkdownPipeline(
+        output=LinkOutput(output=output),
+        console=console,
+        thinking=thinking,
+        hyperlinks=True,
+        continuation=continuation,
+    )
     *lines, rest = source.split('\n')
     for line in lines:
         markdown.line(line)
@@ -379,11 +414,16 @@ class StreamRenderer:
                 return True
         return False
 
-    def _start_part(self) -> None:
+    def _start_part(self, continuation: tuple[Parser, str] | None = None) -> None:
         surface = self.console.file
         self._block = (
             surface.markdown(
-                render=partial(render_markdown, thinking=self._thinking, colors=color_system(self.console)),
+                render=partial(
+                    render_markdown,
+                    thinking=self._thinking,
+                    colors=color_system(self.console),
+                    continuation=continuation,
+                ),
                 width=self.console.width,
             )
             if isinstance(surface, PromptSurface)
@@ -398,6 +438,7 @@ class StreamRenderer:
             console=self.console,
             thinking=self._thinking,
             hyperlinks=self.console.is_terminal,
+            continuation=continuation,
         )
 
     def _make_writer(self, output: IO[str]) -> SmoothWriter:
@@ -427,6 +468,21 @@ class StreamRenderer:
     def _line(self, line: str) -> None:
         assert self._markdown is not None
         self._markdown.line(line)
+
+    async def echo_prompt(self, text: str) -> None:
+        """Print a steering prompt between streamed chunks without ending the active part."""
+        index, thinking = self._index, self._thinking
+        if self._buffer:
+            self._line(self._buffer)
+            self._buffer = ''
+        continuation = self._markdown.continuation() if self._markdown is not None else None
+        await self.finish()
+        self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
+        self.console.print()
+        if index is not None:
+            self._index = index
+            self._thinking = thinking
+            self._start_part(continuation)
 
     async def finish(self) -> None:
         """Drain rendered Markdown and end any tool-call group before a plugin rendering, a widget, or the prompt appears."""
