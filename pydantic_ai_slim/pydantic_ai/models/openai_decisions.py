@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal, assert_never
 
@@ -282,8 +282,7 @@ def _answer(
 ) -> DecisionAnswer | None:
     """A Decisions API answer as the protocol's, or `None` for one no question here allows.
 
-    That is a boolean option, which no question here offers, an option or level given twice, or probabilities that
-    don't sum to one.
+    That is a boolean option, which no question here offers, or an option or level given twice.
     """
     if isinstance(answer, AnswerAnswerResourcePredicate):
         return NoulAnswer(noul=answer.probability)
@@ -291,22 +290,13 @@ def _answer(
         probabilities = {
             option.value: option.probability for option in answer.probabilities if isinstance(option.value, str)
         }
-        if (
-            not isinstance(answer.choice, str)
-            or len(probabilities) != len(answer.probabilities)
-            or not _sums_to_one(probabilities.values())
-        ):
+        if not isinstance(answer.choice, str) or len(probabilities) != len(answer.probabilities):
             return None
         return ChoiceAnswer(choice=answer.choice, confidence=answer.confidence, probabilities=probabilities)
     elif isinstance(answer, AnswerAnswerResourceScore):
         probabilities = {level.value: level.probability for level in answer.probabilities}
-        if len(probabilities) != len(answer.probabilities) or not _sums_to_one(probabilities.values()):
+        if len(probabilities) != len(answer.probabilities):
             return None
         return ScoreAnswer(score=answer.score, confidence=answer.confidence, probabilities=probabilities)
     else:
         assert_never(answer)
-
-
-def _sums_to_one(probabilities: Collection[float]) -> bool:
-    # The API rounds each probability to two decimal places, so each may be off by half a unit.
-    return abs(sum(probabilities) - 1) <= 1e-6 + len(probabilities) * 0.005

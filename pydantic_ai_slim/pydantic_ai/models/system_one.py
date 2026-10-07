@@ -16,7 +16,6 @@ from ..providers.system_one import SystemOneProvider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from .decision import (
-    ChoiceAnswer,
     DecisionAnswer,
     DecisionModel,
     DecisionModelSettings,
@@ -185,41 +184,37 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
                 or not answer.legend
                 or answer.legend.keys() == answer.probabilities.keys()
             )
-            if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
-                probabilities = answer.probabilities.values()
-                # Jev displays probabilities to two decimal places, so each may differ by half a unit.
-                valid = valid and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
-                if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
-                    # A displayed score and its probabilities may each be rounded. Check whether any distribution
-                    # within their rounding intervals could produce that score, using at least Jev's two decimals.
-                    values: list[Decimal] = [
-                        Decimal(str(answer.probabilities[level])) for level in range(len(question.criteria))
-                    ]
-                    half_units: list[Decimal] = [
-                        Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values
-                    ]
-                    lower: list[Decimal] = [
-                        max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)
-                    ]
-                    upper: list[Decimal] = [
-                        min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)
-                    ]
-                    remaining = Decimal(1) - sum(lower, Decimal(0))
-                    valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
-                    if valid:
-                        bounds: list[Decimal] = []
-                        for levels in (range(len(values)), reversed(range(len(values)))):
-                            rest = remaining
-                            mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
-                            for level in levels:
-                                taken = min(rest, upper[level] - lower[level])
-                                mean += level * taken
-                                rest -= taken
-                            bounds.append(mean)
-                        score = Decimal(str(answer.score))
-                        score_decimals = max(2, -int(score.as_tuple().exponent))
-                        score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
-                        valid = score + score_half_unit >= bounds[0] and score - score_half_unit <= bounds[1]
+            if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
+                # A displayed score and its probabilities may each be rounded. Check whether any distribution
+                # within their rounding intervals could produce that score, using at least Jev's two decimals.
+                values: list[Decimal] = [
+                    Decimal(str(answer.probabilities[level])) for level in range(len(question.criteria))
+                ]
+                half_units: list[Decimal] = [
+                    Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values
+                ]
+                lower: list[Decimal] = [
+                    max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)
+                ]
+                upper: list[Decimal] = [
+                    min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)
+                ]
+                remaining = Decimal(1) - sum(lower, Decimal(0))
+                valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
+                if valid:
+                    bounds: list[Decimal] = []
+                    for levels in (range(len(values)), reversed(range(len(values)))):
+                        rest = remaining
+                        mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
+                        for level in levels:
+                            taken = min(rest, upper[level] - lower[level])
+                            mean += level * taken
+                            rest -= taken
+                        bounds.append(mean)
+                    score = Decimal(str(answer.score))
+                    score_decimals = max(2, -int(score.as_tuple().exponent))
+                    score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
+                    valid = score + score_half_unit >= bounds[0] and score - score_half_unit <= bounds[1]
             if not valid:
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',
