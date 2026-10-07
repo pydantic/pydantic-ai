@@ -11,7 +11,7 @@ import json
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 from unittest.mock import AsyncMock, patch
 
 import anyio
@@ -993,23 +993,20 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
 
     assert result.output is True
     download.assert_awaited_once_with(image_url, data_format='base64_uri')
-    request_body: dict[str, object] = json.loads(captured.requests[0].content)
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert isinstance(request_body, dict)
     request_input_value = request_body['input']
     assert isinstance(request_input_value, list)
-    request_input: list[object] = cast(list[object], request_input_value)
-    input_message_value = request_input[0]
-    assert isinstance(input_message_value, dict)
-    input_message: dict[str, object] = cast(dict[str, object], input_message_value)
-    content_value = input_message['content']
-    assert isinstance(content_value, list)
-    content: list[object] = cast(list[object], content_value)
-    state_part_value = content[0]
-    assert isinstance(state_part_value, dict)
-    state_part: dict[str, object] = cast(dict[str, object], state_part_value)
-    state_text_value = state_part['text']
-    assert isinstance(state_text_value, str)
-    state_text: str = state_text_value
-    state: dict[str, object] = json.loads(state_text)
+    input_message = request_input_value[0]
+    assert isinstance(input_message, dict)
+    content = input_message['content']
+    assert isinstance(content, list)
+    state_part = content[0]
+    assert isinstance(state_part, dict)
+    state_text = state_part['text']
+    assert isinstance(state_text, str)
+    state: JsonValue = json.loads(state_text)
+    assert isinstance(state, dict)
     assert state['text'] == 'Does the lookup contain an image?'
     assert state_text.index('before') < state_text.index('<image 1>') < state_text.index('after')
     assert content[1:] == [
@@ -1061,44 +1058,39 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
     ).run('Does the failed lookup retain its image?', message_history=history)
 
     assert result.output is True
-    request_body: dict[str, object] = json.loads(captured.requests[0].content)
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert isinstance(request_body, dict)
     input_messages_value = request_body['input']
     assert isinstance(input_messages_value, list)
-    input_messages: list[object] = cast(list[object], input_messages_value)
-    input_message_value = input_messages[0]
+    input_message_value = input_messages_value[0]
     assert isinstance(input_message_value, dict)
-    input_message: dict[str, object] = cast(dict[str, object], input_message_value)
-    input_content_value = input_message['content']
+    input_content_value = input_message_value['content']
     assert isinstance(input_content_value, list)
-    input_content: list[object] = cast(list[object], input_content_value)
-    state_part_value = input_content[0]
+    state_part_value = input_content_value[0]
     assert isinstance(state_part_value, dict)
-    state_part: dict[str, object] = cast(dict[str, object], state_part_value)
-    state_text_value = state_part['text']
-    assert isinstance(state_text_value, str)
-    state_text: str = state_text_value
-    state: dict[str, object] = json.loads(state_text)
+    state_text = state_part_value['text']
+    assert isinstance(state_text, str)
+    state: JsonValue = json.loads(state_text)
+    assert isinstance(state, dict)
     history_entries_value = state['history']
     assert isinstance(history_entries_value, list)
-    history_entries: list[object] = cast(list[object], history_entries_value)
     tool_return_contents: list[str] = []
-    for entry in history_entries:
+    for entry in history_entries_value:
         assert isinstance(entry, dict)
-        entry_dict: dict[str, object] = cast(dict[str, object], entry)
-        tool_return_value = entry_dict.get('tool_return')
+        tool_return_value = entry.get('tool_return')
         if isinstance(tool_return_value, dict):
-            tool_return: dict[str, object] = cast(dict[str, object], tool_return_value)
-            content = tool_return['content']
+            content = tool_return_value['content']
             assert isinstance(content, str)
             tool_return_contents.append(content)
 
     assert len(tool_return_contents) == 1
-    error_wrapper: dict[str, object] = json.loads(tool_return_contents[0])
+    error_wrapper: JsonValue = json.loads(tool_return_contents[0])
+    assert isinstance(error_wrapper, dict)
     assert set(error_wrapper) == {'error'}
     error_content = error_wrapper['error']
     assert isinstance(error_content, str)
     assert json.loads(error_content) == ['before', '<image 1>', 'after']
-    assert input_content[1:] == [
+    assert input_content_value[1:] == [
         {'type': 'input_text', 'text': '<image 1>:'},
         {'type': 'input_image', 'image_url': image.data_uri},
     ]
@@ -1109,13 +1101,19 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     """The route and fill receive one identical prepared image input and aggregate their usage."""
 
     def route_and_fill(request: httpx2.Request) -> httpx2.Response:
-        questions: list[dict[str, object]] = json.loads(request.content)['questions']
-        route_question = next((question for question in questions if question['name'] == 'route'), None)
+        request_body: JsonValue = json.loads(request.content)
+        assert isinstance(request_body, dict)
+        questions = request_body['questions']
+        assert isinstance(questions, list)
+        route_question = next(
+            (question for question in questions if isinstance(question, dict) and question.get('name') == 'route'), None
+        )
         if route_question is not None:
             choices = route_question['choices']
             assert isinstance(choices, list)
             labels: list[str] = []
-            for choice in cast('list[dict[str, object]]', choices):
+            for choice in choices:
+                assert isinstance(choice, dict)
                 label = choice.get('value')
                 assert isinstance(label, str)
                 labels.append(label)
