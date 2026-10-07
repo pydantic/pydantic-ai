@@ -335,6 +335,25 @@ async def test_independent_lifetimes(
         assert http_client.is_closed is owned_http_client
 
 
+async def test_context_exit_interrupts_request(allow_model_requests: None, sockets: SocketHarness):
+    socket = sockets.pending[0]
+    socket.responses.clear()
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    before = asyncio.all_tasks()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with source, anyio.create_task_group() as tasks:
+            async with source.connect() as connected:
+
+                async def request() -> None:
+                    with pytest.raises(ModelAPIError, match='interrupted before completion'):
+                        await Agent(connected).run('hello')
+
+                tasks.start_soon(request)
+                await socket.receiving.wait()
+    assert socket.close_count == 1
+    assert asyncio.all_tasks() == before
+
+
 async def test_overlap(allow_model_requests: None, sockets: SocketHarness):
     socket = sockets.pending[0]
     socket.responses.clear()
@@ -368,7 +387,7 @@ async def test_interruption(allow_model_requests: None, sockets: SocketHarness, 
     async with source.connect() as connected:
         if interrupt == 'early_exit':
             async with Agent(connected).run_stream('hello') as result:
-                async for _ in result.stream_text(delta=True):
+                async for _ in result.stream_text(delta=True):  # pragma: no branch
                     break
         elif interrupt == 'explicit_close':
             async with connected.request_stream(
@@ -484,7 +503,7 @@ async def test_handshake_errors(sockets: SocketHarness, failure: str):
     try:
         with pytest.raises(ModelHTTPError if failure == 'status' else ModelAPIError):
             async with source.connect():
-                pytest.fail('The handshake should fail')
+                pytest.fail('The handshake should fail')  # pragma: no cover
         assert not source.client.is_closed()
     finally:
         await source.client.close()
@@ -495,7 +514,7 @@ async def test_missing_websocket_dependency(monkeypatch: pytest.MonkeyPatch):
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     with pytest.raises(ImportError, match=r'Install `pydantic-ai-slim\[openai,realtime\]`'):
         async with source.connect():
-            pytest.fail('The optional dependency is required')
+            pytest.fail('The optional dependency is required')  # pragma: no cover
 
 
 @pytest.mark.parametrize('invalid', ['headers', 'mutated_headers', 'background', 'body', 'envelope', 'resume'])
