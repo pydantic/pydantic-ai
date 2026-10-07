@@ -957,6 +957,41 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
 
 
+async def test_failed_tool_return_with_an_image_is_wrapped_once(allow_model_requests: None):
+    """A failed tool result keeps its image label in place under one error wrapper.
+
+    Not recorded: what is checked is the history the request renders, not the live answer.
+    """
+    image = BinaryContent(b'tool-image', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look up the image.'),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(
+            parts=[ToolReturnPart('lookup', ['before', image, 'after'], tool_call_id='tool-1', outcome='failed')]
+        ),
+        ModelResponse(parts=[TextPart('The lookup failed.')]),
+    ]
+    captured = Captured(boolean_answers)
+
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Did the lookup work?')
+    await agent.run('Try again.', message_history=history)
+
+    state = json.loads(json.loads(captured.requests[0].content)['input'][0]['content'][0]['text'])
+    assert state['history'] == snapshot(
+        [
+            {'user': 'Look up the image.'},
+            {'tool_call': {'name': 'lookup', 'args': {}}},
+            {
+                'tool_return': {
+                    'name': 'lookup',
+                    'content': '{"error":"[\\"before\\",\\"<image 1>\\",\\"after\\"]"}',
+                }
+            },
+            {'assistant': 'The lookup failed.'},
+        ]
+    )
+
+
 async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: None):
     """The route and fill receive one identical prepared image input and aggregate their usage."""
 

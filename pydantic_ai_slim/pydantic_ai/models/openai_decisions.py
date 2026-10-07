@@ -129,7 +129,7 @@ class _DecisionImagePreparer:
         if not part.files:
             return part
         content: list[str] = []
-        for item in part.content_items(mode='str'):
+        for item in part.content_items(mode='str', wrap_if_error=False):
             if isinstance(item, str):
                 content.append(item)
             elif isinstance(item, BinaryContent):
