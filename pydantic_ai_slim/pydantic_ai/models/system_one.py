@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from math import isfinite
-from typing import Annotated, Literal, assert_never, cast
+from typing import Annotated, Literal, cast
 
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
@@ -18,17 +18,15 @@ from ..settings import ModelSettings
 from ..usage import RequestUsage
 from .decision import (
     ChoiceAnswer,
-    ChoiceQuestion,
     DecisionAnswer,
     DecisionModel,
     DecisionModelSettings,
     DecisionQuestion,
     DecisionRequest,
     DecisionResponse,
-    NoulAnswer,
-    NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
+    _answer_fits,  # pyright: ignore[reportPrivateUsage]
     _wire,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -183,25 +181,11 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             )
         for name, question in questions.items():
             answer = parsed.answers[name]
-            if isinstance(question, NoulQuestion):
-                valid = isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
-            elif isinstance(question, ChoiceQuestion):
-                valid = (
-                    isinstance(answer, ChoiceAnswer)
-                    and answer.choice in question.criteria
-                    and answer.probabilities.keys() == question.criteria.keys()
-                )
-            elif isinstance(question, ScoreQuestion):
-                levels = set(range(len(question.criteria)))
-                valid = (
-                    isinstance(answer, ScoreAnswer)
-                    and answer.probabilities.keys() == levels
-                    and (not answer.legend or answer.legend.keys() == levels)
-                    and isfinite(answer.score)
-                    and 0 <= answer.score <= len(question.criteria) - 1
-                )
-            else:
-                assert_never(question)
+            valid = _answer_fits(question, answer) and (
+                not isinstance(answer, ScoreAnswer)
+                or not answer.legend
+                or answer.legend.keys() == answer.probabilities.keys()
+            )
             if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
                 probabilities = answer.probabilities.values()
                 # Jev displays probabilities to two decimal places, so each may differ by half a unit.

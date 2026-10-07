@@ -1,15 +1,15 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, ClassVar, Literal, NotRequired, TypeAlias, assert_never
+from typing import Annotated, ClassVar, Literal, NotRequired, TypeAlias, assert_never, cast
 
 import httpx2
 from pydantic import Field, JsonValue, TypeAdapter
 from typing_extensions import TypedDict
 
 from .._http import to_httpx2_timeout
-from .._utils import is_str_dict
 from ..exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
@@ -19,7 +19,6 @@ from . import get_user_agent
 from .decision import (
     ChoiceAnswer,
     ChoiceQuestion,
-    DecisionAnswer,
     DecisionModel,
     DecisionModelSettings,
     DecisionQuestion,
@@ -30,6 +29,7 @@ from .decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
+    _answer_fits,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
@@ -175,7 +175,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
                 response.text,
             )
         for name, answer in answers.items():
-            if not _allows(request.questions[name], answer):
+            if not _answer_fits(request.questions[name], answer):
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the OpenAI Decisions API: answer {name!r} does not match its question: {answer!r}',
                     response.text,
@@ -203,11 +203,11 @@ def _request_options(model_settings: DecisionModelSettings) -> RequestOptions:
     if (timeout := model_settings.get('timeout')) is not None:
         options['timeout'] = to_httpx2_timeout(timeout)
     if (extra_body := model_settings.get('extra_body')) is not None:
-        if not is_str_dict(extra_body):
+        if not isinstance(extra_body, Mapping):
             raise UserError(
                 f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.'
             )
-        options['extra_json'] = extra_body
+        options['extra_json'] = cast('Mapping[str, object]', extra_body)
     return options
 
 
@@ -250,26 +250,6 @@ def _with_meanings(instructions: JsonValue, criteria: NoulCriteria) -> JsonValue
     if isinstance(instructions, dict):
         return {**instructions, **meanings}
     return {'question': instructions, **meanings}
-
-
-def _allows(question: DecisionQuestion, answer: DecisionAnswer) -> bool:
-    """Whether a question allows an answer: one of its kind, picking an offered option, or within the rubric."""
-    if isinstance(question, NoulQuestion):
-        return isinstance(answer, NoulAnswer)
-    elif isinstance(question, ChoiceQuestion):
-        return (
-            isinstance(answer, ChoiceAnswer)
-            and answer.choice in question.criteria
-            and answer.probabilities.keys() == question.criteria.keys()
-        )
-    elif isinstance(question, ScoreQuestion):
-        return (
-            isinstance(answer, ScoreAnswer)
-            and answer.probabilities.keys() == set(range(len(question.criteria)))
-            and 0 <= answer.score <= len(question.criteria) - 1
-        )
-    else:
-        assert_never(question)
 
 
 def _option(value: str, meaning: JsonValue) -> _Option:

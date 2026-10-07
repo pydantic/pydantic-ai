@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
+from math import isfinite
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
@@ -223,6 +224,30 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
         if item is not None:
             wire[name] = item
     return wire
+
+
+def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether a backend's answer is one its question allows: of its kind, an offered option, or within the rubric.
+
+    The checks every backend's answers need; a backend adds the ones its own API calls for.
+    """
+    if isinstance(question, NoulQuestion):
+        return isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
+    elif isinstance(question, ChoiceQuestion):
+        return (
+            isinstance(answer, ChoiceAnswer)
+            and answer.choice in question.criteria
+            and answer.probabilities.keys() == question.criteria.keys()
+        )
+    elif isinstance(question, ScoreQuestion):
+        return (
+            isinstance(answer, ScoreAnswer)
+            and answer.probabilities.keys() == set(range(len(question.criteria)))
+            and isfinite(answer.score)
+            and 0 <= answer.score <= len(question.criteria) - 1
+        )
+    else:
+        assert_never(question)
 
 
 _UNSUPPORTED_FIELD_HINT = (
