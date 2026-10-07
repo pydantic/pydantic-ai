@@ -12,7 +12,7 @@ from opentelemetry.trace import Span
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapRunHandler
 from pydantic_clai2.plugins import SessionEndReason
-from pydantic_clai2.ui.telemetry import SCOPE, on_conversation_selected, parent_span
+from pydantic_clai2.ui.telemetry import SCOPE, parent_span
 
 
 @dataclass(kw_only=True)
@@ -26,14 +26,12 @@ class SessionTracing(AbstractCapability[None]):
     _active: bool = field(default=False, init=False)
     _roots: dict[str, Span] = field(default_factory=dict[str, Span], init=False)
     _fallback_id: str = field(default_factory=lambda: str(uuid4()), init=False)
-    _unwatch: Callable[[], None] | None = field(default=None, init=False)
 
     def start(self, email: str | None) -> None:
         """Open the current conversation's root; `email`, when known, identifies the user on roots only."""
         self._email = email
         self._active = True
         self.root()
-        self._unwatch = on_conversation_selected(self.root)
 
     def root(self) -> Span | None:
         """Reuse a saved conversation's root, including when it is resumed later in this shell."""
@@ -88,9 +86,6 @@ class SessionTracing(AbstractCapability[None]):
         return session_id
 
     def end(self, reason: SessionEndReason) -> None:
-        if self._unwatch is not None:
-            self._unwatch()
-            self._unwatch = None
         self._bind_identity()
         self._active = False
         for span in self._roots.values():
