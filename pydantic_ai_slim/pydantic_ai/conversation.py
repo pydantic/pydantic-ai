@@ -4,44 +4,15 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from dataclasses import KW_ONLY
-from typing import Annotated, Any, cast
 
 import pydantic
 
 from . import messages as _messages, usage as _usage
 from ._deferred import DeferredToolRequests
+from ._messages_serialization import MessageHistory as _MessageHistory
 from ._uuid import uuid7
 
 __all__ = ('Conversation', 'ConversationTypeAdapter')
-
-
-def _dump_messages_json(messages: list[_messages.ModelMessage], info: pydantic.SerializationInfo) -> Any:
-    # Through `ModelMessagesTypeAdapter`, whose `ser_json_bytes='base64'` reaches the `Any`-typed fields
-    # (a tool's raw `bytes` return, say) that a `Conversation`'s own schema can't configure: a
-    # dataclass's config doesn't apply to the message types it holds. Read back, those values are
-    # their base64 string, exactly as they are through the adapter itself.
-    #
-    # A plain serializer's return isn't shaped by the caller's dump settings, so every one of them is
-    # passed on: without `include`/`exclude`, `exclude={'messages': {'__all__': {'metadata'}}}` would
-    # dump the metadata it was asked to redact, and without `context` a context-aware serializer in
-    # that metadata couldn't redact itself. `info` carries this field's own share of a nested spec.
-    return _messages.ModelMessagesTypeAdapter.dump_python(
-        messages,
-        mode='json',
-        # `SerializationInfo` types these as `IncExCall`, the same shapes `dump_python` takes as `IncEx`.
-        include=cast(Any, info.include),
-        exclude=cast(Any, info.exclude),
-        by_alias=info.by_alias,
-        exclude_unset=info.exclude_unset,
-        exclude_defaults=info.exclude_defaults,
-        exclude_none=info.exclude_none,
-        exclude_computed_fields=info.exclude_computed_fields,
-        round_trip=info.round_trip,
-        serialize_as_any=info.serialize_as_any,
-        # Not `polymorphic_serialization`: `SerializationInfo` has no such attribute in pydantic 2.12, the
-        # oldest supported, so reading it would fail every dump there.
-        context=info.context,
-    )
 
 
 @dataclasses.dataclass
@@ -72,9 +43,7 @@ class Conversation:
 
     _: KW_ONLY
 
-    messages: Annotated[
-        list[_messages.ModelMessage], pydantic.PlainSerializer(_dump_messages_json, when_used='json')
-    ] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    messages: _MessageHistory = dataclasses.field(default_factory=list[_messages.ModelMessage])
     """The conversation so far, in the form `message_history=` takes."""
 
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)

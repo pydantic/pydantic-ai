@@ -75,6 +75,7 @@ if TYPE_CHECKING:
         RealtimeSession,
         WebRTCAnswer,
     )
+    from pydantic_ai.session import AgentSession, SessionState
 
 
 T = TypeVar('T')
@@ -348,6 +349,25 @@ class _RunStreamEventsContext(Generic[OutputDataT], AbstractAsyncContextManager[
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     """Abstract superclass for [`Agent`][pydantic_ai.agent.Agent], [`WrapperAgent`][pydantic_ai.agent.WrapperAgent], and your own custom agent implementations."""
+
+    def session(
+        self,
+        *,
+        conversation: Conversation | None = None,
+        state: SessionState | None = None,
+        deps: AgentDepsT = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+    ) -> AgentSession[AgentDepsT, OutputDataT]:
+        """Create a session owning conversation state and resources across multiple runs.
+
+        Enter it with `async with`. Pass `conversation` to continue portable history, or `state`
+        to restore a session checkpoint including undelivered input. Dependencies and model are
+        defaults for this session's runs; per-run values override them.
+        """
+        # AgentSession inherits the shared run APIs, so importing here avoids an import cycle.
+        from ..session import AgentSession
+
+        return AgentSession(self, conversation=conversation, state=state, deps=deps, model=model)
 
     @property
     @abstractmethod

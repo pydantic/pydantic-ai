@@ -67,6 +67,7 @@ from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import dispatch_event_stream, set_current_run_context
+from .._session import ModelResources, SessionRuntime, take_session
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -1436,6 +1437,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        session = take_session(self, conversation)
         message_history, usage, conversation_id = _agent_graph.resolve_conversation(
             conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
         )
@@ -1445,6 +1447,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         prepared = await self._prepare_run(
             user_prompt,
+            session=session,
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
@@ -1471,6 +1474,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
+        session: SessionRuntime | None = None,
         output_type: OutputSpec[Any] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
@@ -1494,12 +1498,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
         # run would otherwise consume it and attach the outer handle to the wrong run.
         binding = take_run_binding()
+        inferred_models = session.inferred_models if session is not None else None
 
         # The controller likewise exists before any user-supplied setup code, so `RunContext.cancel()`
         # from a capability/toolset `for_run()` hook records the request instead of raising. Delivery
         # still waits for `bind()` below: setup hooks are never interrupted, and a request recorded
         # here ends the run at the first await after binding, before any model request (#7386).
         cancellation = binding.cancellation if binding is not None else RunCancellation()
+        if session is not None:
+            session.bind_cancellation(cancellation)
 
         # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
         # dict overrides only the named budget for this run (riding `ToolManager.default_max_retries`).
@@ -1607,6 +1614,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=bootstrap_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
+                inferred_models=inferred_models,
             )
         if model_contribution is not None:
             selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
@@ -1626,6 +1634,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=bootstrap_capability,
                 ctx=selection_ctx,
                 resolved_models=resolved_models_by_selection,
+                inferred_models=inferred_models,
             )
         elif default_model is not None:
             model_used = default_model
@@ -1679,6 +1688,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ),
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
+        if session is None:
+            session = SessionRuntime(
+                Conversation(messages=state.message_history, usage=state.usage, conversation_id=state.conversation_id),
+                persistent=False,
+            )
+            session.claim()
+        session.attach(state)
         historical_response = next(
             (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
             None,
@@ -1955,6 +1971,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=run_capability,
                 deps=deps,
                 resolved_models=resolved_models_by_selection,
+                inferred_models=inferred_models,
             )
             model_id = run_model_contribution if isinstance(run_model_contribution, str) else None
             model_selector = None
@@ -1980,6 +1997,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capability=run_capability,
                 ctx=selection_ctx,
                 resolved_models=resolved_models_by_selection,
+                inferred_models=inferred_models,
             )
 
         def display_banner(*, model: str, tools: int) -> None:
@@ -1995,7 +2013,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 capabilities=_registered_capability_count(bootstrap_capability),
             )
 
-        model_resources = _RunModelResources(self._entered_model_ids.copy())
+        model_resources = session.resources
+        if not session.persistent:
+            model_resources.entered_model_ids.update(self._entered_model_ids)
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -2055,6 +2075,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model=model_used,
             capability_owns_current_model=capability_owns_current_model,
             model_resources=model_resources,
+            session=session,
             run_capability=run_capability,
             toolset=toolset,
             usage_limits=usage_limits,
@@ -3122,6 +3143,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capability: AbstractCapability[AgentDepsT],
         deps: AgentDepsT,
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
+        inferred_models: dict[str, models.Model] | None = None,
     ) -> models.Model:
         """Resolve a concrete model selection through the capability chain."""
         if not isinstance(selection, str):
@@ -3135,7 +3157,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return entered_model
         resolution_ctx = models.ModelResolutionContext(agent=self, deps=deps)
         resolved = await capability.resolve_model_id(resolution_ctx, model_id=selection)
-        resolved_model = resolved if resolved is not None else models.infer_model(selection)
+        if resolved is not None:
+            resolved_model = resolved
+        elif inferred_models is not None:
+            # Re-evaluate capability resolution each run (it can depend on dependencies), but
+            # keep ordinary provider models and their connections for the session's lifetime.
+            if selection not in inferred_models:
+                inferred_models[selection] = models.infer_model(selection)
+            resolved_model = inferred_models[selection]
+        else:
+            resolved_model = models.infer_model(selection)
         if resolved_models is not None:
             resolved_models[cache_key] = resolved_model
         return resolved_model
@@ -3147,13 +3178,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capability: AbstractCapability[AgentDepsT],
         ctx: models.ModelSelectionContext[AgentDepsT],
         resolved_models: dict[tuple[int, str], models.Model] | None = None,
+        inferred_models: dict[str, models.Model] | None = None,
     ) -> tuple[models.Model, str | None]:
         """Evaluate a static or dynamic model contribution and resolve its result."""
         selection = contribution(ctx) if callable(contribution) and not _is_model(contribution) else contribution
         if inspect.isawaitable(selection):
             selection = await selection
         model = await self._resolve_model_selection(
-            selection, capability=capability, deps=ctx.deps, resolved_models=resolved_models
+            selection,
+            capability=capability,
+            deps=ctx.deps,
+            resolved_models=resolved_models,
+            inferred_models=inferred_models,
         )
         return model, selection if isinstance(selection, str) else None
 
@@ -4302,26 +4338,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
 
 @dataclasses.dataclass
-class _RunModelResources:
-    """Enter every model selected by a run on its shared resource stack."""
-
-    entered_model_ids: set[int]
-    _stack: AsyncExitStack | None = dataclasses.field(default=None, init=False, repr=False)
-
-    def bind_stack(self, stack: AsyncExitStack) -> None:
-        assert self._stack is None
-        self._stack = stack
-
-    async def enter_model(self, selected_model: models.Model) -> None:
-        model_identity = id(selected_model)
-        if model_identity in self.entered_model_ids:
-            return
-        assert self._stack is not None
-        await self._stack.enter_async_context(selected_model)
-        self.entered_model_ids.add(model_identity)
-
-
-@dataclasses.dataclass
 class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     """The fully assembled inputs and resources for one graph-based agent run."""
 
@@ -4339,7 +4355,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
     cancellation_token: CancellationToken | None
     model: models.Model
     capability_owns_current_model: bool
-    model_resources: _RunModelResources
+    model_resources: ModelResources
+    session: SessionRuntime
     run_capability: AbstractCapability[_PreparedDepsT]
     toolset: AbstractToolset[_PreparedDepsT]
     usage_limits: _usage.UsageLimits
@@ -4419,6 +4436,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
+            if not self.session.persistent:
+                stack.callback(self.session.release)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
             stack.callback(refresh_workspace_ref)
@@ -4440,7 +4459,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 
-            self.model_resources.bind_stack(stack)
+            if not self.session.persistent:
+                self.model_resources.bind_stack(stack)
             task_id = anyio.get_current_task().id
             if isinstance(self.concurrency_limiter, _concurrency.ConcurrencyLimiter) and any(
                 active_task_id == task_id and limiter is self.concurrency_limiter
@@ -4458,7 +4478,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
-            if self.capability_owns_current_model:
+            if self.capability_owns_current_model or self.session.persistent:
                 await self.model_resources.enter_model(self.model)
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
