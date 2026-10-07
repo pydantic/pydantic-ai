@@ -24,6 +24,7 @@ from pydantic_core import to_json
 from websockets.exceptions import InvalidStatus, WebSocketException
 
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from . import _suggest_known_model_id_from_provider_error  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -32,6 +33,7 @@ class ResponsesWebSocket:
 
     connection: AsyncResponsesConnection
     model_name: str
+    model_id_namespace: str
     headers: Mapping[str, str]
     active: bool = False
     closed: bool = False
@@ -41,6 +43,7 @@ class ResponsesWebSocket:
         cls,
         client: AsyncOpenAI,
         model_name: str,
+        model_id_namespace: str,
         headers: Mapping[str, str],
         timeout: Timeout,
         options: WebSocketConnectionOptions,
@@ -51,6 +54,10 @@ class ResponsesWebSocket:
                     extra_headers=headers, websocket_connection_options=options
                 ).enter()
         except InvalidStatus as exc:
+            if exc.response.status_code < 400:
+                raise ModelAPIError(
+                    model_name=model_name, message=f'WebSocket handshake failed with status {exc.response.status_code}'
+                ) from exc
             raise ModelHTTPError(
                 status_code=exc.response.status_code,
                 model_name=model_name,
@@ -60,7 +67,7 @@ class ResponsesWebSocket:
         except (OSError, WebSocketException, TimeoutError) as exc:
             raise ModelAPIError(model_name=model_name, message=f'WebSocket connection failed: {exc}') from exc
 
-        return cls(connection, model_name, cls.effective_headers(client, headers))
+        return cls(connection, model_name, model_id_namespace, cls.effective_headers(client, headers))
 
     @staticmethod
     def effective_headers(client: AsyncOpenAI, extra_headers: Mapping[str, str]) -> dict[str, str]:
@@ -132,6 +139,13 @@ class ResponsesWebSocketStream:
                     model_name=self.websocket.model_name,
                     body=event.error.model_dump(exclude_none=True),
                     headers=event.error.headers,
+                    suggested_model_id=(
+                        _suggest_known_model_id_from_provider_error(
+                            self.websocket.model_id_namespace, self.websocket.model_name
+                        )
+                        if event.error.code == 'model_not_found'
+                        else None
+                    ),
                 )
             message = f'{event.error.code}: {event.error.message}' if event.error.code else event.error.message
             raise ModelAPIError(model_name=self.websocket.model_name, message=message)

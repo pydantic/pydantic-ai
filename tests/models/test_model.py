@@ -713,3 +713,10 @@ def test_wrapper_model_deepcopy():
     assert copied.wrapped is not model.wrapped
     assert copied.model_name == 'test'
     assert copied.custom_output_text == 'wrapped'
+
+
+async def test_agent_connection_unsupported():
+    agent = Agent(TestModel())
+    with pytest.raises(UserError, match=r'TestModel.*does not support explicit connections'):
+        async with agent.connect():
+            pass

@@ -2285,6 +2285,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Yield an independent model using one persistent Responses WebSocket.
 
         Use the yielded model with ordinary agent runs. The source model continues to use HTTP.
+        To connect an existing agent without passing a model again, use
+        [`Agent.connect()`][pydantic_ai.agent.AbstractAgent.connect].
         Install `pydantic-ai-slim[openai,realtime]` and use an asyncio event loop.
 
         Each connection supports one active response. Completed responses leave the socket open
@@ -2321,7 +2323,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         timeout = HTTPX2Timeout(to_httpx2_timeout(settings.get('timeout', self.client.timeout)))
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             websocket = await ResponsesWebSocket.connect(
-                self.client, self.model_name, headers, timeout, websocket_connection_options or {}
+                self.client,
+                self.model_name,
+                self._provider.model_id_namespace,
+                headers,
+                timeout,
+                websocket_connection_options or {},
             )
         try:
             connected = _utils.replace_no_init(self, _websocket=websocket)

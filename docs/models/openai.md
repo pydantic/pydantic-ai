@@ -251,17 +251,16 @@ The features below are specific to the Responses API and only available on [`Ope
 
 ### WebSocket mode
 
-Use [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] to reuse one WebSocket across model requests. This can reduce transport overhead in runs with repeated tool calls. Install the optional WebSocket dependency with `pip install 'pydantic-ai-slim[openai,realtime]'` and use an asyncio event loop.
+Use [`agent.connect()`][pydantic_ai.agent.AbstractAgent.connect] to reuse one WebSocket across model requests. This can reduce transport overhead in runs with repeated tool calls. Install the optional WebSocket dependency with `pip install 'pydantic-ai-slim[openai,realtime]'` and use an asyncio event loop.
 
-The context yields an independent model for ordinary agent runs. Tools, structured output, capabilities, and streaming use the same agent execution path as HTTP. Pass the connected model to `Agent` or to a run's `model` argument:
+The agent uses the connection for runs inside the context, including when its model was configured with a shorthand. Tools, structured output, capabilities, and streaming use the same agent execution path as HTTP:
 
 ```python {title="openai_websocket.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-6-astra')
 settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
-agent = Agent(model, model_settings=settings)
+agent = Agent('openai-responses:gpt-6-astra', model_settings=settings)
 
 
 @agent.tool_plain
@@ -271,11 +270,10 @@ def get_temperature(city: str) -> int:
 
 
 async def main():
-    async with model.connect() as connected:
-        first = await agent.run('What is the temperature in Paris?', model=connected)
+    async with agent.connect():
+        first = await agent.run('What is the temperature in Paris?')
         second = await agent.run(
             'How does London compare?',
-            model=connected,
             conversation=first.conversation,
         )
         print(second.output)
@@ -283,11 +281,13 @@ async def main():
 
 [`openai_previous_response_id='auto'`](#referencing-earlier-responses) makes each continuation send only new input items, including tool results within a single run. Without that setting, the connected model sends the full mapped message history on each request. Keep passing the conversation or message history between runs in either case.
 
-Each connected model supports **one active response at a time**. Use separate `connect()` contexts for concurrent runs. Finishing a response leaves the socket open; cancelling a request, leaving a stream before completion, or losing the transport closes it. The connected model raises an error after closure, including after its context exits. Opening or closing an `Agent` context inside `connect()` does not close the socket.
+Each connection supports **one active response at a time**. Concurrent tasks can open separate `agent.connect()` contexts on the same agent. Finishing a response leaves the socket open; cancelling a request, leaving a stream before completion, or losing the transport closes it. Further requests in that context raise an error. Exiting restores the agent's previous model selection, so an ordinary Responses agent uses HTTP again. Opening or closing an `Agent` context inside `connect()` does not close the socket.
+
+For direct model use, [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] yields an independent connected model. Pass that model to an `Agent` or a run's `model` argument. The source model continues to use HTTP, and the connected model cannot be used after its connection context exits.
 
 The model does not reconnect, retry an interrupted generation, or switch generation to HTTP automatically. Open another connection to recover. OpenAI's connection-local cache allows `previous_response_id` with `openai_store=False` or Zero Data Retention on the same socket. If a previous response is no longer available, restart with the full history and the `openai_previous_response_id` setting omitted. See [OpenAI's WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode/) for connection and retention limits.
 
-Set handshake headers through the model's default `extra_headers`, `connect(extra_headers=...)`, or `AsyncOpenAI(default_headers=...)`. Per-request headers must match the connection's headers. Headers and transport options configured only on a custom HTTP client are not inherited by the WebSocket connection. The model's default `timeout` controls the handshake; each request's `timeout` controls its send and receive operations. Otherwise, the SDK client's timeouts apply. `websocket_connection_options` accepts the OpenAI SDK's typed socket options, such as `max_size`.
+Set handshake headers through the model's default `extra_headers`, `model.connect(extra_headers=...)`, or `AsyncOpenAI(default_headers=...)`. Per-request headers must match the connection's headers. Headers and transport options configured only on a custom HTTP client are not inherited by the WebSocket connection. The model's default `timeout` controls the handshake; each request's `timeout` controls its send and receive operations. Otherwise, the SDK client's timeouts apply. The model's `connect(websocket_connection_options=...)` accepts the OpenAI SDK's typed socket options, such as `max_size`.
 
 Background responses, multiplexing, native mid-turn steering, and persistence of a socket across durable execution steps are outside this connection API. Token counting and standalone compaction continue to use their HTTP endpoints. The source model remains available for HTTP requests.
 

@@ -1739,6 +1739,42 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
         yield
 
+    @asynccontextmanager
+    async def connect(self) -> AsyncGenerator[Self]:
+        """Use one persistent model connection for agent runs inside this context.
+
+        The configured model must support [`Model.connect()`][pydantic_ai.models.Model.connect],
+        such as [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+        A model selected by a run-dependent capability cannot be connected outside a run.
+
+        Runs use the connected model without an additional `model` argument. The connection
+        closes and the previous model selection is restored when the context exits. Each context
+        opens an independent connection; concurrent tasks can open their own contexts on the same agent.
+        The model's connection context defines request concurrency and interruption behavior.
+
+        This context manages the model connection. The agent's toolsets and the source model's
+        HTTP client retain their existing lifetimes.
+
+        ```python {test="skip"}
+        from pydantic_ai import Agent
+
+        agent = Agent('openai-responses:gpt-6-astra')
+
+        async def main():
+            async with agent.connect():
+                result = await agent.run('What is the capital of France?')
+                print(result.output)
+        ```
+        """
+        model = self._get_model_outside_run()
+        async with model.connect() as connected:
+            with self.override(model=connected):
+                yield self
+
+    def _get_model_outside_run(self, model: models.Model | models.KnownModelName | str | None = None) -> models.Model:
+        """Resolve the configured model for operations that do not have run dependencies."""
+        raise NotImplementedError
+
     @contextmanager
     @abstractmethod
     def override(

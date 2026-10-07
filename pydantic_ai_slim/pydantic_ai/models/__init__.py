@@ -13,7 +13,7 @@ import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
@@ -526,6 +526,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Exit the model context, closing the provider's HTTP client if it owns one."""
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
+
+    def connect(self) -> AbstractAsyncContextManager[Self]:
+        """Open a persistent connection and yield a model bound to it.
+
+        The context owns the connection and closes it on exit. The source model remains unchanged.
+        Models that do not implement explicit connections raise [`UserError`][pydantic_ai.exceptions.UserError].
+        See [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect]
+        for Responses WebSocket support.
+        """
+        raise UserError(f'`{type(self).__name__}` does not support explicit connections.')
 
     @property
     def settings(self) -> ModelSettings | None:

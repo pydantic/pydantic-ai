@@ -51,9 +51,11 @@ Important distinctions:
 
 ## Reuse an OpenAI Responses WebSocket
 
-Open `async with model.connect() as connected` on an `OpenAIResponsesModel`. Pass `connected` to an ordinary `Agent` or a run's `model` argument. Keep passing the conversation between runs. Set `OpenAIResponsesModelSettings(openai_previous_response_id='auto')` to send only new input, including internal tool results.
+Use `async with agent.connect():` on an agent configured with an OpenAI Responses model, including `Agent('openai-responses:gpt-6-astra')`. Call the agent's ordinary run methods inside the context; the context binds the connection automatically. Keep passing the conversation between runs. Set `OpenAIResponsesModelSettings(openai_previous_response_id='auto')` to send only new input, including internal tool results.
 
-Keep the connection context open for the whole tool loop. Run one response at a time per connected model. Open separate contexts for concurrency. The original model continues to use HTTP.
+Keep the connection context open for the whole tool loop. Run one response at a time per connection. Concurrent tasks can open separate contexts on the same agent. Context exit restores the agent's previous model selection.
+
+For direct model use or connection options, open `async with model.connect() as connected` on an `OpenAIResponsesModel`. Pass `connected` to an `Agent` or a run's `model` argument. The source model continues to use HTTP.
 
 Use `openai_responses_service_tier='ultrafast'` for Ultrafast on supported models. The setting applies to HTTP and WebSocket requests.
 

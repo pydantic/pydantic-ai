@@ -15,10 +15,14 @@ from pydantic import BaseModel, JsonValue, TypeAdapter
 from typing_extensions import Unpack
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.agent import AbstractAgent
+from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import NativeOutput
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 from ..realtime.ws_cassettes import (
@@ -118,8 +122,10 @@ async def test_tool_continuation(allow_model_requests: None, recorded_responses:
         'openai_responses_service_tier': 'ultrafast',
         'openai_reasoning_effort': 'low',
     }
-    async with recorded_responses.model.connect() as connected:
-        agent = Agent(connected, tools=[get_weather], output_type=NativeOutput(Weather), model_settings=settings)
+    agent = Agent(
+        recorded_responses.model, tools=[get_weather], output_type=NativeOutput(Weather), model_settings=settings
+    )
+    async with agent.connect():
         result = await agent.run('Call get_weather for Paris exactly once, then report its temperature.')
     assert calls == ['Paris']
     assert result.output == Weather(temperature=18)
@@ -158,8 +164,8 @@ async def test_tool_continuation(allow_model_requests: None, recorded_responses:
 
 async def test_streaming_sequential_turns(allow_model_requests: None, recorded_responses: RecordedResponses):
     """Ordinary full-history streaming works across sequential turns on the same socket."""
-    async with recorded_responses.model.connect() as connected:
-        agent = Agent(connected)
+    agent = Agent(recorded_responses.model)
+    async with agent.connect():
         async with agent.run_stream('Reply with the word amber.') as first:
             chunks = [chunk async for chunk in first.stream_text(delta=True)]
             first_output = await first.get_output()
@@ -283,6 +289,130 @@ def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
 
     monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
     return harness
+
+
+@pytest.mark.parametrize('defer_model_check', [False, True])
+async def test_agent_connection_shorthand(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch, defer_model_check: bool
+):
+    """A shorthand-created agent uses its connection across ordinary and streamed runs."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    socket = sockets.pending[0]
+    socket.responses.append(text_events('second', 'resp_second'))
+    agent = Agent('openai-responses:gpt-4o', defer_model_check=defer_model_check)
+    async with agent.connect() as connected_agent:
+        assert connected_agent is agent
+        first = await agent.run('first')
+        assert first.output == 'ready'
+        async with agent.run_stream('second', conversation=first.conversation) as second:
+            assert await second.get_output() == 'second'
+        assert socket.close_count == 0
+    assert len(sockets.opened) == 1
+    assert len(socket.sent) == 2
+    assert socket.close_count == 1
+
+
+@pytest.mark.parametrize('wrap_model', [False, True])
+@pytest.mark.parametrize('wrap_agent', [False, True])
+async def test_agent_connection_restores_http(
+    allow_model_requests: None, sockets: SocketHarness, wrap_model: bool, wrap_agent: bool
+):
+    """Connection exit restores HTTP, preserves wrappers, and leaves the source client open."""
+    requests: list[httpx2.Request] = []
+    wrapper_requests: list[str] = []
+
+    def http_handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        response = text_events()[-1]['response']
+        assert isinstance(response, dict)
+        response['output'] = [
+            {
+                'type': 'message',
+                'id': 'msg_http',
+                'role': 'assistant',
+                'status': 'completed',
+                'content': [{'type': 'output_text', 'text': 'http', 'annotations': [], 'logprobs': []}],
+            }
+        ]
+        return httpx2.Response(200, json=response)
+
+    class RecordingWrapper(WrapperModel):
+        async def request(
+            self,
+            messages: list[ModelRequest | ModelResponse],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            wrapper_requests.append('request')
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
+        source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test', http_client=http_client))
+        agent: AbstractAgent[None, str] = Agent(RecordingWrapper(source) if wrap_model else source)
+        if wrap_agent:
+            agent = WrapperAgent(agent)
+        assert (await agent.run('before connecting')).output == 'http'
+        with pytest.raises(ValueError, match='leave connection'):
+            async with agent.connect() as connected_agent:
+                assert connected_agent is agent
+                assert (await agent.run('connected')).output == 'ready'
+                raise ValueError('leave connection')
+        assert not http_client.is_closed
+        assert (await agent.run('after connecting')).output == 'http'
+    assert len(requests) == 2
+    assert len(sockets.opened[0].sent) == 1
+    assert sockets.opened[0].close_count == 1
+    assert wrapper_requests == (['request'] * 3 if wrap_model else [])
+
+
+async def test_agent_connection_nested_override(allow_model_requests: None, sockets: SocketHarness):
+    """Nested connections restore the outer connection and then the original agent model."""
+    outer = sockets.pending[0]
+    outer.responses.append(text_events('outer again', 'resp_outer_again'))
+    inner = ScriptedSocket(responses=deque([text_events('inner', 'resp_inner')]))
+    sockets.pending.append(inner)
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    agent = Agent(TestModel(custom_output_text='original'))
+    with agent.override(model=source):
+        async with agent.connect():
+            assert (await agent.run('outer')).output == 'ready'
+            async with agent.connect():
+                assert (await agent.run('inner')).output == 'inner'
+            assert inner.close_count == 1 and outer.close_count == 0
+            assert (await agent.run('outer again')).output == 'outer again'
+    assert (await agent.run('original')).output == 'original'
+    assert outer.close_count == 1
+    assert [len(socket.sent) for socket in sockets.opened] == [2, 1]
+
+
+async def test_agent_connections_are_task_local(allow_model_requests: None, sockets: SocketHarness):
+    """Two tasks share an agent without sharing or replacing each other's connection."""
+    first = sockets.pending[0]
+    first.responses.clear()
+    second = ScriptedSocket()
+    sockets.pending.append(second)
+    agent = Agent(OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test')))
+    results: list[str] = []
+    before = asyncio.all_tasks()
+
+    async def first_run() -> None:
+        async with agent.connect():
+            results.append((await agent.run('first')).output)
+            results.append((await agent.run('first again')).output)
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(first_run)
+            await first.receiving.wait()
+            async with agent.connect():
+                assert (await agent.run('second')).output == 'ready'
+            assert second.close_count == 1 and first.close_count == 0
+            first.responses.append(text_events('first again', 'resp_first_again'))
+            first.push(*text_events('first', 'resp_first'))
+    assert results == ['first', 'first again']
+    assert [len(socket.sent) for socket in sockets.opened] == [2, 1]
+    assert [socket.close_count for socket in sockets.opened] == [1, 1]
+    assert asyncio.all_tasks() == before
 
 
 @pytest.mark.parametrize('owned_http_client', [False, True])
@@ -414,17 +544,24 @@ async def test_interruption(allow_model_requests: None, sockets: SocketHarness, 
     assert asyncio.all_tasks() == before
 
 
-@pytest.mark.parametrize('failure', ['envelope', 'status', 'failed', 'steering', 'disconnect', 'send', 'timeout'])
-async def test_errors(allow_model_requests: None, sockets: SocketHarness, failure: str):
+@pytest.mark.parametrize(
+    'failure', ['envelope', 'status', 'model_not_found', 'failed', 'steering', 'disconnect', 'send', 'timeout']
+)
+@pytest.mark.parametrize('stream', [False, True])
+async def test_errors(allow_model_requests: None, sockets: SocketHarness, failure: str, stream: bool):
     """Server errors and interrupted transports are not mistaken for successful partial output."""
     socket = sockets.pending[0]
     settings: OpenAIResponsesModelSettings = {}
-    if failure in ('envelope', 'status'):
+    if failure in ('envelope', 'status', 'model_not_found'):
         error: Frame = {
             'type': 'error',
-            'error': {'type': 'invalid_request_error', 'code': 'invalid_test', 'message': 'test failure'},
+            'error': {
+                'type': 'invalid_request_error',
+                'code': 'model_not_found' if failure == 'model_not_found' else 'invalid_test',
+                'message': 'test failure',
+            },
         }
-        if failure == 'status':
+        if failure != 'envelope':
             error['status'] = 400
         socket.responses = deque([[error]])
     elif failure == 'failed':
@@ -452,19 +589,26 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
     else:
         socket.responses.clear()
         settings['timeout'] = 0.01
-    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    model_name = 'gpt-5.2-proo' if failure == 'model_not_found' else 'gpt-4o'
+    source = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key='test'))
     async with source.connect() as connected:
         with pytest.raises(UnexpectedModelBehavior if failure == 'steering' else ModelAPIError) as raised:
-            await Agent(connected, model_settings=settings).run('hello')
+            agent = Agent(connected, model_settings=settings)
+            if stream:
+                async with agent.run_stream('hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('hello')
         assert socket.close_count == (0 if failure == 'failed' else 1)
-        if failure == 'status':
+        if failure in ('status', 'model_not_found'):
             assert isinstance(raised.value, ModelHTTPError)
             assert raised.value.status_code == 400
             assert raised.value.body == {
                 'type': 'invalid_request_error',
-                'code': 'invalid_test',
+                'code': 'model_not_found' if failure == 'model_not_found' else 'invalid_test',
                 'message': 'test failure',
             }
+            assert raised.value.suggested_model_id == ('openai:gpt-5.2-pro' if failure == 'model_not_found' else None)
         elif failure == 'envelope':
             assert 'invalid_test: test failure' in str(raised.value)
         elif failure == 'failed':
@@ -493,17 +637,21 @@ async def test_incomplete_response(allow_model_requests: None, sockets: SocketHa
         assert (await Agent(connected).run('next')).output == 'ready'
 
 
-@pytest.mark.parametrize('failure', ['status', 'transport'])
-async def test_handshake_errors(sockets: SocketHarness, failure: str):
-    if failure == 'status':
-        sockets.connect_error = InvalidStatus(HandshakeResponse(401, 'Unauthorized', Headers(), b'bad key'))
+@pytest.mark.parametrize('status_code', [200, 302, 401, None])
+async def test_handshake_errors(sockets: SocketHarness, status_code: int | None):
+    if status_code is not None:
+        sockets.connect_error = InvalidStatus(
+            HandshakeResponse(status_code, 'Rejected', Headers(), b'handshake rejected')
+        )
     else:
         sockets.connect_error = OSError('unreachable')
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     try:
-        with pytest.raises(ModelHTTPError if failure == 'status' else ModelAPIError):
+        expected_error = ModelHTTPError if status_code is not None and status_code >= 400 else ModelAPIError
+        with pytest.raises(expected_error) as raised:
             async with source.connect():
                 pytest.fail('The handshake should fail')  # pragma: no cover
+        assert type(raised.value) is expected_error
         assert not source.client.is_closed()
     finally:
         await source.client.close()
