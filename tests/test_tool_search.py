@@ -8133,6 +8133,7 @@ async def _keyword_search_results(
 
     agent = Agent(
         FunctionModel(respond, profile=ModelProfile(supported_native_tools=frozenset())),
+        deps_type=type(None),
         toolsets=[catalog],
         capabilities=[ToolSearch(max_results=max_results)],
     )
