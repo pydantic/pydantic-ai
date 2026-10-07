@@ -17,6 +17,7 @@ from openai.types.responses.responses_server_event import ResponseWsError
 from openai.types.shared_params import Reasoning
 from typing_extensions import TypedDict
 
+from .._steering import AcceptSteering, CommitSteering, LoseSteering, RejectSteering, SteeringController
 from .._utils import is_str_dict
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 
@@ -61,10 +62,16 @@ class ResponsesWebSocket:
         self.active = False
         self.closed = False
         self.last_response_id: str | None = None
+        self.steering: SteeringController | None = None
+        self.write_timeout: float | None = None
 
     async def disconnect(self) -> None:
         connection, self.connection = self.connection, None
         self.last_response_id = None
+        if self.steering is not None:
+            self.steering.parent_response_id = None
+            if self.steering.pending:
+                self.steering.observe(LoseSteering())
         if connection is not None:
             with anyio.CancelScope(shield=True):
                 await connection.close()
@@ -72,6 +79,18 @@ class ResponsesWebSocket:
     async def close(self) -> None:
         self.closed = True
         await self.disconnect()
+
+    def receive(self, read_timeout: float | None) -> ResponsesWebSocketStream:
+        if self.closed or self.connection is None or self.active:
+            raise UserError('The native successor requires its original idle WebSocket connection.')
+        self.active = True
+        return ResponsesWebSocketStream(self, read_timeout)
+
+    async def steer(self, input: responses.ResponseSteerInputParam, parent: str) -> None:
+        if self.connection is None or not self.active:
+            raise UserError('Native steering requires an active WebSocket response.')
+        with _map_websocket_errors(self.model_name), anyio.fail_after(self.write_timeout):
+            await self.connection.response.steer(input=input, previous_response_id=parent)
 
     async def create(
         self,
@@ -110,8 +129,8 @@ class ResponsesWebSocket:
                         max_retries=0,
                     ).enter()
                 self.headers = dict(headers)
-            write_timeout = timeout.write if isinstance(timeout, Timeout) else timeout
-            with _map_websocket_errors(self.model_name), anyio.fail_after(write_timeout):
+            self.write_timeout = timeout.write if isinstance(timeout, Timeout) else timeout
+            with _map_websocket_errors(self.model_name), anyio.fail_after(self.write_timeout):
                 # The SDK accepts wire values only: omitted settings were removed above.
                 await self.connection.send(cast(ResponseCreate, body))
             return ResponsesWebSocketStream(self, timeout.read if isinstance(timeout, Timeout) else timeout)
@@ -168,7 +187,25 @@ class ResponsesWebSocketStream:
                         responses.ResponseSteerFailedEvent,
                     ),
                 ):
-                    raise UnexpectedModelBehavior('Received steering events without an active steering operation.')
+                    controller = self.owner.steering
+                    if controller is None or not controller.pending:
+                        raise UnexpectedModelBehavior('Received steering events without an active steering operation.')
+                    assert controller.delivery_id is not None
+                    delivery = controller.deliveries[controller.delivery_id]
+                    if event.steer.previous_response_id != delivery.parent_response_id:
+                        raise UnexpectedModelBehavior('Steering event refers to a different parent response.')
+                    if isinstance(event, responses.ResponseSteerFailedEvent):
+                        if event.steer.id is not None:
+                            controller.observe(AcceptSteering(event.steer.id))
+                        controller.observe(RejectSteering(event.error.message))
+                        raise ModelAPIError(self.owner.model_name, event.error.message)
+                    controller.observe(AcceptSteering(event.steer.id))
+                    continue
+                if isinstance(event, responses.ResponseCreatedEvent) and self.owner.steering is not None:
+                    controller = self.owner.steering
+                    if controller.pending:
+                        controller.observe(CommitSteering(event.response.id))
+                    controller.parent_response_id = event.response.id
                 if isinstance(
                     event,
                     (
@@ -179,6 +216,8 @@ class ResponsesWebSocketStream:
                 ):
                     self.finished = True
                     self.owner.last_response_id = event.response.id
+                    if self.owner.steering is not None:
+                        self.owner.steering.parent_response_id = None
                 yield event
         except BaseException:
             await self.close()

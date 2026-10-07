@@ -9,6 +9,7 @@ from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
+    Awaitable,
     Callable,
     Generator,
     Iterable,
@@ -31,7 +32,7 @@ from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, u
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
-from .._run_context import RunContext
+from .._run_context import RunContext, get_current_run_context
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
@@ -894,6 +895,13 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openai_steering: bool
+    """Enable native mid-response input on Responses WebSockets (default: false).
+
+    Delays final-output detection until each response ends so a native successor can take over.
+    The provider validates model support. Requires an agent run and cannot cross durable units.
     """
 
     openai_native_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]
@@ -2464,6 +2472,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+        if settings.get('openai_steering'):
+            async with self.request_stream(
+                messages, settings, model_request_parameters, get_current_run_context()
+            ) as sr:
+                async for _ in sr:
+                    pass
+            return sr.get()
         if info := self._get_continuation_info(messages, settings):
             # Non-streaming retrieve: on `store=false` backends (Codex, which is also stream-only)
             # `_get_continuation_info` already rejected the continuation with `UserError`.
@@ -2573,6 +2588,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_request_parameters,
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+        if settings.get('openai_steering'):
+            if self._websocket is None or run_context is None or run_context._steering is None:  # pyright: ignore[reportPrivateUsage]
+                raise UserError('`openai_steering` requires Responses WebSocket transport inside an agent run.')
+            if run_context.in_durable_context or run_context._steering.blocked:  # pyright: ignore[reportPrivateUsage]
+                raise UserError('Native steering cannot cross durable execution units.')
+            self._websocket.steering = run_context._steering  # pyright: ignore[reportPrivateUsage]
+            run_context._steering.usage = run_context.usage  # pyright: ignore[reportPrivateUsage]
+            run_context._steering.limits = run_context.usage_limits or usage.UsageLimits()  # pyright: ignore[reportPrivateUsage]
         if info := self._get_continuation_info(messages, settings):
             response_id, last_sequence_number, previous_model_name = info
             expected_response_id = response_id
@@ -2610,6 +2633,43 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
             )
+            if settings.get('openai_steering'):
+                assert self._websocket is not None and self._websocket.steering is not None
+                websocket = self._websocket
+                controller = websocket.steering
+                assert controller is not None
+                assert isinstance(response, ResponsesWebSocketStream)
+                read_timeout = response.read_timeout
+
+                async def prepare_send(part: UserPromptPart) -> Callable[[str], Awaitable[None]]:
+                    mapped = await self._map_user_prompt(part)
+                    # Materialize validation before admission: the SDK's Iterable schema would
+                    # otherwise defer content validation until the socket write.
+                    adapter: TypeAdapter[str | list[responses.ResponseSteerInputContentParam]] = TypeAdapter(
+                        str | list[responses.ResponseSteerInputContentParam]
+                    )
+                    content = adapter.validate_python(mapped['content'])
+                    input: responses.ResponseSteerInputParam = [{'type': 'message', 'role': 'user', 'content': content}]
+
+                    async def send(parent: str) -> None:
+                        await websocket.steer(input, parent)
+
+                    return send
+
+                @asynccontextmanager
+                async def receive() -> AsyncGenerator[StreamedResponse]:
+                    async with websocket.receive(read_timeout) as raw:
+                        successor = await self._process_streamed_response(raw, settings, model_request_parameters)
+                        controller.current_usage = lambda: successor.usage
+                        successor._final_result_ready = lambda: not controller.pending  # pyright: ignore[reportPrivateUsage]
+                        yield successor
+
+                controller.bound_model = self
+                controller.prepare_send = prepare_send
+                controller.disconnect = websocket.disconnect
+                controller.receive = receive
+                controller.current_usage = lambda: sr.usage
+                sr._final_result_ready = lambda: not controller.pending  # pyright: ignore[reportPrivateUsage]
             yield sr
 
     def _process_provider_details(self, response: responses.Response) -> dict[str, Any] | None:
@@ -3597,6 +3657,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _resolve_server_side_state(
         self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
     ) -> tuple[str | None, str | None, list[ModelMessage]]:
+        if self._websocket is not None and (controller := self._websocket.steering) is not None and controller.pending:
+            assert controller.delivery_id is not None
+            parent = controller.deliveries[controller.delivery_id].parent_response_id
+            for i in range(len(messages) - 1, -1, -1):
+                message = messages[i]
+                if isinstance(message, ModelResponse) and message.provider_response_id == parent:
+                    return parent, None, messages[i + 1 :]
+            raise UserError('A native tool continuation must retain its parent response in history.')
         previous_response_id_setting = model_settings.get('openai_previous_response_id')
         conversation_id_setting = model_settings.get('openai_conversation_id')
         if previous_response_id_setting is not None and conversation_id_setting is not None:

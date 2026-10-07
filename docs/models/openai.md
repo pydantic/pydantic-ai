@@ -70,6 +70,27 @@ agent = Agent(model)
 ...
 ```
 
+## Responses WebSocket sessions
+
+Set `transport='websocket'` on [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] and run it inside `async with agent.session() as session` to reuse a connection across runs. HTTP remains the default. Install `openai[realtime]` for the SDK's WebSocket dependency.
+
+The session owns the connection; individual runs own their responses. A completed response leaves the connection available for the next run. An interrupted response or a transport error discards it rather than allowing unread frames to become the next run's output. The next request opens a new connection; it does not automatically replay a request with an unknown outcome. With `openai_previous_response_id='auto'`, only responses retained on the current connection are used for incremental continuation. Restoring a checkpoint sends normalized history instead of assuming the old connection's cache still exists.
+
+### Native steering
+
+Opt into [`openai_steering`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_steering] to submit additional user input during an active Responses WebSocket response. Use `await ctx.steer(*content)` from an event handler, `await run.steer(*content)` while driving a run, or `await session.steer(*content)` from another task. This is separate from `enqueue`: `enqueue` delivers at a framework request boundary, while `steer` asks the provider to create a successor on the current connection. Native steering accepts user text, images, and files, not system instructions or tool results.
+
+The returned delivery ID means the local send completed, not that the provider consumed the input. `session.state.steering` distinguishes sending, acceptance, commitment to a successor, rejection, and an uncertain outcome. Only successor creation inserts the input into conversation history, between the original response and its successor. The responses retain separate identities and usage. Submit at most one unresolved steering operation at a time; after it commits, another active response can be steered.
+
+If the original response calls tools, Pydantic AI executes them and sends their results on the same connection. It does not resend the accepted steering input. A lost connection or an interrupted run leaves unresolved input in the checkpoint. Use `state.recover(steering={delivery_id: 'replay'})` to explicitly queue it at an ordinary boundary, or `'discard'` to abandon it. Replaying an uncertain delivery can duplicate input the provider consumed before the connection was lost; it is an application decision, never an automatic retry.
+
+!!! warning "Opt-in execution semantics"
+    Native steering reserves another model request against the run's usage limits before sending. It cannot perform token-count preflight for the provider-created successor, so it rejects `count_tokens_before_request=True`. It is unavailable inside durable execution units: a connection-local submission cannot be replayed as a workflow effect.
+
+    A provider-created successor inherits the request configuration and advertised tools. Request selection, `before_model_request`, and `wrap_model_request` are not run again for a receive-only successor; `after_model_request` observes it but cannot replace or retry it. Once a response participates in steering, its recorded contents cannot be replaced by request middleware. Explicit tool-result continuations still run request middleware, but cannot switch the bound model or return a cached/`SkipModelRequest` response instead of delivering the tool results.
+
+    Enabling steering delays final-result selection until the response's terminal event. `run_stream()` exposes the final unsteered successor, not the original response as an early final answer. Event handlers still observe intermediate response events. Existing behavior is unchanged when `openai_steering` is disabled.
+
 ## Custom OpenAI Client
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).

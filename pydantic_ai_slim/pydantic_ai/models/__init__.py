@@ -1183,6 +1183,8 @@ class StreamedResponse(ABC):
     """Lifecycle state of the response."""
     metadata: dict[str, Any] | None = field(default=None, init=False)
 
+    _final_result_ready: Callable[[], bool] | None = field(default=None, init=False, repr=False)
+    """An opt-in interaction can delay final output until the response's terminal boundary."""
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
@@ -1212,14 +1214,19 @@ class StreamedResponse(ABC):
             async def iterator_with_final_event(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
             ) -> AsyncIterator[ModelResponseStreamEvent]:
+                candidate: FinalResultEvent | None = None
                 async for event in iterator:
                     yield event
-                    if (
-                        final_result_event := _get_final_result_event(event, self.model_request_parameters)
-                    ) is not None:
-                        self.final_result_event = final_result_event
-                        yield final_result_event
+                    if candidate is None:
+                        candidate = _get_final_result_event(event, self.model_request_parameters)
+                    if candidate is not None and self._final_result_ready is None:
+                        self.final_result_event = candidate
+                        yield candidate
                         break
+                else:
+                    if candidate is not None and self._final_result_ready is not None and self._final_result_ready():
+                        self.final_result_event = candidate
+                        yield candidate
 
                 # If we broke out of the above loop, we need to yield the rest of the events
                 # If we didn't, this will just be a no-op

@@ -22,9 +22,10 @@ from ._cancel import RunCancellation
 from ._enqueue import PendingMessage, PendingMessageQueue
 from ._operations import ToolOperation
 from ._run_context import get_current_run_context
-from ._steering import SteeringDelivery
+from ._steering import SteeringController, SteeringDelivery, require_settled
 from .conversation import Conversation
 from .exceptions import UserError
+from .messages import UserContent
 from .models import Model
 from .models.wrapper import WrapperModel
 from .usage import RequestUsage, RunUsage
@@ -44,6 +45,7 @@ class ActiveRun:
     run_id: str
     pending_messages: PendingMessageQueue
     snapshot: Callable[[], Conversation]
+    steering: SteeringController | None = None
 
 
 @dataclasses.dataclass
@@ -160,6 +162,7 @@ class SessionRuntime:
                 raise UserError('The agent session has closed.')
             if self._claimed:
                 raise UserError('An agent session can execute only one run at a time.')
+            require_settled(list(self.steering.values()))
             if self.realtime is not None and not realtime:
                 raise UserError('Close the realtime connection before starting an ordinary run on this session.')
             self._claimed = True
@@ -201,6 +204,16 @@ class SessionRuntime:
     def require_attached(self) -> None:
         if self._active is None:
             raise UserError('The agent wrapper did not delegate to its wrapped agent with the session conversation.')
+
+    async def steer(self, content: list[UserContent]) -> str:
+        with self._lock:
+            active = self._active
+        if active is None or active.steering is None:
+            raise UserError('Native steering requires an active ordinary run.')
+        ctx = get_current_run_context()
+        if ctx is not None and ctx.run_id == active.run_id:
+            return await ctx.steer(*content)
+        return await active.steering.steer(content)
 
     def enqueue(self, pending: PendingMessage) -> None:
         with self._lock:

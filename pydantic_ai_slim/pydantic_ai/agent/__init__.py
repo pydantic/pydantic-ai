@@ -68,6 +68,7 @@ from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import dispatch_event_stream, set_current_run_context
 from .._session import ActiveRun, ModelResources, SessionRuntime, take_session
+from .._steering import SteeringController
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -1694,6 +1695,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 persistent=False,
             )
             session.claim()
+        steering = SteeringController(session.steering, state.run_id, lambda: state.message_history)
         state.tool_operations = session.operations
         state.deferred_tool_requests = deepcopy(session.conversation.deferred_tool_requests)
         assert isinstance(state.pending_messages, _enqueue.PendingMessageQueue)
@@ -1701,6 +1703,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ActiveRun(
                 run_id=state.run_id,
                 pending_messages=state.pending_messages,
+                steering=steering,
                 snapshot=lambda: Conversation(
                     messages=state.message_history,
                     usage=state.usage,
@@ -2033,6 +2036,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             lambda leaf: resource_policies.append(leaf._model_resources_in_durable_units)  # pyright: ignore[reportPrivateUsage]
         )
         model_resources_in_durable_units = any(resource_policies)
+        steering.blocked = model_resources_in_durable_units or model_used._model_resources_in_durable_units  # pyright: ignore[reportPrivateUsage]
 
         async def enter_model(selected_model: models.Model) -> models.Model:
             if model_resources_in_durable_units:
@@ -2077,6 +2081,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
+            steering=steering,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -4540,6 +4545,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # Nothing drains the queue once the graph stops, so reject later enqueues instead of
             # stranding them. A normal finish already closed it inside `drain_at_end`.
             stack.callback(pending_message_queue.close)
+            if graph_deps.steering is not None:
+                stack.push_async_callback(graph_deps.steering.close)
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 

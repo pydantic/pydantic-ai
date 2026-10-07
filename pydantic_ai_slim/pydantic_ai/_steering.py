@@ -7,12 +7,23 @@ never send, generate IDs, or replay input; the owning driver executes the return
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager
+from copy import deepcopy
 from dataclasses import dataclass, replace
-from typing import Literal, assert_never
+from typing import TYPE_CHECKING, Literal, assert_never
+from uuid import uuid4
+
+import anyio
 
 from ._messages_serialization import MessageHistory
 from .exceptions import UserError
-from .messages import ModelRequest, UserPromptPart
+from .messages import ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
+from .models.wrapper import WrapperModel
+from .usage import RequestUsage, RunUsage, UsageLimits
+
+if TYPE_CHECKING:
+    from .models import Model, ModelRequestContext, StreamedResponse
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -137,6 +148,150 @@ def transition(  # noqa: C901
             return replace(delivery, status='replayed'), ('enqueue',)
         return replace(delivery, status='discarded'), ()
     assert_never(event)
+
+
+class SteeringController:
+    """A run-owned native input port; the session owns its portable delivery records.
+
+    No reader task is created here. Sending returns without waiting for acknowledgement, so an
+    event consumer can submit input without deadlocking itself. The existing model stream reads
+    acknowledgements and each successor. Run teardown fences the port and abandons queued input.
+    """
+
+    def __init__(
+        self,
+        deliveries: dict[str, SteeringDelivery],
+        run_id: str,
+        history: Callable[[], list[ModelMessage]],
+    ) -> None:
+        self.deliveries = deliveries
+        self.run_id = run_id
+        self.history = history
+        self.delivery_id: str | None = None
+        self.parent_response_id: str | None = None
+        self.prepare_send: Callable[[UserPromptPart], Awaitable[Callable[[str], Awaitable[None]]]] | None = None
+        self._writers: dict[anyio.CancelScope, anyio.Event] = {}
+        self.disconnect: Callable[[], Awaitable[None]] | None = None
+        self.receive: Callable[[], AbstractAsyncContextManager[StreamedResponse]] | None = None
+        self.inherited_request: ModelRequestContext | None = None
+        self.bound_model: Model | None = None
+        self.current_usage: Callable[[], RequestUsage] = RequestUsage
+        self.usage = RunUsage()
+        self.limits = UsageLimits()
+        self.closed = False
+        self.blocked = False
+
+    @property
+    def pending(self) -> bool:
+        return self.delivery_id is not None and self.deliveries[self.delivery_id].status in (
+            'sending',
+            'sent',
+            'accepted',
+            'uncertain',
+        )
+
+    def check_model(self, model: Model) -> None:
+        if not self.pending:
+            return
+        while isinstance(model, WrapperModel):
+            model = model.wrapped
+        if model is not self.bound_model:
+            raise UserError('A native steering continuation must use its original bound model.')
+
+    def observe(self, event: SteeringEvent, *, delivery_id: str | None = None) -> None:
+        delivery_id = delivery_id or self.delivery_id
+        if delivery_id is None:
+            raise UserError('Received a steering observation without an active submission.')
+        delivery, actions = transition(self.deliveries[delivery_id], event)
+        if 'record_input' in actions:
+            history = self.history()
+            # At an explicit tool continuation the output request is already in history. Native
+            # input is prepended by the provider, so insert it immediately after the parent.
+            index = next(
+                (
+                    i + 1
+                    for i in range(len(history) - 1, -1, -1)
+                    if isinstance(message := history[i], ModelResponse)
+                    and message.provider_response_id == delivery.parent_response_id
+                ),
+                None,
+            )
+            if index is None:
+                raise UserError('Cannot commit native steering without its parent response in history.')
+            history[index:index] = deepcopy(delivery.messages)
+        # Publish settlement only after its history effect succeeds.
+        self.deliveries[delivery_id] = delivery
+
+    async def steer(self, content: Sequence[UserContent]) -> str:
+        finished = anyio.Event()
+        with anyio.CancelScope() as scope:
+            self._writers[scope] = finished
+            try:
+                return await self._steer(content)
+            finally:
+                self._writers.pop(scope)
+                finished.set()
+        raise UserError('The native steering owner closed before submission completed.')
+
+    async def _steer(self, content: Sequence[UserContent]) -> str:
+        if self.blocked:
+            raise UserError('Native steering is not supported inside durable execution.')
+        if self.closed or self.prepare_send is None or self.parent_response_id is None:
+            raise UserError('Native steering requires an active, steering-enabled model response.')
+        if self.pending:
+            raise UserError('Wait for the current steering submission to commit before submitting another.')
+        if not content:
+            raise UserError('Native steering requires nonempty user content.')
+        if self.limits.count_tokens_before_request:
+            raise UserError('Native steering cannot preflight successor input with `count_tokens_before_request=True`.')
+        parent = self.parent_response_id
+        part = UserPromptPart(deepcopy(list(content)))
+        # Mapping may download media. Failures here have not attempted a provider write and
+        # must not create an uncertain delivery. Recheck admission after the suspension.
+        send = await self.prepare_send(part)
+        if self.closed or self.parent_response_id != parent or self.pending:
+            raise UserError('The native steering response changed while preparing input; submit it again explicitly.')
+        usage = deepcopy(self.usage)
+        usage.incr(self.current_usage())
+        usage.requests += 1  # Reserve the parent, which has not yet been committed by the graph.
+        self.limits.check_before_request(usage)
+        self.limits.check_tokens(usage)
+        self.limits.check_cost(usage, warn_if_cost_unavailable=False)
+        delivery = SteeringDelivery(
+            delivery_id=str(uuid4()),
+            run_id=self.run_id,
+            parent_response_id=self.parent_response_id,
+            messages=[ModelRequest(parts=[part], run_id=self.run_id)],
+        )
+        self.delivery_id = delivery.delivery_id
+        self.deliveries[delivery.delivery_id] = delivery
+        self.observe(SendSteering())
+        try:
+            await send(delivery.parent_response_id)
+        except BaseException:
+            self.observe(LoseSteering(), delivery_id=delivery.delivery_id)
+            if self.disconnect is not None:
+                with anyio.CancelScope(shield=True):
+                    await self.disconnect()
+            raise
+        self.observe(SteeringSent(), delivery_id=delivery.delivery_id)
+        return delivery.delivery_id
+
+    async def close(self) -> None:
+        self.closed = True
+        self.prepare_send = None
+        # External callers may still be mapping input or writing. Cancel and drain them before
+        # releasing the run's ownership; no old writer may reach a later run's connection.
+        with anyio.CancelScope(shield=True):
+            writers = list(self._writers.items())
+            for scope, _ in writers:
+                scope.cancel()
+            for _, finished in writers:
+                await finished.wait()
+            if self.pending:
+                self.observe(LoseSteering())
+                if self.disconnect is not None:
+                    await self.disconnect()
 
 
 def require_settled(deliveries: list[SteeringDelivery]) -> None:

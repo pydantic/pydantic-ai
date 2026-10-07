@@ -144,3 +144,11 @@ A `priority` controls delivery:
 - `'when_idle'`: delivered only when the agent would otherwise terminate, after any `'asap'` messages — a follow-up task that shouldn't interrupt in-flight work.
 
 Both priorities drain however you drive the run — `agent.run()`, explicit `AgentRun.next()`, and a bare `async for node in agent_run:` loop all deliver enqueued messages. See [message history docs](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run) for details.
+
+## Session-Owned Native Steering
+
+For Responses WebSocket requests, explicitly set `OpenAIResponsesModel(..., transport='websocket')` and `OpenAIResponsesModelSettings(openai_steering=True)`. Use `await ctx.steer(*user_content)`, `await run.steer(*user_content)`, or `await session.steer(*user_content)` during an active response. Keep using `enqueue` for provider-independent delivery at the next request boundary. Native steering is not available in durable execution units or with token-count preflight.
+
+A steering delivery ID is a send receipt, not proof of consumption. Read `session.state.steering`: acceptance queues input; commitment identifies the successor consuming it. The original response, steering user input, and successor remain separate in history. Do not resend accepted input with tool outputs. Only one unresolved delivery is admitted at a time.
+
+After loss or interruption, explicitly reconcile the checkpoint with `state.recover(steering={delivery_id: 'replay'})` or `'discard'`; never automatically replay uncertain input. Native successors inherit the original request's tools/settings, bypass request-selection and request-wrapper hooks, and permit observation but not response replacement/retry. Explicit tool-result continuations still run middleware but must retain the bound model and cannot be short-circuited by a cache. With steering enabled, `run_stream()` selects final output only at a response terminal event; use event handlers for intermediate events.

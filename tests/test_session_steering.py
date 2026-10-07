@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import replace
 from typing import Literal
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, SessionStateTypeAdapter, UserError
@@ -16,6 +18,7 @@ from pydantic_ai._steering import (
     ReconcileSteering,
     RejectSteering,
     SendSteering,
+    SteeringController,
     SteeringEvent,
     SteeringSent,
     transition,
@@ -187,3 +190,50 @@ def test_rejected_native_delivery_keeps_user_input():
 def test_native_delivery_rejects_non_user_input(messages: list[ModelRequest | ModelResponse]):
     with pytest.raises(UserError, match='nonempty user messages'):
         replace(delivery(), messages=messages)
+
+
+def test_native_commit_does_not_settle_without_history_effect():
+    """A broken parent reference cannot publish a committed checkpoint."""
+    accepted = replace(delivery(), status='accepted', provider_id='provider-steer')
+    controller = SteeringController({accepted.delivery_id: accepted}, 'run-1', lambda: [])
+    controller.delivery_id = accepted.delivery_id
+    with pytest.raises(UserError, match='parent response'):
+        controller.observe(CommitSteering('response-B'))
+    assert controller.deliveries[accepted.delivery_id] == accepted
+
+
+async def test_native_close_drains_external_sender():
+    """Teardown must finish the submission before its socket can serve another run."""
+    entered = anyio.Event()
+    finished = anyio.Event()
+    wrote: list[str] = []
+    controller = SteeringController({}, 'run-1', lambda: [])
+    controller.parent_response_id = 'response-A'
+
+    async def send(parent: str) -> None:
+        entered.set()
+        try:
+            await anyio.sleep_forever()
+            wrote.append(parent)
+        finally:
+            finished.set()
+
+    async def prepare_send(part: UserPromptPart) -> Callable[[str], Awaitable[None]]:
+        return send
+
+    controller.prepare_send = prepare_send
+
+    async def submit() -> None:
+        try:
+            await controller.steer(['new input'])
+        except UserError:
+            pass
+
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(submit)
+            await entered.wait()
+            await controller.close()
+            assert finished.is_set()
+    assert not wrote
+    assert next(iter(controller.deliveries.values())).status == 'uncertain'

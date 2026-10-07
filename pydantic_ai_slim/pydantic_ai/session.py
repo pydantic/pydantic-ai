@@ -397,6 +397,14 @@ class AgentSession(WrapperAgent[AgentDepsT, OutputDataT]):
             steering=deepcopy(list(self._runtime.steering.values())),
         )
 
+    async def steer(self, *content: messages.UserContent) -> str:
+        """Send native input to the active response; see [`RunContext.steer`][pydantic_ai.tools.RunContext.steer].
+
+        The returned ID identifies a send, not a committed message. Inspect `state.steering`
+        for its delivery facts. An idle session rejects steering; use `enqueue` for its inbox.
+        """
+        return await self._runtime.steer(list(content))
+
     def enqueue(self, *content: EnqueueContent, priority: PendingMessagePriority = 'asap') -> str | None:
         """Submit input to the active run or retain it for the next run while idle.
 

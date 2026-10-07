@@ -30,6 +30,7 @@ _DurableOperationDispatch = Callable[
 
 if TYPE_CHECKING:
     from ._cancel import RunCancellation
+    from ._steering import SteeringController
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
     from .durable_exec._base import BaseDurabilityCapability
@@ -275,6 +276,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
     to add messages rather than mutating it directly.
     """
+
+    _steering: SteeringController | None = field(default=None, repr=False)
+    """Run-owned native input port; never serialized across durable units."""
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -827,6 +831,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # consumer to drain the buffered event and dispatch it a second time.
         await dispatch_event_immediate(self, event)
         return event
+
+    async def steer(self, *content: _messages.UserContent) -> str:
+        """Submit native mid-response user input and return its local delivery ID.
+
+        Supported by streaming OpenAI Responses WebSocket requests with `openai_steering=True`.
+        This is a send receipt, not acceptance or consumption. Session checkpoints retain the
+        input until a successor consumes it. Unlike `enqueue`, this never falls back to boundary
+        delivery. Call from the run's event loop, not a synchronous callback or durable unit.
+        """
+        controller: SteeringController | None = self.__dict__.get('_steering')
+        if controller is None or self.in_durable_context:
+            raise UserError('Native steering is unavailable in this run context or durable execution unit.')
+        return await controller.steer(content)
 
     def enqueue(
         self,
