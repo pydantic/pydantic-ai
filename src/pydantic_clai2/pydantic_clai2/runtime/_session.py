@@ -344,8 +344,8 @@ class Session(Generic[DepsT, OutputT]):
         self.instructions = ''
         """The user's own instructions, sent after the agent's and its plugins' on each request; empty sends none.
 
-        A stock agent binds them with its plugins, so delegated tasks get them too; a supplied agent gets them
-        per run. Either way they are read on each request, so changing them does not rebuild the agent."""
+        A stock agent rebuilt for its plugins binds them too, so delegated tasks get them; otherwise each run
+        gets them. Either way they are read on each request, so changing them does not rebuild the agent."""
         self.resolve_model: ModelNameResolver = lambda name: name
         self.agent = agent
         self._base_agent = agent
@@ -591,8 +591,8 @@ class Session(Generic[DepsT, OutputT]):
                             model=run_model,
                             model_settings=self._run_settings(),
                             # Run-level, not a capability: composing one more would split a plugin group that
-                            # supplies the workspace into its members. A stock agent has them bound already.
-                            instructions=None if isinstance(self._base_agent, StockAgent) else self._user_instructions,
+                            # supplies the workspace into its members. A rebuilt stock agent has them bound already.
+                            instructions=self._user_instructions if self.agent is self._base_agent else None,
                             retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
                             message_history=previous,
                             conversation_id=self.summary.id,

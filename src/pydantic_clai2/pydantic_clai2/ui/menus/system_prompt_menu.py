@@ -16,7 +16,7 @@ from termflow.tui.menu import Menu
 from termflow.tui.pager import Pager
 from termflow.tui.terminal import terminal_size
 
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE_DETAILS,
@@ -31,6 +31,7 @@ from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.menus.text_editor import BUILT_IN_KEYS, edit_text, external_editor
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 _KEY = 'run.instructions'
 _LIST_WIDTH = 34
@@ -59,20 +60,27 @@ Viewer = Callable[[Pager], object]
 
 
 def sent_instructions(messages: Sequence[ModelMessage]) -> str | None:
-    """The instructions sent with the latest request in `messages` that carried any."""
-    return next(
-        (
-            message.instructions
-            for message in reversed(messages)
-            if isinstance(message, ModelRequest) and message.instructions
-        ),
-        None,
-    )
+    """What the model received with the latest request in `messages`, or `None` before any.
+
+    That is the conversation's system prompt parts, which an agent's `system_prompt` adds to its
+    first request and history repeats, then the latest request's instructions.
+    """
+    requests = [message for message in messages if isinstance(message, ModelRequest)]
+    parts = [part.content for request in requests for part in request.parts if isinstance(part, SystemPromptPart)]
+    latest = next((request.instructions for request in reversed(requests) if request.instructions), None)
+    return '\n\n'.join([*parts, *([latest] if latest else [])]) or None
 
 
 def _wrap(text: str, width: int) -> list[str]:
-    """`text` wrapped to `width`, keeping its line breaks and blank lines."""
-    return [wrapped for line in text.splitlines() for wrapped in textwrap.wrap(line, width) or ['']]
+    """`text` wrapped to `width`, keeping its line breaks and blank lines.
+
+    Control characters are made inert: the text can come from a repository's `AGENTS.md` or project file.
+    """
+    return [
+        wrapped
+        for line in text.splitlines()
+        for wrapped in textwrap.wrap(terminal_text(line, keep='\t'), width) or ['']
+    ]
 
 
 class SystemPromptMenu:

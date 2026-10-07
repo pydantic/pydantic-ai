@@ -16,12 +16,13 @@ from termflow.tui.pager import Pager
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_clai2._app import create_shell, create_stock_agent
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
+from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, save_and_close_item
 from pydantic_clai2.ui.menus.system_prompt_menu import (
     Action,
@@ -92,6 +93,7 @@ async def test_saved_instructions_follow_plugin_instructions_and_reach_the_next_
     first = await turn('first')
     assert first.startswith('Plugin guidance.\n\n')
     assert first.endswith('\n\nSaved before launch.')
+    assert first.count('Saved before launch.') == 1, 'bound into a stock agent or passed to the run, never both'
     agent = shell.session.agent
     assert shell.fork_session(None, []).instructions == 'Saved before launch.'
 
@@ -114,6 +116,14 @@ async def test_saved_instructions_follow_plugin_instructions_and_reach_the_next_
     assert await turn('third') == first.removesuffix('\n\nSaved before launch.')
     assert 'run.instructions' not in SettingsStore(tmp_path / 'config.db').overrides()
     assert await menu(MenuResult(cancelled=True)) == 'No changes.'
+
+
+async def test_a_stock_agent_without_plugins_sends_them_from_its_first_request() -> None:
+    seen: list[str | None] = []
+    session = Session(create_stock_agent(recording(seen)), deps=None)
+    session.instructions = 'Be brief.'
+    await session.prompt('hello')
+    assert seen[-1] is not None and seen[-1].endswith('\n\nBe brief.')
 
 
 async def test_arguments_are_refused(tmp_path: Path) -> None:
@@ -151,13 +161,16 @@ def test_menu_shows_yours_as_editable_and_the_full_prompt_as_read_only(
         ModelRequest(parts=[UserPromptPart('summary')]),
     ]
     assert menu.full_prompt() == 'Built-in guidance.\n\nYours.'
+    history.insert(0, ModelRequest(parts=[SystemPromptPart('Agent system prompt.'), UserPromptPart('first')]))
+    assert menu.full_prompt() == 'Agent system prompt.\n\nBuilt-in guidance.\n\nYours.'
+    assert SystemPromptMenu(context, history=lambda: history[:1]).full_prompt() == 'Agent system prompt.'
     view = menu.details(items[3])
     assert view.startswith('Full system prompt (read-only)\n')
     assert view.endswith('Built-in guidance.\n\nYours.')
     history.append(ModelRequest(parts=[], instructions='\n'.join(f'Rule {n}.' for n in range(100))))
     view = menu.details(items[3]).splitlines()
     assert len(view) < 30, 'the panel fits the screen'
-    assert view[-2:] == ['Rule 16.', '…'], 'Enter opens the rest'
+    assert view[-2:] == ['Rule 14.', '…'], 'Enter opens the rest'
 
     context.set_setting(['run.instructions', 'Single line'])
     assert menu.items()[0].description.endswith('1 line')
@@ -168,6 +181,11 @@ def test_menu_shows_yours_as_editable_and_the_full_prompt_as_read_only(
     wrapped = menu.details(items[0]).splitlines()
     assert wrapped[2] == 'First line'
     assert len([line for line in wrapped if line.startswith('word')]) > 1, 'long lines wrap to the panel'
+
+    context.set_setting(['run.instructions', 'From a repository: \x1b]52;c;ZXZpbA==\x07'])
+    shown = menu.details(items[0])
+    assert '\x1b' not in shown and '\x07' not in shown, 'control characters cannot reach the terminal'
+    assert 'From a repository: \\x1b]52;c;ZXZpbA==\\x07' in shown
 
     monkeypatch.delenv('EDITOR')
     context.project = ProjectSettings(overrides={'run.instructions': 'From the project.'})
