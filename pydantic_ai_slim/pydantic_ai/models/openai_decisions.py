@@ -2,15 +2,15 @@ from __future__ import annotations as _annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, NotRequired, TypeAlias, assert_never
 
 import httpx2
 from pydantic import Field, JsonValue, TypeAdapter
-from typing_extensions import NotRequired, TypedDict, assert_never
+from typing_extensions import TypedDict
 
 from .._http import to_httpx2_timeout
 from .._utils import is_str_dict
-from ..exceptions import UnexpectedModelBehavior, UserError
+from ..exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -91,7 +91,11 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    # `max_choice_options` and `max_score_levels` stay `None`: OpenAI publishes no limits for the Decisions API.
+    max_choice_options = 255
+    """The API takes at most this many options in one pick-one; a 256th is a 400."""
+
+    max_score_levels = 10
+    """The API takes at most this many levels in one rubric; an 11th is a 400."""
 
     _model_name: OpenAIDecisionsModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -150,7 +154,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         )
         options = _request_options(model_settings)
         with _map_api_errors(self._model_name, self._provider.model_id_namespace):
-            # TODO: call the SDK's Decisions resource once `openai` ships one.
+            # TODO: call `client.decisions.create`, added in `openai` 3.26.0, once the lock's 7-day cooldown allows it.
             response = await self.client.post('/decisions', cast_to=httpx2.Response, body=body, options=options)
 
         try:
@@ -158,11 +162,17 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             parsed = _response_adapter.validate_python(data)
         except ValueError as e:
             raise UnexpectedModelBehavior(f'Invalid response from the OpenAI Decisions API: {e}', response.text) from e
-        answers = {answer.name: answer.answer() for answer in parsed.answers}
-        if len(answers) != len(parsed.answers) or answers.keys() != request.questions.keys():
+        names = {answer.name for answer in parsed.answers}
+        if len(names) != len(parsed.answers) or names != request.questions.keys():
             raise UnexpectedModelBehavior(
                 'Invalid response from the OpenAI Decisions API: answer names do not match the questions', response.text
             )
+        if refused := [answer.name for answer in parsed.answers if isinstance(answer, _Refusal)]:
+            raise ContentFilterError(
+                f'Content filter triggered. The OpenAI Decisions API declined to answer: {", ".join(map(repr, refused))}',
+                response.text,
+            )
+        answers = {answer.name: answer.answer() for answer in parsed.answers if not isinstance(answer, _Refusal)}
         for name, answer in answers.items():
             if not _allows(request.questions[name], answer):
                 raise UnexpectedModelBehavior(
@@ -207,22 +217,24 @@ def _text(value: JsonValue) -> str:
 
 def _question(name: str, question: DecisionQuestion) -> _Question:
     """A protocol question as a Decisions API question, whose `predicate` is the protocol's yes/no."""
-    instructions = question.instructions
-    wire: _Question
     if isinstance(question, NoulQuestion):
-        wire = _PredicateQuestion(type='predicate', name=name)
-        instructions = _with_meanings(instructions, question.criteria or NoulCriteria())
+        instructions = _instructions(_with_meanings(question.instructions, question.criteria or NoulCriteria()))
+        return _PredicateQuestion(type='predicate', name=name, instructions=instructions)
     elif isinstance(question, ChoiceQuestion):
         choices = [_option(label, meaning) for label, meaning in question.criteria.items()]
-        wire = _ChoiceQuestion(type='choice', name=name, choices=choices)
+        return _ChoiceQuestion(
+            type='choice', name=name, instructions=_instructions(question.instructions), choices=choices
+        )
     elif isinstance(question, ScoreQuestion):
         levels = [_level(str(level), meaning) for level, meaning in enumerate(question.criteria)]
-        wire = _ScoreQuestion(type='score', name=name, levels=levels)
+        return _ScoreQuestion(type='score', name=name, instructions=_instructions(question.instructions), levels=levels)
     else:
         assert_never(question)
-    if instructions is not None:
-        wire['instructions'] = _text(instructions)
-    return wire
+
+
+def _instructions(instructions: JsonValue) -> str:
+    """A question's instructions as the text the API requires on every question: empty where there are none."""
+    return '' if instructions is None else _text(instructions)
 
 
 def _with_meanings(instructions: JsonValue, criteria: NoulCriteria) -> JsonValue:
@@ -280,21 +292,21 @@ class _Level(TypedDict):
 class _PredicateQuestion(TypedDict):
     type: Literal['predicate']
     name: str
-    instructions: NotRequired[str]
+    instructions: str
 
 
 class _ChoiceQuestion(TypedDict):
     type: Literal['choice']
     name: str
     choices: list[_Option]
-    instructions: NotRequired[str]
+    instructions: str
 
 
 class _ScoreQuestion(TypedDict):
     type: Literal['score']
     name: str
     levels: list[_Level]
-    instructions: NotRequired[str]
+    instructions: str
 
 
 _Question: TypeAlias = _PredicateQuestion | _ChoiceQuestion | _ScoreQuestion
@@ -360,11 +372,17 @@ class _ScoreAnswer:
 
 
 @dataclass(kw_only=True)
+class _Refusal:
+    type: Literal['refusal']
+    name: str
+
+
+@dataclass(kw_only=True)
 class _DecisionsResponse:
     """The body the API answers `/v1/decisions` with, apart from the usage, which is read as the Responses API's."""
 
     model: str
-    answers: list[Annotated[_PredicateAnswer | _ChoiceAnswer | _ScoreAnswer, Field(discriminator='type')]]
+    answers: list[Annotated[_PredicateAnswer | _ChoiceAnswer | _ScoreAnswer | _Refusal, Field(discriminator='type')]]
 
 
 _response_adapter = TypeAdapter(_DecisionsResponse)

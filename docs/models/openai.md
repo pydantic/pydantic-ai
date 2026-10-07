@@ -566,11 +566,17 @@ agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 ...
 ```
 
-All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI has not published separate pricing for it, so its cost is estimated at the model's token prices. Like every decision model, it [reads no files](decision.md#what-decision-models-cannot-do).
+All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only the input tokens. Like every decision model, it [reads no files](decision.md#what-decision-models-cannot-do).
 
 `timeout`, `extra_headers` and `extra_body` are forwarded to the request, and the other generic settings, such as `temperature`, are ignored. [`OpenAIDecisionsModelSettings`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModelSettings] adds the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
 
-OpenAI publishes no limits on how many options a pick-one or how many levels a rubric can have, so none are checked before a request is sent. A request over a limit gets an error response from the API, which is raised as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over. Where you know a limit, set it in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile] with `profile=`, as on the [System One page](system-one.md#limits).
+A request has three limits, and `OpenAIDecisionsModel` checks the first two before sending it:
+
+- **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type. A question over the limit raises a [`UserError`][pydantic_ai.exceptions.UserError].
+- **10 levels in one rubric.** A field of eleven or more whole numbers from 0 becomes a [pick-one](decision.md#what-each-field-type-does) instead.
+- **200 questions in one request.** The API rejects a request over the limit with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over.
+
+The model can decline a question, such as one asking it to infer a customer's disability or religion. A declined question fails the whole request with a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. That holds even when the model answered the other questions, or when the question belongs to a route the model did not pick.
 
 !!! note "Measure on your own data"
     A threshold tuned on another decision model does not carry over to this one. Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
