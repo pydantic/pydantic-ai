@@ -27,6 +27,10 @@ from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior,
 from . import _suggest_known_model_id_from_provider_error  # pyright: ignore[reportPrivateUsage]
 
 
+class WebSocketTransportError(ModelAPIError):
+    """A transport failure while reading a Responses WebSocket."""
+
+
 @dataclass
 class ResponsesWebSocket:
     """A socket owned by one model connection context, shared by sequential requests."""
@@ -127,7 +131,7 @@ class ResponsesWebSocketStream:
             with anyio.fail_after(self.timeout.read):
                 event = await self.websocket.connection.recv()
         except (OSError, WebSocketException, TimeoutError) as exc:
-            raise ModelAPIError(
+            raise WebSocketTransportError(
                 model_name=self.websocket.model_name,
                 message=f'WebSocket response interrupted before completion: {exc}',
             ) from exc

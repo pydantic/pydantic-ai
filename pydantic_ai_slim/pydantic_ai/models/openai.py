@@ -927,8 +927,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    openai_responses_service_tier: Literal['auto', 'default', 'flex', 'priority', 'ultrafast']
+    openai_responses_service_tier: Literal['auto', 'default', 'flex', 'priority', 'ultrafast'] | None
     """The service tier for this Responses request, overriding `openai_service_tier` and `service_tier`.
+
+    Set to `None` to use `openai_service_tier` or `service_tier` instead.
+    If neither is set, the tier is omitted from the request.
 
     `ultrafast` is available on supported models over HTTP and WebSocket. It carries a price premium;
     see [OpenAI's Ultrafast guide](https://developers.openai.com/api/docs/guides/ultrafast-mode/).
@@ -3226,9 +3229,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             max_output_tokens=model_settings.get('max_tokens', OMIT),
             temperature=model_settings.get('temperature', OMIT),
             top_p=model_settings.get('top_p', OMIT),
-            service_tier=model_settings.get(
-                'openai_responses_service_tier', _resolve_openai_service_tier(model_settings)
-            ),
+            service_tier=model_settings.get('openai_responses_service_tier')
+            or _resolve_openai_service_tier(model_settings),
             conversation=request_params.conversation,
             top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
             store=store,
@@ -4814,7 +4816,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         if isinstance(self._response.source, AsyncStream):
             return super().get_stream_cancel_errors()
-        return (ModelAPIError,)
+        from ._openai_responses_websocket import WebSocketTransportError
+
+        return (WebSocketTransportError,)
 
     async def close_stream(self) -> None:
         await self._response.source.close()

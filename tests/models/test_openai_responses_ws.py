@@ -4,8 +4,10 @@ import asyncio
 import sys
 from collections import deque
 from collections.abc import Iterator, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 from unittest.mock import Mock
 
 import anyio
@@ -238,6 +240,7 @@ class ScriptedSocket:
     sending: anyio.Event = field(default_factory=anyio.Event)
     send_gate: anyio.Event | None = None
     close_count: int = 0
+    close_events: tuple[Frame, ...] = ()
     send_error: Exception | None = None
 
     async def send(self, data: str | bytes) -> None:
@@ -270,7 +273,7 @@ class ScriptedSocket:
 
     async def close(self, *, code: int = 1000, reason: str = '') -> None:
         self.close_count += 1
-        self.available.set()
+        self.push(*self.close_events)
 
 
 @dataclass
@@ -579,10 +582,19 @@ async def test_interruption(allow_model_requests: None, sockets: SocketHarness, 
     assert asyncio.all_tasks() == before
 
 
-async def test_stream_cancel_during_receive(allow_model_requests: None, sockets: SocketHarness):
-    """Cancelling a blocked consumer closes the socket without leaking its transport error."""
+@pytest.mark.parametrize('failure', ['disconnect', 'envelope', 'status'])
+async def test_stream_cancel_during_receive(allow_model_requests: None, sockets: SocketHarness, failure: str):
+    """Cancellation suppresses teardown errors while preserving genuine server failures."""
     socket = sockets.pending[0]
     socket.responses = deque([text_events()[:-1]])
+    if failure != 'disconnect':
+        error: Frame = {
+            'type': 'error',
+            'error': {'type': 'invalid_request_error', 'code': 'invalid_test', 'message': 'test failure'},
+        }
+        if failure == 'status':
+            error['status'] = 400
+        socket.close_events = (error,)
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     async with source.connect() as connected:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
@@ -591,8 +603,14 @@ async def test_stream_cancel_during_receive(allow_model_requests: None, sockets:
             ) as response:
 
                 async def consume() -> None:
-                    async for _ in response:
-                        pass
+                    expected_error = ModelHTTPError if failure == 'status' else ModelAPIError
+                    with (
+                        pytest.raises(expected_error, match='test failure')
+                        if failure != 'disconnect'
+                        else nullcontext()
+                    ):
+                        async for _ in response:
+                            pass
 
                 async with anyio.create_task_group() as tasks:
                     tasks.start_soon(consume)
@@ -885,9 +903,12 @@ async def test_client_default_headers(
         assert len(sockets.opened[0].sent) == 1
 
 
-async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):
+@pytest.mark.parametrize('responses_tier', ['ultrafast', None], ids=['ultrafast', 'reset'])
+async def test_request_settings(
+    allow_model_requests: None, sockets: SocketHarness, responses_tier: Literal['ultrafast'] | None
+):
     settings: OpenAIResponsesModelSettings = {
-        'openai_responses_service_tier': 'ultrafast',
+        'openai_responses_service_tier': responses_tier,
         'openai_service_tier': 'priority',
         'service_tier': 'flex',
         'openai_store': False,
@@ -905,7 +926,7 @@ async def test_request_settings(allow_model_requests: None, sockets: SocketHarne
     assert sockets.urls == ['wss://api.openai.com/v1/responses']
     assert source.settings == settings
     sent = sockets.opened[0].sent[0]
-    assert sent['service_tier'] == 'ultrafast'
+    assert sent['service_tier'] == (responses_tier or 'priority')
     assert sent['store'] is False
     assert sent['temperature'] == 0.3
     assert sent['metadata'] == {'test': 'websocket'}
