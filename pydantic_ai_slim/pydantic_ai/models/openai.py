@@ -3221,7 +3221,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 key.lower(): value for key, value in model_settings.get('extra_headers', {}).items()
             }
             request_headers.setdefault('user-agent', get_user_agent())
-            if request_headers != self._websocket.headers:
+            if self._websocket.effective_headers(self.client, request_headers) != self._websocket.headers:
                 raise UserError('Set `extra_headers` when opening `model.connect()`, before making requests.')
             body: dict[str, object] = dict(create_params)
             if (extra_body := model_settings.get('extra_body')) is not None:

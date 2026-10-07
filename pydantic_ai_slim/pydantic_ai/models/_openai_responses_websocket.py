@@ -7,7 +7,7 @@ from typing import Self
 
 import anyio
 from httpx2 import Timeout
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, Omit
 from openai.resources.responses.responses import AsyncResponsesConnection
 from openai.types.responses import (
     ResponseCompletedEvent,
@@ -60,7 +60,16 @@ class ResponsesWebSocket:
         except (OSError, WebSocketException, TimeoutError) as exc:
             raise ModelAPIError(model_name=model_name, message=f'WebSocket connection failed: {exc}') from exc
 
-        return cls(connection, model_name, dict(headers))
+        return cls(connection, model_name, cls.effective_headers(client, headers))
+
+    @staticmethod
+    def effective_headers(client: AsyncOpenAI, extra_headers: Mapping[str, str]) -> dict[str, str]:
+        headers: dict[str, str | Omit] = {
+            key.lower(): value
+            for header_set in (client.auth_headers, client.default_headers, extra_headers)
+            for key, value in header_set.items()
+        }
+        return {key: value for key, value in headers.items() if isinstance(value, str)}
 
     async def request(self, body: Mapping[str, object], timeout: Timeout) -> ResponsesWebSocketStream:
         if self.closed:

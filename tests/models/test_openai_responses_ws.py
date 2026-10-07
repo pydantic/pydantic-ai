@@ -30,6 +30,7 @@ from ..realtime.ws_cassettes import (
 )
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.asyncio.client import connect as websocket_connect
     from websockets.datastructures import Headers
@@ -540,6 +541,27 @@ async def test_request_header_overrides(
             with pytest.raises(UserError, match='Set `extra_headers` when opening'):
                 await agent.run('hello')
             assert sockets.opened[0].sent == []
+
+
+@pytest.mark.parametrize(
+    'request_headers',
+    [
+        pytest.param({}, id='inherited'),
+        pytest.param({'X-Tenant': 'tenant-test'}, id='explicit'),
+        pytest.param({'x-tenant': 'tenant-test'}, id='case-insensitive'),
+        pytest.param({'Authorization': 'Bearer test'}, id='authorization'),
+    ],
+)
+async def test_client_default_headers(
+    allow_model_requests: None, sockets: SocketHarness, request_headers: dict[str, str]
+):
+    client = AsyncOpenAI(api_key='test', default_headers={'X-Tenant': 'tenant-test'})
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+    request_settings: OpenAIResponsesModelSettings = {'extra_headers': request_headers}
+    async with source.connect() as connected:
+        assert sockets.headers[0]['x-tenant'] == 'tenant-test'
+        assert (await Agent(connected, model_settings=request_settings).run('hello')).output == 'ready'
+        assert len(sockets.opened[0].sent) == 1
 
 
 async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):
