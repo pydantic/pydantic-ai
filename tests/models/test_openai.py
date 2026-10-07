@@ -1853,6 +1853,16 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/soap+xml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
+    # Parameterized media types must still classify as text-like (issue #9946).
+    assert _is_text_like_media_type('application/json;charset=utf-8') is True
+    assert _is_text_like_media_type('application/xml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/yaml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/toml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/ld+json; charset=utf-8') is True
+    assert _is_text_like_media_type('text/plain; charset=UTF-8') is True
+    # Parameters do not turn a binary type into a text-like one.
+    assert _is_text_like_media_type('application/pdf;charset=utf-8') is False
+    assert _is_text_like_media_type('image/png;charset=utf-8') is False
 
 
 async def test_toml_document_as_binary_content_input(allow_model_requests: None):
