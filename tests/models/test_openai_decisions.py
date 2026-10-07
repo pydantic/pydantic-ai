@@ -780,7 +780,7 @@ async def test_rounded_score_can_match_rounded_probabilities(allow_model_request
 
     Not recorded: a fixed transport response pins the rounding boundary.
     """
-    answer = {
+    answer: dict[str, object] = {
         **FRUSTRATION,
         'score': 1.0,
         'probabilities': [
