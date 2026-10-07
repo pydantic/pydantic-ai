@@ -14,8 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
+from pydantic_clai2.models.profiles import provider_of
 
 
 class ModelSettingsForm(BaseModel):
@@ -247,14 +249,15 @@ class ModelSettingsForm(BaseModel):
 
 
 def model_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI caching defaults for Anthropic and reasoning defaults for GPT families."""
-    provider = model.partition(':')[0]
+    """CLAI caching and thinking defaults for Anthropic and reasoning defaults for GPT families."""
+    provider = provider_of(model)
     if provider in ('anthropic', 'gateway/anthropic', 'claude-code'):
         ttl = '1h' if provider == 'claude-code' else '5m'
         return {
             'anthropic_cache': ttl,
             'anthropic_cache_instructions': ttl,
             'anthropic_cache_tool_definitions': ttl,
+            **_anthropic_thinking_defaults(name=model.partition(':')[2].rsplit('/', 1)[-1]),
         }
     name = model.partition(':')[2] if ':' in model else model
     name = name.rsplit('/', 1)[-1]
@@ -279,6 +282,23 @@ def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> Mod
     """
     defaults = {key: value for key, value in model_defaults(model=model).items() if key not in saved}
     return ModelSettingsForm.model_validate(defaults).to_model_settings()
+
+
+def _anthropic_thinking_defaults(*, name: str) -> dict[str, JsonValue]:
+    """Adaptive thinking at high effort, dropping a replayed block whose conversation prefix changed.
+
+    Each default needs the model to support it, per its profile: `drop_block` only matters for models that
+    bind thinking blocks to the conversation prefix, which compaction and changed instructions break.
+    """
+    claude = anthropic_model_profile(name) or {}
+    defaults: dict[str, JsonValue] = {}
+    if claude.get('anthropic_supports_adaptive_thinking', False):
+        defaults['anthropic_thinking_mode'] = 'adaptive'
+    if claude.get('anthropic_supports_effort', False):
+        defaults['anthropic_effort'] = 'high'
+    if claude.get('anthropic_binds_thinking_blocks', False):
+        defaults['anthropic_preserved_thinking'] = 'drop_block'
+    return defaults
 
 
 def model_settings_from_json(values: dict[str, JsonValue], *, model: str = '') -> ModelSettingsForm:

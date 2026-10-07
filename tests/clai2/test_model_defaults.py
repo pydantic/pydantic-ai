@@ -52,7 +52,8 @@ def test_anthropic_cache_defaults(tmp_path: Path, provider: str, ttl: str) -> No
         'anthropic_cache_instructions': ttl,
         'anthropic_cache_tool_definitions': ttl,
     }
-    assert context.model_settings(model) == expected
+    thinking = {'anthropic_effort': 'high', 'anthropic_thinking': {'type': 'adaptive'}}
+    assert context.model_settings(model) == {**expected, **thinking}
     assert context.store.model_settings(model) == {}
     source = ModelSettingsSource(context.store, model)
     menu = FieldMenu(source, searchable=False)
@@ -61,7 +62,7 @@ def test_anthropic_cache_defaults(tmp_path: Path, provider: str, ttl: str) -> No
         assert row is not None
         assert source.current(row) == ttl
     context.store.save_model_settings(model, {key: False for key in expected})
-    assert context.model_settings(model) == {key: False for key in expected}
+    assert context.model_settings(model) == {**{key: False for key in expected}, **thinking}
 
 
 @pytest.mark.parametrize('provider', ['anthropic', 'claude-code'])
@@ -226,3 +227,44 @@ def test_chat_compatible_reasoning_defaults_can_be_overridden(tmp_path: Path, pr
 @pytest.mark.parametrize('model', ['custom:gpt-6', 'custom:o3'])
 def test_unknown_provider_does_not_claim_chat_protocol_support(model: str) -> None:
     assert set(model_options(model=model)) == {'max_tokens', 'thinking', 'custom_params'}
+
+
+DROP_BLOCK = {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+
+
+@pytest.mark.parametrize(
+    ('model', 'thinking'),
+    [
+        ('anthropic:claude-opus-5-5', {'anthropic_effort': 'high', 'anthropic_thinking': DROP_BLOCK}),
+        ('gateway/anthropic:claude-sonnet-5-5', {'anthropic_effort': 'high', 'anthropic_thinking': DROP_BLOCK}),
+        ('anthropic:claude-fable-5-1', {'anthropic_effort': 'high', 'anthropic_thinking': DROP_BLOCK}),
+        ('anthropic@work:claude-opus-5-5', {'anthropic_effort': 'high', 'anthropic_thinking': DROP_BLOCK}),
+        ('anthropic:claude-opus-5', {'anthropic_effort': 'high', 'anthropic_thinking': {'type': 'adaptive'}}),
+        ('anthropic:claude-haiku-4-5', {}),
+    ],
+)
+def test_anthropic_thinking_defaults_follow_what_the_model_supports(
+    tmp_path: Path, model: str, thinking: dict[str, object]
+) -> None:
+    """Adaptive thinking at high effort, and `drop_block` where a model binds thinking to the conversation prefix."""
+    context, _ = make_context(tmp_path)
+    settings: dict[str, object] = dict(context.model_settings(model) or {})
+    assert {key: settings[key] for key in ('anthropic_effort', 'anthropic_thinking') if key in settings} == thinking
+    assert 'anthropic_cache' in settings, 'profiles get the provider defaults too'
+
+
+def test_saved_anthropic_thinking_settings_override_the_defaults(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    model = 'anthropic:claude-opus-5-5'
+    context.store.save_model_settings(model, {'anthropic_effort': 'low', 'anthropic_preserved_thinking': 'error'})
+    settings: dict[str, object] = dict(context.model_settings(model) or {})
+    assert settings['anthropic_effort'] == 'low'
+    assert settings['anthropic_thinking'] == {
+        'type': 'adaptive',
+        'block_binding': {'prefix_mismatch_behavior': 'error'},
+    }
+
+
+@pytest.mark.parametrize('model', ['openrouter:anthropic/claude-opus-5-5', 'bedrock:us.anthropic.claude-opus-5-5'])
+def test_claude_through_other_providers_gets_no_anthropic_defaults(model: str) -> None:
+    assert model_defaults(model=model) == {}
