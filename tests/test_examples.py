@@ -942,6 +942,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Generate an illustration of a cafe, then write alt text for it.': ToolCallPart(
         tool_name='generate_image', args={'prompt': 'An illustration of a cozy corner cafe'}
     ),
+    'Generate an illustration of a cafe. Then write alt text for it.': ToolCallPart(
+        tool_name='generate_image', args={'prompt': 'A cozy cafe interior with warm lighting.'}
+    ),
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
@@ -1475,18 +1478,6 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='high-res-axolotl')),
                 ]
             )
-        elif m.content == 'Generate an illustration of a cafe. Then write alt text for it.' and any(
-            t.name == 'image_generator' for t in info.function_tools
-        ):
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='image_generator',
-                        args={'prompt': 'A cozy cafe interior with warm lighting.'},
-                        tool_call_id='image_gen_cafe',
-                    )
-                ]
-            )
         elif m.content == 'Generate a chart of y=x^2 for x=-5 to 5.':
             return ModelResponse(
                 parts=[
@@ -1719,10 +1710,6 @@ async def model_logic(  # noqa: C901
             ]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
-        if isinstance(m.content, BinaryImage):
-            return ModelResponse(
-                parts=[TextPart('A cozy cafe with warm lighting, wooden tables, and a chalkboard menu.')]
-            )
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'generate_image':
         return ModelResponse(parts=[TextPart('A cozy corner cafe with warm light spilling onto the sidewalk.')])
