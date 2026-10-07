@@ -104,6 +104,10 @@ conversation ID, and xAI keeps the conversation for 30 minutes of inactivity, bu
 the ID only in memory, so another process can't resume it yet
 ([#7302](https://github.com/pydantic/pydantic-ai/issues/7302)).
 
+A conversation that runs past xAI's maximum duration ends with a `max_duration` error. Resuming it
+would only run into the same limit, so the session raises a
+[`RealtimeError`][pydantic_ai.realtime.RealtimeError] instead of reconnecting.
+
 ## Provider-specific quirks
 
 - Grok Voice always speaks: its profile reports `supports_text_output=False`, so `output_modality='text'`

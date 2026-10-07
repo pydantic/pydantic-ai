@@ -117,6 +117,10 @@ fi
     ('changed_files', 'expected'),
     [
         ([('README.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
+        (
+            [('docs/agents.md', ''), ('.agents/data/catalog.tsv', '')],
+            {'content_only': 'true', 'docs_changed': 'true'},
+        ),
         ([('docs/guides/agents.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('docs/AGENTS.md', '')], {'content_only': 'true', 'docs_changed': 'true'}),
         ([('docs/img/logo.svg', '')], {'content_only': 'true', 'docs_changed': 'true'}),
@@ -263,6 +267,30 @@ def test_clai2_clipboard_runs_only_for_clai2_changes(
     assert outputs['clai2_changed'] == clai2_changed
 
 
+@pytest.mark.parametrize('workflow_path', [WORKFLOW, BENCHMARK_WORKFLOW])
+@pytest.mark.parametrize(
+    ('changed_files', 'expected'),
+    [
+        ([('.agents/skills/pushing-commits-to-the-repo/labels.tsv', '')], 'true'),
+        ([('.agents/data/catalog.tsv', ''), ('.agents/skills/review/SKILL.md', '')], 'true'),
+        ([('.agents/data/catalog.tsv', ''), ('README.md', '')], 'true'),
+        ([('.agents/data/renamed.tsv', '.agents/data/catalog.tsv')], 'true'),
+        ([('.agents/data/catalog.tsv', 'tests/data/catalog.tsv')], 'false'),
+        ([('tests/data/catalog.tsv', '.agents/data/catalog.tsv')], 'false'),
+        ([('.agents/data/catalog.tsv', ''), ('src/code.py', '')], 'false'),
+        ([('.agents/skills/pushing-commits-to-the-repo/label-catalog', '')], 'false'),
+        ([('.agents/config/settings.yaml', '')], 'false'),
+        ([('.agents/scripts/check.py', '')], 'false'),
+    ],
+)
+def test_agent_data_uses_content_only_route(
+    tmp_path: Path, workflow_path: Path, changed_files: list[tuple[str, str]], expected: str
+):
+    outputs = _classify(tmp_path, changed_files, workflow_path=workflow_path)
+
+    assert outputs['content_only'] == expected
+
+
 @pytest.mark.parametrize(
     ('changed_files', 'expected'),
     [
@@ -322,6 +350,12 @@ def test_benchmark_classifier_runs_on_count_or_file_api_fallback(
     assert outputs == {'content_only': 'false'}
 
 
+def test_benchmark_non_pr_events_keep_full_run_defaults(tmp_path: Path):
+    outputs = _classify(tmp_path, [], workflow_path=BENCHMARK_WORKFLOW, event_name='push')
+
+    assert outputs == {'content_only': 'false'}
+
+
 def test_benchmark_job_is_gated_on_the_classifier_output():
     benchmark = BENCHMARK_JOB_ADAPTER.validate_python(_workflow(BENCHMARK_WORKFLOW)['jobs']['benchmarks'])
 
@@ -370,7 +404,12 @@ def test_docs_checks_cover_harness_readmes():
 
 
 def test_aggregate_requires_the_selected_lightweight_job():
-    check = CHECK_JOB_ADAPTER.validate_python(_workflow()['jobs']['check'])
+    jobs = _workflow()['jobs']
+    content_checks = CONDITIONAL_JOB_ADAPTER.validate_python(jobs['content-checks'])
+    assert content_checks['if'] == (
+        "needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'"
+    )
+    check = CHECK_JOB_ADAPTER.validate_python(jobs['check'])
     assert 'content-checks' in check['needs']
     allowed_skips = check['steps'][0]['with']['allowed-skips']
 
