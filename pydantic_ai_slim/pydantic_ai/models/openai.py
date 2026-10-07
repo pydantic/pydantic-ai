@@ -2279,6 +2279,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         only the new input after a previous response, including tool results within one agent run.
         This method does not automatically retry requests or switch generation to HTTP.
 
+        Handshake headers include `AsyncOpenAI(default_headers=...)`. Headers and transport
+        options configured only on a custom HTTP client are not inherited by the WebSocket.
+
         Args:
             extra_headers: Headers for the WebSocket handshake, overriding the model's default
                 `extra_headers`. Request headers must match the headers used to open the connection.

@@ -4,7 +4,8 @@ Run from the repository root with an OpenAI API key in the environment:
     uv run scripts/benchmark_openai_responses_websocket.py --model gpt-6-astra --service-tier ultrafast
 
 Both transports reuse their connection and use stored-response chaining, identical
-settings, and the same tools. One warmup run per transport precedes alternating
+settings, and the same tools. Tool choice enforces the configured number of rounds
+before allowing a final response. One warmup run per transport precedes alternating
 trials. Connection setup is excluded. Calls use the selected tier and incur API charges.
 
 TTFT is measured per model request, from opening its stream to the first generated
@@ -31,6 +32,7 @@ from pydantic import TypeAdapter
 from pydantic_ai import (
     Agent,
     ModelResponse,
+    ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
     RunContext,
@@ -104,9 +106,12 @@ async def measure(
                 times.append(first_token * 1000)
     elapsed = perf_counter() - started
     assert run.result is not None
-    if workload.completed != rounds or run.result.output.strip().lower() != 'done':
-        raise RuntimeError(f'The model did not complete exactly {rounds} tool calls and answer done.')
     usage = run.result.usage
+    if workload.completed != rounds or usage.requests != rounds + 1 or run.result.output.strip().lower() != 'done':
+        raise RuntimeError(
+            f'{transport} trial {trial} is not comparable: expected {rounds} tool calls and answer done; '
+            f'received {workload.completed} tool calls, {usage.requests} requests, and output {run.result.output!r}.'
+        )
     served_tiers: list[str | None] = []
     for message in run.result.all_messages():
         if isinstance(message, ModelResponse):
@@ -153,10 +158,15 @@ async def main() -> None:
         logfire.instrument_httpx(http_client, capture_all=True)
         async with AsyncOpenAI(http_client=http_client, max_retries=0, timeout=60) as client:
             source = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client), settings=settings)
+
+            def request_settings(ctx: RunContext[Workload]) -> ModelSettings:
+                return ModelSettings(tool_choice='required' if ctx.deps.completed < ctx.deps.rounds else 'none')
+
             agent = Agent(
                 source,
                 deps_type=Workload,
                 name='responses_transport_benchmark',
+                model_settings=request_settings,
                 instructions='Call next_step until it returns done=true. Call it once per response. Then answer exactly done.',
             )
 
