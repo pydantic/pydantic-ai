@@ -34,9 +34,11 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     FilePart,
     ImageUrl,
     ModelMessagesTypeAdapter,
+    NativeToolCallPart,
     NativeToolReturnPart,
     UserPromptPart,
 )
@@ -957,6 +959,152 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
 
 
+@pytest.mark.parametrize(
+    'native',
+    [pytest.param(False, id='tool-return'), pytest.param(True, id='native-tool-return')],
+)
+async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model_requests: None, native: bool):
+    """Image URLs in either tool-return form are downloaded and labeled in their original position."""
+    image_url = ImageUrl('https://example.com/tool-image.png')
+    image_data_uri = 'data:image/png;base64,dG9vbC1pbWFnZQ=='
+    history: list[ModelMessage] = [ModelRequest.user_text_prompt('Look up the image.')]
+    if native:
+        history.append(
+            ModelResponse(
+                parts=[NativeToolReturnPart('native_lookup', ['before', image_url, 'after'], provider_name='openai')]
+            )
+        )
+    else:
+        history.extend(
+            [
+                ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+                ModelRequest(parts=[ToolReturnPart('lookup', ['before', image_url, 'after'], tool_call_id='tool-1')]),
+            ]
+        )
+    captured = Captured(boolean_answers)
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Does the lookup contain an image?')
+
+    with patch(
+        'pydantic_ai.models.openai_decisions.download_item',
+        new_callable=AsyncMock,
+        return_value={'data': image_data_uri, 'content_type': 'image/png'},
+    ) as download:
+        result = await agent.run('Does the lookup contain an image?', message_history=history)
+
+    assert result.output is True
+    download.assert_awaited_once_with(image_url, data_format='base64_uri')
+    request_body: dict[str, object] = json.loads(captured.requests[0].content)
+    request_input_value = request_body['input']
+    assert isinstance(request_input_value, list)
+    request_input: list[object] = cast(list[object], request_input_value)
+    input_message_value = request_input[0]
+    assert isinstance(input_message_value, dict)
+    input_message: dict[str, object] = cast(dict[str, object], input_message_value)
+    content_value = input_message['content']
+    assert isinstance(content_value, list)
+    content: list[object] = cast(list[object], content_value)
+    state_part_value = content[0]
+    assert isinstance(state_part_value, dict)
+    state_part: dict[str, object] = cast(dict[str, object], state_part_value)
+    state_text_value = state_part['text']
+    assert isinstance(state_text_value, str)
+    state_text: str = state_text_value
+    state: dict[str, object] = json.loads(state_text)
+    assert state['text'] == 'Does the lookup contain an image?'
+    assert state_text.index('before') < state_text.index('<image 1>') < state_text.index('after')
+    assert content[1:] == [
+        {'type': 'input_text', 'text': '<image 1>:'},
+        {'type': 'input_image', 'image_url': image_data_uri},
+    ]
+
+
+@pytest.mark.parametrize(
+    'native',
+    [pytest.param(False, id='tool-return'), pytest.param(True, id='native-tool-return')],
+)
+async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_model_requests: None, native: bool):
+    """A failed multimodal return keeps its text around the image and receives one error wrapper in history."""
+    image = BinaryContent(b'tool-image', media_type='image/png')
+    failed_content: list[str | BinaryContent] = ['before', image, 'after']
+    history: list[ModelMessage] = [ModelRequest.user_text_prompt('Look up this image.')]
+    if native:
+        history.extend(
+            [
+                ModelResponse(
+                    parts=[NativeToolCallPart('native_lookup', {}, tool_call_id='native-1', provider_name='openai')]
+                ),
+                ModelResponse(
+                    parts=[
+                        NativeToolReturnPart(
+                            'native_lookup',
+                            failed_content,
+                            tool_call_id='native-1',
+                            provider_name='openai',
+                            outcome='failed',
+                        )
+                    ]
+                ),
+            ]
+        )
+    else:
+        history.extend(
+            [
+                ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+                ModelRequest(parts=[ToolReturnPart('lookup', failed_content, tool_call_id='tool-1', outcome='failed')]),
+            ]
+        )
+    original_history = ModelMessagesTypeAdapter.dump_json(history)
+    captured = Captured(boolean_answers)
+
+    result = await Agent(
+        mock_model(captured), output_type=bool, instructions='Does the failed lookup retain its image?'
+    ).run('Does the failed lookup retain its image?', message_history=history)
+
+    assert result.output is True
+    request_body: dict[str, object] = json.loads(captured.requests[0].content)
+    input_messages_value = request_body['input']
+    assert isinstance(input_messages_value, list)
+    input_messages: list[object] = cast(list[object], input_messages_value)
+    input_message_value = input_messages[0]
+    assert isinstance(input_message_value, dict)
+    input_message: dict[str, object] = cast(dict[str, object], input_message_value)
+    input_content_value = input_message['content']
+    assert isinstance(input_content_value, list)
+    input_content: list[object] = cast(list[object], input_content_value)
+    state_part_value = input_content[0]
+    assert isinstance(state_part_value, dict)
+    state_part: dict[str, object] = cast(dict[str, object], state_part_value)
+    state_text_value = state_part['text']
+    assert isinstance(state_text_value, str)
+    state_text: str = state_text_value
+    state: dict[str, object] = json.loads(state_text)
+    history_entries_value = state['history']
+    assert isinstance(history_entries_value, list)
+    history_entries: list[object] = cast(list[object], history_entries_value)
+    tool_return_contents: list[str] = []
+    for entry in history_entries:
+        if isinstance(entry, dict):
+            entry_dict: dict[str, object] = cast(dict[str, object], entry)
+            tool_return_value = entry_dict.get('tool_return')
+            if isinstance(tool_return_value, dict):
+                tool_return: dict[str, object] = cast(dict[str, object], tool_return_value)
+                content = tool_return['content']
+                assert isinstance(content, str)
+                tool_return_contents.append(content)
+
+    assert len(tool_return_contents) == 1
+    error_wrapper: dict[str, object] = json.loads(tool_return_contents[0])
+    assert set(error_wrapper) == {'error'}
+    error_content = error_wrapper['error']
+    assert isinstance(error_content, str)
+    assert json.loads(error_content) == ['before', '<image 1>', 'after']
+    assert input_content[1:] == [
+        {'type': 'input_text', 'text': '<image 1>:'},
+        {'type': 'input_image', 'image_url': image.data_uri},
+    ]
+    assert ModelMessagesTypeAdapter.dump_json(history) == original_history
+
+
 async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: None):
     """The route and fill receive one identical prepared image input and aggregate their usage."""
 
@@ -1054,6 +1202,30 @@ async def test_unsupported_files_fail_before_a_decisions_request(
 
     with pytest.raises(UserError, match='OpenAI Decisions supports text and inline images only'):
         await Agent(mock_model(captured), output_type=bool).run(prompt, message_history=history)
+    assert captured.requests == []
+
+
+@pytest.mark.parametrize('source', ['prompt', 'tool-return'])
+async def test_unsupported_audio_urls_fail_before_a_decisions_request(
+    source: Literal['prompt', 'tool-return'], allow_model_requests: None
+):
+    """Audio URLs are rejected in user prompts and tool returns before a Decisions request is sent."""
+    audio_url = AudioUrl('https://example.com/audio.mp3')
+    history: list[ModelMessage] = []
+    prompt: str | list[AudioUrl] = 'Classify this content.'
+    if source == 'prompt':
+        prompt = [audio_url]
+    else:
+        history = [
+            ModelRequest.user_text_prompt('Look up the attachment.'),
+            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+            ModelRequest(parts=[ToolReturnPart('lookup', audio_url, tool_call_id='tool-1')]),
+        ]
+    captured = Captured(boolean_answers)
+    agent = Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?')
+
+    with pytest.raises(UserError, match='OpenAI Decisions supports text and inline images only'):
+        await agent.run(prompt, message_history=history)
     assert captured.requests == []
 
 
