@@ -329,13 +329,22 @@ def test_only_opted_in_available_commands_run_live() -> None:
 async def test_live_command_keeps_the_editor_working_and_cancellable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A slow command such as `/compact` shows the working spinner and stops on Ctrl-C, not a frozen prompt."""
-    started, working, done = anyio.Event(), anyio.Event(), anyio.Event()
+    """A slow command such as `/compact` keeps the prompt on screen with the spinner and stops on Ctrl-C.
+
+    The draft typed meanwhile shows while it runs and is still there once it stops.
+    """
+    started, working, drafted, kept, done = (anyio.Event() for _ in range(5))
 
     class Surface(PromptSurface):
         def paint(self, rows: tuple[str, ...]) -> None:
-            if started.is_set() and any(Text.from_ansi(row).plain.startswith(' Working ') for row in rows):
+            plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
+            busy = any(row.startswith(' Working ') for row in plain)
+            if started.is_set() and busy:
                 working.set()
+                if 'keep me' in plain:
+                    drafted.set()
+            elif drafted.is_set() and 'keep me' in plain:
+                kept.set()
             super().paint(rows)
 
     monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
@@ -365,8 +374,11 @@ async def test_live_command_keeps_the_editor_working_and_cancellable(
             pipe.send_text('/slow quickly\r')
             pipe.send_text('/slow\r')
             await working.wait()
-            pipe.send_text('\x03')
-            pipe.send_text('/exit\r')
+            pipe.send_text('keep me')
+            await drafted.wait()
+            pipe.send_text('\x1b')
+            await kept.wait()
+            pipe.send_text('\x15/exit\r')
             await done.wait()
     text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert text.index('finished quickly') < text.index('Command cancelled.') < text.index('Goodbye.')
