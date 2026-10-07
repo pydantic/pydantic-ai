@@ -226,17 +226,13 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
     return wire
 
 
-def _sums_to_one(probabilities: Collection[float]) -> bool:
-    # A normalized distribution must fit inside the probabilities' bounded rounding intervals.
-    lower = Decimal(0)
-    upper = Decimal(0)
-    for probability in probabilities:
-        value = Decimal(str(probability))
-        half_unit = Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2
-        lower += max(Decimal(0), value - half_unit)
-        upper += min(Decimal(1), value + half_unit)
-    # A small tolerance accommodates floating-point normalization.
-    return lower <= Decimal('1.000001') and upper >= Decimal('0.999999')
+def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal], list[Decimal]]:
+    """The bounded rounding intervals of the displayed probabilities, using at least two decimal places."""
+    values: list[Decimal] = [Decimal(str(probability)) for probability in probabilities]
+    half_units: list[Decimal] = [Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values]
+    lower: list[Decimal] = [max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)]
+    upper: list[Decimal] = [min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)]
+    return lower, upper
 
 
 _UNSUPPORTED_FIELD_HINT = (
@@ -705,37 +701,33 @@ class DecisionModel(Model[InterfaceClient]):
         if isinstance(question, NoulQuestion):
             return isinstance(answer, NoulAnswer) and 0 <= answer.noul <= 1
         elif isinstance(question, ChoiceQuestion):
-            return (
+            if not (
                 isinstance(answer, ChoiceAnswer)
                 and answer.choice in question.criteria
                 and answer.probabilities.keys() == question.criteria.keys()
                 and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
-                and _sums_to_one(answer.probabilities.values())
-            )
+            ):
+                return False
+            lower, upper = _probability_bounds(answer.probabilities.values())
+            # A small tolerance accommodates floating-point normalization.
+            return sum(lower, Decimal(0)) <= Decimal('1.000001') and sum(upper, Decimal(0)) >= Decimal('0.999999')
         elif isinstance(question, ScoreQuestion):
             if not (
                 isinstance(answer, ScoreAnswer)
                 and answer.probabilities.keys() == set(range(len(question.criteria)))
                 and 0 <= answer.score <= len(question.criteria) - 1
                 and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
-                and _sums_to_one(answer.probabilities.values())
             ):
                 return False
             # A displayed score and its probabilities may each be rounded. Check whether any distribution
             # within their rounding intervals could produce that score, using at least two decimals.
-            values: list[Decimal] = [
-                Decimal(str(answer.probabilities[level])) for level in range(len(question.criteria))
-            ]
-            half_units: list[Decimal] = [
-                Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values
-            ]
-            lower: list[Decimal] = [max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)]
-            upper: list[Decimal] = [min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)]
+            probabilities: list[float] = [answer.probabilities[level] for level in range(len(question.criteria))]
+            lower, upper = _probability_bounds(probabilities)
             remaining = Decimal(1) - sum(lower, Decimal(0))
             valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
             if valid:
                 bounds: list[Decimal] = []
-                for levels in (range(len(values)), reversed(range(len(values)))):
+                for levels in (range(len(lower)), reversed(range(len(lower)))):
                     rest = remaining
                     mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
                     for level in levels:
