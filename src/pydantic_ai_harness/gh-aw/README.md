@@ -70,9 +70,11 @@ tools. gh-aw writes the MCP server configuration outside the checkout and mounts
 read-only inside the sandbox; repository-controlled files cannot select an MCP server
 that runs with the gateway's credentials.
 
-The engine subscribes to typed core events through the public `Agent.on_event` API. The
-inline parser selects their framed JSONL records from captured engine stdio, and the gh-aw
-runtime bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
+The headless runner streams model responses so their typed events can be recorded in the
+canonical session. The engine subscribes to typed core events through the public
+`Agent.on_event` API. The inline parser selects their framed JSONL records from captured
+engine stdio, and the gh-aw runtime bootstrap writes the canonical stream to
+`agent-session.jsonl`: `session.init`,
 `user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when
 available; startup failures still record status without usage when none is available. Errors
@@ -120,12 +122,12 @@ from pydantic_ai import Agent
 agent = Agent(name='triage', instructions='Answer briefly.')
 ```
 
-Five things to know.
+Some details to know.
 
-- **The repository joins `PYTHONPATH`.** Only when `PAI_AGENT` is set: making
-  repository code importable is the point of running your own agent, and it is what
-  the engine otherwise keeps off the import path for its own composition. The
-  generated `gh_aw_agent.py` is not written at all in this mode.
+- **A private wrapper module resolves the agent.** The engine writes it in every mode: the
+  default composition, an imported `PAI_AGENT`, or a spec. For an imported target, the
+  framework packages load before the wrapper adds the checkout to `sys.path` while
+  resolving `PAI_AGENT`. Gateway tools and recording apply in every mode.
 - **Dependencies go in a workflow-level `steps:` block.** Those steps run on the
   host runner, after gh-aw's `Setup Python` and before both the engine's install
   step and the agent, so a `--user` install lands in the same `$HOME/.local` the
@@ -247,6 +249,10 @@ The default stable release is below this runtime floor. Existing workflows must 
 recompiled with a compatible gh-aw pin and have their generated lockfile committed.
 Installing a newer `gh aw` CLI locally does not alter an already committed lockfile or
 the runtime it selects.
+
+The workflow summary is the canonical success/failure report. Categorical summary labels
+for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
+request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
 
 ## Pointing the engine at your own endpoint
 

@@ -2,19 +2,18 @@
 # requires-python = ">=3.11"
 # dependencies = ["packaging>=24", "pydantic>=2", "pyyaml>=6.0.2"]
 # ///
-"""Validate `gh-aw/pydantic.md` and print the `pydantic-ai-harness` version its engine pins.
+"""Validate `gh-aw/pydantic.md` and print the version its engine pins for both packages.
 
 GitHub Agentic Workflows resolves the imported definition at compile time and vendors its
 frontmatter into the workflow it generates, so those fields are a published contract rather
 than repo-local config: `engine.id` keys the entry in gh-aw's engine catalog, and
-`engine.version` is the release the generated workflow installs from PyPI at run time. A
-renamed field breaks the catalog entry, and a version that was never published breaks every
-run of it at install time.
+`engine.version` is the release the generated workflow installs for both `pydantic-ai-harness`
+and `pydantic-clai2` from PyPI at run time. A renamed field breaks the catalog entry, and a
+version missing from either package breaks every run of it at install time.
 
 Consumers import the file from `main`, so a merge reaches them on their next compile and
 nothing downstream re-checks it. `--published` is therefore part of the pull request gate
-rather than a release step: it asks PyPI the one question the file cannot answer about
-itself.
+rather than a release step: it asks PyPI whether both pinned package releases are available.
 
 The lint job and the release reminder job both call this, which is why the checks live here
 rather than inlined as shell twice.
@@ -95,24 +94,25 @@ def engine_version() -> str:
 
 
 def unpublished_reason(version: str) -> str | None:
-    """Return why PyPI does not serve `version` as a release, or `None` when it does."""
-    url = f'https://pypi.org/pypi/pydantic-ai-harness/{version}/json'
-    try:
-        with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT_SECONDS) as response:
-            status: int = response.status
-    except urllib.error.HTTPError as exc:
-        status = exc.code
-    except OSError as exc:
-        # A failed request is not evidence that the version is missing, so it is reported
-        # as the network error it is rather than as an unpublished pin.
-        return f'Could not ask PyPI whether pydantic-ai-harness {version} is published: {exc}'
+    """Return why PyPI does not serve a pinned release, or `None` when both do."""
+    for package in ('pydantic-ai-harness', 'pydantic-clai2'):
+        url = f'https://pypi.org/pypi/{package}/{version}/json'
+        try:
+            with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT_SECONDS) as response:
+                status: int = response.status
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+        except OSError as exc:
+            # A failed request is not evidence that the version is missing, so it is reported
+            # as the network error it is rather than as an unpublished pin.
+            return f'Could not ask PyPI whether {package} {version} is published: {exc}'
 
-    if status != 200:
-        return (
-            f'{DEFINITION} pins `engine.version: {version}`, which PyPI does not serve '
-            f'(HTTP {status}). gh-aw installs that version at run time, so a workflow '
-            f'compiled against this definition would fail before the agent starts.'
-        )
+        if status != 200:
+            return (
+                f'{DEFINITION} pins `engine.version: {version}` for `{package}`, which PyPI does not serve '
+                f'(HTTP {status}). gh-aw installs that version at run time, so a workflow '
+                f'compiled against this definition would fail before the agent starts.'
+            )
     return None
 
 
@@ -122,7 +122,7 @@ def main() -> int:
     parser.add_argument(
         '--published',
         action='store_true',
-        help='also require the pinned version to be a release PyPI serves',
+        help='also require both pinned package releases to be served by PyPI',
     )
     published: bool = parser.parse_args().published
 

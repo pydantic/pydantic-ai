@@ -51,6 +51,9 @@ import-based engine like this one, so it is not part of the configuration below.
 - Existing workflows need a compatible runtime pin and a newly compiled lockfile.
   Installing a newer `gh aw` CLI locally does not change the runtime an existing lockfile
   selects.
+- The workflow summary is the canonical success/failure report. Categorical summary labels
+  for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
+  request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -284,8 +287,9 @@ Key by key:
   three are OpenAI-shaped and use Chat Completions. Under `PAI_BASE_URL` everything stays
   on Chat Completions.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
-  [`Coder`](coder.md) agent with yours. Setting it also puts the checkout on
-  `PYTHONPATH`, which is what makes `my_agent` importable.
+  [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
+  when resolving an imported target, it adds the checkout to `sys.path` after loading the
+  framework packages.
 - `safe-outputs: add-comment:` declares the one write this workflow performs. With no
   `safe-outputs:` section at all, gh-aw enables `create-issue` with a max of 1 instead;
   declaring the section replaces that default, so the triage does not also open an issue
@@ -521,7 +525,9 @@ diffs two or more runs when given more than one id. For the raw step output, inc
 engine's own lines, `gh run view <run-id> --log` (add `--attempt N` for an earlier attempt)
 is often quicker.
 
-The engine emits `session.init`, `user.message`, `assistant.message`, `assistant.reasoning`,
+The headless runner streams model responses so their typed events can be recorded in the
+canonical session. The engine emits `session.init`, `user.message`, `assistant.message`,
+`assistant.reasoning`,
 `tool.execution_start`, `tool.execution_complete`, and `session.result`. The result includes
 reported usage when available; startup failures still record status without usage when none
 is available. If finalizing the recording fails, the launcher reports the error on stderr,
