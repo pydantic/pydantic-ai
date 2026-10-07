@@ -254,3 +254,25 @@ async def test_realtime_failed_attachment_can_recover_without_consuming_inbox():
         assert owner.state.pending == pending
         assert owner.state.active_run_id is None
         await owner.run('continue')
+
+
+@pytest.mark.parametrize('second', ['second', BinaryImage(data=b'image', media_type='image/png')])
+async def test_realtime_short_circuit_keeps_owner_inbox_order(second: str | BinaryImage):
+    class Skip(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            return AgentRunResult(output='skipped')
+
+    async with Agent(TestModel(), deps_type=type(None)).session() as owner:
+        first_id = owner.enqueue('first')
+        async with owner.realtime(FakeRealtimeModel(BlockingRealtimeConnection([])), capabilities=[Skip()]).session():
+            second_id = owner.enqueue(second)
+            assert [pending.enqueue_id for pending in owner.state.pending] == [first_id, second_id]
+        assert [pending.enqueue_id for pending in owner.state.pending] == [first_id, second_id]
+        result = await owner.run('continue')
+        prompts = [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
+        assert prompts == ['continue', 'first', second if isinstance(second, str) else [second]]

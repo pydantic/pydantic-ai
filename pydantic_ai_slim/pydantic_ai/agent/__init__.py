@@ -4121,6 +4121,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
                 session._result = result  # pyright: ignore[reportPrivateUsage]
                 session._closed = True  # pyright: ignore[reportPrivateUsage]
+                session._pending_messages.close()  # pyright: ignore[reportPrivateUsage]
                 if owner is not None:
                     session._attach_owner(owner)  # pyright: ignore[reportPrivateUsage]
                 return session

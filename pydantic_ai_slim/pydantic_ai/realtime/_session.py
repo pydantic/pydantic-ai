@@ -678,6 +678,9 @@ class _RealtimePendingMessages(PendingMessageQueue):
         self._on_append = on_append
 
     def try_append(self, pending: PendingMessage) -> bool:
+        # Once revoked, input belongs to the owner's inbox, not this driver's text channel.
+        if self._closed:
+            return False
         _pending_message_text(pending)
         if not super().try_append(pending):
             return False
