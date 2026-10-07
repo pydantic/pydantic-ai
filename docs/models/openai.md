@@ -541,7 +541,7 @@ Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI o
 
 ## Decisions API {#decisions-api}
 
-OpenAI's Decisions API runs a GPT model as a [decision model](decision.md): it answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text. [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page.
+OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions) runs a GPT model as a [decision model](decision.md): it answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text. [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page.
 
 It takes model IDs that the Responses API also serves, such as `gpt-6-luna`, so the `'openai-decisions:'` prefix is what picks it:
 
@@ -576,7 +576,7 @@ A request has three [limits](https://github.com/openai/openai-openapi/blob/main/
 
 - **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type. A question over the limit raises a [`UserError`][pydantic_ai.exceptions.UserError].
 - **10 levels in one rubric.** A field of eleven or more whole numbers from 0 becomes a [pick-one](decision.md#what-each-field-type-does) instead.
-- **200 questions in one request.** The API rejects a request over the limit with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over.
+- **200 questions in one request.** A `list` or `dict` of options counts one question per option, and with tools or a union of output types, every route's fields can go in the same request as the route question, depending on the prompt's length. The API rejects a request over the limit with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over.
 
 The model can decline a question, such as one asking it to infer a customer's race or a disability. A declined question fails the run with a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], even when the model answered the other questions, or when the question belongs to a route the model did not pick. A question declined while filling a route the model already picked fails the run with an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] that names the route.
 

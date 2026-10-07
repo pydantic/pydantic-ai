@@ -126,6 +126,13 @@ def test_init(env: TestEnv):
     assert isinstance(infer_model(model.model_id), OpenAIDecisionsModel)
 
 
+def test_missing_api_key_names_this_provider(env: TestEnv):
+    env.remove('OPENAI_API_KEY')
+    env.remove('OPENAI_BASE_URL')
+    with pytest.raises(UserError, match=r'`OpenAIDecisionsProvider\(api_key=\.\.\.\)`'):
+        OpenAIDecisionsProvider()
+
+
 def test_infer_model_refuses_another_provider():
     with pytest.raises(UserError, match='require an `OpenAIDecisionsProvider`'):
         infer_model('openai-decisions:gpt-6-luna', provider_factory=lambda _: OpenAIProvider(api_key='test'))
