@@ -3,9 +3,10 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import ClassVar, Literal, assert_never
 
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
 from .._http import to_httpx2_timeout
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
@@ -260,8 +261,23 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
 
 def _validate_extra_body(extra_body: object) -> None:
-    if extra_body is not None and not isinstance(extra_body, Mapping):
+    if extra_body is None:
+        return
+    if not isinstance(extra_body, Mapping):
         raise UserError(f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.')
+
+    class ExtraBodyEncoder(json.JSONEncoder):
+        def default(self, o: object) -> object:
+            if isinstance(o, datetime):
+                return o.isoformat()
+            elif isinstance(o, BaseModel):
+                return o.model_dump(exclude_unset=True, mode='json', by_alias=True)
+            return super().default(o)
+
+    try:
+        json.dumps({**extra_body}, cls=ExtraBodyEncoder, allow_nan=False)
+    except (TypeError, ValueError) as e:
+        raise UserError('`extra_body` must be JSON serializable to send it to the OpenAI Decisions API.') from e
 
 
 def _text(value: JsonValue) -> str:

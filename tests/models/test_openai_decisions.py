@@ -8,9 +8,12 @@ recording.
 from __future__ import annotations as _annotations
 
 import json
+import math
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Annotated, Literal
 from unittest.mock import AsyncMock, patch
 
@@ -745,6 +748,79 @@ async def test_decide_rejects_invalid_extra_body_before_a_request(allow_model_re
         )
 
     assert captured.requests == []
+
+
+@pytest.mark.parametrize('invalid_kind', ['object', 'nan', 'infinity', 'circular-list', 'circular-dict'])
+async def test_non_json_extra_body_fails_before_image_download(allow_model_requests: None, invalid_kind: str):
+    circular_list: list[object] = []
+    circular_list.append(circular_list)
+    circular_dict: dict[str, object] = {}
+    circular_dict['self'] = circular_dict
+    invalid_values: dict[str, object] = {
+        'object': object(),
+        'nan': math.nan,
+        'infinity': math.inf,
+        'circular-list': circular_list,
+        'circular-dict': circular_dict,
+    }
+    settings: OpenAIDecisionsModelSettings = {'extra_body': {'invalid': invalid_values[invalid_kind]}}
+    image_url = ImageUrl('https://example.com/receipt.png')
+    captured = Captured(boolean_answers)
+    agent = Agent(
+        mock_model(captured),
+        output_type=bool,
+        instructions='Does the evidence contain an image?',
+        model_settings=settings,
+    )
+
+    with (
+        patch('pydantic_ai.models.decision.download_item', new_callable=AsyncMock) as download,
+        pytest.raises(UserError, match='JSON serializable') as exc_info,
+    ):
+        await agent.run([image_url])
+
+    assert str(exc_info.value) == '`extra_body` must be JSON serializable to send it to the OpenAI Decisions API.'
+    assert isinstance(exc_info.value.__cause__, (TypeError, ValueError))
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
+async def test_decide_rejects_non_json_extra_body_before_a_request(allow_model_requests: None):
+    captured = Captured(boolean_answers)
+    model = mock_model(captured)
+
+    with pytest.raises(UserError, match='JSON serializable') as exc_info:
+        await model.decide(
+            DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}),
+            OpenAIDecisionsModelSettings(extra_body={'invalid': object()}),
+        )
+
+    assert str(exc_info.value) == '`extra_body` must be JSON serializable to send it to the OpenAI Decisions API.'
+    assert isinstance(exc_info.value.__cause__, TypeError)
+    assert captured.requests == []
+
+
+async def test_json_extra_body_preserves_sdk_encoding(allow_model_requests: None):
+    class ExtraBodyModel(BaseModel):
+        display_name: str = Field(alias='displayName')
+        omitted: str = 'default'
+
+    nested_model = ExtraBodyModel.model_validate({'displayName': 'visible'})
+    timestamp = datetime(2024, 3, 4, 5, 6, 7)
+    extra_body = MappingProxyType({'custom': {'model': nested_model, 'timestamp': timestamp}})
+    settings: OpenAIDecisionsModelSettings = {'extra_body': extra_body}
+    captured = Captured(boolean_answers)
+
+    await Agent(
+        mock_model(captured),
+        output_type=bool,
+        instructions='Does the ticket need attention?',
+    ).run('Charged twice.', model_settings=settings)
+
+    assert captured.body['custom'] == {
+        'model': {'displayName': 'visible'},
+        'timestamp': '2024-03-04T05:06:07',
+    }
 
 
 @pytest.mark.parametrize(
