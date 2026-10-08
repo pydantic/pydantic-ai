@@ -71,12 +71,16 @@ If `rg` output looks mangled (unicode/regex artifacts), drop to `grep -n` — do
 
 ## Step 3b — Pair the genai-prices entry
 
-Cost and `context_window` do not live in this repo. Both come from `pydantic/genai-prices` through
-`_genai_prices.py`, and `Model.profile` only consults it when nothing else set `context_window`, so a
-new id has neither until genai-prices ships an entry and this repo's lock picks up that release.
-Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContext.context_window_used`
-is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
-instead. Open the genai-prices PR alongside the model add and link the two.
+Cost and `context_window` data come from `pydantic/genai-prices` through `_genai_prices.py`.
+Bundled data requires a `genai-prices` release.
+Update the Pydantic AI lock to verify the bundled entry locally.
+The live merged feed can supply entries through `pydantic_ai.prices.update_in_background()`.
+Check the updater for an entry before claiming a package release blocks support.
+`Model.profile` only consults genai-prices when nothing else set `context_window`.
+Without a price entry in either source, `ModelResponse.cost()` raises `LookupError` and a
+`cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end instead.
+Without a `context_window` value from any source, `RunContext.context_window_used` is `None`.
+If no genai-prices entry exists, open the genai-prices PR alongside the model add and link the two.
 
 Before you write the entry, check that no one has added it already. Someone else may have added
 it on release day. Grep genai-prices `main` for each provider file you plan to edit, then the
