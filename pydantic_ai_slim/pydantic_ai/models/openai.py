@@ -1026,7 +1026,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `medium`, and `high`.
     """
 
-    openai_previous_response_id: Literal['auto'] | str
+    openai_previous_response_id: Literal['auto'] | str | None
     """Reference a prior OpenAI response to continue a conversation server-side, omitting already-stored messages from the input.
 
     - `'auto'`: chain to the most recent `provider_response_id` in the message history.
@@ -1036,9 +1036,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
       tool-call continuations), the most recent `provider_response_id` from the message
       history takes precedence so the chain extends correctly without re-sending messages
       that are already server-side.
+    - `None`: disable chaining for this request and send the full history, even when the model
+      or agent settings default this option to `'auto'`.
 
-    In both cases, messages that precede the chosen response in the history are omitted
-    from the input, since OpenAI reconstructs them from server-side state.
+    Only when this setting resolves to a response ID are messages that precede that response
+    in the history omitted from the input, since OpenAI reconstructs them from server-side state.
 
     Over HTTP, the referenced response must have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],

@@ -21,7 +21,7 @@ from typing_extensions import Unpack
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import SelectModel
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models import ModelRequestParameters
@@ -363,7 +363,7 @@ async def test_agent_connection_shorthand(
     assert socket.close_count == 1
 
 
-@pytest.mark.parametrize('selection', ['deferred-configured', 'static-select'])
+@pytest.mark.parametrize('selection', ['deferred-configured', 'static-capability'])
 async def test_agent_connection_reuses_entered_model_client(
     allow_model_requests: None,
     sockets: SocketHarness,
@@ -375,7 +375,12 @@ async def test_agent_connection_reuses_entered_model_client(
     if selection == 'deferred-configured':
         agent = Agent('openai-responses:gpt-4o', defer_model_check=True)
     else:
-        agent = Agent(capabilities=[SelectModel('openai-responses:gpt-4o')])
+
+        class StaticModelCapability(AbstractCapability[None]):
+            def get_model(self) -> str:
+                return 'openai-responses:gpt-4o'
+
+        agent = Agent(capabilities=[StaticModelCapability()], deps_type=type(None))
 
     async with agent:
         async with agent.iter('probe') as run:
@@ -476,6 +481,52 @@ async def test_connected_model_warmup_response_id_continues_agent_run(
     next_input = socket.sent[1]['input']
     assert next_input == [{'role': 'user', 'content': 'Convert 10 miles to kilometers.'}]
     assert socket.close_count == 1
+
+
+@pytest.mark.parametrize('settings_origin', ['agent', 'model'])
+async def test_agent_run_can_reset_default_auto_response_id_for_full_history(
+    allow_model_requests: None, sockets: SocketHarness, settings_origin: Literal['agent', 'model']
+):
+    """A per-run None reset replays history on a new socket without changing the auto default."""
+    first_socket = sockets.pending[0]
+    first_socket.responses = deque([text_events('first reply', 'resp_first')])
+    second_socket = ScriptedSocket(
+        responses=deque([text_events('reset reply', 'resp_reset'), text_events('follow-up reply', 'resp_followup')])
+    )
+    sockets.pending.append(second_socket)
+
+    default_settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+    model_settings = default_settings if settings_origin == 'model' else None
+    agent_settings = default_settings if settings_origin == 'agent' else None
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=model_settings)
+    agent = Agent(source, model_settings=agent_settings)
+    reset_settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': None}
+
+    async with agent.connect():
+        first = await agent.run('first')
+    async with agent.connect():
+        reset = await agent.run('reset', conversation=first.conversation, model_settings=reset_settings)
+        follow_up = await agent.run('follow-up', conversation=reset.conversation)
+
+    assert first.output == 'first reply'
+    assert reset.output == 'reset reply'
+    assert follow_up.output == 'follow-up reply'
+    assert sockets.opened == [first_socket, second_socket]
+    assert first_socket.sent[0]['input'] == [{'role': 'user', 'content': 'first'}]
+    assert first_socket.sent[0].get('previous_response_id') is None
+    assert first_socket.sent[0]['store'] is False
+
+    assert second_socket.sent[0]['input'] == [
+        {'role': 'user', 'content': 'first'},
+        {'role': 'assistant', 'content': 'first reply'},
+        {'role': 'user', 'content': 'reset'},
+    ]
+    assert second_socket.sent[0].get('previous_response_id') is None
+    assert second_socket.sent[0]['store'] is False
+    assert second_socket.sent[1]['previous_response_id'] == 'resp_reset'
+    assert second_socket.sent[1]['input'] == [{'role': 'user', 'content': 'follow-up'}]
+    assert second_socket.sent[1]['store'] is False
+    assert [socket.close_count for socket in sockets.opened] == [1, 1]
 
 
 async def test_agent_run_retries_empty_connected_warmup_response(allow_model_requests: None, sockets: SocketHarness):
