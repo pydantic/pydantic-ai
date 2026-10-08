@@ -17,7 +17,7 @@ For example, Pydantic AI 2.45.0 sends `User-Agent: pydantic-ai/2.45.0`.
 
 ## The version check
 
-Whenever the banner is displayed, Pydantic AI checks `https://pydantic.dev/docs/api/versions` in a background thread. The endpoint lists the latest versions of Pydantic's packages, grouped by registry. Pydantic AI reads only `pydantic-ai` and `pydantic-ai-harness` from the `pypi` registry and ignores unknown registries, packages, and package fields. The result appears in the next banner, never the banner that starts the request.
+Whenever the banner is displayed, Pydantic AI checks `https://info.pydantic.info/versions.json` in a background thread. The endpoint lists the latest versions of Pydantic's packages, grouped by registry. Pydantic AI reads only `pydantic-ai` and `pydantic-ai-harness` from the `pypi` registry and ignores unknown registries, packages, and package fields. The result appears in the next banner, never the banner that starts the request.
 
 The check runs at most once per 24 hours per machine. For an agent run, the banner is displayed on the first run in a process only when instrumentation is not configured and a terminal or coding agent is present. `clai` displays its intro banner when a terminal or coding agent is present, including when instrumentation is configured.
 

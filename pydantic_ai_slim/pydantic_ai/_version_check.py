@@ -17,7 +17,7 @@ from typing import cast
 import httpx2
 from typing_extensions import TypedDict
 
-VERSION_CHECK_URL = 'https://pydantic.dev/docs/api/versions'
+VERSION_CHECK_URL = 'https://info.pydantic.info/versions.json'
 """Reports the latest release of every package Pydantic publishes, keyed by registry and then by name.
 
 Read as `{'pypi': {'pydantic-ai': {'latest': '2.46.0'}}}`. The endpoint only ever adds keys, so
