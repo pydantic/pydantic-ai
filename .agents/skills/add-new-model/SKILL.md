@@ -164,6 +164,9 @@ The gateway reaches the canonical API through an ordinary SDK client carrying a 
 - **Probe the gateway leg rather than reasoning about it.** `Model('<id>', provider='gateway')`, then
   exercise whatever capability you gated. If `PYDANTIC_AI_GATEWAY_BASE_URL` is set in the environment,
   check it points at the gateway root: a provider-specific proxy path 404s every other provider.
+- **Probe Bedrock Gateway profile regions individually.** A successful `gateway/bedrock:` inference-profile ID
+  does not establish support for another region prefix or the bare ID. Probe each candidate; exclude only IDs
+  Gateway rejects.
 
 A model the gateway genuinely does not serve is the other case entirely: it belongs in
 `UNSUPPORTED_GATEWAY_MODEL_NAMES`, on evidence that the gateway rejects the id. Never leave the id
