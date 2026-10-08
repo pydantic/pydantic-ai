@@ -2447,3 +2447,28 @@ async def test_openai_responses_explicit_prefix_only_options_win_over_fallback(a
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['instructions'] == 'Support policies.'
+
+
+async def test_openai_responses_unified_cache_stable_prefix_only_keeps_tool_result_breakpoint(
+    allow_model_requests: None,
+):
+    """A leading `CachePoint` moves its breakpoint onto the preceding tool result, which `mode='explicit'`
+    still writes, so the request stays prefix-only without an instruction breakpoint."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        _history_ending_in(ModelRequest(parts=[UserPromptPart([CachePoint(), 'Stay focused.'])])),
+        {'cache': {'messages': False}},
+        ModelRequestParameters(),
+    )
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+    assert request['input'][2] == snapshot(
+        {
+            'type': 'function_call_output',
+            'call_id': 'call_1',
+            'output': [{'type': 'input_text', 'text': 'result 1', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
+        }
+    )
