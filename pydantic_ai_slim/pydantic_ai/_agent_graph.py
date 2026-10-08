@@ -1482,14 +1482,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         wrap_task = asyncio.create_task(wrap_awaitable)
 
         async def _wrap_response() -> _messages.ModelResponse | None:
-            """The response `wrap_model_request` finishes with after abandoning the stream, if it returns one."""
+            """The response `wrap_model_request` finishes with after abandoning the stream.
+
+            Any error it raises instead is raised to the consumer, so it can't act on the cut-short
+            stream, except `ModelRetry`, which ends the stream for the retry below.
+            """
             try:
                 # Shielded so a cancelled consumer leaves `wrap_task` to the stream teardown below.
                 return await asyncio.shield(wrap_task)
             except exceptions.SkipModelRequest as e:
                 return e.response
-            except Exception:
-                # Surfaces from `await wrap_task` once the consumer is done with the stream.
+            except exceptions.ModelRetry:
                 return None
 
         # Wait for handler to start or wrap to complete (short-circuit).

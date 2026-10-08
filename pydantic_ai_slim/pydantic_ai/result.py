@@ -473,7 +473,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         A capability's `wrap_model_request` can stop its handler while the stream is being consumed, for
         example a parallel input guardrail that blocks the prompt. Any in-flight pull is cancelled and drained,
         so the model stream can be closed without racing it. The consumer's iteration then continues with the
-        events of the response `replacement_response` returns, or ends if it returns `None`.
+        events of the response `replacement_response` returns, ends if it returns `None`, or raises what it raises.
 
         Returns whether the stream was cut short: `False` if the consumer had already received all of it.
         """

@@ -851,22 +851,22 @@ class TestInputGuardrailParallelStreaming:
         assert run.result is not None
         assert run.result.output == 'nope'
 
-    async def test_guard_error_mid_stream_ends_the_stream_and_raises(self):
+    async def test_guard_error_mid_stream_raises_from_the_stream(self):
+        """A guard error is raised where the stream was cut, so the cut-short output is never settled on."""
         model = _StalledModel()
 
-        async def guard(_prompt: str) -> GuardrailResult:
+        async def guard(_prompt: str) -> bool:
             await model.first_chunk_sent.wait()
-            return GuardrailResult.retry('try again')
+            raise InputBlocked('hard policy failure')
 
         agent = model.agent(InputGuardrail(guard=guard, parallel=True))
-        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        outputs: list[str] = []
 
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(UserError, match='cannot return'):
-            async with agent.run_stream_events('hello') as stream:
-                async for event in stream:
-                    events.append(event)
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(InputBlocked, match='hard policy failure'):
+            async with agent.run_stream('hello') as result:
+                outputs.append(await result.get_output())
 
-        assert _text_events(events) == [('start', 'leaked '), 'final result']
+        assert outputs == []
         assert model.closed.is_set()
 
     async def test_allow_streams_every_chunk(self):

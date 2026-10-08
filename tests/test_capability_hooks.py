@@ -1768,6 +1768,46 @@ class TestSkipModelRequestInteraction:
         assert events[-1].result.output == 'replaced'
         assert model_stream_closed.is_set()
 
+    async def test_wrap_model_request_retrying_after_stopping_its_handler_mid_stream(self):
+        """`ModelRetry` after stopping the handler mid-stream ends the stream and retries the request."""
+        first_chunk_sent = asyncio.Event()
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            if first_chunk_sent.is_set():
+                yield 'retried'
+                return
+            yield 'model '
+            first_chunk_sent.set()
+            await asyncio.Event().wait()
+            yield 'never'  # pragma: no cover
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                if first_chunk_sent.is_set():
+                    return await handler(request_context)
+                handler_task = asyncio.create_task(handler(request_context))
+                await first_chunk_sent.wait()
+                handler_task.cancel()
+                await asyncio.gather(handler_task, return_exceptions=True)
+                raise ModelRetry('try again')
+
+        agent = Agent(FunctionModel(stream_function=stream_function), capabilities=[RetryCap()])
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.run_stream_events('hello') as stream:
+                events = [event async for event in stream]
+
+        assert [event for event in events if isinstance(event, PartStartEvent)] == snapshot(
+            [
+                PartStartEvent(index=0, part=TextPart(content='model ')),
+                PartStartEvent(index=0, part=TextPart(content='retried')),
+            ]
+        )
+        assert isinstance(events[-1], AgentRunResultEvent)
+        assert events[-1].result.output == 'retried'
+
 
 class TestPrepareToolsHook:
     async def test_filter_function_tools(self):
