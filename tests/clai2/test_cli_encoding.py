@@ -1,5 +1,6 @@
 """CLI output is UTF-8 even when the platform's default text codec is not."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -51,6 +52,9 @@ def test_worktree_with_non_ascii_repository_path(tmp_path: Path, monkeypatch: py
 @pytest.mark.parametrize('command', ['token', 'login'])
 def test_gh_with_non_ascii_diagnostics(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     """Run a stand-in CLI so the actual run/Popen pipes decode UTF-8 diagnostics."""
+    for name in tuple(os.environ):
+        if name.startswith('COVERAGE_'):
+            monkeypatch.delenv(name)
     diagnostic = 'Ошибка: Иван\n' if command == 'token' else 'Ошибка: После\n'
     script = (
         'import sys\n'
