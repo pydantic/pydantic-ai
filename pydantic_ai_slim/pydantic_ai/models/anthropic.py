@@ -793,9 +793,10 @@ def _is_stale_thinking_block_error(
     if not _can_add_drop_block(thinking):
         return False
     body: object | None = error.body
+    # The Anthropic API wraps the message in an `error` object; Bedrock returns it at the top level.
+    reported: object | None = body.get('error', body) if _utils.is_str_dict(body) else None
     return (
-        _utils.is_str_dict(body)
-        and _utils.is_str_dict(reported := body.get('error'))
+        _utils.is_str_dict(reported)
         and isinstance(message := reported.get('message'), str)
         and _STALE_THINKING_BLOCK_MARKER in message
     )
