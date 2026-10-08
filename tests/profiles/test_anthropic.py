@@ -634,13 +634,13 @@ def test_model_profile_haiku_5_5():
     Anthropic documents Haiku 5.5's 128K output, adaptive default, `xhigh`/`max`, manual budget-thinking and
     non-default sampling rejection, disabled-thinking effort cap, task-budget support, and prefix binding. Fast mode
     docs list only Opus models; web-search docs cover dynamic filtering on Claude 4.6 and later. Live probes confirmed
-    adaptive `xhigh`/`max` returned signed thinking blocks; adaptive default with no `thinking` setting and effort
-    `high` also returned signed thinking blocks and positive thinking-token usage. Other live probes confirmed forced
-    tool choice, task-budget acceptance,
-    `code_execution_20260120`, BM25 search, Advisor, web-search request acceptance, deferred tool addition, inline
-    system messages, and the `drop_block` transformation after a prefix change. The only Haiku-specific profile
-    overrides are fast speed disabled and thinking-block binding enabled; unchanged fields retain Opus 5's
-    existing profile defaults. See Anthropic's [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
+    adaptive `xhigh`/`max` returned signed thinking blocks; adaptive default with no `thinking` setting and effort `high`
+    also returned signed thinking blocks and positive thinking-token usage. Other live probes confirmed forced tool
+    choice, task-budget acceptance, `code_execution_20260120`, BM25 search, Advisor, web-search request acceptance,
+    deferred tool addition, inline system messages, and the `drop_block` transformation after a prefix change. The only
+    Haiku-specific profile overrides are fast speed disabled and thinking-block binding enabled; unchanged fields
+    retain Opus 5's existing profile defaults. See Anthropic's
+    [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
     [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide),
     [thinking configuration](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting),
     [effort](https://platform.claude.com/docs/en/build-with-claude/effort),

@@ -150,10 +150,10 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Claude Fable 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind replayed thinking blocks to
     the conversation prefix. Anthropic documents a 400 after `system`, `tools`, or earlier `messages` change; for
     accounts created before 31 August 2026, the error requires `thinking.block_binding.prefix_mismatch_behavior`.
-    When True, Pydantic AI preserves the account's default behavior on the first request; if Anthropic rejects a stale
-    block, it retries once with
-    `thinking.block_binding.prefix_mismatch_behavior='drop_block'` and warns after the retry succeeds. See
-    [Anthropic's thinking troubleshooting guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
+    When True, Pydantic AI preserves the account's default behavior on the first request; if Anthropic
+    rejects a stale block, it retries once with `thinking.block_binding.prefix_mismatch_behavior='drop_block'`
+    and warns after the retry succeeds. See [Anthropic's thinking troubleshooting
+    guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
 
 

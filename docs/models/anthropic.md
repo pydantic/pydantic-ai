@@ -51,9 +51,6 @@ agent = Agent(model)
 
     The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 introduced updated tokenization (carried into 4.8). If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
 
-Newly released models may need refreshed pricing data for cost calculation and context-window tracking; see
-[keeping model prices up to date](../agent.md#keeping-model-prices-up-to-date).
-
 ## `provider` argument
 
 You can provide a custom `Provider` via the `provider` argument:
