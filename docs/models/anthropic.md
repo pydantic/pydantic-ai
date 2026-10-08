@@ -239,7 +239,7 @@ The provider-agnostic way to enable prompt caching is the unified [`ModelSetting
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-opus-5-5',
     instructions='You are a helpful assistant.',
     model_settings={'cache': True},
 )

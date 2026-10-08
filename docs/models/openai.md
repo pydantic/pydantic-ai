@@ -176,7 +176,7 @@ How long a cached prefix survives depends on the [retention policy](https://plat
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('gpt-5.5')
 settings = OpenAIResponsesModelSettings(openai_prompt_cache_retention='24h')
 agent = Agent(model, model_settings=settings)
 ...

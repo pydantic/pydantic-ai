@@ -20,7 +20,7 @@ Use the [`Caching`][pydantic_ai.capabilities.Caching] capability to enable cachi
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
 
-agent = Agent('anthropic:claude-opus-4-7', capabilities=[Caching()])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching()])
 ```
 
 You can also set the underlying `cache` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings] directly:
@@ -28,7 +28,7 @@ You can also set the underlying `cache` field in [`ModelSettings`][pydantic_ai.s
 ```python {title="unified_cache.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-opus-4-7', model_settings={'cache': True})
+agent = Agent('anthropic:claude-opus-5-5', model_settings={'cache': True})
 ```
 
 The [`Caching.retention`][pydantic_ai.capabilities.Caching.retention] value accepts:
@@ -49,7 +49,7 @@ By default, caching covers the tool definitions, the static instructions, and th
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Caching
 
-agent = Agent('anthropic:claude-opus-4-7', capabilities=[Caching(messages=False)])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[Caching(messages=False)])
 ```
 
 The `cache` model setting takes the same option as a [`CacheConfig`][pydantic_ai.settings.CacheConfig], together with an optional retention:
@@ -58,7 +58,7 @@ The `cache` model setting takes the same option as a [`CacheConfig`][pydantic_ai
 from pydantic_ai import Agent
 
 agent = Agent(
-    'anthropic:claude-opus-4-7',
+    'anthropic:claude-opus-5-5',
     model_settings={'cache': {'retention': '1h', 'messages': False}},
 )
 ```
