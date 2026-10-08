@@ -597,7 +597,7 @@ While adaptive thinking is on, an explicit forcing `tool_choice` is still sent, 
 
 ## Thinking block binding
 
-**Claude Fable 5.1**, **Claude Opus 5.5**, **Claude Sonnet 5.5**, and **Claude Haiku 5.5** bind each thinking block to the conversation prefix that produced it. Anthropic [documents a 400](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting) when replaying history after `system`, `tools`, or earlier `messages` change. Two ordinary Pydantic AI features change the prefix:
+**Claude Fable 5.1**, **Claude Opus 5.5**, **Claude Sonnet 5.5**, and **Claude Haiku 5.5** bind each thinking block to the conversation prefix that produced it. Anthropic [documents a 400](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting) (`The block is bound to a different conversation`) when replaying history after `system`, `tools`, or earlier `messages` change. Two ordinary Pydantic AI features change the prefix:
 
 - a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
