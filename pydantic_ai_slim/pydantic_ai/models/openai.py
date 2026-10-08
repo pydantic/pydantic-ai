@@ -108,7 +108,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -126,6 +126,7 @@ from . import (
     get_user_agent,
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._prompt_cache import split_cache_setting
 from ._tool_choice import (
     resolve_tool_choice,
     support_tool_forcing,
@@ -1100,19 +1101,66 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
-def _resolve_cache_retention(
-    profile: ModelProfile, default_settings: ModelSettings | None, model_settings: ModelSettings | None
+_CACHE_SETTINGS_KEYS = ('openai_prompt_cache_options', 'openai_cache_instructions')
+"""The OpenAI settings that take precedence over the unified `cache` setting.
+
+`openai_prompt_cache_retention` isn't one of them: it's a maximum-retention policy that OpenAI keeps
+independent of the GPT-5.6 cache options, so it combines with the unified setting instead.
+"""
+
+
+def _openai_effective_cache_settings(settings: OpenAIChatModelSettings) -> tuple[CacheSetting | None, ...]:
+    """The cache settings that take effect when any of `_CACHE_SETTINGS_KEYS` is present.
+
+    The implicit breakpoint (`mode='implicit'`, the default) caches at the 30-minute TTL, as does an
+    instruction breakpoint; with `mode='explicit'` and no instruction breakpoint, only `CachePoint`s cache.
+    """
+    options = settings.get('openai_prompt_cache_options') or {}
+    return (
+        '30m' if options.get('mode', 'implicit') == 'implicit' else None,
+        '30m' if settings.get('openai_cache_instructions') else None,
+    )
+
+
+def _translate_openai_cache(
+    profile: OpenAIModelProfile, model_settings: ModelSettings | None, params: ModelRequestParameters
+) -> ModelSettings | None:
+    """Map the unified `cache` setting onto GPT-5.6's prompt cache options and an instruction breakpoint.
+
+    Only applies to models with explicit prompt cache breakpoints, and only when no explicit OpenAI
+    cache setting (`_CACHE_SETTINGS_KEYS`) is present, since those take precedence. `openai_cache_instructions`
+    keeps its own gates, so requests that continue server-side state still get no instruction breakpoint.
+
+    Caching only the stable prefix (`messages=False`) uses `mode='explicit'`, so OpenAI creates no implicit
+    breakpoint and writes only the instruction breakpoint.
+    """
+    if (
+        not params.cache
+        or not profile.get('openai_supports_prompt_cache_breakpoints', False)
+        or any(key in (model_settings or {}) for key in _CACHE_SETTINGS_KEYS)
+    ):
+        return model_settings
+    translated = cast(OpenAIChatModelSettings, {**(model_settings or {})})
+    # `'30m'` is the only TTL OpenAI accepts, so every retention snaps to it.
+    _, messages = split_cache_setting(params.cache)
+    translated['openai_prompt_cache_options'] = {'mode': 'implicit' if messages else 'explicit', 'ttl': '30m'}
+    translated['openai_cache_instructions'] = True
+    return translated
+
+
+def _resolve_legacy_cache_retention(
+    profile: OpenAIModelProfile, default_settings: ModelSettings | None, model_settings: ModelSettings | None
 ) -> timedelta | None:
+    """The 24-hour extended retention `openai_prompt_cache_retention` requests on models before GPT-5.6.
+
+    On GPT-5.6 and later, `prompt_cache_retention` is a deprecated *maximum* that doesn't extend the
+    30-minute minimum OpenAI guarantees, so it says nothing about how long the prefix stays cached.
+    https://developers.openai.com/api/docs/guides/prompt-caching
+    """
     if profile.get('openai_supports_prompt_cache_breakpoints', False):
-        # On GPT-5.6 and later, `prompt_cache_retention` is a deprecated *maximum* that doesn't extend the
-        # 30-minute minimum OpenAI guarantees, so it says nothing about how long the prefix stays cached:
-        # the profile's `default_cache_retention` remains the expected window.
-        # https://developers.openai.com/api/docs/guides/prompt-caching
         return None
     settings = merge_model_settings(default_settings, model_settings) or {}
-    if settings.get('openai_prompt_cache_retention') == '24h':
-        return timedelta(hours=24)
-    return None
+    return timedelta(hours=24) if settings.get('openai_prompt_cache_retention') == '24h' else None
 
 
 @dataclass(init=False)
@@ -1177,8 +1225,25 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return self._model_name
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_cache_retention(self.profile, self.settings, model_settings)
+        """Resolve the prompt cache retention requested by OpenAI settings or the unified `cache` setting."""
+        return _resolve_legacy_cache_retention(
+            self.profile, self.settings, model_settings
+        ) or super().resolve_cache_retention(model_settings)
+
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # OpenAI's models cache prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
+        # Subclasses serving other model families (OpenRouter's Anthropic routes) still report it.
+        if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            return False
+        return super()._caching_not_enabled(model_settings)
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
+            return _openai_effective_cache_settings(cast(OpenAIChatModelSettings, merged_settings))
+        return super()._effective_cache_settings(merged_settings)
 
     @property
     def system(self) -> str:
@@ -1221,7 +1286,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
                 f'Please use `OpenAIResponsesModel` instead.'
             )
-        return super().prepare_request(model_settings, model_request_parameters)
+        model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     async def request(
         self,
@@ -2260,8 +2326,33 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return self._model_name
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_cache_retention(self.profile, self.settings, model_settings)
+        """Resolve the prompt cache retention requested by OpenAI settings or the unified `cache` setting."""
+        return _resolve_legacy_cache_retention(
+            self.profile, self.settings, model_settings
+        ) or super().resolve_cache_retention(model_settings)
+
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # OpenAI's models cache prompts implicitly even when nothing is configured, so unconfigured isn't uncached.
+        # Subclasses serving other model families (OpenRouter's Anthropic routes) still report it.
+        if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+            return False
+        return super()._caching_not_enabled(model_settings)
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        if self._has_provider_cache_settings(merged_settings) and self.profile.get('supports_cache', False):
+            return _openai_effective_cache_settings(cast(OpenAIChatModelSettings, merged_settings))
+        return super()._effective_cache_settings(merged_settings)
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     @property
     def system(self) -> str:

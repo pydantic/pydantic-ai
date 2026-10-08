@@ -229,11 +229,27 @@ The `remaining` field on `task_budget` is for *client-side* compaction patterns 
 
 ## Prompt Caching
 
-Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports automatic caching, per-block message caching, and explicit cache breakpoints:
+Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports the unified `cache` setting as well as Anthropic's automatic caching, per-block message caching, and explicit cache breakpoints:
+
+### Unified `cache` setting
+
+The provider-agnostic way to enable prompt caching is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability), which works the same across every supporting provider:
+
+```python {title="anthropic_unified_cache.py"}
+from pydantic_ai import Agent
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='You are a helpful assistant.',
+    model_settings={'cache': True},
+)
+```
+
+On Anthropic, `cache=True` (or a retention like `cache='1h'`) uses automatic caching, exactly like `anthropic_cache` below; on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, it places cache breakpoints at the end of the tool definitions, the static instructions and the conversation instead. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Prompt Caching](../capabilities/caching.md) for the trade-off. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
 
 ### Automatic Caching
 
-The simplest way to enable prompt caching is with [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
+The Anthropic-specific way to use automatic caching is [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
 
 ```python {test="skip"}
 from pydantic_ai import Agent

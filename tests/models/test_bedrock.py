@@ -4322,6 +4322,156 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
 
 
 @pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'cache,expected_cache_point,expected_usage',
+    [
+        pytest.param(
+            True,
+            # No `ttl`, matching what `bedrock_cache_instructions=True` sends.
+            {'cachePoint': {'type': 'default'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_tokens=8172,
+                        output_tokens=5,
+                        input_tokens=8259,
+                        cost=Decimal('0.0227194'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        output_tokens=5,
+                        input_tokens=8259,
+                        cache_read_tokens=8172,
+                        cost=Decimal('0.00204424'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='default',
+        ),
+        pytest.param(
+            '1h',
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_tokens=8175,
+                        output_tokens=5,
+                        input_tokens=8262,
+                        cost=Decimal('0.02272765'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        output_tokens=5,
+                        input_tokens=8262,
+                        cache_read_tokens=8175,
+                        cost=Decimal('0.0020449'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
+async def test_unified_cache_writes_then_reads_real_api(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    cache: Literal[True, '1h'],
+    expected_cache_point: dict[str, Any],
+    expected_usage: tuple[RunUsage, RunUsage],
+):
+    """The unified `cache` setting places cache points after the tool definitions and the instructions,
+    with the requested TTL, and Bedrock accepts them.
+
+    The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-5', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a concise Python assistant (cache setting: {cache!r}). '
+        + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=cache),
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Sunny in {city}'
+
+    prompt = 'Name one Python web framework, in one word.'
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await agent.run(prompt)
+        second = await agent.run(prompt)
+
+    assert [
+        {
+            'system': [block for block in body['system'] if 'cachePoint' in block],
+            'tools': [tool for tool in body['toolConfig']['tools'] if 'cachePoint' in tool],
+        }
+        for body in sent_requests
+    ] == [{'system': [expected_cache_point], 'tools': [expected_cache_point]}] * 2
+    assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
+async def test_unified_cache_reads_history_after_wide_turn_real_api(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """With `cache=True`, a direct `model.request()` caches the conversation, and the next request reads it
+    back even after a turn with 12 parallel tool calls.
+
+    Bedrock looks back only about 20 content blocks from a cache breakpoint for an earlier cache entry, and the
+    wide turn adds 25, so the end of the previous request gets its own breakpoint
+    (https://github.com/pydantic/pydantic-ai/issues/9404).
+    """
+    # Claude Sonnet 4.5 on Bedrock reads nothing back after this turn without the extra breakpoint.
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
+    )
+    first_request = ModelRequest(
+        parts=[
+            UserPromptPart('Here are some notes about Python, for a wide turn. ' + 'Python favors readability. ' * 1200)
+        ],
+        instructions='You are a concise Python assistant.',
+    )
+    tool_calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    history: list[ModelMessage] = [
+        first_request,
+        ModelResponse(parts=[TextPart('Checking the weather.'), *tool_calls]),
+        ModelRequest(
+            parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in tool_calls]
+        ),
+    ]
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await model.request([first_request], ModelSettings(cache=True), params)
+        second = await model.request(history, ModelSettings(cache=True), params)
+
+    def cache_point_positions(body: dict[str, Any]) -> list[tuple[int, int]]:
+        return [
+            (message_index, block_index)
+            for message_index, message in enumerate(body['messages'])
+            for block_index, block in enumerate(message['content'])
+            if 'cachePoint' in block
+        ]
+
+    # Instructions, tools, and the end of the conversation; after the wide turn, also the end of the first request.
+    assert [cache_point_positions(body) for body in sent_requests] == snapshot([[(0, 1)], [(0, 1), (2, 12)]])
+    assert [
+        ('cachePoint' in body['system'][-1], 'cachePoint' in body['toolConfig']['tools'][-1]) for body in sent_requests
+    ] == [(True, True)] * 2
+    assert (first.usage, second.usage) == snapshot(
+        (
+            RequestUsage(input_tokens=7749, cache_write_tokens=7746, output_tokens=219),
+            RequestUsage(input_tokens=8337, cache_read_tokens=7746, cache_write_tokens=584, output_tokens=156),
+        )
+    )
+    assert second.usage.cache_read_tokens >= first.usage.cache_write_tokens
+
+
+@pytest.mark.vcr()
 async def test_bedrock_cache_messages_with_document_as_last_content(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -5059,6 +5209,69 @@ async def test_bedrock_cache_skipped_for_unsupported_models(
         messages_user, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
     )
     assert bedrock_messages[0]['content'] == snapshot([{'text': 'User message.'}])
+
+
+async def test_unified_cache_places_stable_boundary_points(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The unified `cache` setting flows through `prepare_request` into cache points at the stable
+    prompt boundaries; `cache=True` emits no explicit `ttl`, matching `bedrock_cache_*=True`."""
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='tool_one')])
+    settings, params = model.prepare_request(ModelSettings(cache=True), params)
+    bedrock_settings = cast(BedrockModelSettings, settings or {})
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert system_prompt == snapshot([{'text': 'System instructions.'}, {'cachePoint': {'type': 'default'}}])
+
+    tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config and tool_config['tools'][-1] == snapshot({'cachePoint': {'type': 'default'}})
+
+
+async def test_bedrock_cache_messages_keeps_existing_previous_request_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """After a wide turn, a previous request that already ends in a `CachePoint` doesn't get a second one."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    calls = [ToolCallPart('get_weather', {}, tool_call_id=f'call_{i}') for i in range(12)]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Check the weather everywhere.', CachePoint()])]),
+        ModelResponse(parts=[TextPart('Checking.'), *calls]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id=call.tool_call_id) for call in calls]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+
+    assert [[next(iter(block)) for block in message['content']][-2:] for message in bedrock_messages] == [
+        ['text', 'cachePoint'],
+        ['toolUse', 'toolUse'],
+        ['toolResult', 'cachePoint'],
+    ]
+
+
+async def test_unified_cache_tool_points_skipped_for_nova(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """On Nova (prompt caching without tool caching), the unified setting caches instructions while
+    the injected tool-definitions setting is dropped by the profile gate."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='tool_one')])
+    settings, params = model.prepare_request(ModelSettings(cache=True), params)
+    bedrock_settings = cast(BedrockModelSettings, settings or {})
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert system_prompt[-1] == {'cachePoint': {'type': 'default'}}
+
+    tool_config = model._map_tool_config(params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
+    assert tool_config and all('cachePoint' not in tool for tool in tool_config['tools'])
 
 
 async def test_bedrock_cache_tool_definitions_skipped_for_nova(
