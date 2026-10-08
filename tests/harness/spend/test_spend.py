@@ -51,6 +51,7 @@ from pydantic_ai_harness.spend import (
     UnpricedModelWarning,
 )
 from pydantic_ai_harness.spend._exceptions import SpendCompositionWarning
+from tests.continuation_utils import ScriptedContinuationModel, StreamSegment
 
 pytestmark = [
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
@@ -2084,39 +2085,26 @@ class _CountingStore(InMemorySpendStore):
         return await super().add_many(entries)
 
 
-def _continued_model(
-    segments: Sequence[ModelResponse], *, fail_on_call: int | None = None
-) -> tuple[FunctionModel, list[int]]:
-    """Answer with `segments` in order, failing once on `fail_on_call` (1-based) instead."""
-    calls: list[int] = []
-    pending = list(segments)
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        calls.append(len(calls) + 1)
-        if len(calls) == fail_on_call:
-            raise RuntimeError('continuation failed')
-        return replace(pending.pop(0))
-
-    return FunctionModel(respond), calls
-
-
 def _segment(
     content: str, *, tokens: tuple[int, int], cost: str, suspended: bool, response_id: str | None
 ) -> ModelResponse:
     return ModelResponse(
         parts=[TextPart(content)],
+        model_name='scripted',
         state='suspended' if suspended else 'complete',
         provider_response_id=response_id,
         usage=RequestUsage(input_tokens=tokens[0], output_tokens=tokens[1], cost=Decimal(cost)),
     )
 
 
-def _paused_then_finished(*, response_ids: bool = True) -> list[ModelResponse]:
-    """An Anthropic `pause_turn` style chain: two separately billed segments merged into one turn."""
-    return [
-        _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a' if response_ids else None),
-        _segment('B', tokens=(8, 3), cost='0.011', suspended=False, response_id='b' if response_ids else None),
-    ]
+def _paused_then_finished(*, response_ids: bool = True, fail_between: bool = False) -> list[ModelResponse | Exception]:
+    """An Anthropic `pause_turn` style chain: two separately billed segments merged into one turn.
+
+    With `fail_between`, the request continuing the first segment fails once before it succeeds.
+    """
+    first = _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a' if response_ids else None)
+    second = _segment('B', tokens=(8, 3), cost='0.011', suspended=False, response_id='b' if response_ids else None)
+    return [first, RuntimeError('continuation failed'), second] if fail_between else [first, second]
 
 
 def _billed_cost(response: ModelResponse) -> Decimal | None:
@@ -2136,7 +2124,7 @@ class TestContinuationAccrual:
         """
         journal = _Journal()
         store = _CountingStore()
-        model, calls = _continued_model(_paused_then_finished(), fail_on_call=2)
+        model = ScriptedContinuationModel(responses=_paused_then_finished(fail_between=True))
         limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
         agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
 
@@ -2150,7 +2138,7 @@ class TestContinuationAccrual:
         await agent.run('go', run_id='same-durable-task', usage=usage)
 
         final = (await limits.status())[0].spent
-        assert len(calls) == 3
+        assert model.request_calls == 3
         assert (usage.total_tokens, usage.cost) == (21, Decimal('0.021'))
         assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
         assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
@@ -2170,7 +2158,7 @@ class TestContinuationAccrual:
         segment twice.
         """
         journal = _Journal(journal_capabilities=False)
-        model, _ = _continued_model(_paused_then_finished(response_ids=response_ids), fail_on_call=2)
+        model = ScriptedContinuationModel(responses=_paused_then_finished(response_ids=response_ids, fail_between=True))
         limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost)
         agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
 
@@ -2186,7 +2174,7 @@ class TestContinuationAccrual:
     async def test_replaying_a_completed_chain_charges_nothing_again(self, journal_capabilities: bool):
         journal = _Journal(journal_capabilities=journal_capabilities)
         store = _CountingStore()
-        model, calls = _continued_model(_paused_then_finished())
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
         limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
         agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
 
@@ -2195,47 +2183,74 @@ class TestContinuationAccrual:
         await agent.run('go', run_id='same-durable-task')
 
         final = (await limits.status())[0].spent
-        assert len(calls) == 2
+        assert model.request_calls == 2
         assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
         assert len(store.batches) == (2 if journal_capabilities else 4)
 
     async def test_a_chain_is_reported_once_with_its_combined_usage(self):
         """Accruing at each boundary changes what reaches the store, not what is reported."""
         snapshots: list[SpendSnapshot] = []
-        model, _ = _continued_model(_paused_then_finished())
-        limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost, on_spend=snapshots.append)
+        store = _CountingStore()
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=_billed_cost, on_spend=snapshots.append
+        )
 
         result = await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
 
         assert [(s.usage.total_tokens, s.usd) for s in snapshots] == [(21, Decimal('0.021'))]
         assert snapshots[0].budgets[0].spent == Spent(usd=Decimal('0.021'), tokens=21, requests=1)
         assert result.usage.total_tokens == 21
+        assert len(store.batches) == 2
+
+    async def test_a_streamed_chain_is_accrued_at_each_boundary(self):
+        """The streamed composite reports its segments to the observers present when it was opened."""
+        store = _CountingStore()
+        model = ScriptedContinuationModel(
+            segments=[
+                StreamSegment(
+                    texts=['A'], state='suspended', provider_response_id='a', input_tokens=7, output_tokens=3
+                ),
+                StreamSegment(texts=['B'], state='complete', provider_response_id='b', input_tokens=8, output_tokens=3),
+            ]
+        )
+        limits = SpendLimits[None](
+            budgets=[Budget(window='total')], store=store, price=lambda response: Decimal(response.usage.total_tokens)
+        )
+
+        async with Agent(model, deps_type=type(None), capabilities=[limits]).run_stream('go') as stream:
+            assert await stream.get_output() == 'AB'
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('21'), tokens=21, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [
+            [(10, 1)],
+            [(11, 0)],
+        ]
 
     async def test_idle_polls_of_one_background_job_are_not_accrued(self):
         """Polls of one job replace the response, so only growth in its usage is new spend."""
         store = _CountingStore()
-        polls = [
-            _segment('', tokens=(1, 0), cost='0', suspended=True, response_id='job'),
-            _segment('', tokens=(1, 0), cost='0', suspended=True, response_id='job'),
+        polls: list[ModelResponse | Exception] = [
+            _segment('', tokens=(0, 0), cost='0', suspended=True, response_id='job'),
+            _segment('', tokens=(0, 0), cost='0', suspended=True, response_id='job'),
             _segment('done', tokens=(40, 2), cost='0.05', suspended=False, response_id='job'),
         ]
-        model, _ = _continued_model(polls)
         limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
 
-        await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+        await Agent(ScriptedContinuationModel(responses=polls), deps_type=type(None), capabilities=[limits]).run('go')
 
         assert (await limits.status())[0].spent == Spent(usd=Decimal('0.05'), tokens=42, requests=1)
         assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [
-            [(1, 1)],
-            [(41, 0)],
+            [(0, 1)],
+            [(42, 0)],
         ]
 
     async def test_a_resumed_chain_is_folded_from_the_response_it_resumes(self):
-        """A history ending in a suspended response seeds the chain, and its usage stays in the merge."""
+        """The suspended response a history ends in seeds the fold, so the boundaries match core's merge."""
         seed = _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a')
         store = _CountingStore()
-        model, _ = _continued_model(
-            [
+        model = ScriptedContinuationModel(
+            responses=[
                 _segment('B', tokens=(8, 3), cost='0.011', suspended=True, response_id='b'),
                 _segment('C', tokens=(4, 1), cost='0.005', suspended=False, response_id='c'),
             ]
@@ -2246,18 +2261,43 @@ class TestContinuationAccrual:
             message_history=[ModelRequest.user_text_prompt('go'), seed]
         )
 
-        assert result.usage.total_tokens == 26
-        assert (await limits.status())[0].spent == Spent(usd=Decimal('0.026'), tokens=26, requests=1)
+        assert (await limits.status())[0].spent.tokens == result.usage.total_tokens
         assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
             [(21, Decimal('0.021'))],
             [(5, Decimal('0.005'))],
         ]
 
+    @pytest.mark.parametrize('failure', ['unpriced', 'raises'])
+    async def test_a_boundary_that_cannot_be_priced_defers_to_the_merged_response(self, failure: str):
+        """Pricing outcomes belong to the response that is reported, not to an intermediate merge."""
+
+        def price(response: ModelResponse) -> Decimal | None:
+            if response.state == 'complete':
+                return Decimal('3')
+            if failure == 'raises':
+                raise RuntimeError('cannot price a partial turn')
+            return None
+
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=price, on_unpriced='raise')
+
+        await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('3'), tokens=21, requests=1)
+
+    async def test_an_unpriced_chain_counts_one_unpriced_request(self):
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=lambda response: None)
+
+        await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert (await limits.status())[0].spent == Spent(tokens=21, requests=1, unpriced_requests=1)
+
     async def test_a_boundary_priced_above_the_whole_chain_posts_no_credit(self):
         def price(response: ModelResponse) -> Decimal:
             return Decimal('5') if response.state == 'suspended' else Decimal('3')
 
-        model, _ = _continued_model(_paused_then_finished())
+        model = ScriptedContinuationModel(responses=_paused_then_finished())
         limits = SpendLimits[None](budgets=[Budget(window='total')], price=price)
 
         await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')

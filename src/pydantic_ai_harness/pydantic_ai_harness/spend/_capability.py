@@ -338,31 +338,34 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """Accrue one billed response, then report it once.
 
         `boundaries` are what a continuation chain had merged into after each segment before
-        its last. Each is accrued as the growth over what is already applied, and `response`
-        last, so the amounts add up to `response` itself. Under durable execution each
-        segment is its own durable model request, and a lifecycle that failed partway
-        accrued the merged response up to the failure. A retry replays those segments and
-        reaches the same boundaries in the same order, so the recorded accruals replay and
-        only the segments it newly requested reach the store. Accruing the whole merged
-        response in one call would replay the recorded accrual in its place instead.
+        its last. Each accrues its USD and token growth over what is already applied, and
+        `response` last, so the tokens add up to `response` itself. Under durable execution
+        each segment is its own durable model request, and a non-streamed lifecycle that
+        failed partway accrued the merged response up to the failure. A retry replays those
+        segments and reaches the same boundaries in the same order, so the recorded accruals
+        replay and only the segments it newly requested reach the store. Accruing the whole
+        merged response in one call would replay the recorded accrual in its place instead.
 
-        Growth is floored at zero against the highest amount applied so far, so a pricing
-        function that values a later boundary below an earlier one cannot post a credit.
-        A boundary that adds nothing is skipped, which keeps a background job polled under
-        one id to one store call when its intermediate polls carry no usage.
+        The request and, when `response` is unpriced, the unpriced request are counted with
+        the first accrual. A boundary that cannot be priced adds no USD and `response` catches
+        up, so pricing errors and `on_unpriced` apply to `response` alone. USD growth is floored
+        at zero against the highest amount applied so far, so a pricing function that values a
+        later boundary below an earlier one cannot post a credit. A boundary that adds nothing
+        is skipped, which keeps a background job polled under one id to one store call when
+        its intermediate polls carry no usage.
         """
         usd, priced, price_error = self._price_of(response)
         keyed = await self._keyed(ctx)
-        applied_usd, applied_tokens, applied_unpriced = Decimal(0), 0, 0
+        applied_usd, applied_tokens = Decimal(0), 0
         accrued: Mapping[str, Spent] | None = None
         for boundary in (*boundaries, response):
-            boundary_usd, boundary_priced = (usd, priced) if boundary is response else self._price_of(boundary)[:2]
+            boundary_usd = usd if boundary is response else self._price_of(boundary)[0]
             with money_precision():
                 usd_growth = max(Decimal(0), boundary_usd - applied_usd)
             tokens_growth = max(0, boundary.usage.total_tokens - applied_tokens)
-            unpriced_growth = max(0, (0 if boundary_priced else 1) - applied_unpriced)
-            if accrued is not None and not (usd_growth or tokens_growth or unpriced_growth):
+            if accrued is not None and not (usd_growth or tokens_growth):
                 continue
+            first = accrued is None
             entries: dict[str, SpendEntry] = {}
             for budget, key in keyed:
                 # Budgets sharing a name, window, and scope share a counter, which is
@@ -373,8 +376,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                         key=key,
                         usd=usd_growth,
                         tokens=tokens_growth,
-                        requests=1 if accrued is None else 0,
-                        unpriced=unpriced_growth,
+                        requests=1 if first else 0,
+                        unpriced=0 if priced or not first else 1,
                         ttl=budget.ttl,
                         token=self._dedup_token(ctx, boundary, response_index),
                     )
@@ -392,7 +395,6 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             with money_precision():
                 applied_usd += usd_growth
             applied_tokens += tokens_growth
-            applied_unpriced += unpriced_growth
         assert accrued is not None
         statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
 
@@ -705,7 +707,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     @durable_operation('accrue')
     async def _accrue(self, entries: list[SpendEntry]) -> Mapping[str, Spent]:
-        """Apply one response and journal the totals returned by the store."""
+        """Apply one response, or a continuation boundary's growth, and journal the store's totals."""
         return await self._store.add_many(entries) if entries else {}
 
     async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
