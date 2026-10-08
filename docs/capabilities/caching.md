@@ -1,5 +1,5 @@
 ---
-description: "Prompt caching in Pydantic AI: enable it across providers with the Caching capability or the unified cache setting, what it costs, how Pydantic AI keeps the prompt prefix stable, what invalidates a cache, and how to monitor cache efficiency."
+description: "Prompt caching in Pydantic AI: how each provider caches, what caching costs, how to enable it portably with the Caching capability or the unified cache setting, what invalidates a cache, and how to monitor cache efficiency."
 ---
 
 # Caching
@@ -8,9 +8,68 @@ Prompt caching lets a provider reuse the work it did on a prompt prefix it has s
 
 A cache hit requires the serialized request to be an exact prefix of an earlier request, in the provider's cache order: tool definitions, then the system prompt, then messages. A change early in the request silently causes everything after it to be charged again, so caching pays off only while that prefix stays stable.
 
-Some providers cache prompts implicitly, without any configuration: OpenAI, Gemini, DeepSeek and xAI, for example. Others cache nothing unless the request opts in: Anthropic (including on Amazon Bedrock, Google Vertex AI and Microsoft Foundry), Amazon Bedrock's Claude and Nova models, and OpenRouter's Anthropic models. OpenAI's GPT-5.6 and later, and Gemini 2.5 and later on OpenRouter, sit in between: they cache implicitly, and also take explicit breakpoints (and on GPT-5.6, a cache TTL), such as one at the end of the instructions so separate conversations share them.
+Some providers cache prompts implicitly, without any configuration: OpenAI, Gemini, DeepSeek and xAI, for example. Others cache nothing unless the request says what to cache: Anthropic (including on Amazon Bedrock, Google Vertex AI and Microsoft Foundry), Amazon Bedrock's Claude and Nova models, and OpenRouter's Anthropic models. OpenAI's GPT-5.6 and later, and Gemini 2.5 and later on OpenRouter, sit in between: they cache implicitly, and also take explicit breakpoints, such as one at the end of the instructions so separate conversations share them.
 
-The simplest way to enable caching across supported providers is the [`Caching`][pydantic_ai.capabilities.Caching] [capability](overview.md). Provider-specific settings are available for advanced usage when you need direct access to a provider's native cache controls.
+To enable caching the same way on every provider, use the [`Caching`][pydantic_ai.capabilities.Caching] capability, described under [Unified caching settings](#unified-caching-settings).
+
+## How providers cache
+
+Each section below summarizes a provider's native caching behavior and its provider-specific settings. The linked provider pages document those settings in detail. For what the unified setting sends to each provider, see [Provider translation](#provider-translation).
+
+### Anthropic
+
+Anthropic caches nothing unless the request marks what to cache, with a 5-minute default TTL and a 1-hour opt-in. A request carries at most four cache breakpoints.
+
+[`anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache] uses Anthropic's [automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching), which places the breakpoint on the last cacheable block and moves it forward as the conversation grows. The Anthropic API and Microsoft Foundry support automatic caching; the Bedrock and Vertex AI SDK clients don't, so there `anthropic_cache` falls back to a breakpoint on the last user message. [`anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions], [`anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions] and [`anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages] place per-block breakpoints, and a [`CachePoint`][pydantic_ai.messages.CachePoint] in a user message marks one explicitly.
+
+See [Anthropic prompt caching](../models/anthropic.md#prompt-caching) for details.
+
+### Bedrock
+
+The Bedrock Converse API caches explicitly on Claude and Nova models, at a 5-minute default TTL, with a 1-hour TTL on the Claude models AWS grants it to. Nova doesn't cache tool definitions. Content below the model's minimum token threshold isn't cached, a request carries at most four cache points, and a cache point only finds the previous request's cache entry within about 20 content blocks.
+
+[`bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions], [`bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions] and [`bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages] place cache points, and a [`CachePoint`][pydantic_ai.messages.CachePoint] marks one explicitly.
+
+See [Bedrock prompt caching](../models/bedrock.md#prompt-caching) for details.
+
+### OpenAI
+
+OpenAI caches prompts implicitly once they pass a minimum length (1,024 tokens on GPT-5.6 and later).
+
+On models before GPT-5.6, how long a cached prefix lives depends on the retention policy: `in_memory` typically keeps it for 5 to 10 minutes of inactivity, `24h` for up to a day, and the default depends on whether your organization has zero data retention enabled. [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request.
+
+On GPT-5.6 and later, a cached prefix stays eligible for reuse for 30 minutes after its most recent write or read. [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options] sets the TTL and the mode: in the default implicit mode OpenAI also places a breakpoint of its own, in explicit mode only the request's breakpoints are cached. A [`CachePoint`][pydantic_ai.messages.CachePoint] adds a breakpoint after a user content block, and [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] adds one after the static instructions. OpenAI writes at most four breakpoints per request.
+
+On any model, [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_key] groups requests that share a prefix to improve hit rates.
+
+See [OpenAI prompt caching](../models/openai.md#prompt-caching) for details.
+
+### OpenRouter
+
+OpenRouter passes explicit breakpoints through to Anthropic and Gemini models: [`openrouter_cache_instructions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_instructions], [`openrouter_cache_tool_definitions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_tool_definitions], [`openrouter_cache_messages`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_messages] and [`CachePoint`][pydantic_ai.messages.CachePoint]. Anthropic routes honor the requested TTL. Gemini routes ignore it, use only the last breakpoint in the conversation, and take no tool definition breakpoint. OpenAI models on OpenRouter cache implicitly; for GPT-5.6 breakpoints, use an OpenAI model class with the OpenRouter provider.
+
+See [OpenRouter prompt caching](../models/openrouter.md#prompt-caching) for details.
+
+### Google
+
+Gemini caches prompts implicitly. [`CachePoint`][pydantic_ai.messages.CachePoint] markers are ignored. To reuse a large, fixed context explicitly, create a cached content resource and pass its name in [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content].
+
+See [Google context caching](../models/google.md#context-caching-google_cached_content) for details.
+
+### Other providers
+
+Other providers that cache prompts, such as DeepSeek and xAI, do so implicitly. Some take a hint that keeps related requests on the same cache: xAI's [cache sticky routing](../models/xai.md#configuration) metadata, Mistral's [`mistral_prompt_cache_key`][pydantic_ai.models.mistral.MistralModelSettings.mistral_prompt_cache_key], and the [prompt cache identity](../models/openai-codex.md#prompt-caching) the OpenAI Codex model derives from the conversation.
+
+## Cost
+
+Caching changes what a request costs. Writing a prefix to the cache costs more than sending it uncached, and reading it back costs much less:
+
+| Provider | Cache write | Cache read |
+|---|---|---|
+| Anthropic (incl. Bedrock, Vertex AI and Foundry) | 1.25x the input price for the 5-minute cache, 2x for the 1-hour cache | 0.1x |
+| OpenAI GPT-5.6 and later | 1.25x | 0.1x |
+
+So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour cache (2x) after two. A prefix is read back on every request after the first in an agent run with tool calls, and on every turn of a conversation that continues through [`message_history`](../message-history.md). A single request that's never repeated only pays the write premium; for agents that handle many of those, [cache only the stable prefix](#caching-only-the-stable-prefix).
 
 ## Unified caching settings
 
@@ -63,62 +122,18 @@ agent = Agent(
 )
 ```
 
-Per provider:
-
-- **Anthropic API and Microsoft Foundry:** automatic caching would breakpoint the end of the conversation, so the instructions and tool definitions get breakpoints instead (`anthropic_cache_instructions` and `anthropic_cache_tool_definitions`).
-- **Anthropic on the Bedrock and Vertex AI SDK clients, Bedrock Converse, and OpenRouter's Anthropic routes:** the instruction and tool definition breakpoints, without the conversation breakpoint. OpenRouter's Gemini routes take no tool definition breakpoint, so they cache the instructions.
-- **OpenAI GPT-5.6 and later:** `openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'}` with the instruction breakpoint. With `mode='explicit'`, OpenAI doesn't create its implicit breakpoint, so only the instructions are written. On requests that continue server-side state (`openai_previous_response_id` or `openai_conversation_id`), the instructions can't carry a breakpoint, so those requests use no prompt caching at all.
-- **Providers that cache implicitly**, such as Gemini and earlier OpenAI models: no effect.
-
-### What gets cached
-
-Where the provider has a server-managed caching mode, it's used: Anthropic's [automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching) places the cache breakpoint on the last cacheable block itself and moves it forward as the conversation grows. Elsewhere, Pydantic AI places explicit cache breakpoints at the end of the tool definitions, the static instructions, and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached.
-
-On Amazon Bedrock, a breakpoint finds the previous request's cache entry only if it is within about 20 content blocks, so after a turn that adds more than that (such as a dozen parallel tool calls and their results), the end of the previous request gets a breakpoint of its own. With instructions, tools and the conversation, that's at most the four breakpoints a request can carry; when explicit `CachePoint`s would push a request over the limit, the oldest message breakpoints are dropped first.
-
 ### Provider translation
 
-| Provider | `Caching()` | `Caching('1h')` | Notes |
-|---|---|---|---|
-| Anthropic | `anthropic_cache='5m'` | `anthropic_cache='1h'` | Automatic caching on the Anthropic API and Microsoft Foundry |
-| Anthropic on Bedrock and Vertex AI SDK clients | `anthropic_cache_instructions`, `anthropic_cache_tool_definitions` and `anthropic_cache_messages` set to `'5m'` | The same, set to `'1h'` | These clients don't support automatic caching. On Bedrock, `'1h'` snaps to `'5m'` on the models AWS doesn't grant the 1-hour TTL |
-| Bedrock (Claude and Nova) | `bedrock_cache_instructions`, `bedrock_cache_tool_definitions` and `bedrock_cache_messages` set to `True` | The same, set to `'1h'` | Nova caches the instructions and conversation but not tool definitions, at a 5-minute TTL |
-| OpenRouter (Anthropic and Gemini) | `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` set to `'5m'` | The same, set to `'1h'` | Gemini takes no tool definition breakpoint and no TTL, and caches at its default 5 minutes |
-| OpenAI (GPT-5.6 and later) | `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and `openai_cache_instructions=True` | The same | `'30m'` is the only TTL OpenAI accepts. The [instruction breakpoint](../models/openai.md#prompt-caching) is skipped on requests that continue server-side state |
+Where the provider has an automatic caching mode, the unified setting uses it. Elsewhere, Pydantic AI places cache breakpoints at the end of the tool definitions, the static instructions, and the conversation, so the stable prefix is shared between conversations and each request reads back everything the previous one cached. When explicit `CachePoint`s would push a request over the provider's breakpoint limit, the oldest message breakpoints are dropped first.
 
-## Provider support
-
-| Provider | Caching | Provider-specific settings |
-|---|---|---|
-| [Anthropic](../models/anthropic.md#prompt-caching) | Explicit: nothing is cached unless the request opts in. 5-minute default TTL, 1-hour opt-in | [`anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache], [`anthropic_cache_instructions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_instructions], [`anthropic_cache_tool_definitions`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_tool_definitions], [`anthropic_cache_messages`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache_messages], and [`CachePoint`][pydantic_ai.messages.CachePoint] |
-| [Bedrock](../models/bedrock.md#prompt-caching) | Explicit, on Claude and Nova models. Minimum-token thresholds apply | [`bedrock_cache_instructions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_instructions], [`bedrock_cache_tool_definitions`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_tool_definitions], [`bedrock_cache_messages`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_cache_messages], and [`CachePoint`][pydantic_ai.messages.CachePoint] |
-| [OpenRouter](../models/openrouter.md#prompt-caching) | Passes explicit caching through to Anthropic and Gemini models; OpenAI models cache implicitly | [`openrouter_cache_instructions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_instructions], [`openrouter_cache_tool_definitions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_tool_definitions], [`openrouter_cache_messages`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_messages], and [`CachePoint`][pydantic_ai.messages.CachePoint] |
-| [OpenAI](../models/openai.md#prompt-caching) | Implicit, above a minimum prompt length (1,024 tokens on GPT-5.6 and later). GPT-5.6 and later also take explicit breakpoints and a 30-minute TTL | [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options], [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] and [`CachePoint`][pydantic_ai.messages.CachePoint] on GPT-5.6 and later; [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] on earlier models |
-| [Google](../models/google.md#context-caching-google_cached_content) | Implicit. [`CachePoint`][pydantic_ai.messages.CachePoint] markers are ignored | [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] for explicit cached-content resources |
-| Other providers | Typically implicit where supported | Consult the provider page, for example xAI's [cache sticky routing](../models/xai.md#configuration) |
-
-The [`Caching`][pydantic_ai.capabilities.Caching] capability and the unified `cache` setting translate to these provider-specific settings as shown in [Provider translation](#provider-translation), and have no effect on providers that only cache implicitly, such as Google and OpenAI models before GPT-5.6. The provider pages linked in the table document them, along with details such as Bedrock's minimum-token thresholds and OpenRouter's per-downstream-provider differences.
-
-## Cost
-
-Caching changes what a request costs. Writing a prefix to the cache costs more than sending it uncached, and reading it back costs much less:
-
-| Provider | Cache write | Cache read |
-|---|---|---|
-| Anthropic (incl. Bedrock, Vertex AI and Foundry) | 1.25x the input price for the 5-minute cache, 2x for the 1-hour cache | 0.1x |
-| OpenAI GPT-5.6 and later | 1.25x | 0.1x |
-
-So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour cache (2x) after two. A prefix is read back on every request after the first in an agent run with tool calls, and on every turn of a conversation that continues through [`message_history`](../message-history.md). A single request that's never repeated only pays the write premium; for agents that handle many of those, [cache only the stable prefix](#caching-only-the-stable-prefix).
-
-## Prefix-stability guarantees
-
-Pydantic AI makes the following guarantees about the prompt prefix it sends to providers:
-
-- [Instructions are assembled deterministically](../agent.md#instructions) for each request. Static instructions from `Agent(instructions=...)` always sort before dynamic instructions, preserving the static prefix when dynamic content changes.
-- Message history is append-only within a run: Pydantic AI does not rewrite or reorder settled messages. [History processors](../message-history.md#processing-message-history) you add, and capabilities that rewrite history such as [compaction](compaction.md), are the exception.
-- Internal bookkeeping such as run IDs, message timestamps, and deferred-tool flags does not reach the provider wire and therefore cannot move the prompt prefix.
-- [Vercel AI](../ui/vercel-ai.md) and [AG-UI](../ui/ag-ui.md) adapter round-trips are tested to reconstruct histories that serialize back to the same provider request for the wire-relevant fields (tool call arguments, thinking signatures). Older UI protocol versions can be lossy — for example, AG-UI versions without a reasoning carrier drop thinking parts, which moves the prefix — so keep the client packages current.
-- Every recorded provider conversation in Pydantic AI's test suite is checked for wire-level prefix stability, so a framework change that starts moving prefixes fails CI in the pull request that introduces it.
+| Provider | `Caching()` | `Caching('1h')` | `Caching(messages=False)` | Notes |
+|---|---|---|---|---|
+| Anthropic API and Microsoft Foundry | `anthropic_cache='5m'` | `anthropic_cache='1h'` | `anthropic_cache_instructions` and `anthropic_cache_tool_definitions` set to `'5m'` | |
+| Anthropic on Bedrock and Vertex AI SDK clients | `anthropic_cache_instructions`, `anthropic_cache_tool_definitions` and `anthropic_cache_messages` set to `'5m'` | The same, set to `'1h'` | Without `anthropic_cache_messages` | On Bedrock, `'1h'` snaps to `'5m'` on the models AWS doesn't grant the 1-hour TTL |
+| Bedrock (Claude and Nova) | `bedrock_cache_instructions`, `bedrock_cache_tool_definitions` and `bedrock_cache_messages` set to `True` | The same, set to `'1h'` | Without `bedrock_cache_messages` | `'1h'` snaps to `'5m'` on the models AWS doesn't grant the 1-hour TTL. After a turn that adds more than about 20 content blocks, the end of the previous request gets a cache point too |
+| OpenRouter (Anthropic and Gemini) | `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` set to `'5m'` | The same, set to `'1h'` | Without `openrouter_cache_messages` | Gemini routes take no tool definition breakpoint and no TTL |
+| OpenAI (GPT-5.6 and later, on the OpenAI API) | `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and `openai_cache_instructions=True` | The same | `mode='explicit'`, so only the instructions are written | `'30m'` is the only TTL OpenAI accepts. Requests that continue server-side state (`openai_previous_response_id` or `openai_conversation_id`) get no instruction breakpoint, so with `messages=False` they use no prompt caching at all |
+| Providers that only cache implicitly | No effect | No effect | No effect | Such as Google and OpenAI models before GPT-5.6 |
 
 ## What invalidates a cache
 
@@ -134,6 +149,16 @@ On Anthropic models that bind thinking blocks to the prefix that produced them (
 ### Provider retention
 
 Provider caches expire after idle gaps. This is unavoidable, but it creates a useful opportunity: schedule history-mutating maintenance for [cache-cold windows](../message-history.md#scheduling-maintenance-into-cache-cold-windows), when the next request would pay the full input price anyway. Each provider's documented default retention is recorded as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention], a longer retention requested through settings is resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], and [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] takes either to predict whether the next request will find the cache cold.
+
+## Prefix-stability guarantees
+
+Pydantic AI makes the following guarantees about the prompt prefix it sends to providers:
+
+- [Instructions are assembled deterministically](../agent.md#instructions) for each request. Static instructions from `Agent(instructions=...)` always sort before dynamic instructions, preserving the static prefix when dynamic content changes.
+- Message history is append-only within a run: Pydantic AI does not rewrite or reorder settled messages. [History processors](../message-history.md#processing-message-history) you add, and capabilities that rewrite history such as [compaction](compaction.md), are the exception.
+- Internal bookkeeping such as run IDs, message timestamps, and deferred-tool flags does not reach the provider wire and therefore cannot move the prompt prefix.
+- [Vercel AI](../ui/vercel-ai.md) and [AG-UI](../ui/ag-ui.md) adapter round-trips are tested to reconstruct histories that serialize back to the same provider request for the wire-relevant fields (tool call arguments, thinking signatures). Older UI protocol versions can be lossy — for example, AG-UI versions without a reasoning carrier drop thinking parts, which moves the prefix — so keep the client packages current.
+- Every recorded provider conversation in Pydantic AI's test suite is checked for wire-level prefix stability, so a framework change that starts moving prefixes fails CI in the pull request that introduces it.
 
 ## Monitoring cache efficiency
 
