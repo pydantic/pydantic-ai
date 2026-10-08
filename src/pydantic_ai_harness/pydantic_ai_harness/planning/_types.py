@@ -8,7 +8,8 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class TaskStatus(str, Enum):
+# Preserve string formatting of existing public enum members.
+class TaskStatus(str, Enum):  # noqa: UP042
     """Lifecycle status of a single plan step.
 
     `blocked` is only reachable when the capability runs with

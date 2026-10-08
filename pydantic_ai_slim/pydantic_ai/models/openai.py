@@ -12,18 +12,19 @@ from collections.abc import (
     Callable,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
+from typing import Any, Literal, Never, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, Protocol, TypedDict, assert_never
+from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
@@ -52,6 +53,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -102,6 +104,7 @@ from ..profiles.openai import (
     OPENAI_REASONING_EFFORT_MAP,
     SAMPLING_PARAMS,
     OpenAIModelProfile,
+    OpenAISystemPromptRole,
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
@@ -659,6 +662,36 @@ def _add_openai_prompt_cache_breakpoint(
     content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
 
 
+def _cacheable_instruction_count(instruction_parts: Sequence[InstructionPart]) -> int:
+    """Number of leading static instruction parts, which the instruction breakpoint goes after.
+
+    Agent runs sort static parts first, but a direct `Model.request` caller may not, and a dynamic
+    part must never end up inside the cached prefix.
+    """
+    return next((i for i, part in enumerate(instruction_parts) if part.dynamic), len(instruction_parts))
+
+
+def _leading_system_message_count(
+    messages: Sequence[Mapping[str, Any]], system_prompt_role: OpenAISystemPromptRole
+) -> int:
+    """Number of leading messages holding system prompts, which is where instructions belong."""
+    return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
+
+
+def _has_dynamic_system_prompt(messages: Sequence[ModelMessage]) -> bool:
+    """Whether any system prompt is dynamic, i.e. its content can change between requests.
+
+    A dynamic system prompt renders ahead of the instructions in the cached prefix, so its changing
+    content would silently invalidate the cache; the breakpoint is skipped when one is present.
+    """
+    return any(
+        isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
 def _leading_cache_breakpoint(item: dict[str, Any]) -> _OpenAIPromptCacheBreakpoint | None:
     """The breakpoint a leading `CachePoint` left on an empty placeholder opening this user message, if any."""
     content = item.get('content')
@@ -812,6 +845,32 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
     The `ttl` here is independent of the `openai_prompt_cache_retention` setting, which OpenAI deprecates
     for GPT-5.6 and later models.
+
+    See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
+    for more information.
+    """
+
+    openai_cache_instructions: bool
+    """Whether to add a prompt cache breakpoint after the last static instruction.
+
+    With no static instructions, the breakpoint goes on the last system prompt instead.
+
+    Supported by GPT-5.6 and later models; other models ignore it. OpenAI applies the request-wide
+    `ttl` from `openai_prompt_cache_options`. OpenAI writes at most four breakpoints per request and
+    drops the earliest first, so if `CachePoint` markers push a request over that limit, the
+    instruction breakpoint is the first one dropped.
+
+    On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the
+    instructions are sent as leading input messages instead. That only happens on requests that
+    don't continue server-side state: when `openai_previous_response_id` or `openai_conversation_id`
+    is set, or the history has been compacted, this setting leaves the instructions where they would
+    otherwise go (normally the top-level field) and adds no breakpoint. That includes
+    `openai_previous_response_id='auto'` on the first request of a chain: a stored response keeps
+    its input, so relocated instructions would be replayed alongside every later request's own.
+
+    No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
+    per-request content would sit inside the cached prefix and miss the cache on every run, nor when
+    the system prompt role is `'user'` or the model merges leading system messages.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -1042,8 +1101,14 @@ def _resolve_openai_service_tier(
 
 
 def _resolve_cache_retention(
-    default_settings: ModelSettings | None, model_settings: ModelSettings | None
+    profile: ModelProfile, default_settings: ModelSettings | None, model_settings: ModelSettings | None
 ) -> timedelta | None:
+    if profile.get('openai_supports_prompt_cache_breakpoints', False):
+        # On GPT-5.6 and later, `prompt_cache_retention` is a deprecated *maximum* that doesn't extend the
+        # 30-minute minimum OpenAI guarantees, so it says nothing about how long the prefix stays cached:
+        # the profile's `default_cache_retention` remains the expected window.
+        # https://developers.openai.com/api/docs/guides/prompt-caching
+        return None
     settings = merge_model_settings(default_settings, model_settings) or {}
     if settings.get('openai_prompt_cache_retention') == '24h':
         return timedelta(hours=24)
@@ -1113,7 +1178,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.profile, self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -1804,10 +1869,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             else:
                 assert_never(message)
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
-            )
+        system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        if instruction_parts:
             if system_prompt_role == 'developer':
                 instruction_messages: list[chat.ChatCompletionMessageParam] = [
                     chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
@@ -1823,6 +1887,32 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
+        if (
+            model_settings
+            and model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            # A `'user'` system prompt role can't be told apart from a real user turn, and merging
+            # the leading messages collapses the boundary into one block, so neither can carry it.
+            and system_prompt_role != 'user'
+            and profile.get('openai_chat_supports_multiple_system_messages', True)
+            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
+            and not _has_dynamic_system_prompt(messages)
+        ):
+            static_count = _cacheable_instruction_count(instruction_parts)
+            breakpoint_index = system_prompt_count + static_count - 1
+            if breakpoint_index >= 0:
+                target = cast(
+                    'chat.ChatCompletionSystemMessageParam | chat.ChatCompletionDeveloperMessageParam',
+                    openai_messages[breakpoint_index],
+                )
+                content = target['content']
+                content_parts = (
+                    [ChatCompletionContentPartTextParam(type='text', text=content)]
+                    if isinstance(content, str)
+                    else list(content)
+                )
+                _add_openai_prompt_cache_breakpoint(content_parts)
+                target['content'] = content_parts
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         # After instructions are inserted and system messages merged: the breakpoint may land on a system
@@ -2171,7 +2261,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.profile, self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -2799,6 +2889,29 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
+        system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
+        if (
+            model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            # A `'user'` system prompt role can't be told apart from a real user turn.
+            and system_prompt_role != 'user'
+            # A stored response keeps its input, so instructions relocated there would be replayed
+            # to any request that continues it, next to that request's own instructions. Only
+            # requests that don't use server-side state relocate them, whatever the setting resolves to.
+            and model_settings.get('openai_previous_response_id') is None
+            and model_settings.get('openai_conversation_id') is None
+            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
+            and not _has_dynamic_system_prompt(messages)
+            # A compaction item retains the window's leading system items, so they aren't resent.
+            and not any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
+        ):
+            instructions = self._relocate_cached_instructions(
+                instructions,
+                openai_messages,
+                self._get_instruction_parts(messages, wire_request_parameters) or [],
+                system_prompt_role,
+            )
+
         text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
@@ -2812,15 +2925,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
-            assert isinstance(instructions, str)
-            system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-            system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
-            )
-            openai_messages.insert(
-                system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
-            )
-            instructions = OMIT
+            # `openai_cache_instructions` may already have moved them into the input messages.
+            if isinstance(instructions, str):
+                system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+                openai_messages.insert(
+                    system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
+                )
+                instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
             text_with_verbosity: responses.ResponseTextConfigParam = text if isinstance(text, dict) else {}
@@ -2864,6 +2975,47 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if 'openai_context_management' in unsupported_settings
             else model_settings.get('openai_context_management', OMIT),
         )
+
+    @staticmethod
+    def _relocate_cached_instructions(
+        instructions: str | Omit,
+        openai_messages: list[responses.ResponseInputItemParam],
+        instruction_parts: list[InstructionPart],
+        system_prompt_role: OpenAISystemPromptRole,
+    ) -> str | Omit:
+        """Move the instructions into leading input messages and mark a cache breakpoint after the last static one.
+
+        The top-level `instructions` field cannot carry a breakpoint. Mutates `openai_messages` and
+        returns what's left of the top-level `instructions`.
+        """
+        # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt. Kept
+        # apart from `_leading_system_message_count`: checking `type` there would also move where
+        # prompted-output instructions go for users who don't set `openai_cache_instructions`.
+        system_prompt_count = next(
+            (
+                i
+                for i, message in enumerate(openai_messages)
+                if message.get('role') != system_prompt_role or message.get('type', 'message') != 'message'
+            ),
+            len(openai_messages),
+        )
+        breakpoint_index = system_prompt_count + _cacheable_instruction_count(instruction_parts) - 1
+        # With nothing static to cache, the instructions stay in the top-level field.
+        if breakpoint_index >= 0:
+            if instruction_parts:
+                openai_messages[system_prompt_count:system_prompt_count] = [
+                    responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
+                    for part in instruction_parts
+                ]
+                instructions = OMIT
+            target = cast(responses.EasyInputMessageParam, openai_messages[breakpoint_index])
+            # A system prompt's content is already a list when a leading `CachePoint` attached its breakpoint there.
+            content: str | responses.ResponseInputMessageContentListParam = target['content']
+            if isinstance(content, str):
+                content = [responses.ResponseInputTextParam(type='input_text', text=content)]
+            _add_openai_prompt_cache_breakpoint(content)
+            target['content'] = content
+        return instructions
 
     @staticmethod
     def _build_request_options(

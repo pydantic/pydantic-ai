@@ -41,10 +41,10 @@ from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from functools import cache
-from typing import Annotated, Any
+from typing import Annotated, Any, assert_never
 
 from pydantic import Field, TypeAdapter, ValidationError
-from typing_extensions import TypedDict, assert_never
+from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
