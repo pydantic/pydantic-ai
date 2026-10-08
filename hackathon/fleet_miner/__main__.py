@@ -83,7 +83,17 @@ def _parser() -> argparse.ArgumentParser:
         '--memory-fixture', type=Path, help='also read `memory proposal` spans from this JSON (dry runs only)'
     )
     parser.add_argument(
-        '--no-memory-check', action='store_true', help='skip the LLM check that flags personal preferences'
+        '--no-memory-check', action='store_true', help='skip the LLM checks (personal preference, equivalence)'
+    )
+    parser.add_argument(
+        '--memory-mode',
+        choices=['review', 'corroborate', 'auto'],
+        help='override `agent__clai2.policy.memory.shared` (default: read it; `review` when unset)',
+    )
+    parser.add_argument(
+        '--variables-suffix',
+        default='',
+        help='append to every Logfire variable name, e.g. `_test` for `memory__clai2_test` and `agent__clai2_test`',
     )
     parser.add_argument(
         '--drop-unreviewed-policy',
@@ -124,9 +134,9 @@ def _parser() -> argparse.ArgumentParser:
 async def main(args: argparse.Namespace) -> tuple[str, int]:
     """One mining run: returns a one-line summary and the number of new suggestions."""
     USAGE.reset()
-    if (args.fixture or args.memory_fixture) and not args.dry_run:
-        # Fixture output must never reach the live variable.
-        raise SystemExit('--fixture runs are offline: add --dry-run (and --out to keep the result).')
+    if (args.fixture or (args.memory_fixture and not args.variables_suffix)) and not args.dry_run:
+        # Fixture output must never reach the production variables (a memory fixture may go to `_test` ones).
+        raise SystemExit('fixture runs are offline: add --dry-run (or --variables-suffix _test for a memory fixture).')
     now = datetime.now(UTC)
     if args.fixture:
         prompts = fetch.load_fixture(args.fixture)
@@ -144,7 +154,7 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
     say(f'{len(prompts)} prompts from {len(users)} users in {len({p.trace_id for p in prompts})} sessions')
 
     api_key = os.environ.get('LOGFIRE_CLAI2_API_KEY')
-    client = VariablesClient(api_key, base_url=args.base_url) if api_key else None
+    client = VariablesClient(api_key, base_url=args.base_url, suffix=args.variables_suffix) if api_key else None
     existing_doc = await client.read() if client else None
     existing = existing_doc.proposals if existing_doc else []
 
@@ -204,14 +214,19 @@ async def main(args: argparse.Namespace) -> tuple[str, int]:
         if args.memory_fixture:
             memory_spans += memory_mod.load_fixture(args.memory_fixture)
         shared = await client.read_json(memory_mod.MEMORY_VARIABLE) if client else None
+        mode = args.memory_mode or memory_mod.shared_mode(
+            await client.read_json(memory_mod.AGENT_VARIABLE) if client else None
+        )
         result_memory = await memory_mod.mine_memory(
             memory_spans,
             current=memory_mod.shared_files(shared),
             existing=existing,
             model=None if args.no_memory_check else args.pattern_model,
+            mode=mode,
         )
+        await _publish_memory(args, client, result_memory, now=now)
         say(
-            f'\n{len(memory_spans)} memory proposal spans -> {len(result_memory.proposals)} files'
+            f'\n{len(memory_spans)} memory proposal spans -> {len(result_memory.proposals)} files (shared mode: {mode})'
             + (f'; dropped: {result_memory.dropped}' if result_memory.dropped else '')
         )
         drafted += result_memory.proposals
@@ -397,6 +412,55 @@ async def _mine_prompts(
     return drafted, found, stale_reasons
 
 
+async def _publish_memory(
+    args: argparse.Namespace, client: VariablesClient | None, result: memory_mod.MemoryResult, *, now: datetime
+) -> None:
+    """Write what the shared-memory mode publishes into `memory__clai2`, then mark those proposals accepted.
+
+    Only after the write is verified: a failed or dry-run publish leaves the proposal pending with the reason.
+    """
+    if not result.publish:
+        return
+    by_id = {p.id: p for p in result.proposals}
+    name = memory_mod.MEMORY_VARIABLE + args.variables_suffix
+    refused: dict[str, str] = {}
+    if args.dry_run or client is None:
+        _, refused = memory_mod.with_published(None, result.publish, by_id, now)
+        for item in result.publish:
+            by_id[item.proposal_id].status_reason = refused.get(item.proposal_id) or (
+                f'Would be published to `{name}` ({item.source}); not written ({"dry run" if args.dry_run else "no API key"}).'
+            )
+        return
+
+    def build(current: dict[str, object] | None) -> dict[str, object]:
+        nonlocal refused
+        value, refused = memory_mod.with_published(current, result.publish, by_id, now)
+        return value
+
+    try:
+        await client.update_json(
+            memory_mod.MEMORY_VARIABLE,
+            build,
+            description='Shared repo memory for clai2 (hackathon): accepted repo notes with provenance.',
+        )
+    except Exception as exc:
+        for item in result.publish:
+            by_id[item.proposal_id].status_reason = f'Publishing failed: {type(exc).__name__}: {exc}'[:300]
+        return
+    for item in result.publish:
+        p = by_id[item.proposal_id]
+        if item.proposal_id in refused:
+            p.status_reason = refused[item.proposal_id]
+            continue
+        p.status, p.accepted_at, p.accepted_by = 'accepted', now, 'auto-publish'
+        p.status_reason = (
+            f'Corroborated by {", ".join(item.corroborated_by)}; published to `{name}`.'
+            if item.source == 'corroborated'
+            else f'Auto-published to `{name}` (policy.memory.shared: auto).'
+        )
+    say(f'Published {len(result.publish) - len(refused)} memory file(s) to `{name}`.')
+
+
 async def _fetch_calls(args: argparse.Namespace) -> list[policy_mod.ToolCall]:
     calls = await policy_mod.fetch_tool_calls(
         os.environ.get('LOGFIRE_CLAI2_READ_TOKEN') or os.environ['LOGFIRE_CLAI2_API_KEY'],
@@ -495,7 +559,7 @@ async def watch(args: argparse.Namespace) -> None:
     global VERBOSE
     VERBOSE = False
     api_key = os.environ['LOGFIRE_CLAI2_API_KEY']
-    control = VariablesClient(api_key, base_url=args.base_url)
+    control = VariablesClient(api_key, base_url=args.base_url, suffix=args.variables_suffix)
     description = 'Fleet miner control for clai2 (hackathon): Run now requests from the UI, run status from the miner.'
 
     async def set_status(**fields: object) -> None:

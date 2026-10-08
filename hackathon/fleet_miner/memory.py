@@ -15,7 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from logfire.query_client import AsyncLogfireQueryClient
 from pydantic import BaseModel, Field
@@ -25,11 +25,27 @@ from pydantic_ai import Agent
 from . import __version__
 from .fetch import _SESSIONS, IDENTITY, NOT_TEST, OVERLAP
 from .llm_cache import run_cached
-from .models import AppliesTo, Evidence, Proposal, contains_secrets
+from .models import AppliesTo, Evidence, Proposal, contains_secrets, redact_secrets
 
 MEMORY_VARIABLE = 'memory__clai2'
+AGENT_VARIABLE = 'agent__clai2'
 MAX_BYTES = 8 * 1024
 """Per file, as `memory__clai2` accepts (design decision 2)."""
+MAX_FILES_PER_REPO = 20
+
+SharedMode = Literal['review', 'corroborate', 'auto']
+"""`agent__clai2.policy.memory.shared`: every proposal waits for an admin (`review`), is published once agents of
+2+ developers propose equivalent content (`corroborate`), or is published right away (`auto`)."""
+
+
+def shared_mode(agent_value: dict[str, Any] | None) -> SharedMode:
+    mode = (((agent_value or {}).get('policy') or {}).get('memory') or {}).get('shared')
+    return mode if mode in ('review', 'corroborate', 'auto') else 'review'
+
+
+def normalized(text: str) -> str:
+    return re.sub(r'\s+', ' ', text).strip().lower()
+
 
 MEMORY_SQL = f"""
 SELECT r.trace_id, r.span_id, r.start_timestamp,
@@ -136,6 +152,27 @@ class _Review(BaseModel):
     reason: str
 
 
+EQUIVALENT_INSTRUCTIONS = """\
+Two developers' coding agents proposed versions of the same shared repo memory file. Are they equivalent: do they
+state the same facts and guidance, so either could be published without losing or changing anything that matters?
+Wording, order and formatting differences don't count; a fact only one of them has, or a contradiction, does.
+"""
+
+
+class _Equivalent(BaseModel):
+    equivalent: bool
+
+
+@dataclass
+class Publish:
+    """A proposal the shared-memory mode publishes without an admin."""
+
+    proposal_id: str
+    source: Literal['auto', 'corroborated']
+    corroborated_by: list[str]
+    """Emails of the developers whose agents proposed equivalent content (`corroborated` only)."""
+
+
 @dataclass
 class MemoryResult:
     proposals: list[Proposal]
@@ -143,6 +180,8 @@ class MemoryResult:
     """Pending memory proposals that should go stale (e.g. the shared file now has exactly this content)."""
     dropped: dict[str, int]
     """Why spans were left out, with counts, for the run summary."""
+    publish: list[Publish]
+    """What `mode` says to publish now; the caller writes `memory__clai2`, then marks these accepted."""
 
 
 async def mine_memory(
@@ -151,20 +190,37 @@ async def mine_memory(
     current: dict[tuple[str, str], str],
     existing: list[Proposal],
     model: str | None,
+    mode: SharedMode = 'review',
     max_evidence: int = 20,
 ) -> MemoryResult:
-    """One proposal per (repo, file) from the spans; `model=None` skips the personal-preference check."""
+    """One proposal per (repo, file) from the spans; `model=None` skips the LLM checks (personal preference, and
+    equivalence beyond normalized text for `corroborate`).
+
+    A file whose latest proposal fails the secret or size check is dropped in `review` mode. In `auto` and
+    `corroborate` it stays a pending proposal with the reason (secrets redacted), so an admin sees why it wasn't
+    published.
+    """
     dropped: defaultdict[str, int] = defaultdict(int)
     by_file: dict[tuple[str, str], list[MemorySpan]] = defaultdict(list)
+    failed: dict[tuple[str, str], tuple[MemorySpan, str]] = {}
     for span in spans:
         if span.scope not in (None, 'repo') or not span.repo_slug or not span.path or span.content is None:
             dropped['not a repo memory file'] += 1
-        elif contains_secrets(span.content):
-            dropped['looks like it contains a secret'] += 1
-        elif len(span.content.encode()) > MAX_BYTES:
-            dropped[f'over {MAX_BYTES // 1024} KB'] += 1
+            continue
+        key = (span.repo_slug, span.path)
+        problem = (
+            'looks like it contains a secret'
+            if contains_secrets(span.content)
+            else f'over {MAX_BYTES // 1024} KB'
+            if len(span.content.encode()) > MAX_BYTES
+            else None
+        )
+        if problem:
+            dropped[problem] += 1
+            failed[key] = (span, problem)
         else:
-            by_file[(span.repo_slug, span.path)].append(span)
+            by_file[key].append(span)
+            failed.pop(key, None)  # a later good proposal supersedes an earlier failed one
 
     old_by_id = {p.id: p for p in existing if p.kind == 'memory'}
     agent = (
@@ -172,8 +228,26 @@ async def mine_memory(
         if model
         else None
     )
+    equivalence = (
+        Agent(model, output_type=_Equivalent, instructions=EQUIVALENT_INSTRUCTIONS, name='fleet_miner_memory_same')
+        if model
+        else None
+    )
     proposals: list[Proposal] = []
     stale_reasons: dict[str, str] = {}
+    publish: list[Publish] = []
+    if mode != 'review':
+        # Spans that failed a check while being the latest for their file: pending, with the reason, never published.
+        for (repo, path), (span, problem) in failed.items():
+            by_file.pop((repo, path), None)
+            assert span.content is not None
+            proposal = _proposal(memory_id(repo, path), repo, path, [span], current.get((repo, path)), model, None, 1)
+            content = redact_secrets(span.content)
+            proposals.append(
+                proposal.model_copy(
+                    update={'content': content, 'text': content, 'status_reason': f'Not published: {problem}.'}
+                )
+            )
     for (repo, path), file_spans in by_file.items():
         base_id = memory_id(repo, path)
         proposal_id = base_id
@@ -195,44 +269,119 @@ async def mine_memory(
             dropped['same as the current shared file'] += len(file_spans)
             stale_reasons[proposal_id] = 'The shared file already has exactly this content.'
             continue
-        users = {s.user for s in file_spans}
         review_flag = None
         if agent is not None:
             review = await run_cached(
                 agent, f'Repository: {repo}\nFile: {path}\n\n{latest.content[:4000]}', output_type=_Review
             )
             review_flag = f'Looks like a personal preference: {review.reason}' if review.personal else None
-        n = len(file_spans)
-        proposals.append(
-            Proposal(
-                id=proposal_id,
-                kind='memory',
-                name=path,
-                description=latest.why or f'Repo memory `{path}` for {repo}',
-                text=latest.content,
-                suggested_tier=None,
-                rationale=f'Proposed {n} time{"" if n == 1 else "s"} by {len(users)} developer'
-                f'{"" if len(users) == 1 else "s"}' + (f'. Why: {latest.why}' if latest.why else '.'),
-                pattern=f'{repo}:{path}',
-                distinct_users=len(users),
-                sessions=len({s.session_id or s.trace_id for s in file_spans}),
-                evidence=[
-                    Evidence(trace_id=s.trace_id, span_id=s.span_id, timestamp=s.timestamp)
-                    for s in reversed(file_spans[-max_evidence:])
-                ],
-                scope='repo',
-                scope_reason='Repo memory applies to the repository it was proposed for.',
-                applies_to=AppliesTo(repos=[repo]),
-                repo_slug=repo,
-                path=path,
-                content=latest.content,
-                base_content=base,
-                base_sha=latest.base_sha,
-                why=latest.why,
-                proposed_by=latest.user_email,
-                proposal_count=n,
-                review_flag=review_flag,
-                generated_by=f'fleet-miner {__version__}' + (f' / {model}' if model else ''),
-            )
-        )
-    return MemoryResult(proposals, stale_reasons, dict(dropped))
+        proposals.append(_proposal(proposal_id, repo, path, file_spans, base, model, review_flag, max_evidence))
+        if mode == 'auto':
+            publish.append(Publish(proposal_id, 'auto', []))
+        elif mode == 'corroborate':
+            # The latest proposal of each other developer, checked against the newest content.
+            others: dict[str, MemorySpan] = {}
+            for s in file_spans[:-1]:
+                if s.user != latest.user:
+                    others[s.user] = s
+            agreeing = [latest.user]
+            for user, s in others.items():
+                assert s.content is not None
+                same = normalized(s.content) == normalized(latest.content)
+                if not same and equivalence is not None:
+                    a, b = sorted([s.content, latest.content])
+                    same = (
+                        await run_cached(
+                            equivalence, f'Version A:\n{a[:4000]}\n\nVersion B:\n{b[:4000]}', output_type=_Equivalent
+                        )
+                    ).equivalent
+                if same:
+                    agreeing.append(user)
+            if len(agreeing) >= 2:
+                emails = [u for u in agreeing if not u.startswith('host:')] or agreeing
+                publish.append(Publish(proposal_id, 'corroborated', emails))
+    return MemoryResult(proposals, stale_reasons, dict(dropped), publish)
+
+
+def _proposal(
+    proposal_id: str,
+    repo: str,
+    path: str,
+    file_spans: list[MemorySpan],
+    base: str | None,
+    model: str | None,
+    review_flag: str | None,
+    max_evidence: int,
+) -> Proposal:
+    latest = file_spans[-1]
+    assert latest.content is not None
+    users = {s.user for s in file_spans}
+    n = len(file_spans)
+    return Proposal(
+        id=proposal_id,
+        kind='memory',
+        name=path,
+        description=latest.why or f'Repo memory `{path}` for {repo}',
+        text=latest.content,
+        suggested_tier=None,
+        rationale=f'Proposed {n} time{"" if n == 1 else "s"} by {len(users)} developer'
+        f'{"" if len(users) == 1 else "s"}' + (f'. Why: {latest.why}' if latest.why else '.'),
+        pattern=f'{repo}:{path}',
+        distinct_users=len(users),
+        sessions=len({s.session_id or s.trace_id for s in file_spans}),
+        evidence=[
+            Evidence(trace_id=s.trace_id, span_id=s.span_id, timestamp=s.timestamp)
+            for s in reversed(file_spans[-max_evidence:])
+        ],
+        scope='repo',
+        scope_reason='Repo memory applies to the repository it was proposed for.',
+        applies_to=AppliesTo(repos=[repo]),
+        repo_slug=repo,
+        path=path,
+        content=latest.content,
+        base_content=base,
+        base_sha=latest.base_sha,
+        why=latest.why,
+        proposed_by=latest.user_email,
+        proposal_count=n,
+        review_flag=review_flag,
+        generated_by=f'fleet-miner {__version__}' + (f' / {model}' if model else ''),
+    )
+
+
+def with_published(
+    value: dict[str, Any] | None, publish: list[Publish], proposals: dict[str, Proposal], now: datetime
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """`memory__clai2` with these proposals' files written in (the shape the UI writes on accept), plus why any
+    could not be (`{proposal_id: reason}`).
+
+    A file replaces the entry for the same repo and path; clai2 takes the first entry per path, so it goes first.
+    """
+    files: list[dict[str, Any]] = list((value or {}).get('files', []))
+    refused: dict[str, str] = {}
+    for item in publish:
+        p = proposals[item.proposal_id]
+        assert p.repo_slug and p.path and p.content is not None
+
+        def same_file(f: dict[str, Any]) -> bool:
+            return f.get('path') == p.path and (f.get('applies_to') or {}).get('repos') == [p.repo_slug]
+
+        rest = [f for f in files if not same_file(f)]
+        paths = {f.get('path') for f in rest if p.repo_slug in ((f.get('applies_to') or {}).get('repos') or [])}
+        if p.path not in paths and len(paths) >= MAX_FILES_PER_REPO:
+            refused[p.id] = f'Not published: {p.repo_slug} already has {MAX_FILES_PER_REPO} shared files.'
+            continue
+        entry = {
+            'scope': 'repo',
+            'applies_to': {'repos': [p.repo_slug]},
+            'path': p.path,
+            'content': p.content,
+            'source': item.source,
+            'proposal_id': p.id,
+            'proposed_by': p.proposed_by,
+            'accepted_by': 'auto-publish',
+            'accepted_at': now.isoformat(),
+            **({'corroborated_by': item.corroborated_by} if item.corroborated_by else {}),
+        }
+        files = [entry, *rest]
+    return {**(value or {}), 'files': files}, refused

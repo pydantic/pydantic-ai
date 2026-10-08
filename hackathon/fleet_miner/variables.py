@@ -16,8 +16,10 @@ LABEL = 'production'
 
 
 class VariablesClient:
-    def __init__(self, api_key: str, *, base_url: str):
+    def __init__(self, api_key: str, *, base_url: str, suffix: str = ''):
+        """`suffix` is appended to every variable name, e.g. `_test` to work on `memory__clai2_test` instead."""
         self._client = httpx.AsyncClient(base_url=base_url, headers={'Authorization': f'bearer {api_key}'}, timeout=30)
+        self.suffix = suffix
 
     async def __aenter__(self) -> VariablesClient:
         return self
@@ -28,7 +30,7 @@ class VariablesClient:
     async def _config(self, name: str = VARIABLE) -> dict[str, Any] | None:
         response = await self._client.get('/v1/variables/')
         response.raise_for_status()
-        return response.json().get('variables', {}).get(name)
+        return response.json().get('variables', {}).get(name + self.suffix)
 
     async def read(self) -> ProposalsDoc | None:
         """The document the `production` label points at (the UI moves that label when it writes statuses)."""
@@ -98,6 +100,7 @@ class VariablesClient:
         raise RuntimeError(f'could not write `{name}` without racing another writer')
 
     async def _write(self, name: str, serialized: str, *, exists: bool, description: str) -> None:
+        name += self.suffix
         label = {'target_type': 'version', 'serialized_value': serialized}
         if exists:
             response = await self._client.put(f'/v1/variables/{name}/', json={'labels': {LABEL: label}})

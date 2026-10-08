@@ -204,6 +204,8 @@ class Proposal(BaseModel):
     """Why a proposal was dismissed or marked stale by the miner, e.g. "test traffic"."""
     accepted_tier: Tier | None = None
     accepted_at: datetime | None = None
+    accepted_by: str | None = None
+    """Who accepted it; `auto-publish` when the miner published repo memory itself (`policy.memory.shared`)."""
     source: Literal['fleet-miner'] = 'fleet-miner'
     generated_by: str | None = None
     """Miner version and drafting model, e.g. `fleet-miner 0.2 / gateway/anthropic:claude-sonnet-5-5`."""

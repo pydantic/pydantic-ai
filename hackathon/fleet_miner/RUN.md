@@ -63,6 +63,15 @@ Two families of findings, both "never from one developer or one session":
    `--no-memory-check` skips it). A file proposed again after its proposal was accepted or dismissed becomes a new
    revision (`<id>-r2`). Offline: `--memory-fixture spans.json --dry-run`.
 
+   `agent__clai2.policy.memory.shared` (production) decides what happens next. `review` (default): wait for an
+   admin. `auto`: publish right away. `corroborate`: publish once agents of 2+ developers proposed the same file with
+   equivalent content (normalized text, else a cached LLM equivalence check). Publishing writes the file into
+   `memory__clai2` (first entry for its path; `source` `auto` or `corroborated`, `accepted_by: auto-publish`,
+   `accepted_at`, `proposal_id`, `proposed_by`, `corroborated_by`), verifies the write, then marks the proposal
+   accepted. In these modes a file failing the secret or size check (or the 20-files-per-repo limit) stays pending
+   with the reason, secrets redacted. `--memory-mode` overrides the variable; `--variables-suffix _test` makes every
+   variable `<name>_test`, the only way to try publishing live.
+
 Rule globs are plain text and `*` only (no `?`, `[...]` or `{...}`), matched per command segment, e.g.
 `git branch -D*`; a category that needs several patterns gets one rule per pattern. Every policy evidence item is a
 call the final glob matches.
