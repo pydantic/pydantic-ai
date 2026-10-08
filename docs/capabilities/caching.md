@@ -36,7 +36,7 @@ See [Bedrock prompt caching](../models/bedrock.md#prompt-caching) for details.
 
 OpenAI caches prompts implicitly once they pass a minimum length (1,024 tokens on GPT-5.6 and later).
 
-On models before GPT-5.6, how long a cached prefix lives depends on the retention policy: `in_memory` typically keeps it for 5 to 10 minutes of inactivity, `24h` for up to a day, and the default depends on whether your organization has zero data retention enabled. [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request.
+On models before GPT-5.6, how long a cached prefix lives depends on the retention policy, which [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] overrides per request.
 
 On GPT-5.6 and later, a cached prefix stays eligible for reuse for 30 minutes after its most recent write or read. [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options] sets the TTL and the mode: in the default implicit mode OpenAI also places a breakpoint of its own, in explicit mode only the request's breakpoints are cached. A [`CachePoint`][pydantic_ai.messages.CachePoint] adds a breakpoint after a user content block, and [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] adds one after the static instructions. OpenAI writes at most four breakpoints per request.
 
