@@ -339,6 +339,8 @@ include = [
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
     ".github/scripts/test_ci_content_classifier.py",
+    ".github/scripts/review_test_quality.py",
+    ".github/scripts/test_review_test_quality.py",
 ]
 
 [tool.ruff.lint]
@@ -404,6 +406,7 @@ quote-style = "single"
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
+".github/scripts/test_review_test_quality.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "!src/pydantic_clai2/**/*.py" = ["BLE001"]
 
@@ -440,6 +443,7 @@ executionEnvironments = [
     # type check on an older interpreter, so they are analysed above the library's floor.
     { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = ".github/scripts/review_test_quality.py", pythonVersion = "3.11" },
 ]
 exclude = [
     # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.

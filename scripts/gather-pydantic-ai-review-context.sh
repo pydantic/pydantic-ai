@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Gather PR context for the CI Review agent into $GITHUB_WORKSPACE/.review-context/.
-# Usage: scripts/gather-pydantic-ai-review-context.sh <pr-number> [repo]
+# Usage: scripts/gather-pydantic-ai-review-context.sh <pr-number> [repo] [head-ref] [base-ref]
 #
 # Examples:
 #   scripts/gather-pydantic-ai-review-context.sh 4269
 #   scripts/gather-pydantic-ai-review-context.sh 4269 pydantic/pydantic-ai
+#   scripts/gather-pydantic-ai-review-context.sh 4269 pydantic/pydantic-ai <head-sha> <base-sha>
 #
 # Why outputs live at the workspace ROOT, and not under /tmp or `.github/`:
 # the agent's `Read` tool refuses any path outside the workspace, so a `/tmp`
@@ -26,6 +27,12 @@ set -euo pipefail
 
 PR_NUMBER="${1:?Usage: $0 <pr-number> [repo]}"
 REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+PINNED_HEAD="${3:-}"
+PINNED_BASE="${4:-}"
+if [ -n "$PINNED_HEAD" ] && [ -z "$PINNED_BASE" ] || [ -z "$PINNED_HEAD" ] && [ -n "$PINNED_BASE" ]; then
+  echo 'Pinned head and base refs must be supplied together' >&2
+  exit 2
+fi
 CTX="${GITHUB_WORKSPACE:-$PWD}/.review-context"
 mkdir -p "$CTX"
 
@@ -197,7 +204,11 @@ done > "$CTX/related-issues.txt"
 echo "  - Fetching base branch for function-context diffs"
 BASE_REF=$(jq -r '.baseRefName' "$CTX/pr-details.json")
 MERGE_BASE=""
-if [ -n "$BASE_REF" ]; then
+DIFF_HEAD="HEAD"
+if [ -n "$PINNED_HEAD" ] && [ -n "$PINNED_BASE" ]; then
+  MERGE_BASE=$(git merge-base "$PINNED_BASE" "$PINNED_HEAD" 2>/dev/null || echo "")
+  DIFF_HEAD="$PINNED_HEAD"
+elif [ -n "$BASE_REF" ]; then
   if git fetch "https://github.com/${REPO}.git" "$BASE_REF" --quiet 2>/dev/null; then
     MERGE_BASE=$(git merge-base HEAD FETCH_HEAD 2>/dev/null || echo "")
   fi
@@ -215,7 +226,7 @@ if [ -n "$MERGE_BASE" ]; then
   # -W (--function-context) shows the full function body around each change,
   # so the reviewer can see the function signature and surrounding logic without
   # needing to read the full source file separately.
-  git diff -W --no-color "$MERGE_BASE" HEAD
+  git diff -W --no-color "$MERGE_BASE" "$DIFF_HEAD"
 else
   gh pr diff "$PR_NUMBER" --repo "$REPO"
 fi | awk -v dir="$CTX/diff" '

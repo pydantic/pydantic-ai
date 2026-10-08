@@ -9,6 +9,7 @@
   "exclude": [
     // These tests deliberately exercise private helpers and loose GitHub webhook dictionaries
     // through monkeypatching; pytest covers them, while the module they test stays checked.
-    "test_issue_pr_attention_monitor.py"
+    "test_issue_pr_attention_monitor.py",
+    "test_review_test_quality.py"
   ]
 }
