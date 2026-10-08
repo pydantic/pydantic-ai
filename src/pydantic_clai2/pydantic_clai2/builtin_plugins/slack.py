@@ -29,6 +29,7 @@ from pydantic_clai2.config.credential_store import delete_credentials, load_code
 from pydantic_clai2.pkce import PKCESignIn
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart, TurnStart
 from pydantic_clai2.plugins.keys import browser_sign_in, choose_key, on_loop
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
@@ -351,7 +352,7 @@ async def configure_menu(source: SlackSource[DepsT]) -> str:
         if source.settings.client_id is None:  # With an app set up, Enter only changes the ID; R starts over.
             url = slack_app.create_app_url()
             try:
-                opened = webbrowser.open(url)
+                opened = open_browser(url)
             except webbrowser.Error:
                 opened = False
             if not opened:

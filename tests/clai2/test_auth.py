@@ -117,7 +117,7 @@ async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: st
         return CREDENTIALS
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     output = io.StringIO()
     auth = CodexAuth(Console(file=output), read_line=never_pasted)
     commands = Commands()
@@ -182,7 +182,7 @@ async def test_failed_login_does_not_save(monkeypatch: pytest.MonkeyPatch) -> No
         raise UserError('Authorization denied')
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
     with pytest.raises(UserError, match='denied'):
         await auth.login([])
@@ -201,7 +201,7 @@ async def test_pasted_redirect_wins_over_callback(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', never_called_back)
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code', exchange_code)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     monkeypatch.setattr('secrets.token_urlsafe', fixed_state)
     pasted = 'the-code' if bare else '  http://localhost:1455/auth/callback?code=the-code&state=fixed-state \n'
     prompts, auth = scripted(['', '   ', pasted])
@@ -238,7 +238,7 @@ async def test_paste_survives_a_failed_callback(monkeypatch: pytest.MonkeyPatch,
         OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchanged_elsewhere if same_tick else port_in_use
     )
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code', exchange_code)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     auth = CodexAuth(Console(file=output), read_line=paste)
     assert 'connected' in await auth.login([])
     assert await auth.source.load() == CREDENTIALS
@@ -247,7 +247,7 @@ async def test_paste_survives_a_failed_callback(monkeypatch: pytest.MonkeyPatch,
 
 async def test_lost_race_then_rejected_paste(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', port_in_use)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     _, auth = scripted(['', EOFError()])
     with pytest.raises(UserError, match='cancelled'):
         await auth.login([])
@@ -265,7 +265,7 @@ async def test_lost_race_then_rejected_paste(monkeypatch: pytest.MonkeyPatch) ->
 )
 async def test_rejected_paste(monkeypatch: pytest.MonkeyPatch, pasted: str | BaseException, message: str) -> None:
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', never_called_back)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     monkeypatch.setattr('secrets.token_urlsafe', fixed_state)
     _, auth = scripted([pasted])
     with pytest.raises(UserError, match=message):
@@ -305,7 +305,7 @@ async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
         await auth.login(['invalid'])
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', never_called_back)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     with pytest.raises(UserError, match='timed out'):
         await auth.login([])
     assert auth.model('openai-codex:test').model_name == 'test'

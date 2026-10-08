@@ -24,6 +24,7 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, save_key
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.menus.slash_search import slash_search
@@ -92,7 +93,7 @@ class Setup:
     announce: Announce
     runners: Runners = TERMINAL
     http: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=httpx.Timeout(30, read=60))
-    open_browser: OpenBrowser = webbrowser.open
+    open_browser: OpenBrowser = open_browser
     sleep: Callable[[float], Awaitable[None]] = anyio.sleep
 
 
