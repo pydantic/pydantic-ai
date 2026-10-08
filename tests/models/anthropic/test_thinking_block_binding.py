@@ -190,8 +190,8 @@ async def test_anthropic_retries_a_stale_thinking_block_with_drop_block(allow_mo
     """A rejected replay is retried once asking Anthropic to drop the block, and the run continues.
 
     The retried `thinking` object rides in `extra_body`, typed `adaptive` when the request had no `thinking` setting.
-    Claude Sonnet 5.5 and Haiku 5.5 reject a `thinking` object without a `type`; Anthropic documents Haiku 5.5's
-    adaptive default, though the simple live default probe returned no thinking block.
+    Claude Sonnet 5.5 and Haiku 5.5 reject a `thinking` object without a `type`; Haiku 5.5's adaptive default was
+    verified live with effort `high` and no `thinking` parameter, and the response included thinking tokens.
     """
     mock_client = MockAnthropic.create_mock(
         [

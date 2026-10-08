@@ -150,9 +150,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     Claude Fable 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind replayed thinking blocks to
     the conversation prefix. Anthropic documents a 400 after `system`, `tools`, or earlier `messages` change; for
     accounts created before 31 August 2026, the error requires `thinking.block_binding.prefix_mismatch_behavior`.
-    Haiku 5.5 was probed live with `drop_block`, which returned a `thinking_dropped` transformation for a changed
-    prefix; the explicit `error` behavior was not probed. When True, Pydantic AI preserves the account's default
-    behavior on the first request; if Anthropic rejects a stale block, it retries once with
+    When True, Pydantic AI preserves the account's default behavior on the first request; if Anthropic rejects a stale
+    block, it retries once with
     `thinking.block_binding.prefix_mismatch_behavior='drop_block'` and warns after the retry succeeds. See
     [Anthropic's thinking troubleshooting guide](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting).
     """
@@ -356,8 +355,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     # Anthropic documents these models as thinking when the request omits `thinking`; Fable 5, Fable 5.1, Opus 5,
     # Opus 5.5, and Sonnet 5 return thinking tokens live with no thinking parameter, where Opus 4.8 and Sonnet 4.6
-    # return none. Anthropic also documents Haiku 5.5 as adaptive-on by default, but its simple live probe returned
-    # no thinking block.
+    # return none. Haiku 5.5's adaptive default was verified live with `anthropic_effort='high'` and no `thinking`
+    # parameter; it returned signed thinking blocks and positive thinking-token usage.
     thinking_enabled_by_default = model_name.startswith(
         (
             'claude-fable-5',
