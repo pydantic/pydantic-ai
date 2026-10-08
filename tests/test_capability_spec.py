@@ -708,6 +708,15 @@ def test_model_json_schema_with_capabilities():
                     'title': 'AgentRetries',
                     'type': 'object',
                 },
+                'CacheConfig': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'retention': {'enum': ['5m', '30m', '1h'], 'title': 'Retention', 'type': 'string'},
+                        'messages': {'title': 'Messages', 'type': 'boolean'},
+                    },
+                    'title': 'CacheConfig',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
@@ -1659,7 +1668,11 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Thinking',
                         },
                         'cache': {
-                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h'], 'type': 'string'}],
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['5m', '30m', '1h'], 'type': 'string'},
+                                {'$ref': '#/$defs/CacheConfig'},
+                            ],
                             'title': 'Cache',
                         },
                         'service_tier': {

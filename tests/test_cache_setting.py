@@ -546,7 +546,7 @@ async def test_fallback_model_snaps_cache_per_wrapped_model():
 
 class TestCachingCapability:
     @pytest.mark.parametrize('retention', [True, False, '1h'])
-    async def test_caching_sets_unified_cache(self, retention: CacheSetting):
+    async def test_caching_sets_unified_cache(self, retention: bool | CacheRetention):
         """`Caching` contributes the unified `cache` setting, which each model resolves against its profile."""
         model = _RecordingFunctionModel(
             _echo, profile=ModelProfile(supports_cache=True, supported_cache_retentions=('5m', '1h'))
