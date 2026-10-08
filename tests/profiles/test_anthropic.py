@@ -364,6 +364,7 @@ def test_model_profile_fable_5():
         ('claude-sonnet-5', True, False),
         ('claude-opus-5-5', True, True),
         ('claude-sonnet-5-5', True, True),
+        ('claude-haiku-5-5', True, False),
         ('claude-fable-5', True, True),
         ('claude-fable-5-1', True, True),
         ('claude-mythos-5-1', True, True),
@@ -397,6 +398,7 @@ def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: boo
         ('claude-opus-5-5', False),
         ('claude-opus-5', True),
         ('claude-sonnet-5-5', False),
+        ('claude-haiku-5-5', True),
         ('claude-sonnet-5', True),
     ],
 )
@@ -621,6 +623,34 @@ def test_model_profile_sonnet_5_5():
         'anthropic_binds_thinking_blocks': True,
         'thinking_always_enabled': True,
     }
+
+
+def test_model_profile_haiku_5_5():
+    """Claude Haiku 5.5 supports adaptive thinking, forced tools, and the current Anthropic tool set."""
+    profile = anthropic_model_profile('claude-haiku-5-5')
+    assert profile is not None
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_disallows_top_effort_when_thinking_disabled') is True
+    assert profile.get('thinking_enabled_by_default') is True
+    assert profile.get('thinking_always_enabled') is False
+    assert profile.get('supports_forced_tool_choice') is True
+    assert profile.get('anthropic_binds_thinking_blocks') is True
+    assert profile.get('anthropic_supports_dynamic_filtering') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
+    assert profile.get('anthropic_supported_code_execution_tool_versions') == ('20250825', '20260120')
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_max_output_tokens') == 128_000
+    supported_native_tools = profile.get('supported_native_tools', frozenset())
+    assert ToolSearchTool in supported_native_tools
+    assert AdvisorTool in supported_native_tools
+    assert CodeExecutionTool in supported_native_tools
+    assert WebSearchTool in supported_native_tools
+    assert WebFetchTool in supported_native_tools
 
 
 @pytest.mark.parametrize(

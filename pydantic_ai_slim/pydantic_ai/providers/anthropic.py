@@ -43,6 +43,7 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-sonnet-5-5',
+    'claude-haiku-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -67,6 +68,7 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-sonnet-5-5',
+    'claude-haiku-5-5',
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 

@@ -663,6 +663,29 @@ def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking()
         )
 
 
+@skip_if_no_anthropic
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param({'anthropic_thinking': {'type': 'adaptive'}, 'tool_choice': 'required'}, id='adaptive'),
+        pytest.param({'anthropic_thinking': {'type': 'disabled'}, 'tool_choice': 'required'}, id='disabled'),
+    ],
+)
+def test_haiku_5_5_supports_forced_tool_choice_with_adaptive_or_disabled_thinking(settings: AnthropicModelSettings):
+    """Haiku 5.5 accepts forced tool choice with either adaptive or disabled thinking."""
+    profile = AnthropicModelProfile(
+        supports_forced_tool_choice=True,
+        forced_tool_choice_disables_thinking=True,
+        anthropic_supports_adaptive_thinking=True,
+    )
+    assert (
+        anthropic_support_tool_forcing(
+            'claude-haiku-5-5', profile, settings, ModelRequestParameters(function_tools=[make_tool('my_tool')])
+        )
+        is True
+    )
+
+
 @pytest.mark.parametrize(
     'provider_name',
     [

@@ -42,6 +42,7 @@ _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-sonnet-4-5',
     'claude-sonnet-4-6',
     'claude-sonnet-5',
+    'claude-haiku-5-5',
 )
 
 
@@ -58,7 +59,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_supports_adaptive_thinking: bool
-    """Whether the model supports adaptive thinking (Sonnet 4.6+, Opus 4.6+). Default: `False`.
+    """Whether the model supports adaptive thinking (Sonnet 4.6+, Opus 4.6+, Haiku 5.5). Default: `False`.
 
     When True, unified `thinking` translates to `{'type': 'adaptive'}`.
     When False, it translates to `{'type': 'enabled', 'budget_tokens': N}`.
@@ -68,7 +69,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_supports_effort: bool
-    """Whether the model supports the `effort` parameter in `output_config` (Opus 4.5+, Sonnet 4.6+). Default: `False`.
+    """Whether the model supports the `effort` parameter in `output_config` (Opus 4.5+, Sonnet 4.6+, Haiku 5.5). Default: `False`.
 
     When True and the unified thinking level is a string (e.g. 'high'), it is also
     mapped to `output_config.effort`.
@@ -84,13 +85,13 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_xhigh_effort: bool
     """Whether the model supports the `xhigh` effort value in `output_config`. Default: `False`.
 
-    Claude Opus 4.7, 4.8, and 5 accept `xhigh`; older Anthropic models should use `max` instead.
+    Claude Opus 4.7, 4.8, 5, and Haiku 5.5 accept `xhigh`; older Anthropic models should use `max` instead.
     """
 
     anthropic_disallows_budget_thinking: bool
     """Whether the model rejects budget-based thinking settings. Default: `False`.
 
-    Claude Opus 4.7, 4.8, and 5 require adaptive thinking and return a 400 for
+    Claude Opus 4.7, 4.8, 5, and Haiku 5.5 require adaptive thinking and return a 400 for
     `{'type': 'enabled', 'budget_tokens': ...}`.
     """
 
@@ -103,7 +104,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_disallows_top_effort_when_thinking_disabled: bool
     """Whether the model rejects `xhigh`/`max` effort while thinking is explicitly disabled. Default: `False`.
 
-    Claude Opus 5 caps effort at `high` when `anthropic_thinking={'type': 'disabled'}` and returns a
+    Claude Opus 5 and Haiku 5.5 cap effort at `high` when `anthropic_thinking={'type': 'disabled'}` and return a
     400 for `xhigh` or `max`; Claude Opus 4.8 accepts the same combination. Claude Opus 5.5 rejects
     disabled thinking at every effort level, so the flag doesn't apply to it.
     """
@@ -117,7 +118,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_task_budgets: bool
     """Whether the model supports `output_config.task_budget`. Default: `False`.
 
-    Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 beta feature.
+    Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
     """
 
     anthropic_supports_forced_tool_choice: bool
@@ -213,6 +214,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         'claude-opus-4-8',
         'claude-opus-5',
         'claude-sonnet-5',
+        'claude-haiku-5-5',
     )
     """These models support both structured outputs and strict tool calling."""
     # TODO update when new models are released that support structured outputs
@@ -223,7 +225,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5')
     )
 
-    # Sonnet 4.6+ and Opus 4.6+ support adaptive thinking; older models use budget-based
+    # Sonnet 4.6+, Opus 4.6+, and Haiku 5.5 support adaptive thinking; older models use budget-based.
     supports_adaptive = model_name.startswith(
         (
             'claude-fable-5',
@@ -235,6 +237,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-opus-4-7',
             'claude-opus-4-8',
             'claude-opus-5',
+            'claude-haiku-5-5',
         )
     )
 
@@ -250,27 +253,60 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-opus-5',
             'claude-sonnet-4-6',
             'claude-sonnet-5',
+            'claude-haiku-5-5',
         )
     )
     supports_xhigh_effort = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-opus-5',
+            'claude-sonnet-5',
+            'claude-haiku-5-5',
+        )
     )
     disallows_budget_thinking = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-opus-5',
+            'claude-sonnet-5',
+            'claude-haiku-5-5',
+        )
     )
     disallows_sampling_settings = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-opus-5',
+            'claude-sonnet-5',
+            'claude-haiku-5-5',
+        )
     )
-    # Opus 5 caps effort at `high` while thinking is disabled; Opus 4.8 and earlier accept every level.
+    # Opus 5 and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept every level.
     # Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
-    disallows_top_effort_when_thinking_disabled = model_name.startswith('claude-opus-5') and not model_name.startswith(
-        'claude-opus-5-5'
-    )
+    disallows_top_effort_when_thinking_disabled = (
+        model_name.startswith('claude-opus-5') and not model_name.startswith('claude-opus-5-5')
+    ) or model_name.startswith('claude-haiku-5-5')
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
     supports_task_budgets = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-opus-5',
+            'claude-sonnet-5',
+            'claude-haiku-5-5',
+        )
     )
 
     # The `max_tokens` Anthropic's Models API reports for each model. Mythos 5 isn't reachable with our credentials;
@@ -285,6 +321,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-opus-5',
             'claude-sonnet-4-6',
             'claude-sonnet-5',
+            'claude-haiku-5-5',
         )
     ):
         max_output_tokens: int | None = 128_000
@@ -315,12 +352,19 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
 
     # Anthropic documents these models as thinking when the request omits `thinking`; Fable 5, Fable 5.1, Opus 5,
-    # Opus 5.5 and Sonnet 5 return thinking tokens live with no thinking parameter, where Opus 4.8 and Sonnet 4.6
-    # return none.
+    # Opus 5.5, Sonnet 5, and Haiku 5.5 return thinking tokens live with no thinking parameter, where Opus 4.8
+    # and Sonnet 4.6 return none.
     thinking_enabled_by_default = model_name.startswith(
-        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5', 'claude-sonnet-5')
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-mythos-preview',
+            'claude-opus-5',
+            'claude-sonnet-5',
+            'claude-haiku-5-5',
+        )
     )
-    # Of those, all but Opus 5 and Sonnet 5 reject `thinking={'type': 'disabled'}` with a 400, so thinking
+    # Of those, all but Opus 5, Sonnet 5, and Haiku 5.5 reject `thinking={'type': 'disabled'}` with a 400, so thinking
     # can't be turned off.
     thinking_always_enabled = model_name.startswith(
         ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5-5', 'claude-sonnet-5-5')
@@ -336,12 +380,14 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5-1', 'claude-mythos-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5')
     )
 
-    # Claude Fable 5.1, Opus 5.5, and Sonnet 5.5 bind thinking blocks to the conversation prefix:
+    # Claude Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5 bind thinking blocks to the conversation prefix:
     # Claude Fable 5, Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit
     # `prefix_mismatch_behavior` of `'error'` where Opus 5.5 and Sonnet 5.5 return a 400 once the
     # `system` prompt changes, and Anthropic documents that Claude Mythos 5.1 "doesn't run this
     # check" — the one capability on which it is not Fable 5.1's mirror.
-    binds_thinking_blocks = model_name.startswith(('claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5'))
+    binds_thinking_blocks = model_name.startswith(
+        ('claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5')
+    )
 
     supports_dynamic_filtering = model_name.startswith(
         (
@@ -354,6 +400,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-opus-4-7',
             'claude-opus-4-8',
             'claude-opus-5',
+            'claude-haiku-5-5',
         )
     )
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
@@ -372,10 +419,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-opus-4-8',
             'claude-opus-5',
             'claude-haiku-4-5',
+            'claude-haiku-5-5',
         )
     )
     # The advisor tool's valid *executors* (the model driving generation) are Fable/Mythos 5, Opus
-    # 4.6-4.8 and 5, Sonnet 4.6/5, and Haiku 4.5. The executor/advisor pairing itself is validated API-side.
+    # 4.6-4.8 and 5, Sonnet 4.6/5, and Haiku 4.5/5.5. The executor/advisor pairing itself is validated API-side.
     supports_advisor = model_name.startswith(
         (
             'claude-fable-5',
@@ -387,6 +435,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-sonnet-4-6',
             'claude-sonnet-5',
             'claude-haiku-4-5',
+            'claude-haiku-5-5',
         )
     )
     supported_native_tools = _ANTHROPIC_BASE_BUILTINS

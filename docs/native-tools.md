@@ -281,7 +281,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | To include code execution output on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
 | Google | ✅ | See [Google tool combinations](#google-tool-combinations). |
-| Anthropic | ✅ | Available on compatible Anthropic models. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
+| Anthropic | ✅ | Available on compatible Anthropic models, including Claude Haiku 5.5. Pydantic AI selects a compatible code execution tool version automatically; see [Anthropic code execution tool version](models/anthropic.md#code-execution-tool-version) to override it. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -797,6 +797,8 @@ _(This example is complete, it can be run "as is")_
 ## Advisor Tool
 
 The [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] lets an executor model consult another model mid-generation. See the [Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool) and [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/advisor) documentation for current model compatibility.
+
+Claude Haiku 5.5 is supported as both the executor and the advisor model.
 
 ### Provider Support
 

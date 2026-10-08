@@ -65,9 +65,13 @@ def test_anthropic_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -
         # Direct Anthropic API ids (with and without date suffix)
         'claude-haiku-4-5',
         'claude-haiku-4-5-20251001',
+        'claude-haiku-5-5',
         # Amazon Bedrock ids: `anthropic.` provider segment, optional geo prefix and `-vN(:M)?` version suffix
         'anthropic.claude-haiku-4-5',
         'anthropic.claude-haiku-4-5-20251001-v1:0',
+        'anthropic.claude-haiku-5-5',
+        'us.anthropic.claude-haiku-5-5',
+        'global.anthropic.claude-haiku-5-5',
         'us.anthropic.claude-haiku-4-5-20251001-v1:0',
         'global.anthropic.claude-haiku-4-5',
         # Anthropic on Vertex AI: `@`-delimited version
@@ -102,6 +106,7 @@ def test_anthropic_provider_model_profile_older_model_still_resolves():
         # Sonnet 5 accepts the entry with a 200 and then ignores it, so it is deliberately out.
         ('claude-sonnet-5', False),
         ('claude-sonnet-5-5', True),
+        ('claude-haiku-5-5', True),
         ('claude-opus-4-7', False),
         ('claude-sonnet-4-6', False),
         ('claude-haiku-4-5', False),
@@ -127,3 +132,13 @@ def test_anthropic_provider_model_profile_inline_system_prompts(model_name: str,
     profile = AnthropicProvider.model_profile(model_name)
     assert isinstance(profile, dict)
     assert profile.get('supports_inline_system_prompts', False) is supported
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_mode'),
+    [('claude-haiku-5-5', 'by_reference'), ('claude-sonnet-5', None)],
+)
+def test_anthropic_provider_model_profile_tool_availability_delta(model_name: str, expected_mode: str | None):
+    profile = AnthropicProvider.model_profile(model_name)
+    assert isinstance(profile, dict)
+    assert profile.get('tool_addition_mode') == expected_mode
