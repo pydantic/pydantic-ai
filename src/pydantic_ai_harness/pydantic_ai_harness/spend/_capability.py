@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse
+from pydantic_ai.models._continuation import merge_responses, observe_continuation_segments
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend._budget import Budget, BudgetSpec, bucket, delimited, scope_key, store_key
@@ -296,17 +297,24 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         this sees a response even when a hook nested inside this wrapper rejects or replaces it,
         and never sees a response a hook made up without calling the model (a cache hit or
         `SkipModelRequest`).
+
+        The segments of a continuation chain are observed too, so the merged response they
+        produce can be accrued boundary by boundary: see `_accrue_response`.
         """
         usage_response_offset = len(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
+        segments: list[ModelResponse] = []
         response: ModelResponse | None = None
         try:
-            response = await handler(request_context)
+            with observe_continuation_segments(request_context, segments.append):
+                response = await handler(request_context)
         finally:
             usage_responses = request_context._usage_responses[usage_response_offset:]  # pyright: ignore[reportPrivateUsage]
+            # Segments are attributed only to a lifecycle's single committed response, which core merged them into.
+            boundaries = _continuation_boundaries(request_context, segments) if len(usage_responses) == 1 else []
             first_error: Exception | None = None
             for response_index, usage_response in enumerate(usage_responses, start=usage_response_offset):
                 try:
-                    error = await self._accrue_response(ctx, usage_response, response_index)
+                    error = await self._accrue_response(ctx, usage_response, response_index, boundaries)
                 except Exception as exc:
                     error = exc
                 if first_error is None:
@@ -321,36 +329,71 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return response
 
     async def _accrue_response(
-        self, ctx: RunContext[AgentDepsT], response: ModelResponse, response_index: int
+        self,
+        ctx: RunContext[AgentDepsT],
+        response: ModelResponse,
+        response_index: int,
+        boundaries: Sequence[ModelResponse] = (),
     ) -> Exception | None:
+        """Accrue one billed response, then report it once.
+
+        `boundaries` are what a continuation chain had merged into after each segment before
+        its last. Each is accrued as the growth over what is already applied, and `response`
+        last, so the amounts add up to `response` itself. Under durable execution each
+        segment is its own durable model request, and a lifecycle that failed partway
+        accrued the merged response up to the failure. A retry replays those segments and
+        reaches the same boundaries in the same order, so the recorded accruals replay and
+        only the segments it newly requested reach the store. Accruing the whole merged
+        response in one call would replay the recorded accrual in its place instead.
+
+        Growth is floored at zero against the highest amount applied so far, so a pricing
+        function that values a later boundary below an earlier one cannot post a credit.
+        A boundary that adds nothing is skipped, which keeps a background job polled under
+        one id to one store call when its intermediate polls carry no usage.
+        """
         usd, priced, price_error = self._price_of(response)
         keyed = await self._keyed(ctx)
-        token = self._dedup_token(ctx, response, response_index)
-        entries: dict[str, SpendEntry] = {}
-        for budget, key in keyed:
-            # Budgets sharing a name, window, and scope share a counter, which is
-            # how one window carries both a USD and a token ceiling. Adding the
-            # response once per budget would double-count it and halve them both.
-            if key not in entries:
-                entries[key] = SpendEntry(
-                    key=key,
-                    usd=usd,
-                    tokens=response.usage.total_tokens,
-                    requests=1,
-                    unpriced=0 if priced else 1,
-                    ttl=budget.ttl,
-                    token=token,
+        applied_usd, applied_tokens, applied_unpriced = Decimal(0), 0, 0
+        accrued: Mapping[str, Spent] | None = None
+        for boundary in (*boundaries, response):
+            boundary_usd, boundary_priced = (usd, priced) if boundary is response else self._price_of(boundary)[:2]
+            with money_precision():
+                usd_growth = max(Decimal(0), boundary_usd - applied_usd)
+            tokens_growth = max(0, boundary.usage.total_tokens - applied_tokens)
+            unpriced_growth = max(0, (0 if boundary_priced else 1) - applied_unpriced)
+            if accrued is not None and not (usd_growth or tokens_growth or unpriced_growth):
+                continue
+            entries: dict[str, SpendEntry] = {}
+            for budget, key in keyed:
+                # Budgets sharing a name, window, and scope share a counter, which is
+                # how one window carries both a USD and a token ceiling. Adding the
+                # response once per budget would double-count it and halve them both.
+                if key not in entries:
+                    entries[key] = SpendEntry(
+                        key=key,
+                        usd=usd_growth,
+                        tokens=tokens_growth,
+                        requests=1 if accrued is None else 0,
+                        unpriced=unpriced_growth,
+                        ttl=budget.ttl,
+                        token=self._dedup_token(ctx, boundary, response_index),
+                    )
+            # Every window in one call, so a failure cannot leave the response counted
+            # against the day and not the month. Nothing to apply is not a call: see `_read`.
+            accrued = await self._accrue(list(entries.values()))
+            missing = sorted({key for _, key in keyed} - accrued.keys())
+            if missing:
+                raise UserError(
+                    f'The spend accrual returned no total for key(s) {missing}. Under durable execution this can '
+                    'mean a `Budget.scope` callable returned a different value on replay; scope and price callables '
+                    'must be deterministic. Otherwise, the `BatchSpendStore` must return a total for every submitted '
+                    'key.'
                 )
-        # Every window in one call, so a failure cannot leave the response counted
-        # against the day and not the month. Nothing to apply is not a call: see `_read`.
-        accrued = await self._accrue(list(entries.values()))
-        missing = sorted({key for _, key in keyed} - accrued.keys())
-        if missing:
-            raise UserError(
-                f'The spend accrual returned no total for key(s) {missing}. Under durable execution this can mean '
-                'a `Budget.scope` callable returned a different value on replay; scope and price callables must be '
-                'deterministic. Otherwise, the `BatchSpendStore` must return a total for every submitted key.'
-            )
+            with money_precision():
+                applied_usd += usd_growth
+            applied_tokens += tokens_growth
+            applied_unpriced += unpriced_growth
+        assert accrued is not None
         statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
 
         error: Exception | None = None
@@ -710,6 +753,28 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 # escape would skip `on_unpriced` and drop the accrual with it.
                 pass
         return Decimal(0), False, None
+
+
+def _continuation_boundaries(
+    request_context: ModelRequestContext, segments: Sequence[ModelResponse]
+) -> list[ModelResponse]:
+    """What a continuation chain had merged into after each of its segments but the last.
+
+    Folded the way core's continuation loop folds them, starting from the suspended response
+    a resumed request ends in, so each boundary is the response core would have committed had
+    the chain failed right after that segment.
+    """
+    if len(segments) < 2:
+        return []
+    messages = request_context.messages
+    merged = messages[-1] if messages else None
+    if not (isinstance(merged, ModelResponse) and merged.state == 'suspended'):
+        merged = None
+    boundaries: list[ModelResponse] = []
+    for segment in segments[:-1]:
+        merged = segment if merged is None else merge_responses(merged, segment)
+        boundaries.append(merged)
+    return boundaries
 
 
 def _status(budget: Budget[Any], key: str, spent: Spent) -> BudgetStatus:

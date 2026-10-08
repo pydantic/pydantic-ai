@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
@@ -23,8 +23,15 @@ from pydantic_ai.capabilities import (
     CapabilityOrdering,
     WrapModelRequestHandler,
 )
+from pydantic_ai.durable_exec import (
+    JSON_CODEC,
+    BaseDurabilityCapability,
+    DurabilityEngineSpec,
+    JournalCallableOperationBackend,
+    RoleBasedOperationConfig,
+)
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -2008,6 +2015,254 @@ class TestIdempotentAccrual:
         await _record(guard, response=_response(provider_name='anthropic', provider_response_id='1'))
 
         assert (await guard.status())[0].spent.requests == 2
+
+
+class _Journal(JournalCallableOperationBackend[None]):
+    """Replay recorded durable units by name and occurrence, the way Temporal and DBOS do.
+
+    With `journal_capabilities=False` the capability operations are not recorded, so a
+    replayed accrual reaches the store again and only its token can recognise it.
+    """
+
+    def __init__(self, *, journal_capabilities: bool = True) -> None:
+        super().__init__(
+            agent_name='journal', config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None)
+        )
+        self.journal_capabilities = journal_capabilities
+        self.results: dict[tuple[str, int], object] = {}
+        self.occurrences: dict[str, int] = {}
+
+    async def execute(
+        self,
+        *,
+        operation_id: object,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: None,
+    ) -> object:
+        occurrence = self.occurrences.get(name, 0)
+        self.occurrences[name] = occurrence + 1
+        if not self.journal_capabilities and '__capability__' in name:
+            return await body()
+        key = (name, occurrence)
+        if key not in self.results:
+            self.results[key] = await body()
+        return self.results[key]
+
+    def replay(self) -> None:
+        """Start the run over from the beginning of the journal, as recovery does."""
+        self.occurrences.clear()
+
+
+class _JournalDurability(BaseDurabilityCapability[None]):
+    engine_spec = DurabilityEngineSpec(
+        engine_name='journal', durable_unit_noun='step', durable_container_noun='journal', codec=JSON_CODEC
+    )
+
+    def __init__(self, journal: _Journal) -> None:
+        super().__init__()
+        self.journal = journal
+
+    @property
+    def in_durable_context(self) -> bool:
+        return True
+
+    def get_durable_operation_backend(self) -> _Journal:
+        return self.journal
+
+
+class _CountingStore(InMemorySpendStore):
+    """Count the accruals that reach the store, as opposed to the ones a journal replays."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batches: list[tuple[SpendEntry, ...]] = []
+
+    async def add_many(self, entries: Sequence[SpendEntry]) -> Mapping[str, Spent]:
+        self.batches.append(tuple(entries))
+        return await super().add_many(entries)
+
+
+def _continued_model(
+    segments: Sequence[ModelResponse], *, fail_on_call: int | None = None
+) -> tuple[FunctionModel, list[int]]:
+    """Answer with `segments` in order, failing once on `fail_on_call` (1-based) instead."""
+    calls: list[int] = []
+    pending = list(segments)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(len(calls) + 1)
+        if len(calls) == fail_on_call:
+            raise RuntimeError('continuation failed')
+        return replace(pending.pop(0))
+
+    return FunctionModel(respond), calls
+
+
+def _segment(
+    content: str, *, tokens: tuple[int, int], cost: str, suspended: bool, response_id: str | None
+) -> ModelResponse:
+    return ModelResponse(
+        parts=[TextPart(content)],
+        state='suspended' if suspended else 'complete',
+        provider_response_id=response_id,
+        usage=RequestUsage(input_tokens=tokens[0], output_tokens=tokens[1], cost=Decimal(cost)),
+    )
+
+
+def _paused_then_finished(*, response_ids: bool = True) -> list[ModelResponse]:
+    """An Anthropic `pause_turn` style chain: two separately billed segments merged into one turn."""
+    return [
+        _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a' if response_ids else None),
+        _segment('B', tokens=(8, 3), cost='0.011', suspended=False, response_id='b' if response_ids else None),
+    ]
+
+
+def _billed_cost(response: ModelResponse) -> Decimal | None:
+    return response.usage.cost
+
+
+class TestContinuationAccrual:
+    """A continuation chain is merged into one response but billed segment by segment."""
+
+    async def test_a_durable_retry_accrues_the_continuation_it_newly_billed(self):
+        """The first segment was charged before the second failed; the retry replays it and bills the second.
+
+        Regression test for https://github.com/pydantic/pydantic-ai/issues/9935: the retry accrued
+        the merged response at the journal position the failed attempt had recorded for the first
+        segment alone, so the journal replayed that record and the second segment never reached the
+        store.
+        """
+        journal = _Journal()
+        store = _CountingStore()
+        model, calls = _continued_model(_paused_then_finished(), fail_on_call=2)
+        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+        agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
+
+        with pytest.raises(RuntimeError, match='continuation failed'):
+            await agent.run('go', run_id='same-durable-task')
+        first = (await limits.status())[0].spent
+        assert (first.tokens, first.usd, first.requests) == (10, Decimal('0.010'), 1)
+
+        journal.replay()
+        usage = RunUsage()
+        await agent.run('go', run_id='same-durable-task', usage=usage)
+
+        final = (await limits.status())[0].spent
+        assert len(calls) == 3
+        assert (usage.total_tokens, usage.cost) == (21, Decimal('0.021'))
+        assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
+        assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
+            [(10, Decimal('0.010'))],
+            [(11, Decimal('0.011'))],
+        ]
+
+    @pytest.mark.parametrize('response_ids', [True, False], ids=['provider-ids', 'no-provider-ids'])
+    async def test_a_retry_whose_accruals_reach_the_store_again_charges_the_replayed_segment_once(
+        self, response_ids: bool
+    ):
+        """Recovery that cannot consult the recorded accrual is left to the store's token.
+
+        The token is derived from the run position and the replay-stable response content, so it
+        recognises the replayed segment whether or not the provider reported a response id. Accruing
+        the merged response whole presented a token the store had never seen and charged the first
+        segment twice.
+        """
+        journal = _Journal(journal_capabilities=False)
+        model, _ = _continued_model(_paused_then_finished(response_ids=response_ids), fail_on_call=2)
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost)
+        agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
+
+        with pytest.raises(RuntimeError, match='continuation failed'):
+            await agent.run('go', run_id='same-durable-task')
+        journal.replay()
+        await agent.run('go', run_id='same-durable-task')
+
+        final = (await limits.status())[0].spent
+        assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
+
+    @pytest.mark.parametrize('journal_capabilities', [True, False], ids=['journaled', 'store-token'])
+    async def test_replaying_a_completed_chain_charges_nothing_again(self, journal_capabilities: bool):
+        journal = _Journal(journal_capabilities=journal_capabilities)
+        store = _CountingStore()
+        model, calls = _continued_model(_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+        agent = Agent(model, name='journal', deps_type=type(None), capabilities=[_JournalDurability(journal), limits])
+
+        await agent.run('go', run_id='same-durable-task')
+        journal.replay()
+        await agent.run('go', run_id='same-durable-task')
+
+        final = (await limits.status())[0].spent
+        assert len(calls) == 2
+        assert (final.tokens, final.usd, final.requests) == (21, Decimal('0.021'), 1)
+        assert len(store.batches) == (2 if journal_capabilities else 4)
+
+    async def test_a_chain_is_reported_once_with_its_combined_usage(self):
+        """Accruing at each boundary changes what reaches the store, not what is reported."""
+        snapshots: list[SpendSnapshot] = []
+        model, _ = _continued_model(_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=_billed_cost, on_spend=snapshots.append)
+
+        result = await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert [(s.usage.total_tokens, s.usd) for s in snapshots] == [(21, Decimal('0.021'))]
+        assert snapshots[0].budgets[0].spent == Spent(usd=Decimal('0.021'), tokens=21, requests=1)
+        assert result.usage.total_tokens == 21
+
+    async def test_idle_polls_of_one_background_job_are_not_accrued(self):
+        """Polls of one job replace the response, so only growth in its usage is new spend."""
+        store = _CountingStore()
+        polls = [
+            _segment('', tokens=(1, 0), cost='0', suspended=True, response_id='job'),
+            _segment('', tokens=(1, 0), cost='0', suspended=True, response_id='job'),
+            _segment('done', tokens=(40, 2), cost='0.05', suspended=False, response_id='job'),
+        ]
+        model, _ = _continued_model(polls)
+        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+
+        await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('0.05'), tokens=42, requests=1)
+        assert [[(entry.tokens, entry.requests) for entry in batch] for batch in store.batches] == [
+            [(1, 1)],
+            [(41, 0)],
+        ]
+
+    async def test_a_resumed_chain_is_folded_from_the_response_it_resumes(self):
+        """A history ending in a suspended response seeds the chain, and its usage stays in the merge."""
+        seed = _segment('A', tokens=(7, 3), cost='0.010', suspended=True, response_id='a')
+        store = _CountingStore()
+        model, _ = _continued_model(
+            [
+                _segment('B', tokens=(8, 3), cost='0.011', suspended=True, response_id='b'),
+                _segment('C', tokens=(4, 1), cost='0.005', suspended=False, response_id='c'),
+            ]
+        )
+        limits = SpendLimits[None](budgets=[Budget(window='total')], store=store, price=_billed_cost)
+
+        result = await Agent(model, deps_type=type(None), capabilities=[limits]).run(
+            message_history=[ModelRequest.user_text_prompt('go'), seed]
+        )
+
+        assert result.usage.total_tokens == 26
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('0.026'), tokens=26, requests=1)
+        assert [[(entry.tokens, entry.usd) for entry in batch] for batch in store.batches] == [
+            [(21, Decimal('0.021'))],
+            [(5, Decimal('0.005'))],
+        ]
+
+    async def test_a_boundary_priced_above_the_whole_chain_posts_no_credit(self):
+        def price(response: ModelResponse) -> Decimal:
+            return Decimal('5') if response.state == 'suspended' else Decimal('3')
+
+        model, _ = _continued_model(_paused_then_finished())
+        limits = SpendLimits[None](budgets=[Budget(window='total')], price=price)
+
+        await Agent(model, deps_type=type(None), capabilities=[limits]).run('go')
+
+        assert (await limits.status())[0].spent == Spent(usd=Decimal('5'), tokens=21, requests=1)
 
 
 class TestDeprecatedStore:
