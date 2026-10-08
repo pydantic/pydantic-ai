@@ -2355,3 +2355,76 @@ async def test_openai_responses_unified_cache_stable_prefix_only(allow_model_req
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
     assert request['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+
+
+async def test_openai_responses_unified_cache_stable_prefix_only_with_chaining(allow_model_requests: None):
+    """With server-side state the instructions can't carry a breakpoint, so `mode='explicit'` would cache
+    nothing: the request keeps OpenAI's implicit breakpoint instead."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto', cache={'messages': False})
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    assert request['instructions'] == 'Support policies.'
+    assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_chat_unified_cache_stable_prefix_only_with_merged_system_messages(allow_model_requests: None):
+    """Merged system messages can't carry the instruction breakpoint, so the request keeps OpenAI's implicit
+    breakpoint rather than caching nothing."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_supports_multiple_system_messages=False, openai_supports_prompt_cache_breakpoints=True
+        ),
+    )
+    agent = Agent(
+        model,
+        system_prompt='Support policies.',
+        instructions='Answer briefly.',
+        model_settings={'cache': {'messages': False}},
+    )
+
+    await agent.run('Where is order 1234?')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    assert kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': """\
+Support policies.
+
+Answer briefly.\
+""",
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_unified_cache_stable_prefix_only_keeps_cache_point(allow_model_requests: None):
+    """A `CachePoint` is a breakpoint `mode='explicit'` still writes, so the request stays prefix-only."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_supports_multiple_system_messages=False, openai_supports_prompt_cache_breakpoints=True
+        ),
+    )
+    agent = Agent(model, instructions='Support policies.', model_settings={'cache': {'messages': False}})
+
+    await agent.run(['Long reference document.', CachePoint(), 'Where is order 1234?'])
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+    assert kwargs['messages'][1]['content'][0] == snapshot(
+        {'type': 'text', 'text': 'Long reference document.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+    )
