@@ -55,6 +55,12 @@ Frame = dict[str, JsonValue]
 FRAME_ADAPTER = TypeAdapter(Frame)
 
 
+@pytest.fixture
+def anyio_backend() -> str:
+    """The Responses WebSocket connector and Agent lifecycle use asyncio."""
+    return 'asyncio'
+
+
 @pytest.fixture(autouse=True)
 def stable_platform_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Avoid the SDK's macOS platform probe spawning a subprocess inside async tests."""
