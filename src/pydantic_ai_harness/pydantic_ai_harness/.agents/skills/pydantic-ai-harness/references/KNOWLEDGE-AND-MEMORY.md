@@ -4,7 +4,7 @@ Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persist
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
 history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
 Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand). Only `Skills` needs an extra.
+demand). `Skills` and the optional Pixeltable integration require extras.
 
 | Need | Use |
 |---|---|
@@ -84,6 +84,8 @@ Gotchas:
 tables, query rows, and search an embedding index. The `tables` allowlist is required and two
 instances combine by intersecting allowlists. `PixeltableMemoryStore` is a separate store for
 `Memory`; neither requires the other. Install `pydantic-ai-harness[pixeltable]` on Python 3.11+.
+Projections omit media, array, binary, and unstored computed columns by default and reject them
+when explicitly requested.
 See the [Pixeltable guide](https://pydantic.dev/docs/ai/harness/pixeltable/) for limits and examples.
 
 ### Namespaces (multi-user)

@@ -254,7 +254,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         Args:
             table: Pixeltable table path.
             columns: Columns to return. Omit to skip media, array, and binary
-                columns. Unstored computed and explicit media columns are rejected.
+                columns. Explicit media, array, binary, and unstored computed columns are rejected.
             where: Equality filters mapping column name to value. Media, array, and
                 binary columns reject non-null filters; `None` matches null rows.
             limit: Maximum rows to return, capped by the capability.
@@ -287,7 +287,8 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             query: Text to embed and search for.
             column: Column with an embedding index.
             columns: Extra columns to return with the match and score. Indexed media is
-                omitted unless explicitly requested, in which case it is rejected.
+                omitted unless explicitly requested. Explicit media, array, binary, and unstored
+                computed columns are rejected.
             limit: Maximum rows to return, capped by the capability.
             idx: Embedding index name. Required when the column has more than one index.
 
@@ -366,7 +367,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
                 raise ModelRetry(f'Column {name!r} is computed on read; these tools do not run it.')
             type_ = column_md[name]['type_']
             if _is_skipped_type(type_):
-                continue
+                raise ModelRetry(f'Column {name!r} has an array or binary type; choose a stored scalar column.')
             ref = t[name]
             if _is_media_type(type_):
                 raise ModelRetry(

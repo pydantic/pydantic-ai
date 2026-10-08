@@ -90,7 +90,7 @@ recalls it in a second run without the first run's chat history.
 - Default projections skip media, array, binary, and unstored computed columns, including indexed
   media in similarity search. Unstored computed columns rerun their functions (possibly model calls)
   on read, so explicit projections and filters reject them. Explicit media projections are rejected
-  because they expose local file paths.
+  because they expose local file paths. Explicit array and binary projections are also rejected.
 - `query_table` and `similarity_search` return `{"table", "rows", "truncated"}`, bounded by `max_rows`
   (default 20) and `max_chars` (default 8000). Oversized strings end in `...`; other oversized values
   become `null`, and `truncated` reports applied bounds. `list_tables` and `describe_table` are sized
@@ -112,8 +112,9 @@ recalls it in a second run without the first run's chat history.
 - `search_memory` uses the same lexical scoring and prefix isolation as the other stores.
 - `store.table` supports queries, joins, and computed columns; filter to `kind == 'file'` for memory
   rows. Route writes and deletes through the store to preserve versions and receipts.
-- Pixeltable keeps old row versions for every update and delete, and receipts are not pruned, so the
-  table grows with history.
+- An uninterrupted write with a new operation id creates three table versions (record intent,
+  apply write, clear intent). Receipts are retained for replay; deleting them would not remove
+  their history, so the table grows with both operations and row versions.
 - Deleted or overwritten memories stay readable through earlier table versions (for example
   `pxt.get_table('hr.memory:3')`), and a journaled write's content also remains in the history of its
   receipt row. Pixeltable has no API to prune history, so the only way to purge a memory is to drop

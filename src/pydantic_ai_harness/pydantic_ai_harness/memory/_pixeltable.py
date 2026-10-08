@@ -132,6 +132,10 @@ class PixeltableMemoryStore:
     on the next lookup instead of double-applying. Paths whose first segment is
     `__meta__` or `__op__` are reserved.
 
+    An uninterrupted write with a new operation id creates three table versions
+    (record intent, apply write, clear intent). Receipts are retained for replay;
+    deleting them would not remove their history from Pixeltable.
+
     Args:
         table_name: Pixeltable table path (e.g. `'harness.memory'`).
     """

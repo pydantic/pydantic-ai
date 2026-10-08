@@ -20,8 +20,9 @@ uv run examples/coding_agent.py
 
 Each example states its default model at the top and reads that provider's API
 key from the environment (e.g. `ANTHROPIC_API_KEY`). Set
-`PYDANTIC_AI_MODEL=provider:model` to run against a different model — you'll
-then need that provider's key instead.
+`PYDANTIC_AI_MODEL=provider:model` to run against a different model. You'll
+need that provider's key.
+The video example also needs `OPENAI_API_KEY` for ingestion and search.
 
 ## The examples
 

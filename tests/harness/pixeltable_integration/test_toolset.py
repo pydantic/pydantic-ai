@@ -169,12 +169,21 @@ class TestPixeltableToolsetQuery:
         assert len(result['rows']) == 3
         assert all(set(row) == {'text'} for row in result['rows'])
 
-    def test_named_array_column_is_skipped(self, catalog: str) -> None:
-        tools = _chunks(catalog)
-        result = tools.query_table(f'{catalog}.chunks', columns=['vec', 'pos'], where={'pos': 0})
-        assert result['rows'] == [{'pos': 0}]
-        with pytest.raises(ModelRetry, match='No selectable columns'):
-            tools.query_table(f'{catalog}.chunks', columns=['vec'])
+    @pytest.mark.parametrize('column', ['vec', 'blob'])
+    @pytest.mark.parametrize('similarity', [False, True])
+    def test_named_array_and_binary_columns_are_rejected(self, root: str, column: str, similarity: bool) -> None:
+        path = f'{root}.projections'
+        table = create_table(path, {'text': pxt.String, 'vec': pxt.Array[(8,), pxt.Float], 'blob': pxt.Binary})
+        insert_rows(table, [{'text': 'cats sit on mats', 'vec': np.zeros(DIM, dtype=np.float32), 'blob': b'content'}])
+        table.add_embedding_index('text', string_embed=tiny_embed)
+        tools = _tools([path])
+        assert tools.query_table(path)['rows'] == [{'text': 'cats sit on mats'}]
+        for columns in ([column], [column, 'text']):
+            with pytest.raises(ModelRetry, match=f'Column {column!r} has an array or binary type'):
+                if similarity:
+                    tools.similarity_search(path, 'cats', 'text', columns=columns)
+                else:
+                    tools.query_table(path, columns=columns)
 
     def test_named_media_column_is_rejected(self, catalog: str, tmp_path: Path) -> None:
         docs = create_table(f'{catalog}.docs', {'doc': pxt.Document, 'title': pxt.String})
