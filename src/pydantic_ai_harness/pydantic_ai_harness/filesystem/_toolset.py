@@ -7,6 +7,7 @@ import fnmatch
 import functools
 import hashlib
 import logging
+import mimetypes
 import os
 import posixpath
 import re
@@ -16,12 +17,13 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
-from typing import Concatenate, ParamSpec
+from typing import Concatenate, ParamSpec, TypeVar
 
 import anyio
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
@@ -49,6 +51,7 @@ from pydantic_ai_harness.filesystem._events import (
 from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, Unreadable, run_ripgrep
 
 _P = ParamSpec('_P')
+_R = TypeVar('_R')
 
 logger = logging.getLogger(__name__)
 
@@ -276,12 +279,12 @@ def _sanitize_recoverable_error(error: BaseException, root: str) -> str:
 
 
 def _recoverable(
-    fn: Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[str]],
-) -> Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[str]]:
+    fn: Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[_R]],
+) -> Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[_R]]:
     """Surface model-correctable tool errors as `ModelRetry`, and workspace refusals as `ToolFailed`."""
 
     @functools.wraps(fn)
-    async def wrapper(self: FileSystemToolset, scope: _Scope, *args: _P.args, **kwargs: _P.kwargs) -> str:
+    async def wrapper(self: FileSystemToolset, scope: _Scope, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
             return await fn(self, scope, *args, **kwargs)
         # Before the recoverable tuple and `OSError`: `WorkspaceReadOnlyError` is a
@@ -351,6 +354,60 @@ def _format_lines(lines: Sequence[str], offset: int, limit: int, max_chars: int 
 def _is_binary(data: bytes, sample_size: int = 8192) -> bool:
     """Detect binary content by checking for null bytes in the sample."""
     return b'\x00' in data[:sample_size]
+
+
+_MAX_MEDIA_BYTES = 5_000_000
+"""Largest image or PDF `read_file` returns as file content.
+
+File content bypasses the textual `max_read_chars` budget, and 5 MB is the
+strictest per-image limit among mainstream providers. A larger file gets the
+text description instead of content that would fail the next model request.
+"""
+
+_HEX_PREVIEW_BYTES = 64
+"""Leading bytes of a non-media binary file shown as hex."""
+
+
+def _sniff_media_type(data: bytes) -> str | None:
+    """The media type of an image or PDF, read from its leading bytes.
+
+    Only types a tool result can carry to the model as a file are recognized:
+    images and PDFs. Audio and video are left out because some providers reject
+    them in a tool result. The bytes decide, not the extension, so a misnamed
+    file is not sent under the wrong media type.
+
+    The image signatures duplicate core's `image_media_type_from_bytes`
+    (`pydantic_ai/images/_media_type.py`), which is private and covers neither GIF
+    nor PDF. Change both together until core offers a public helper to use here.
+    """
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg'
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif'
+    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
+        return 'image/webp'
+    if data.startswith(b'%PDF-'):
+        return 'application/pdf'
+    return None
+
+
+_HEX_ROW_CHARS = 58
+"""Characters in one full hex row: an 8-digit offset, two spaces, 16 bytes, and the newline."""
+
+
+def _hex_preview(data: bytes, max_chars: int | None = None) -> str:
+    """Up to the first `_HEX_PREVIEW_BYTES` of `data` as offset-prefixed hex rows of 16 bytes.
+
+    With `max_chars`, only as many rows as fit are shown; the notice for the rest is not counted,
+    and callers reserve `_NOTICE_CHARS` for it.
+    """
+    limit = _HEX_PREVIEW_BYTES if max_chars is None else min(_HEX_PREVIEW_BYTES, max_chars // _HEX_ROW_CHARS * 16)
+    head = data[:limit]
+    rows = [f'{start:08x}  {head[start : start + 16].hex(" ")}\n' for start in range(0, len(head), 16)]
+    more = f'... ({len(data) - len(head)} more bytes)\n' if len(data) > len(head) else ''
+    return ''.join(rows) + more
 
 
 def _matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: int) -> tuple[list[str], bool]:
@@ -551,7 +608,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 f'Unknown filesystem tools: {", ".join(unknown)}. Available: {", ".join(FILE_SYSTEM_TOOL_NAMES)}.'
             )
 
-        registrations: dict[str, Callable[..., Awaitable[str]]] = {
+        registrations: dict[str, Callable[..., Awaitable[str | list[str | BinaryContent]]]] = {
             'read_file': self._read_file_tool,
             'write_file': self._write_file_tool if content_hashes else self._write_file_tool_unhashed,
             'edit_file': self._edit_file_tool if content_hashes else self._edit_file_tool_unhashed,
@@ -840,14 +897,18 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
     async def read_file(
         self, path: str, *, offset: int = 0, limit: int | None = None, workspace: WorkspaceBackend
-    ) -> str:
-        """Read a text file in `workspace` directly, outside an agent run."""
+    ) -> str | list[str | BinaryContent]:
+        """Read a file in `workspace` directly, outside an agent run.
+
+        An image or PDF comes back as its header followed by a `BinaryContent`;
+        everything else is text.
+        """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 
     async def _read_file_tool(
         self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
-    ) -> str:
-        """Read a text file with line numbers.
+    ) -> str | list[str | BinaryContent]:
+        """Read a text file with line numbers, or view an image or PDF.
 
         Args:
             ctx: The current agent run context.
@@ -856,7 +917,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             limit: Maximum number of lines to return (default: 2000).
 
         Returns:
-            File content with line numbers, plus metadata header.
+            File content with line numbers, plus metadata header. An image or PDF
+            is returned as the file itself; other binary files as their size,
+            media type and leading bytes in hex.
         """
         return await self._read_file(
             await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, offset=offset, limit=limit
@@ -865,7 +928,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     @_recoverable
     async def _read_file(
         self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str, *, offset: int = 0, limit: int | None = None
-    ) -> str:
+    ) -> str | list[str | BinaryContent]:
         if offset < 0:
             raise ValueError('offset must be non-negative.')
         if limit is not None and limit < 1:
@@ -887,10 +950,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
             return f'Path not found: {path}'
         content_hash = _bytes_hash(raw)
-        if _is_binary(raw):
+        media_type = _sniff_media_type(raw)
+        if media_type is not None or _is_binary(raw):
             if ctx is not None:
                 await ctx.emit(FileReadEvent(**self._event_location(scope, resolved), content_hash=content_hash))
-            return f'[Binary file: {len(raw)} bytes. Use a binary-aware tool to inspect.]'
+            return self._read_binary(path, raw, media_type, content_hash)
 
         text = raw.decode('utf-8', errors='replace')
         lines = text.splitlines(keepends=True)
@@ -902,11 +966,28 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             await ctx.emit(FileReadEvent(**self._event_location(scope, resolved), content_hash=content_hash))
         return header + body
 
-    def _read_header(self, path: str, total: int, content_hash: str) -> str:
-        label = path
+    def _read_binary(
+        self, path: str, raw: bytes, media_type: str | None, content_hash: str
+    ) -> str | list[str | BinaryContent]:
+        """An image or PDF as file content when it fits `_MAX_MEDIA_BYTES`, anything else described in text."""
+        hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
+        shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
+        header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
+        if media_type is None:
+            intro = 'Binary file; the first bytes in hex:\n'
+            return header + intro + _hex_preview(raw, self._body_budget(header + intro))
+        if len(raw) <= _MAX_MEDIA_BYTES:
+            return [header, BinaryContent(data=raw, media_type=media_type)]
+        return f'{header}Too large to view: the limit is {_MAX_MEDIA_BYTES} bytes.\n'
+
+    def _path_label(self, path: str) -> str:
         if self._max_read_chars is not None and len(path) > self._max_read_chars // 4:
             # The label echoes what the model passed; keep a long one from eating the window.
-            label = '...' + path[-(self._max_read_chars // 4) :]
+            return '...' + path[-(self._max_read_chars // 4) :]
+        return path
+
+    def _read_header(self, path: str, total: int, content_hash: str) -> str:
+        label = self._path_label(path)
         return f'[{label} | {total} lines{" | hash:" + content_hash if self._content_hashes else ""}]\n'
 
     def _body_budget(self, header: str) -> int | None:

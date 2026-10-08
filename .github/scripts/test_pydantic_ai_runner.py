@@ -55,6 +55,7 @@ from pydantic_ai_gh_aw_shim import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
+    BinaryContent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -545,6 +546,16 @@ def test_read_continuation_hint_uses_one_based_offset(tmp_path: Path, monkeypatc
     assert 'L3' in nxt and 'L2' not in nxt
 
 
+def test_read_file_returns_an_image_as_the_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # An image comes back as the harness returns it, header plus the file, not as text.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
+    (tmp_path / 'chart.png').write_bytes(png)
+    out = asyncio.run(pkg.read_file(_ctx(), str(tmp_path / 'chart.png')))
+    assert isinstance(out, list)
+    assert out[1] == BinaryContent(data=png, media_type='image/png')
+
+
 def test_read_limit_zero_behaves_like_omitted_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Passed straight to the harness, `limit=0` reads zero lines and emits a
     # same-offset hint that loops. The adapter normalizes `limit<=0` to an omitted
@@ -564,7 +575,8 @@ def test_harness_backed_tools_surface_oserror_as_error(tmp_path: Path, monkeypat
     # of letting it escape and abort the whole agent run.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     long_path = 'a' * 10_000
-    assert asyncio.run(pkg.read_file(_ctx(), long_path)).startswith('error:')
+    read = asyncio.run(pkg.read_file(_ctx(), long_path))
+    assert isinstance(read, str) and read.startswith('error:')
     assert asyncio.run(pkg.edit_file(_ctx(), long_path, 'x', 'y')).startswith('error:')
     assert asyncio.run(pkg.list_dir(_ctx(), long_path)).startswith('error:')
     assert asyncio.run(pkg.glob_search(_ctx(), '*.py', long_path)).startswith('error:')
@@ -582,6 +594,7 @@ def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, mon
     # plus long padding so the chunk blows well past the char cap.
     f.write_text('\n'.join(f'{i:06d}' + 'x' * 200 for i in range(1, 2001)) + '\n', encoding='utf-8')
     out = asyncio.run(pkg.read_file(_ctx(), str(f)))
+    assert isinstance(out, str)
     assert len(out) <= shared.MAX_TOOL_OUTPUT + 256  # bounded by the output cap
     m = re.search(r'Use offset=(\d+) to continue reading', out)
     assert m, 'continuation hint must survive char-budget truncation'
@@ -1798,7 +1811,7 @@ def test_stream_events_tags_retry_prompt_as_error():
 def test_read_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     out = asyncio.run(pkg.read_file(_ctx(), str(tmp_path / 'nope.txt')))
-    assert out.startswith('error:')
+    assert isinstance(out, str) and out.startswith('error:')
 
 
 def test_edit_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
