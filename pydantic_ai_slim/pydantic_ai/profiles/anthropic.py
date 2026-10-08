@@ -310,7 +310,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
 
     # The `max_tokens` Anthropic's Models API reports for each model. Mythos 5 isn't reachable with our credentials;
-    # Anthropic documents Mythos 5.1 as having Fable 5.1's capabilities.
+    # Anthropic documents Mythos 5.1 as having Fable 5.1's capabilities. Haiku 5.5's value is from Anthropic's docs.
     if model_name.startswith(
         (
             'claude-fable-5',

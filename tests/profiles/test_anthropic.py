@@ -626,9 +626,10 @@ def test_model_profile_sonnet_5_5():
 def test_model_profile_haiku_5_5():
     """Claude Haiku 5.5 carries Sonnet 5's capability surface plus thinking block binding and the Opus 5 effort cap.
 
-    Follows Anthropic's Haiku 5.5 migration guide and feature pages, not a live probe: it rejects sampling settings,
-    budget-based thinking, and fast mode, thinks adaptively when the request omits `thinking`, and supports all five
-    effort levels, task budgets, json-schema output, tool search, the advisor tool, and code execution `20260120`.
+    Follows Anthropic's Haiku 5.5 migration guide and feature pages, not a live probe: it rejects sampling settings and
+    budget-based thinking, doesn't support fast mode, thinks adaptively when the request omits `thinking`, and supports
+    all five effort levels, task budgets, json-schema output, tool search, the advisor tool, and code execution
+    `20260120`.
 
     Unlike Sonnet 5, it binds thinking blocks to the conversation prefix like the other 5.5 models, and like Opus 5
     it accepts `thinking: {'type': 'disabled'}` only at `high` effort or below. Unlike Opus 5.5 and Sonnet 5.5, it
