@@ -14,12 +14,12 @@ from render.workflows import TaskDefinition, Workflows
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import RenderWorkflows
 
 from .conftest import RecordingTaskContext, ToolTaskConcurrency, json_round_trip, run_agent_in_task
@@ -497,6 +497,30 @@ async def test_nested_agent_model_usage_matches_an_inline_run() -> None:
     assert inline.usage.requests == distributed.usage.requests == 3
     assert inline.usage.input_tokens == distributed.usage.input_tokens
     assert inline.usage.output_tokens == distributed.usage.output_tokens
+
+
+async def test_nested_agent_usage_counts_toward_parent_request_limit() -> None:
+    """A model request inside a tool must count before the parent requests again."""
+    child = Agent(TestModel(call_tools=[], custom_output_text='child result'), name='limited-child')
+    runtime = RenderWorkflows[None](Workflows())
+    parent = Agent(
+        TestModel(call_tools=['delegate']), name='limited-parent', deps_type=type(None), capabilities=[runtime]
+    )
+
+    @parent.tool
+    async def delegate(ctx: RunContext[None]) -> str:
+        return (await child.run('child', usage=ctx.usage)).output
+
+    inline_usage = RunUsage()
+    with pytest.raises(UsageLimitExceeded, match='request_limit of 2'):
+        await parent.run('parent', usage=inline_usage, usage_limits=UsageLimits(request_limit=2))
+
+    distributed_usage = RunUsage()
+    with runtime.activate(JsonRecordingTaskContext()):
+        with pytest.raises(UsageLimitExceeded, match='request_limit of 2'):
+            await parent.run('parent', usage=distributed_usage, usage_limits=UsageLimits(request_limit=2))
+
+    assert inline_usage.requests == distributed_usage.requests == 2
 
 
 @pytest.mark.parametrize('capability_owned', [False, True])
