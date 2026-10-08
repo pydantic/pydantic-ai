@@ -1,16 +1,13 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import ClassVar, Literal, assert_never
 
-from pydantic import BaseModel, JsonValue
+from pydantic import JsonValue
 
 from .._http import to_httpx2_timeout
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
-from ..messages import BinaryContent, ImageUrl
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -181,22 +178,11 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         """The system / model provider."""
         return self._provider.name
 
-    async def _prepare_decision_request(
-        self,
-        state: JsonValue,
-        image_inputs: list[BinaryContent | ImageUrl],
-        questions: dict[str, DecisionQuestion],
-        model_settings: DecisionModelSettings,
-    ) -> DecisionRequest:
-        _validate_extra_body(model_settings.get('extra_body'))
-        return await super()._prepare_decision_request(state, image_inputs, questions, model_settings)
-
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
         extra_headers: dict[str, str] = dict(model_settings.get('extra_headers', {}))
         if all(name.lower() != 'user-agent' for name in extra_headers):
             extra_headers['User-Agent'] = get_user_agent()
-        _validate_extra_body(model_settings.get('extra_body'))
         self._check_request_limits(image_count=len(request.images), question_count=len(request.questions))
         decision_input: str | list[DecisionInputMessageParam] = _text(request.state)
         if request.images:
@@ -281,26 +267,6 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             # The body carries no ID of its own.
             provider_response_id=response.request_id,
         )
-
-
-def _validate_extra_body(extra_body: object) -> None:
-    if extra_body is None:
-        return
-    if not isinstance(extra_body, Mapping):
-        raise UserError(f'`extra_body` must be a mapping to send it to the OpenAI Decisions API; got {extra_body!r}.')
-
-    class ExtraBodyEncoder(json.JSONEncoder):
-        def default(self, o: object) -> object:
-            if isinstance(o, datetime):
-                return o.isoformat()
-            elif isinstance(o, BaseModel):
-                return o.model_dump(exclude_unset=True, mode='json', by_alias=True)
-            return super().default(o)
-
-    try:
-        json.dumps({**extra_body}, cls=ExtraBodyEncoder, ensure_ascii=False, allow_nan=False).encode()
-    except (TypeError, ValueError) as e:
-        raise UserError('`extra_body` must be JSON serializable to send it to the OpenAI Decisions API.') from e
 
 
 def _text(value: JsonValue) -> str:

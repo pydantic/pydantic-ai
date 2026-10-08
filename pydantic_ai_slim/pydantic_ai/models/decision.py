@@ -2239,7 +2239,7 @@ def _noul_question(options: dict[bool, str | None], asked: JsonValue | None) -> 
 
 def _image_label(item: MultiModalContent, images: list[BinaryContent | ImageUrl], context: str) -> str:
     if not isinstance(item, (BinaryContent, ImageUrl)) or (isinstance(item, BinaryContent) and not item.is_image):
-        raise UserError(f'Decision models support text and inline images only; {context} contains an unsupported file.')
+        raise UserError(f'{context} contains an unsupported file: this model accepts text and images only.')
     images.append(item)
     return f'<image {len(images)}>'
 

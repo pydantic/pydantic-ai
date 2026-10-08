@@ -8,7 +8,6 @@ recording.
 from __future__ import annotations as _annotations
 
 import json
-import math
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -726,80 +725,6 @@ async def test_user_agent_and_default_timeout(allow_model_requests: None, user_a
     request = captured.requests[0]
     assert request.headers['user-agent'] == 'support-bot'
     assert None not in request.extensions['timeout'].values()
-
-
-async def test_extra_body_must_be_a_mapping(allow_model_requests: None):
-    """Not recorded: refused before a request is sent."""
-    captured = Captured(ticket_answers)
-    agent = Agent(mock_model(captured), output_type=Ticket)
-    with pytest.raises(UserError, match='`extra_body` must be a mapping'):
-        await agent.run('Charged twice.', model_settings={'extra_body': ['not', 'a', 'mapping']})
-    assert captured.requests == []
-
-
-async def test_decide_rejects_invalid_extra_body_before_a_request(allow_model_requests: None):
-    """The public `decide` method validates `extra_body` even when called without an agent run."""
-    captured = Captured(ticket_answers)
-    model = mock_model(captured)
-
-    with pytest.raises(UserError, match='`extra_body` must be a mapping'):
-        await model.decide(
-            DecisionRequest(state='Charged twice.', questions={'q': NoulQuestion()}),
-            OpenAIDecisionsModelSettings(extra_body=['not', 'a', 'mapping']),
-        )
-
-    assert captured.requests == []
-
-
-@pytest.mark.parametrize('invalid_kind', ['object', 'nan', 'infinity', 'circular-list', 'circular-dict', 'surrogate'])
-async def test_non_json_extra_body_fails_before_image_download(allow_model_requests: None, invalid_kind: str):
-    circular_list: list[object] = []
-    circular_list.append(circular_list)
-    circular_dict: dict[str, object] = {}
-    circular_dict['self'] = circular_dict
-    invalid_values: dict[str, object] = {
-        'object': object(),
-        'nan': math.nan,
-        'infinity': math.inf,
-        'circular-list': circular_list,
-        'circular-dict': circular_dict,
-        'surrogate': chr(0xD800),
-    }
-    settings: OpenAIDecisionsModelSettings = {'extra_body': {'invalid': invalid_values[invalid_kind]}}
-    image_url = ImageUrl('https://example.com/receipt.png')
-    captured = Captured(boolean_answers)
-    agent = Agent(
-        mock_model(captured),
-        output_type=bool,
-        instructions='Does the evidence contain an image?',
-        model_settings=settings,
-    )
-
-    with (
-        patch('pydantic_ai.models.decision.download_item', new_callable=AsyncMock) as download,
-        pytest.raises(UserError, match='JSON serializable') as exc_info,
-    ):
-        await agent.run([image_url])
-
-    assert str(exc_info.value) == '`extra_body` must be JSON serializable to send it to the OpenAI Decisions API.'
-    assert isinstance(exc_info.value.__cause__, (TypeError, ValueError))
-    download.assert_not_awaited()
-    assert captured.requests == []
-
-
-async def test_decide_rejects_non_json_extra_body_before_a_request(allow_model_requests: None):
-    captured = Captured(boolean_answers)
-    model = mock_model(captured)
-
-    with pytest.raises(UserError, match='JSON serializable') as exc_info:
-        await model.decide(
-            DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}),
-            OpenAIDecisionsModelSettings(extra_body={'invalid': object()}),
-        )
-
-    assert str(exc_info.value) == '`extra_body` must be JSON serializable to send it to the OpenAI Decisions API.'
-    assert isinstance(exc_info.value.__cause__, TypeError)
-    assert captured.requests == []
 
 
 async def test_json_extra_body_preserves_sdk_encoding(allow_model_requests: None):
@@ -1663,7 +1588,7 @@ async def test_unsupported_files_fail_before_a_decisions_request(
         ]
     captured = Captured(boolean_answers)
 
-    with pytest.raises(UserError, match='Decision models support text and inline images only'):
+    with pytest.raises(UserError, match='unsupported file: this model accepts text and images only'):
         await Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?').run(
             prompt, message_history=history
         )
@@ -1689,7 +1614,7 @@ async def test_unsupported_audio_urls_fail_before_a_decisions_request(
     captured = Captured(boolean_answers)
     agent = Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?')
 
-    with pytest.raises(UserError, match='Decision models support text and inline images only'):
+    with pytest.raises(UserError, match='unsupported file: this model accepts text and images only'):
         await agent.run(prompt, message_history=history)
     assert captured.requests == []
 
@@ -2085,31 +2010,6 @@ async def test_201_questions_prevent_image_download(allow_model_requests: None):
             None,
             ModelRequestParameters(output_tools=[output_tool], output_mode='tool', allow_text_output=False),
         )
-
-    download.assert_not_awaited()
-    assert captured.requests == []
-
-
-async def test_invalid_extra_body_prevents_image_download(allow_model_requests: None):
-    """Invalid `extra_body` settings are rejected before downloading an image prompt."""
-    captured = Captured(boolean_answers)
-    settings: OpenAIDecisionsModelSettings = {'extra_body': ['not', 'a', 'mapping']}
-    agent = Agent(
-        mock_model(captured),
-        output_type=bool,
-        instructions='Does the input contain an image?',
-        model_settings=settings,
-    )
-
-    with (
-        patch(
-            'pydantic_ai.models.decision.download_item',
-            new_callable=AsyncMock,
-            side_effect=httpx2.ConnectError('image download failed'),
-        ) as download,
-        pytest.raises(UserError, match='`extra_body` must be a mapping'),
-    ):
-        await agent.run([ImageUrl('https://example.com/missing.png')])
 
     download.assert_not_awaited()
     assert captured.requests == []
