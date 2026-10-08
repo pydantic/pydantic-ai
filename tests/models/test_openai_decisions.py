@@ -750,7 +750,7 @@ async def test_decide_rejects_invalid_extra_body_before_a_request(allow_model_re
     assert captured.requests == []
 
 
-@pytest.mark.parametrize('invalid_kind', ['object', 'nan', 'infinity', 'circular-list', 'circular-dict'])
+@pytest.mark.parametrize('invalid_kind', ['object', 'nan', 'infinity', 'circular-list', 'circular-dict', 'surrogate'])
 async def test_non_json_extra_body_fails_before_image_download(allow_model_requests: None, invalid_kind: str):
     circular_list: list[object] = []
     circular_list.append(circular_list)
@@ -762,6 +762,7 @@ async def test_non_json_extra_body_fails_before_image_download(allow_model_reque
         'infinity': math.inf,
         'circular-list': circular_list,
         'circular-dict': circular_dict,
+        'surrogate': chr(0xD800),
     }
     settings: OpenAIDecisionsModelSettings = {'extra_body': {'invalid': invalid_values[invalid_kind]}}
     image_url = ImageUrl('https://example.com/receipt.png')
@@ -986,22 +987,28 @@ async def test_rounded_score_can_match_rounded_probabilities(allow_model_request
 
 
 @pytest.mark.parametrize(
-    ('nonzero_probabilities', 'matches'),
-    [pytest.param(205, False, id='sum cannot round to one'), pytest.param(199, True, id='sum can round to one')],
+    ('option_count', 'probability', 'positive_count', 'matches'),
+    [
+        pytest.param(255, 0.01, 205, False, id='sum cannot round to one'),
+        pytest.param(255, 0.01, 199, True, id='sum can round to one'),
+        pytest.param(200, 0.0, 0, False, id='all-zero 200-way distribution'),
+        pytest.param(200, 0.005, 200, True, id='uniform rounded 200-way distribution'),
+    ],
 )
 async def test_choice_probability_sum_respects_rounding_bounds(
-    nonzero_probabilities: int, matches: bool, allow_model_requests: None
+    option_count: int, probability: float, positive_count: int, matches: bool, allow_model_requests: None
 ):
-    """Rounded choice probabilities must admit a normalized distribution."""
-    criteria: dict[str, JsonValue] = {str(option): None for option in range(255)}
+    """Rounded choice probabilities must admit a normalized distribution, including a positive 200-way split."""
+    criteria: dict[str, JsonValue] = {str(option): None for option in range(option_count)}
     probabilities: list[dict[str, object]] = [
-        {'value': str(option), 'probability': 0.01 if option < nonzero_probabilities else 0.0} for option in range(255)
+        {'value': str(option), 'probability': probability if option < positive_count else 0.0}
+        for option in range(option_count)
     ]
     answer: dict[str, object] = {
         'type': 'choice',
         'name': 'q',
         'choice': '0',
-        'confidence': 0.01,
+        'confidence': probability,
         'probabilities': probabilities,
     }
     model = mock_model(lambda _: decisions(answer))

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic_ai import Agent, BinaryContent, ModelHTTPError, ToolCallPart
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import infer_model
-from pydantic_ai.models.decision import DecisionRequest, NoulQuestion
+from pydantic_ai.models.decision import DecisionRequest, NoulQuestion, ScoreAnswer, ScoreQuestion
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.system_one import SystemOneModel, SystemOneModelSettings
 from pydantic_ai.models.test import TestModel
@@ -660,6 +660,39 @@ async def test_rounded_score_can_match_rounded_probabilities(
 
     result = await Agent(mock_model(handler), output_type=Mood).run('Slightly frustrating.')
     assert result.output == Mood(frustration=1)
+
+
+@pytest.mark.parametrize(
+    ('probability', 'valid'),
+    [pytest.param(0.0, False, id='all-zero'), pytest.param(0.005, True, id='uniform-rounded')],
+)
+async def test_200_level_score_probabilities_must_not_be_all_zero(
+    probability: float, valid: bool, allow_model_requests: None
+):
+    probabilities: dict[str, float] = {str(level): probability for level in range(200)}
+    captured = Captured(
+        lambda _: answers(
+            score={
+                'type': 'score',
+                'score': 99.5,
+                'confidence': probability,
+                'probabilities': probabilities,
+            }
+        )
+    )
+    request = DecisionRequest(
+        state='Choose a level.',
+        questions={'score': ScoreQuestion(criteria=[str(level) for level in range(200)])},
+    )
+
+    if valid:
+        response = await mock_model(captured).decide(request, {})
+        score_answer = response.answers['score']
+        assert isinstance(score_answer, ScoreAnswer)
+        assert score_answer.score == 99.5
+    else:
+        with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One API'):
+            await mock_model(captured).decide(request, {})
 
 
 async def test_provider_recreates_its_client():

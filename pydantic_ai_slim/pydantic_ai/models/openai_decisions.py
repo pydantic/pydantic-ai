@@ -275,7 +275,7 @@ def _validate_extra_body(extra_body: object) -> None:
             return super().default(o)
 
     try:
-        json.dumps({**extra_body}, cls=ExtraBodyEncoder, allow_nan=False)
+        json.dumps({**extra_body}, cls=ExtraBodyEncoder, ensure_ascii=False, allow_nan=False).encode()
     except (TypeError, ValueError) as e:
         raise UserError('`extra_body` must be JSON serializable to send it to the OpenAI Decisions API.') from e
 

@@ -527,6 +527,7 @@ class DecisionModel(Model[InterfaceClient]):
                 and answer.choice in question.criteria
                 and answer.probabilities.keys() == question.criteria.keys()
                 and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
+                and sum(answer.probabilities.values()) > 0
             ):
                 return False
             lower, upper = _probability_bounds(answer.probabilities.values())
@@ -538,6 +539,7 @@ class DecisionModel(Model[InterfaceClient]):
                 and answer.probabilities.keys() == set(range(len(question.criteria)))
                 and 0 <= answer.score <= len(question.criteria) - 1
                 and all(0 <= p <= 1 for p in (answer.confidence, *answer.probabilities.values()))
+                and sum(answer.probabilities.values()) > 0
             ):
                 return False
             # A displayed score and its probabilities may each be rounded. Check whether any distribution
