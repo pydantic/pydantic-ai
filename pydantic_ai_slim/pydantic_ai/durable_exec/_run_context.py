@@ -51,6 +51,9 @@ class SerializedRunContext(RunContext[AgentDepsT]):
     arguments; assigning them afterward does not make them readable. The projection omits live models,
     history, capability objects, and arbitrary validation context. Engine-specific
     fields and legacy payload aliases belong in the engine subclass.
+
+    Field visibility is not authorization. The projected approval and availability values
+    must come from a trusted dispatch path; this class does not authenticate them.
     """
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):

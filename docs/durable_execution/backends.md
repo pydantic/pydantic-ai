@@ -171,6 +171,9 @@ Keep engine-specific fields, older payload aliases, and event behavior in the en
 [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] implementation shows
 how to restore a workspace and attach the worker's agent.
 
+Only reconstruct a context from a trusted dispatch path. Approval and tool-availability values in
+the payload are ordinary data; this helper does not authenticate them.
+
 ### API evolution
 
 [`DurableOperationId`][pydantic_ai.durable_exec.DurableOperationId] grows in minor releases as
