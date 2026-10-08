@@ -232,7 +232,7 @@ An empty value resets. `R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
-While a turn is running, `/set`, `/settings`, `/model`, `/model add`, `/model settings`,
+While a turn is running, `/set`, `/settings`, `/system_prompt`, `/model`, `/model add`, `/model settings`,
 `/theme`, and `/spinner` typed without further arguments open their menu right
 away instead of queueing.
 The turn keeps running: its output is held while the menu is open
@@ -249,6 +249,13 @@ keeps the tools and hooks it started with, because the agent binds them when a
 run begins; the change reaches the agent on your next prompt, and CLAI says so.
 A plugin turned off mid-turn finishes its cleanup when the turn ends. While a
 delegated task is running, `/plugins` still refuses changes, as between turns.
+
+`/system_prompt` shows the full system prompt sent with the latest request and
+edits your own instructions, the `run.instructions` setting. CLAI sends them after
+its built-in instructions, `AGENTS.md`, and plugin instructions, which stay
+read-only; yours replace none of them, and resetting removes them. Editing opens
+`$VISUAL` or `$EDITOR`; on Windows, when neither is set, or when the editor cannot
+start, a built-in editor opens instead. Changes apply from your next prompt.
 
 ## Models and their settings
 
@@ -319,7 +326,7 @@ Settings are validated before writes. `/set` updates the active settings snapsho
 legacy `/config` writes apply on restart; plugin changes apply on the next prompt.
 `--request-limit` controls the full prompt's model-request budget.
 
-Interactive commands: `/login`, `/set` (alias `/settings`), `/theme`, `/model`, `/help`, `/clear` (alias `/new`), `/exit`, `/config`, `/plugins`, and `/reload`.
+Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/help`, `/clear` (alias `/new`), `/exit`, `/config`, `/plugins`, and `/reload`.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Path completion inserts a path; it does not attach file contents.
 Unknown slash commands are not sent to the model. Up/down recall prompt history

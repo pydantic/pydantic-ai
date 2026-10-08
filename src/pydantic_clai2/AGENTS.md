@@ -207,6 +207,10 @@ one that is not.
   settings are two sources, not two editors. Do not write a third editor.
 - `/set` edits go through `CommandContext.set_setting` / `reset_setting`, the
   same path as the typed command, so validation lives in one place.
+- Multi-line text goes through `text_editor.edit_text`: `$VISUAL` or `$EDITOR`
+  on a temporary file, else (on Windows, unset, or failing to start) a built-in
+  prompt_toolkit editor, since termflow has no multi-line input. Call it from a
+  menu worker between widgets. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
   one-liners are `no cover`.
@@ -272,7 +276,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force` |
 | `_app.py` | the prompt loop, built-in `/commands`, and `open_stock_agent`, the stock agent for code outside the terminal |
-| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
+| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume (a session busy in another process resumes as a saved fork), plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
 | `runtime/imported_sessions.py` | Claude Code and Codex sessions for `/resume`, `--resume-claude`, and `--resume-codex`: the on-disk catalog, stable CLAI IDs, and copying into the store (re-reading an uncontinued copy on every resume) |
 | `runtime/claude_code_sessions.py`, `runtime/codex_sessions.py` | read each agent's JSON Lines transcripts: headers for the browser, and the history to continue (the last Claude Code branch, Codex's compacted history) |
@@ -297,6 +301,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
+| `ui/menus/system_prompt_menu.py` | `/system_prompt`: the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, and the latest request's full instructions, read-only |
+| `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
 | `ui/menus/model_menu.py` | `/model add`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
 | `ui/menus/model_picker.py` | `/model`: selection, completion, and confirmed deletion of saved models and chains, and `/model chains`; protects the current model and saved default |
 | `ui/menus/chain_menu.py` | The `/model` picker's chain editors: new chain, models and their order (`edit_chain`), and `rename_chain` |
@@ -444,7 +450,8 @@ Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
 Full-screen menus leave the live panel temporarily. Inline questions borrow it
-with `run_worker(inline=True)`. Streamed text and thinking keep Markdown source,
+with `run_worker(inline=True)` and pin the question text in their rows, not the
+transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
 and a tool-call group its call names, for width/theme repaint; tool output keeps styled lines, each tagged with the
 theme that painted it, and `recolor.py` translates them role by role (`theme.roles`)
 when the theme changes. On exit, `restore`
