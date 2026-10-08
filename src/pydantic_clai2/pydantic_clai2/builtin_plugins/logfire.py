@@ -14,7 +14,7 @@ import asyncio
 import os
 import sys
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Self
@@ -324,6 +324,14 @@ class LogfirePlugin(Plugin[LogfireSettings]):
         chunks = (self._chunks,) if self._chunks is not None else ()
         return (self._session_tracing, self.instrumentation, control, fleet_control, *memory, *chunks, resilient)
 
+    def _memory_handler(self, memory: MemoryCommand) -> Callable[[list[str]], Awaitable[str]]:
+        async def handler(args: list[str]) -> str:
+            # Up to date before showing anything: a note may have been published or dismissed since the last turn.
+            self._reconcile_pending(await to_thread.run_sync(self.fleet.snapshot) if self.fleet else None)
+            return await memory(args)
+
+        return handler
+
     def _withdraw_memory(self, note: PendingNote) -> None:
         """Record that this user withdrew a proposal, so the fleet miner can mark it stale."""
         identity = self._session_tracing.identity()
@@ -443,7 +451,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             Command(
                 name='memory',
                 description='What the agent remembers here: personal notebooks, repo notes from Logfire, pending proposals',
-                handler=memory,
+                handler=self._memory_handler(memory),
                 complete=lambda args: ('open', 'edit', 'forget', 'propose') if len(args) <= 1 else (),
             ),
             Command(
@@ -601,13 +609,13 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             return
         self._show(build, changes)
         self._announced.clear()
-        self._reconcile_pending(build)
+        self._reconcile_pending(build.snapshot)
 
-    def _reconcile_pending(self, build: Build) -> None:
+    def _reconcile_pending(self, snapshot: Snapshot | None = None) -> None:
         """Drop this user's pending notes that were published or dismissed, and say once which were dismissed."""
         assert self.fleet is not None
         for line in self._pending_notes.reconcile(
-            repo=_repo_slug(), shared=self.fleet.notes(build.snapshot), proposals=self.fleet.proposals()
+            repo=_repo_slug(), shared=self.fleet.notes(snapshot), proposals=self.fleet.proposals()
         ):
             self.host.console.print(f'◆ {line}', style=theme.color(theme.WARNING), markup=False)
 
@@ -649,6 +657,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
                 last = current
                 build = self.fleet.build()
                 self._show(build, self.fleet.changes(build, mark_seen=False))
+                self._reconcile_pending(build.snapshot)
                 unasked = [c for c in build.pending if (c.item.key, c.fingerprint) not in self._asked]
                 if unasked and await self._ask_consent(unasked):
                     build = self.fleet.build()

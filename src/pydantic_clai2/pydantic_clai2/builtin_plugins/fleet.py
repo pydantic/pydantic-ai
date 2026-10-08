@@ -405,7 +405,7 @@ class Fleet:
         targeting_key, attributes = self.targeting_key(), self.attributes()
         return tuple(
             provider.get_serialized_value(variable.name, targeting_key, attributes).value
-            for variable in (self.agent_variable, self.catalog_variable, self.memory_variable)
+            for variable in (self.agent_variable, self.catalog_variable, self.memory_variable, self.proposals_variable)
         )
 
     def current_policy(self) -> Policy | None:
