@@ -477,9 +477,8 @@ print(json.dumps(schema, indent=2)[:66] + '...')
 """
 {
   "$defs": {
-    "Case": {
-      "additionalProperties": false,
-...
+    "CacheConfig": {
+      "additionalProperties": ...
 """
 ```
 

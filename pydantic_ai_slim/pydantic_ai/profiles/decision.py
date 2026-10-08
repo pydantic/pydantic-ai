@@ -8,8 +8,9 @@ class DecisionModelProfile(ModelProfile, total=False):
 
     These are facts about the model behind the URL, not the class that talks to it, so they are set by the provider
     for the model name, or by `profile=`. A key left out falls back to the class's
-    [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and
-    [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels].
+    [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options],
+    [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels] and
+    [`requires_instructions`][pydantic_ai.models.decision.DecisionModel.requires_instructions].
 
     ALL FIELDS MUST BE `decision_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
@@ -26,6 +27,13 @@ class DecisionModelProfile(ModelProfile, total=False):
 
     Whole numbers from 0 with more levels than this are not a rubric, so a field of them is asked as a pick-one
     instead, and counts against `decision_max_choice_options`.
+    """
+
+    decision_requires_instructions: bool
+    """Whether the model refuses a question without `instructions`.
+
+    A pick-one, a rubric, or a yes/no with described answers with nothing else to ask is then sent with a generic
+    question, `'Which of these applies?'`, instead of no `instructions` at all.
     """
 
 

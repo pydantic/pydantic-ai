@@ -1,6 +1,7 @@
 """The live panel paints frames from the transcript, on the alternate screen, and prints the session on close."""
 
 import io
+from collections.abc import Callable
 
 import pytest
 from rich.console import Console
@@ -20,6 +21,7 @@ from pydantic_clai2.ui.prompt.prompt_surface import (
     MODES_ON,
     WHEEL_ROWS,
     PromptSurface,
+    open_in_browser,
 )
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.transcript_view import SCROLLED_HINT
@@ -33,10 +35,12 @@ class Screen:
     def __init__(self, *, width: int = 80, height: int = 24) -> None:
         self.now = 0.0
         self.terminal = SurfaceTerminal(width=width, height=height)
+        self.opened: list[str] = []
         self.surface = PromptSurface(
             output=self.terminal,
             size=lambda: (self.terminal.width, self.terminal.height),
             clock=lambda: self.now,
+            open_url=self.opened.append,
         )
 
     def write(self, text: str) -> None:
@@ -554,6 +558,105 @@ def test_clicks_other_buttons_and_blank_drags_copy_nothing() -> None:
         screen.surface.transcript_key('mouse', report)
     assert screen.surface.transcript_key('mouse', release(30, 4)) is None, 'blank cells have nothing to copy'
     assert '\x1b]52;' not in screen.terminal.getvalue()[start:]
+
+
+def click(screen: Screen, column: int, row: int) -> list[str]:
+    """The URLs one press and release at a cell opened."""
+    opened = len(screen.opened)
+    for report in (press(column, row), release(column, row)):
+        assert screen.surface.transcript_key('mouse', report) is None
+    return screen.opened[opened:]
+
+
+def test_clicking_a_url_opens_it() -> None:
+    """Reporting the mouse stops the terminal opening links on Cmd+click, and Cmd is never reported."""
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('See https://ai.pydantic.dev/docs, then\n(https://x.dev/Foo_(bar)).\n')
+    assert click(screen, 5, 1) == ['https://ai.pydantic.dev/docs'], 'the first character'
+    assert click(screen, 32, 1) == ['https://ai.pydantic.dev/docs'], 'the last character'
+    assert click(screen, 33, 1) == [], 'trailing punctuation is not part of the URL'
+    assert click(screen, 1, 1) == []
+    assert click(screen, 10, 2) == ['https://x.dev/Foo_(bar)']
+    assert click(screen, 2, 7) == [], 'the editor rows below the transcript'
+    for report in (press(5, 1), drag(12, 1), release(12, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert len(screen.opened) == 3, 'a drag over a URL selects it instead'
+
+
+def test_clicking_a_url_wrapped_across_rows_opens_all_of_it() -> None:
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    screen.write(f'Go {url}\nnext\n')
+    assert screen.lines()[:4] == [f'Go {url[:17]}', url[17:37], url[37:], 'next']
+    assert click(screen, 10, 2) == [url]
+    assert click(screen, 2, 3) == [url]
+    assert click(screen, 2, 4) == []
+
+
+@pytest.mark.parametrize('after', ['next', 'API_KEY=secret'])
+def test_a_url_ending_at_the_edge_never_runs_into_the_next_line(after: str) -> None:
+    """Only genuine wraps join rows, so a click cannot open, or leak, the line after a URL."""
+    url = 'https://example.com/a'
+    screen = Screen(width=len(url), height=10)
+    screen.surface.paint(ROWS)
+    screen.write(f'{url}\n{after}\n')
+    assert screen.lines()[:2] == [url, after]
+    assert click(screen, 5, 1) == [url]
+    assert click(screen, 2, 2) == []
+
+
+def test_a_url_cut_off_by_the_viewport_is_not_opened() -> None:
+    """Its address is incomplete, and its visible part may even be another URL from its query."""
+    outer, inner = 'https://a.dev/?next=', 'https://b.dev/page'
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(f'{outer}{inner}\ndone\nmore\n')
+    assert screen.lines()[:4] == [inner, 'done', 'more', ''], 'the first row scrolled away above'
+    assert click(screen, 3, 1) == []
+    screen.surface.transcript_key('pageup')
+    assert screen.lines()[:2] == [outer, inner], 'once all of it shows'
+    assert click(screen, 3, 2) == [outer + inner]
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(ROWS)
+    screen.write(''.join(f'line {index}\n' for index in range(4)) + f'{url}\n')
+    screen.surface.scroll(2)
+    assert screen.lines()[2:4] == [url[:20], SCROLLED_HINT.rstrip()], 'the hint covers the rest of the URL'
+    assert click(screen, 3, 3) == []
+
+
+def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
+    url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
+
+    def render(*, source: str, width: int) -> str:
+        return f'{source}\nafter\n'
+
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    screen.surface.markdown(render=render, width=40).extend(url)
+    screen.surface.paint(ROWS)
+    assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
+    assert click(screen, 3, 2) == [url]
+    assert click(screen, 2, 4) == []
+
+
+def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr('webbrowser.open', opened.append)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.prompt_surface.Thread', _Inline)
+    open_in_browser('https://ai.pydantic.dev')
+    assert opened == ['https://ai.pydantic.dev']
+
+
+class _Inline:
+    def __init__(self, *, target: Callable[[str], object], args: tuple[str], daemon: bool) -> None:
+        assert daemon, 'a browser that never returns must not keep CLAI alive'
+        self.target, self.args = target, args
+
+    def start(self) -> None:
+        self.target(*self.args)
 
 
 def test_scrolling_resizing_and_releasing_the_panel_clear_the_highlight() -> None:

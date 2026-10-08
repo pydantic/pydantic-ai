@@ -110,7 +110,9 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
 
 
 async def test_compact_says_when_there_is_nothing_to_do() -> None:
-    assert await make_plugin().commands.execute_async('/compact') == 'Nothing to compact: the conversation is empty.'
+    plugin = make_plugin()
+    assert plugin.commands.runs_live('/compact'), 'a long summary must keep the spinner up and stay cancellable'
+    assert await plugin.commands.execute_async('/compact') == 'Nothing to compact: the conversation is empty.'
     short = Transcript(messages=[ModelRequest.user_text_prompt('hi')], model='test')
     plugin = make_plugin(short)
     with capture_run_messages() as summary_run:

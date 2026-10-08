@@ -346,7 +346,9 @@ directory too. Repository-local configuration/credentials and the SDK's
 `XDG_CONFIG_HOME` values fall back to `~/.config`. A checkout cannot select the
 telemetry destination through its own files. Without credentials the default
 `if-token-present` mode does not export to Logfire or start interactive setup. Console logging is disabled. Other SDK configuration,
-such as explicit OTLP exporters, still applies.
+such as explicit OTLP exporters, still applies. The SDKs' own log messages, such as
+failed or retried exports, never print to the terminal; a logging handler that a
+plugin configures still receives them.
 
 Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
 settings, and saved token references. No reconfiguration is needed. Old commands
