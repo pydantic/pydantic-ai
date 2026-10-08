@@ -39,6 +39,7 @@ AsyncAnthropicClient: TypeAlias = (
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
+    'claude-haiku-5-5',
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
@@ -58,11 +59,14 @@ entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for ad
 top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
 so the entry costs nothing measurable and keeps the instruction's operator authority.
 
+`claude-haiku-5-5` is published as supported and is included on the strength of that list.
+
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
 """
 
 _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-fable-5',
+    'claude-haiku-5-5',
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
@@ -76,7 +80,7 @@ separate features, one GA and one beta, that could diverge again. Models predati
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
 the way it does a plain system entry. Verified live per model except `claude-mythos-5`, which isn't
-reachable with our credentials and is included on the strength of the published list.
+reachable with our credentials, and `claude-haiku-5-5`; both are included on the strength of the published list.
 """
 
 

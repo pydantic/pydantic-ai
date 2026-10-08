@@ -162,7 +162,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('anthropic_supports_xhigh_effort', False) is True
 
     # These models support structured output directly, but not through Bedrock Converse.
-    for model_name in ('claude-sonnet-5', 'claude-fable-5'):
+    for model_name in ('claude-sonnet-5', 'claude-fable-5', 'claude-haiku-5-5'):
         anthropic_profile = provider.model_profile(f'global.anthropic.{model_name}')
         anthropic_model_profile_mock.assert_called_with(model_name)
         assert isinstance(anthropic_profile, dict)
