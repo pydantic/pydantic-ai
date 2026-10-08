@@ -58,6 +58,7 @@ For every variable, tuple, and literal you're about to touch, grep its readers a
 Specifically, for a typical model add, grep for:
 
 - The previous model id literal you're mirroring (e.g. `gpt-5.4`, `claude-opus-4-5`) — `rg '<prev-id>' --glob '!**/*.yaml' --glob '!**/cassettes/**'`
+- Search for the previous model's display name in docs and public docstrings; inspect capability rosters for the same features.
 - Every prefix/membership key in the profile module you're editing (e.g. OpenAI's `_REASONING_SUPPORT_BY_PREFIX` keys, Anthropic's inline `model_name.startswith((...))` tuples, xAI's `_GROK_43_REASONING_MODELS`)
 - `KnownModelName` and its provider-block neighbours
 - Snapshot test files: `tests/models/test_model_names.py`, `tests/test_capability_spec.py`
