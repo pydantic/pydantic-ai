@@ -36,6 +36,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai_harness.ask_user import AskUserRequest, Question, QuestionOption
 from pydantic_ai_harness.logfire import AgentControl
 from pydantic_ai_harness.policy import PolicyDecision, PolicyRule, decision_attributes
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import managed, policy_state
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.builtin_plugins.fleet import Build, Change, Consent, Fleet, FleetControl, Snapshot
@@ -68,7 +69,8 @@ from pydantic_clai2.builtin_plugins.logfire_sessions import (
     trace_link,
 )
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
-from pydantic_clai2.builtin_plugins.memory_command import MemoryCommand, run_editor
+from pydantic_clai2.builtin_plugins.memory_command import MemoryCommand
+from pydantic_clai2.builtin_plugins.session_search import session_search
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.config.settings_store import config_dir
@@ -88,6 +90,7 @@ from pydantic_clai2.runtime.remote_sessions import RemoteListing, RemoteResume
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow_async
 from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.ui.menus.text_editor import edit_text
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
@@ -322,7 +325,18 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             ),
         )
         chunks = (self._chunks,) if self._chunks is not None else ()
-        return (self._session_tracing, self.instrumentation, control, fleet_control, *memory, *chunks, resilient)
+        # This user's past sessions, from this machine's store and (when it can be queried) Logfire.
+        search = session_search(SqliteConversationStore(database=config_dir() / 'sessions.db'), self._sessions)
+        return (
+            self._session_tracing,
+            self.instrumentation,
+            control,
+            fleet_control,
+            *memory,
+            *chunks,
+            *search,
+            resilient,
+        )
 
     def _memory_handler(self, memory: MemoryCommand) -> Callable[[list[str]], Awaitable[str]]:
         async def handler(args: list[str]) -> str:
@@ -443,7 +457,7 @@ class LogfirePlugin(Plugin[LogfireSettings]):
             pending=self._pending_notes,
             propose=self._propose_memory,
             withdraw=self._withdraw_memory,
-            edit=lambda path: run_worker(lambda: run_editor(path)),
+            edit=lambda text, title: run_worker(lambda: edit_text(text, title=title)),
             link=self._link('#memory'),
         )
         return (

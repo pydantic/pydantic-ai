@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shlex
-import subprocess
-import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,16 +38,6 @@ def _excerpt(content: str) -> list[str]:
     return shown
 
 
-def run_editor(path: Path) -> bool:
-    """Open `$VISUAL` or `$EDITOR` (default `vi`) on `path`; whether it exited cleanly. Blocking."""
-    try:
-        editor = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
-        print('\x1b[2J\x1b[H', end='', flush=True, file=sys.__stdout__)
-        return subprocess.call([*editor, str(path)]) == 0
-    except (OSError, ValueError):
-        return False
-
-
 @dataclass(kw_only=True)
 class MemoryCommand:
     """The notebooks this session uses: personal (this repository's and every repository's), repo notes, pending."""
@@ -65,7 +51,8 @@ class MemoryCommand:
     propose: Callable[[str, str, str], str]
     withdraw: Callable[[PendingNote], None]
     """Records that a pending proposal was withdrawn, so the fleet miner can mark it stale."""
-    edit: Callable[[Path], Awaitable[bool]]
+    edit: Callable[[str, str], Awaitable[str | None]]
+    """`(text, title)` to the edited text, or `None` when the user cancelled: the shared multi-line editor."""
     link: str | None = None
     """Logfire's Memory tab, where admins edit repo notes."""
 
@@ -153,11 +140,14 @@ class MemoryCommand:
     async def edit_notebook(self, *, every_repo: bool) -> str:
         here, everywhere = self._dirs()
         path = (everywhere if every_repo else here) / MAIN
+        current = path.read_text(encoding='utf-8') if path.is_file() else ''
+        edited = await self.edit(
+            current, f'Your notes ({"every repository" if every_repo else self.repo() or "this directory"})'
+        )
+        if edited is None or edited == current:
+            return f'No changes to {path}.'
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            path.write_text('', encoding='utf-8')
-        if not await self.edit(path):
-            return f'The editor did not finish cleanly; {path} is as the editor left it.'
+        path.write_text(edited, encoding='utf-8')
         return f'Saved {path}. The agent sees it from the next model request.'
 
     def forget(self, name: str) -> str:

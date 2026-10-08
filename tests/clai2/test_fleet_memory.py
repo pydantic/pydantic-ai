@@ -227,17 +227,16 @@ async def test_memory_command_lists_opens_edits_forgets_and_proposes(tmp_path: P
     pending = PendingNotes(tmp_path / 'pending.json')
     proposals: list[tuple[str, str, str]] = []
     withdrawn: list[PendingNote] = []
-    edited: list[Path] = []
+    edited: list[str] = []
 
     def propose(path: str, content: str, why: str) -> str:
         proposals.append((path, content, why))
         pending.add(repo='acme/widgets', path=path, content=content, why=why)
         return 'Proposed.'
 
-    async def edit(path: Path) -> bool:
-        edited.append(path)
-        path.write_text('- Prefer uv.\n', encoding='utf-8')
-        return True
+    async def edit(text: str, title: str) -> str | None:
+        edited.append(title)
+        return None if title == 'cancel' else '- Prefer uv.\n'
 
     command = MemoryCommand(
         directory=tmp_path / 'memory',
@@ -253,7 +252,8 @@ async def test_memory_command_lists_opens_edits_forgets_and_proposes(tmp_path: P
     here, everywhere = personal_dirs(tmp_path / 'memory', 'acme/widgets')
     assert await command(['edit']) == f'Saved {here / "MEMORY.md"}. The agent sees it from the next model request.'
     await command(['edit', 'global'])
-    assert edited == [here / 'MEMORY.md', everywhere / 'MEMORY.md']
+    assert edited == ['Your notes (acme/widgets)', 'Your notes (every repository)']
+    assert await command(['edit']) == f'No changes to {here / "MEMORY.md"}.'
     (here / 'testing.md').write_text('Use pytest -x.\n', encoding='utf-8')
 
     overview = await command([])

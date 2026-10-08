@@ -377,3 +377,50 @@ async def test_logfire_sessions_are_listed_for_sessions_and_resume(
 
     refused = LogfireSessions(query=Refused(query.exporter), states=alice.states, owner=lambda: ALICE, project='p')
     assert (await refused.listing(workspace='.')).unavailable == 'Logfire sessions unavailable: no query scope'
+
+
+async def test_search_reaches_this_machines_and_logfire_sessions(
+    tmp_path: Path, provider: TracerProvider, query: SpanQuery
+) -> None:
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+    from pydantic_clai2.builtin_plugins.session_search import INSTRUCTIONS, SessionsHistorySource, session_search
+
+    alice = Machine(tmp_path, 'a', ALICE, provider, query)
+    await alice.prompt('The flaky test was fixed by pinning the zebra-timezone fixture')
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    local = (await Agent(TestModel(custom_output_text='ok')).run('Rename the walrus module')).all_messages()
+    saved = await store.save(summary=ConversationSummary(workspace=str(tmp_path), title='walrus'), messages=local)
+
+    results: list[str] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            assert INSTRUCTIONS in (messages[0].instructions or '')  # pyright: ignore[reportAttributeAccessIssue]
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('search_conversation_history', {'query': 'zebra'}, tool_call_id='a'),
+                    ToolCallPart('search_conversation_history', {'query': 'walrus'}, tool_call_id='b'),
+                ]
+            )
+        results.extend(str(part.content) for part in messages[-1].parts)  # pyright: ignore[reportAttributeAccessIssue]
+        return ModelResponse(parts=[TextPart('ok')])
+
+    await Agent(FunctionModel(model), capabilities=[*session_search(store, alice.sessions)]).run('search')
+    assert f'run: {alice.session_id}' in results[0] and 'zebra' in results[0]
+    assert f'run: {saved.id}' in results[1] and 'walrus' in results[1]
+
+    # Logfire unreachable or a damaged session: search goes on with what it can read.
+    class Down(SpanQuery):
+        async def rows(self, sql: str, *, limit: int = 10_000) -> list[dict[str, Any]]:
+            raise OSError('offline')
+
+    offline = LogfireSessions(query=Down(query.exporter), states=alice.states, owner=lambda: ALICE, project='p')
+    source = SessionsHistorySource(local=store, logfire=offline)
+    assert [run.run_id for run in await source.list_runs()] == [saved.id]
+    assert await source.run_history(run_id=alice.session_id) == []
+    online = SessionsHistorySource(local=None, logfire=alice.sessions)
+    assert await online.run_history(run_id=alice.session_id) == alice.messages
+    assert await online.run_history(run_id=alice.session_id) == alice.messages  # Cached.
+    assert await SessionsHistorySource(local=None, logfire=None).run_history(run_id='x') == []
