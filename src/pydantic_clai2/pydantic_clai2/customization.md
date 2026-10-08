@@ -34,6 +34,10 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   models=...) values from get_logins to add /login NAME and save those models
   once it succeeds. ModelProvider(settings_from='anthropic') gives its models
   Anthropic's /model settings controls.
+- Give the model standing instructions without a plugin: /system_prompt edits
+  run.instructions, which CLAI sends after its built-in, AGENTS.md, and plugin
+  instructions, and shows the full system prompt read-only. A plugin adds
+  instructions with get_capabilities instead.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
